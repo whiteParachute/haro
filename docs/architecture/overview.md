@@ -118,15 +118,16 @@ Haro 在进化中坚持"留精华、不堆数量"：
 
 调研覆盖 9 个竞品/参考项目：
 
-| 层次 | 竞品 | Haro 差异 |
-|------|------|----------|
-| Agent 级自进化 | Hermes (~97.6k stars) — 技能自创建+自改进+记忆 | Haro 做平台级：多 Agent + 编排 + Prompt + 平台代码的全面自进化 |
-| Agent 团队管理 | Multica (~15.7k stars) — 管理多个 Agent CLI | Haro 是 runtime 层，Multica 是管理层；Haro 可作为 Multica 的 Provider |
-| 编排框架 | CrewAI / AutoGen / LangGraph | Haro 融合三者优点 + 自进化（它们都是静态的） |
-| 事件流 | OpenHands | Haro 参考其事件流+沙箱，加入进化维度 |
-| 终端 Agent | Crush (OpenCode 继任) | 参考其 skill 生态思路 |
-| 自进化 Agent | yoyo-evolve | 核心灵感来源，Haro 从单 Agent 扩展到平台级 |
-| 消息渠道 | OpenClaw / KeyClaw / lark-bridge | Haro 抽象为独立 Channel 层，复用 lark-bridge 作为飞书 adapter |
+| 层次 | 竞品 | 技术栈 | Haro 差异 |
+|------|------|--------|----------|
+| Agent 级自进化 | Hermes (NousResearch/hermes-agent, ~98.6k stars) — 技能自创建+自改进+记忆 | Python + aiosqlite + FTS5 | Haro 做平台级：多 Agent + 编排 + Prompt + 平台代码的全面自进化；底层调用方式禁止直调 Anthropic API（Hermes 有此风险，Haro 强绑定 claude-agent-sdk） |
+| 统一 Agent 平台 | OpenClaw — 多 Provider + 多 Channel + 丰富工具 | TypeScript + pnpm + sqlite-vec + LanceDB | Haro 借鉴其 allow/deny 工具过滤、Dreaming 记忆 consolidation、Channel 抽象；但其"直调 Anthropic API"路径在 Haro 永远禁止 |
+| Agent 团队管理 | Multica (~15.7k stars) — 管理多个 Agent CLI | — | Haro 是 runtime 层，Multica 是管理层；Haro 可作为 Multica 的 Provider |
+| 编排框架 | CrewAI / AutoGen / LangGraph | — | Haro 融合三者优点 + 自进化（它们都是静态的） |
+| 事件流 | OpenHands | — | Haro 参考其事件流+沙箱，加入进化维度 |
+| 终端 Agent | Crush (OpenCode 继任) | — | 参考其 skill 生态思路 |
+| 自进化 Agent | Yoyo（SagaSu 出品） | Next.js 16 + Go + PostgreSQL | 核心灵感来源，Haro 从单 Agent 扩展到平台级 |
+| 消息渠道 | KeyClaw / lark-bridge | — | Haro 抽象为独立 Channel 层，复用 lark-bridge 作为飞书 adapter |
 
 ## 三大独有能力（竞品均不具备的组合）
 
@@ -143,10 +144,11 @@ Haro 在进化中坚持"留精华、不堆数量"：
 | 核心语言 | TypeScript (Node.js 22) | — （Rust 等其他语言按需引入，不做强绑定） |
 | 运行时 | Actor 模型 + 消息驱动 | 参考 AutoGen 0.4 |
 | 工作流 | 有状态图 + 自动快照 | 参考 LangGraph Checkpointing |
-| 记忆 | 独立 Memory Fabric（兼容 aria-memory 格式） | 参考 aria-memory |
-| 工具 / 技能 | 兼容 Claude Code skill 格式 + MCP | 参考 Claude Code / Hermes |
+| 记忆 | 独立 Memory Fabric（基本照抄 aria-memory，含三层目录 + `.pending/` 多端合并） | 参考 aria-memory |
+| 工具 / 技能 | 兼容 Claude Code skill 格式 + MCP | 参考 Claude Code |
 | 配置 | Zod schema + 热重载 | 参考 lark-bridge |
-| 存储 | SQLite WAL（Phase 0）→ 按需升级 | 参考 KeyClaw |
-| 进化 | 内置 Cron + eat/shit 代谢 + GitHub Actions | 参考 yoyo-evolve |
-| Agent SDK | **`@anthropic-ai/claude-agent-sdk`（防封号，强绑定）** | 对齐 lark-bridge |
+| 存储 | SQLite WAL + FTS5（Phase 0）→ sqlite-vec / LanceDB 向量（Phase 2+） | 参考 OpenClaw / Hermes |
+| 代码 Lint | ESLint + `@typescript-eslint/recommended` + `import/no-cycle`（Phase 2 由 eat/shit 代谢评估迁移 [oxlint](https://oxc.rs/docs/guide/usage/linter)，OpenClaw 已用） | 参考 OpenClaw（oxlint） |
+| 进化 | 内置 Cron + eat/shit 代谢 + GitHub Actions；Phase 2+ 加入 OpenClaw 风格 Dreaming（短→长期晋升） | 参考 yoyo-evolve / OpenClaw |
+| Agent SDK | **`@anthropic-ai/claude-agent-sdk`（防封号，强绑定 lark-bridge）** — 禁止直调 Anthropic API（Hermes/OpenClaw 均有此风险路径） | 对齐 lark-bridge |
 | 消息渠道 | Channel 抽象层 + 飞书（复用 lark-bridge）+ Telegram | 参考 OpenClaw / KeyClaw |

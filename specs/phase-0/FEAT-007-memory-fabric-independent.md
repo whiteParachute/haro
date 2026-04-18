@@ -1,7 +1,7 @@
 ---
 id: FEAT-007
-title: Memory Fabric 独立能力（原生读写 + aria-memory 目录兼容）
-status: draft
+title: Memory Fabric 独立能力（aria-memory 兼容 + 三层即时写 + 本 session 注入）
+status: approved
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
@@ -9,6 +9,7 @@ updated: 2026-04-18
 related:
   - ../../docs/modules/memory-fabric.md
   - ./FEAT-010-skills-subsystem.md
+  - ./FEAT-005-single-agent-execution-loop.md
   - ../../roadmap/phases.md#p0-7memory-fabric-独立能力
 ---
 
@@ -16,114 +17,200 @@ related:
 
 ## 1. Context / 背景
 
-Haro 的记忆设计原则：**先具备独立记忆能力**，再兼容 aria-memory。Phase 0 采用文件级直接操作，不做正式的库抽取（留到 Phase 1）。本 spec 交付最小可用的记忆读写 + 目录结构 + 与 FEAT-010 的 skill 集成点（`memory-wrapup` 在 session 结束时触发写入）。主备配置作为兼容性选项但不是 Phase 0 默认。
+Haro 的记忆原型**基本照抄 aria-memory**：同样的三层目录（index.md / impressions / knowledge）、同样的多端写入合并机制（`.pending/`）、同样的 Obsidian wikilink 格式。
+
+与 aria-memory 的**关键差异**：aria-memory 依赖 Claude Code 的 SessionStart hook 注入记忆到 system prompt，因此"本次 session 写入的内容下次 session 才可见"。Haro 自己 orchestrate 执行循环，可以做得更好——**写入即时可见**：同一 session 内前面 turn 写入的记忆，后面 turn 立刻能读到。
+
+本 spec 交付 Phase 0 的 Memory Fabric 独立能力，作为 FEAT-005（Runner）、FEAT-010（Skills）、FEAT-011（eat/shit）的共同底座。
 
 ## 2. Goals / 目标
 
-- G1: 原生读写 `~/.haro/memory/` 下的 `index.md` + `knowledge/*.md`，不依赖任何外部库
-- G2: 目录格式与 aria-memory 完全兼容，用户可把已有 aria-memory 目录直接指给 Haro 使用
-- G3: 提供 `MemoryFabric` 类供 FEAT-005 / FEAT-010 调用
+- G1: 原生读写 `~/.haro/memory/`（index.md / impressions/ / knowledge/），不依赖任何外部库
+- G2: 目录格式与 aria-memory 完全兼容，用户可把已有 aria-memory 目录直接指给 Haro
+- G3: 实现**三层即时写**（显式 / 事件驱动 / session 结束兜底），**本 session 内立即可见**
+- G4: 多端写入合并沿用 aria-memory `.pending/` 幂等键机制
+- G5: 提供 `MemoryFabric` 类供 FEAT-005 / FEAT-010 / FEAT-011 调用
 
 ## 3. Non-Goals / 不做的事
 
 - 不做正式库抽取（`@haro/memory-fabric` 独立 npm 包推迟到 Phase 1）
 - 不做 Phase 0 默认启用主备（主备作为可选配置存在但不强制测试）
 - 不做 shared/ 共享记忆的跨 Agent 访问（Phase 1）
-- 不做记忆的全文检索（Phase 1，当前仅 index.md 入口查询）
-- 不做向量索引（Phase 2+）
+- 不做向量检索 / 语义检索（Phase 2，届时对标 OpenClaw 的 hybrid 模式）
+- 不做 OpenClaw 式的 "Dreaming" 自动 consolidation（Phase 2+，在 memory-sleep 内增强）
 
 ## 4. Requirements / 需求项
 
-- R1: `MemoryFabric.write({ scope, agentId?, category, content })`，scope ∈ {`platform`,`agent`,`shared`}；自动维护 `index.md`
-- R2: `MemoryFabric.read({ scope, agentId?, query })`，返回匹配的 knowledge 文件列表（按主题/标签，非全文）
-- R3: `MemoryFabric.appendSession({ agentId, session })`，将 session 要点写入 `agents/{agentId}/knowledge/session-<yyyymm>.md`（按月归档）
-- R4: 目录结构严格按 [memory-fabric.md](../../docs/modules/memory-fabric.md) 的布局创建：`platform/`、`agents/{id}/`、`shared/`
-- R5: 兼容已有 aria-memory 目录 — `memory.path` 可配置为非默认路径；读写使用相同 index.md + knowledge 格式
-- R6: 提供"主备"可选配置（schema 支持，但 Phase 0 默认单路径）；有备用路径时写主 + 异步写备
-- R7: Memory Fabric 对外不暴露具体实现细节（文件系统层为内部）；上层（Runner / Skills）只通过 `MemoryFabric` 类调用
-- R8: 预装记忆 skill（remember / memory / memory-wrapup / memory-sleep / memory-status / memory-auto-maintain，FEAT-010 交付）内部调用本 spec 的 API
+### 查询（R1–R2）
+
+- R1: 查询策略分三层级联（照抄 aria-memory）：
+  1. 读 `index.md`（随身索引，~200 条上限）做关键词匹配
+  2. `impressions/YYYY-MM-DD_*.md` Grep 正则
+  3. `knowledge/*.md` Grep 正则
+  4. 未命中时扩展到 `impressions/archived/`
+- R2: 查询 API：`MemoryFabric.query({ scope, agentId?, query, limit? })`，返回匹配的知识 + 来源文件 + 日期；查询结果必须**立即包含本 session 刚写入的内容**（无缓存延迟）
+
+### 写入（R3–R6）
+
+- R3: 三层写入时机：
+  - **T1 显式写（同步即时）**：`MemoryFabric.write()`，用户显式触发（`remember` skill）或 agent 主动沉淀；原子写 `knowledge/*.md` + 更新 `index.md` + 立即提交到内存索引
+  - **T2 事件驱动写（异步即时）**：`MemoryFabric.deposit()`，agent 在 reasoning 中识别"值得记住的模式"；追加到 `.pending/<uuid>.md`（幂等键 `{source, wrapup_id, hash}`）+ 立即更新内存索引（但不立即合并到主文件）
+  - **T3 session 结束兜底**：`MemoryFabric.wrapupSession()`，把完整 transcript 提炼为一个 impression 写到 `impressions/YYYY-MM-DD_<topic>.md`；无论 T1/T2 是否写过都执行，防止遗漏
+- R4: **本 session 注入**：`MemoryFabric` 维护一个内存 `MemoryIndex`（索引 + 热数据），T1/T2 写入后立即更新它；Agent Runtime 每轮 query 前调用 `MemoryFabric.contextFor({ agentId, query })` 取 top-N 条近期相关记忆，作为 systemPrompt 前缀
+- R5: **多端写入合并**：`.pending/` 下的幂等键 = `{source, wrapup_id, hash}`；`memory-sleep` 扫 `.pending` 时按 hash 去重、按 source 合并、冲突时保留多方（沿用 aria-memory 逻辑）
+- R6: 写入使用**应用层 Promise-chain 串行化** + 临时文件 `rename()` 原子替换（无 OS file lock），保证单进程内并发写安全
+
+### 维护（R7–R8）
+
+- R7: `MemoryFabric.maintenance()` 手动触发，对应 `memory-sleep` skill；**照抄 aria-memory global_sleep 12 步**：备份 → 合并 pending → 压缩 index → 重建 index → 过期清理 → 拆分合并 knowledge → 更新 personality → 更新 meta → 更新 `.last-sleep-at` → 生成 daily → 追加 changelog
+- R8: `MemoryFabric.stats()` 返回记忆数量、分布、最后维护时间（供 `memory-status` skill）
+
+### 兼容与边界（R9–R12）
+
+- R9: 配置 `memory.path` 支持指向已有 aria-memory 目录；读写时**不破坏** aria-memory 其他子目录（如 `impressions/archived/`、`personality.md`）
+- R10: 主备配置（兼容选项）：写主同步 + 写备异步；读先主后备；维护仅主执行
+- R11: Memory Fabric 对外仅暴露 API；上层（Runner / Skills）不得直接 `fs.readFile` 访问记忆目录
+- R12: 预装记忆 skill（6 个，FEAT-010 交付）内部调用本 spec 的 API
 
 ## 5. Design / 设计要点
 
-**API**
+### 5.1 目录结构（照抄 aria-memory）
+
+```
+~/.haro/memory/
+├── platform/
+│   ├── index.md                    # 200 条 Obsidian wikilink 索引
+│   ├── impressions/
+│   │   ├── 2026-04-18_<topic>.md   # 按日期+主题
+│   │   └── archived/               # > 6 个月移入
+│   ├── knowledge/
+│   │   ├── <domain>.md             # 按领域
+│   │   └── .pending/               # 多端写入临时区
+│   │       └── <uuid>.md           # 带幂等键 frontmatter
+│   ├── personality.md              # 用户交互风格
+│   ├── meta.json                   # lastGlobalSleepAt / indexVersion / 计数
+│   ├── .last-sleep-at              # Git 跟踪的水位戳
+│   └── changelog.md
+├── agents/{id}/                    # 结构同 platform/
+└── shared/                         # Phase 1
+```
+
+### 5.2 三层写入时序
+
+```
+T1 显式写（用户说"记住这个" / agent 学到关键事实）
+  ↓ 同步
+  原子写 knowledge/<file>.md
+  → 更新 index.md（Promise-chain 串行化）
+  → 更新 MemoryIndex（内存）
+  → 返回给调用方
+
+T2 事件驱动写（agent reasoning 中自动沉淀）
+  ↓ 异步
+  追加 .pending/<uuid>.md  { source, wrapup_id, hash, content }
+  → 更新 MemoryIndex（内存）← 本 session 可见的关键一步
+  → 不立即合并到 knowledge/ 主文件（留给 memory-sleep）
+
+T3 session 结束兜底
+  ↓
+  提炼 transcript → impressions/YYYY-MM-DD_<topic>.md
+  → 更新 index.md
+  → 触发一次轻量 memory-sleep（仅合并本 session 产生的 .pending）
+```
+
+### 5.3 本 Session 注入机制
+
+aria-memory 的注入在 Claude Code SessionStart hook 做，因此"本 session 写入 → 本 session 不可见"。Haro 因为自己 orchestrate 执行循环，**在 Agent Runtime 的每轮 query 前主动读 MemoryFabric**：
 
 ```typescript
-interface MemoryFabric {
-  write(req: WriteRequest): Promise<string /* 写入路径 */>
-  read(req: ReadRequest): Promise<KnowledgeFile[]>
-  appendSession(req: AppendSessionRequest): Promise<void>
-  stats(): Promise<MemoryStats>   // 供 memory-status
-  maintenance(): Promise<MaintenanceReport>   // 供 memory-sleep
-}
+// FEAT-005 Runner 每轮循环前
+const ctx = await memoryFabric.contextFor({ agentId, query: task })
+const augmentedSystemPrompt = [
+  agent.systemPrompt,
+  '\n\n<memory-context>\n',
+  ctx.items.map(i => `- [${i.date}] ${i.summary} → ${i.source}`).join('\n'),
+  '\n</memory-context>'
+].join('')
 ```
 
-**index.md 维护**
+`contextFor()` 直接查 `MemoryIndex`（内存结构），零 IO 延迟，**保证 T1/T2 刚写入的条目立刻可见**。
 
-每次 write 后追加/更新 `index.md` 的相应段落，格式沿用 aria-memory：
+### 5.4 多端写入合并（从 aria-memory 照抄）
 
-```markdown
-# <scope-name> Index
+场景：同一用户从飞书和 Telegram 同时与 Haro 交互，两个 Channel 的 Agent 都要写记忆 → `.pending/` 并发写。
 
-## Knowledge
+合并规则（`memory-sleep` 执行）：
 
-- [session-202604.md](knowledge/session-202604.md) — <摘要>
-- [common-bugs.md](knowledge/common-bugs.md) — <摘要>
+1. 按 `hash` 去重（完全相同的内容只保留一份）
+2. 按 `source` 标注（`sg-feishu` / `sg-telegram` / …）
+3. 冲突时（同一 wrapup_id 但 hash 不同）→ 保留两条并在 `knowledge/<file>.md` 内以 `## Source: X` / `## Source: Y` 分段
+4. 若主文件在两次 sleep 之间被人工编辑（mtime 晚于 last-sleep-at），不覆盖，merge 到末尾
 
-Last maintained: 2026-04-18T10:00:00Z
-```
+### 5.5 Dreaming（OpenClaw 风格，Phase 2+ 增强）
 
-**兼容 aria-memory**
+Phase 0 的 `memory-sleep` 只做"去重 + 合并 + 整理"；Phase 2+ 在其内部增加 OpenClaw 风格的 **Dreaming** 短→长期晋升：
 
-- 不修改 aria-memory 目录内的其他文件（`impressions/` 等）
-- 写入时遵守 aria-memory 的 frontmatter 约定（`title / tags / created / updated`）
-- `memory-sleep` 的具体维护语义沿用 aria-memory（不另发明）
+- 采集 `.pending/` 每条的使用证据（该内容被查询命中次数 / 被 agent 引用次数）
+- 质量评分（content length / diversity / novelty）
+- 高分条目晋升为长期 knowledge；低分归档或丢弃
+- 这是 [Evolution Engine](../../docs/evolution/self-improvement.md) 的一部分，与 eat/shit 代谢机制协同
 
-**主备（兼容选项）**
-
-```yaml
-memory:
-  primary:
-    path: ~/.haro/memory
-    globalSleep: true
-  backup:
-    path: /mnt/nas/haro-memory-backup
-    globalSleep: false
-```
-
-- 写入：主同步、备异步（fire-and-forget + 日志）
-- 读取：先主后备（主失败才读备）
-- 维护（`memory-sleep`）：仅主执行
+Phase 2+ 设计细节另立 spec。
 
 ## 6. Acceptance Criteria / 验收标准
 
-- AC1: 调用 `memoryFabric.write({ scope: 'agent', agentId: 'x', category: 'knowledge', content })`，`~/.haro/memory/agents/x/knowledge/<file>.md` 被创建，`index.md` 新增对应条目（对应 R1、R4）
-- AC2: `memoryFabric.read({ scope: 'agent', agentId: 'x', query: { tag: 'foo' } })` 返回带 `tag: foo` 的文件列表（对应 R2）
-- AC3: 配置 `memory.path: /tmp/existing-aria` 指向已有 aria-memory 目录，Haro 读/写后原有文件未被破坏（对应 R5）
-- AC4: 配置主备路径，写入一条记忆 → 主路径立刻可见；备路径在 1s 内也出现该文件（对应 R6）
-- AC5: 运行 `grep -rE "fs\.(write|read)File.*\\.haro/memory" packages/{core,cli,providers} --include="*.ts"` 返回 0 行（除 Memory Fabric 自身实现），即所有上层必须走 API（对应 R7）
-- AC6: 调用 `stats()` 返回记忆数量、分布、最后维护时间的结构化数据（对应 `memory-status` skill 的来源）
-- AC7: FEAT-005 的 Runner 在 session 结束时调用 `memoryFabric.appendSession`，对应月份 knowledge 文件新增一行条目（对应 R3、R8）
+### 查询与写入
+
+- AC1: 调用 `memoryFabric.write({ scope: 'agent', agentId: 'x', content })` 后，同一进程内**下一次 query** 立刻返回该条（对应 R2、R3 T1、R4）
+- AC2: 调用 `memoryFabric.deposit({ ... })` 后，`.pending/` 下出现对应 uuid 文件；**同一进程内 query 立即命中**（通过 MemoryIndex 查到，即使主文件未合并）（对应 R3 T2、R4）
+- AC3: `memoryFabric.query({ query: 'foo' })` 按"index → impressions → knowledge → archived"层级返回，每条带来源文件和日期（对应 R1）
+
+### 本 Session 注入
+
+- AC4: FEAT-005 Runner 在同一 session 内跑两次 run：第一次写入"用户偏爱简洁回答"→ 第二次 run 的 systemPrompt 包含该条（对应 R4）
+
+### 多端合并
+
+- AC5: 同时从两个 Channel（模拟飞书 + Telegram） deposit 不同内容但相同 wrapup_id；`memory-sleep` 后 knowledge 文件内既保留两份内容又按 source 分段（对应 R5）
+- AC6: deposit 两条完全相同的内容（同 hash），`memory-sleep` 后只保留一份（对应 R5）
+
+### 维护
+
+- AC7: `maintenance()` 执行 12 步完整流程，幂等（连跑两次第二次无变化）（对应 R7）
+- AC8: `.last-sleep-at` 在维护后更新；`meta.json` 的 `lastGlobalSleepAt` 同步（对应 R7）
+
+### 兼容与边界
+
+- AC9: 配置 `memory.path: /tmp/existing-aria` 指向预置 aria-memory fixture；Haro 读写后原有 `personality.md`、`changelog.md` 等未被破坏（对应 R9）
+- AC10: 主备配置下，T1 写入后备路径在 1s 内同步出现该文件（对应 R10）
+- AC11: 运行 `grep -rE "fs\\.(write|read)File.*\\.haro/memory" packages/{core,cli,providers} --include='*.ts'` 返回 0 行（除 Memory Fabric 自身）（对应 R11）
 
 ## 7. Test Plan / 测试计划
 
 - 单元测试：
-  - `memory-fabric.write.test.ts` — 各 scope 的写入 + index.md 更新（AC1）
-  - `memory-fabric.read.test.ts` — tag/topic 查询（AC2）
-  - `append-session.test.ts` — 月份归档命名 + 内容（AC7）
-  - `primary-backup.test.ts` — 主备写入时序（AC4）
+  - `memory-fabric.write.test.ts` — T1 即时写 + MemoryIndex 更新（AC1）
+  - `memory-fabric.deposit.test.ts` — T2 pending + 内存索引（AC2）
+  - `memory-fabric.query.test.ts` — 层级级联查询（AC3）
+  - `context-for.test.ts` — 本 session 注入（AC4）
+  - `merge-pending.test.ts` — 多端合并 + 幂等（AC5、AC6）
+  - `maintenance.test.ts` — 12 步流程 + 幂等（AC7、AC8）
+  - `primary-backup.test.ts` — 主备同步（AC10）
 - 集成测试：
-  - `aria-compat.test.ts` — 用一个预置 aria-memory fixture 目录（AC3）
-  - `api-boundary.test.ts` — 扫描源码确保上层不绕过 API（AC5）
+  - `aria-compat.test.ts` — 预置 aria-memory fixture（AC9）
+  - `api-boundary.test.ts` — 源码扫描（AC11）
+  - `same-session-visibility.e2e.test.ts` — 端到端验证"写入后同 session 可见"（AC4）
 - 手动验证：
-  - AC4 主备（需要 NAS 环境，否则用两个本地目录替代）
+  - AC10 主备（用两个本地目录替代 NAS）
 
 ## 8. Open Questions / 待定问题
 
-- Q1: `query` 参数的语义（tag / topic / fuzzy）Phase 0 只支持 tag 精确匹配是否够用？
-- Q2: `maintenance()` 与 aria-memory 的 `global_sleep` 如何对齐？是直接 shell out 调用，还是自己实现？建议 Phase 0 先简单合并重复条目 + 更新时间戳
-- Q3: 跨进程并发写入 `index.md` 的冲突？文件锁？flock？
-- Q4: `memory-wrapup` skill 的粒度：每 session 一次还是按 N 次 batch？
+全部已关闭（见 Changelog 2026-04-18 决策条）。
 
 ## 9. Changelog / 变更记录
 
 - 2026-04-18: whiteParachute — 初稿
+- 2026-04-18: whiteParachute — 大幅重写 → approved
+  - Q1 查询语义 → 照抄 aria-memory 三层级联（index → impressions → knowledge → archived）；FTS5 作为加速层留到 Phase 1，向量留到 Phase 2（对标 OpenClaw hybrid）
+  - Q2 维护 → 完整照抄 aria-memory global_sleep 12 步；Phase 2+ 增强 OpenClaw 风格 Dreaming（短→长期晋升 + 质量评分 + 适配多端写入合并）
+  - Q3 并发 → Promise-chain 串行化 + 原子 rename（单进程场景无需 OS file lock；与 OpenClaw 一致）
+  - Q4 写入时机 → **重新设计**为三层即时写（T1 显式同步 + T2 事件异步 + T3 session 兜底）+ 本 session 立即可见（通过 Agent Runtime 每轮 query 前主动读 MemoryFabric，不依赖外部 hook）

@@ -31,6 +31,26 @@ Provider / Model 在生态里持续迭代（新版本、新定价、能力变化
 | 命中率异常 | 某规则的 Fallback 率持续 > 20%（7 天窗口） | 该规则 |
 | 用户差评 | 用户对某次 session 反馈 ≤ 2 分（1–5 分制） | 该 session 使用的规则 |
 | 周期体检 | 默认每 30 天全量重评估 | 所有规则 |
+| 上下文窗口变更 | `maxContextTokens` 刷新（见下节多源解析链） | 涉及大上下文任务的规则 |
+
+### maxContextTokens 多源解析链（Phase 2 落地）
+
+Phase 0 采用 per-model 硬编码表（见 [FEAT-002](./phase-0/FEAT-002-claude-provider.md#maxcontexttokens-r4-细化)）。Phase 2 对齐 **Hermes (NousResearch/hermes-agent) 的多源动态解析链**：
+
+```
+解析顺序（fail-through）：
+  1. config override              (~/.haro/config.yaml::providers.<id>.models.<model>.maxContextTokens)
+  2. Provider 自定义配置          (provider.capabilities().extended.models[model].maxContextTokens)
+  3. 本地持久缓存                 (~/.haro/cache/provider-meta/<id>-<model>.json, TTL 由事件触发刷新)
+  4. Provider SDK/endpoint /models
+  5. Registry（Anthropic /v1/models、OpenRouter、models.dev 等）
+  6. 兜底：128k（安全下限）
+```
+
+实现要点：
+- 每次"Provider 新增模型" / "Provider 模型弃用" 事件触发第 3 步缓存刷新
+- 解析失败不阻塞请求，降级使用下一层的值
+- 所有解析路径的证据（时间、来源、解析结果）写入 `evolution-context/orient/provider-meta.jsonl`，供 Pattern Miner 分析
 
 ### 评判标准（Agent 自评估 + 用户反馈）
 
