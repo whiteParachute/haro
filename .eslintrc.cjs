@@ -37,25 +37,37 @@ module.exports = {
           'warn',
           {
             selector:
-              "BinaryExpression[operator='==='] > Identifier[name='providerId'] ~ Literal",
+              "BinaryExpression[operator='==='][left.type='Identifier'][left.name='providerId'][right.type='Literal']",
             message:
               'R7: core module must not hard-code providerId comparisons. Route through the provider registry.',
           },
           {
             selector:
-              "BinaryExpression[operator='==='] > Identifier[name='channelId'] ~ Literal",
+              "BinaryExpression[operator='==='][right.type='Identifier'][right.name='providerId'][left.type='Literal']",
+            message:
+              'R7: core module must not hard-code providerId comparisons. Route through the provider registry.',
+          },
+          {
+            selector:
+              "BinaryExpression[operator='==='][left.type='Identifier'][left.name='channelId'][right.type='Literal']",
             message:
               'R7: core module must not hard-code channelId comparisons. Route through the channel registry.',
           },
           {
             selector:
-              "BinaryExpression[operator='==='] > MemberExpression[property.name='providerId'] ~ Literal",
+              "BinaryExpression[operator='==='][right.type='Identifier'][right.name='channelId'][left.type='Literal']",
+            message:
+              'R7: core module must not hard-code channelId comparisons. Route through the channel registry.',
+          },
+          {
+            selector:
+              "BinaryExpression[operator='==='][left.type='MemberExpression'][left.property.name='providerId'][right.type='Literal']",
             message:
               'R7: core module must not hard-code providerId comparisons (member form). Route through the provider registry.',
           },
           {
             selector:
-              "BinaryExpression[operator='==='] > MemberExpression[property.name='channelId'] ~ Literal",
+              "BinaryExpression[operator='==='][left.type='MemberExpression'][left.property.name='channelId'][right.type='Literal']",
             message:
               'R7: core module must not hard-code channelId comparisons (member form). Route through the channel registry.',
           },
