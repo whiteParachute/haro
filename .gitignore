@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+out/
+.next/
+.nuxt/
+
+# TypeScript
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V2
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Haro data directory (user-specific, not versioned)
+.haro/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Package manager lock files (keep package-lock.json or yarn.lock, not both)
+# Uncomment the one you don't use:
+# package-lock.json
+# yarn.lock
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+
+# Temporary files
+tmp/
+temp/
+.tmp/
