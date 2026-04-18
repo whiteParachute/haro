@@ -1,0 +1,28 @@
+{
+  "name": "@haro/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Haro CLI entry point (placeholder — full command surface arrives in later FEAT specs)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "haro": "./bin/haro.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@haro/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

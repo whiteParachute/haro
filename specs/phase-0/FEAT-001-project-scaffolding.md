@@ -1,7 +1,7 @@
 ---
 id: FEAT-001
 title: 项目脚手架（monorepo + 配置 + 日志 + SQLite）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
@@ -114,3 +114,9 @@ haro/
   - Q2 → ESLint + `@typescript-eslint/recommended` + `import/no-cycle`；Phase 2 由 eat/shit 代谢评估迁移 oxlint
   - Q3 → `better-sqlite3` + 启用 FTS5
   - Q4 → `pino-roll` transport（10MB × 5 份）+ redact 脱敏
+- 2026-04-18: whiteParachute — approved → done
+  - 脚手架落地：`packages/{core,cli,providers}` + `scripts/{init-db,smoke}.ts`，`pnpm install && pnpm build && pnpm test && pnpm smoke` 全绿（25 测试覆盖 AC1–AC5）
+  - AC 全部通过：AC1（dist artifacts 校验 + smoke）、AC2（bin/haro.js 非法配置非零退出 + stderr Zod 路径）、AC3（in-process dual-output + 独立子进程 `node -e` 对比）、AC4（初始化脚本幂等 + 数据保留）、AC5（7 个子目录首次创建 + 二次幂等）
+  - 运行期默认 `rolling: true`（pino-roll 10MB × 5），模块级默认 logger 使用 sync multistream 以满足 AC3 的 `node -e` 确定性断言；`HARO_LOG_ROLLING=0/1` 环境变量显式覆盖
+  - R7 以 ESLint `no-restricted-syntax` 占位规则预防 `providerId === <literal>` / `channelId === <literal>` 硬编码，后续由 FEAT-002 / FEAT-008 替换为专用 plugin
+  - 经两轮 codex:review（a382c6187a167c276 + af79ab9ecae96d0dd）修完 F-001 ~ F-008 所有 MUST-FIX 项
