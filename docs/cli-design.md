@@ -111,8 +111,15 @@ Provider 状态
 数据目录
   ✓ ~/.haro/agents/              存在，2 个 Agent 配置
   ✓ ~/.haro/memory/              存在，可读写
+  ✓ ~/.haro/channels/            存在，2 个 Channel 配置
+  ✓ ~/.haro/skills/              存在，15 个预装 skill
   ✓ ~/.haro/haro.db              SQLite 正常，WAL 模式
   ✓ ~/.haro/logs/                存在，可写
+
+Channel 状态
+  ✓ cli                          enabled
+  ✓ feishu                       enabled (long-polling, 1 session 活跃)
+  - telegram                     disabled
 
 Agent 配置
   ✓ haro-assistant               配置有效
@@ -137,6 +144,45 @@ haro skills info <skill-name>
 
 # 为 Agent 启用技能
 haro skills enable <skill-name> --agent <agent-id>
+```
+
+### `haro channel`
+
+消息渠道管理。详见 [Channel Layer 设计](./modules/channel-layer.md)。
+
+```bash
+# 列出所有已注册 channel
+haro channel list
+
+# 启用 / 停用 / 移除
+haro channel enable <id>
+haro channel disable <id>
+haro channel remove <id>
+
+# channel 级健康检查
+haro channel doctor <id>
+
+# 飞书接入向导（调用 lark-setup skill）
+haro channel setup feishu
+
+# Telegram 接入向导
+haro channel setup telegram
+```
+
+### `haro eat` / `haro shit`
+
+进化代谢。详见 [Evolution 代谢机制规范](../specs/evolution-metabolism.md)。
+
+```bash
+# 摄入：把外部内容沉淀为 rules / skills / memory
+haro eat https://example.com/article
+haro eat ./local-doc.md
+haro eat "一段直接粘贴的文本"
+
+# 排出：扫描并淘汰不必要的外挂组件
+haro shit --scope skills --days 90
+haro shit --scope all --dry-run      # 预览不执行
+haro shit rollback <archive-id>       # 回滚
 ```
 
 ### `haro status`

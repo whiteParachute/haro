@@ -2,26 +2,27 @@
 
 ## 概述
 
-Provider Abstraction Layer 是 Haro 的底层基础，负责统一管理多个 AI Agent Provider 的接入，屏蔽底层差异，向上提供统一的 AgentProvider 接口。
+Provider Abstraction Layer (PAL) 是 Haro 对「**谁在回答**」的抽象，负责统一管理多个 AI Agent Provider 的接入，屏蔽底层差异。与之并列的 [Channel Abstraction Layer](../modules/channel-layer.md) 抽象「**从哪里来**」。
+
+PAL 是 [可插拔原则](./overview.md#设计原则) 的典型落地 —— 每个 Provider 独立注册、独立装卸，核心模块对具体 Provider 零硬编码。
 
 ## 核心设计决策
 
 ### D1：执行模型 — SDK 直调（方案 A）
 
-**决策**：Haro 直接调用 Claude Agent SDK / Codex SDK，自己实现 agent loop。
+**决策**：Haro 直接调用各 Provider SDK，自己实现 agent loop。
 
 **理由**：
 - SDK 直调对 token 流、工具调用、上下文管理的控制力远强于 CLI 子进程
-- KeyClaw 已有成熟实现可复用
 - 支持自定义 context strategy、checkpoint、进化钩子
 
 **不选 CLI 子进程（方案 B）**：Multica 的做法，但 Haro 作为平台级产品需要更多控制力。
 
 ### D2：Claude Provider — 必须使用 Agent SDK，不得直调 Anthropic API
 
-**决策**：Claude Provider 调用 `@anthropic-ai/claude-agent-sdk` 的 `query()` 方法，完全参考 lark-bridge 的实现模式。
+**决策**：Claude Provider 调用 `@anthropic-ai/claude-agent-sdk` 的 `query()` 方法，**调用方式必须与 lark-bridge 保持一致**。
 
-**⚠️ 封号风险警告**：
+**⚠️ 封号风险警告**（这是 Haro 技术栈中唯一的强绑定约束）：
 - **禁止**直接调用 `anthropic.messages.create()` (Anthropic Messages API)
 - **禁止**模拟 Claude.ai 的浏览器行为
 - **必须**通过 `@anthropic-ai/claude-agent-sdk` 的官方方式接入
@@ -31,7 +32,7 @@ Provider Abstraction Layer 是 Haro 的底层基础，负责统一管理多个 A
 
 ### D3：Codex Provider — 使用 Codex SDK
 
-**决策**：Codex Provider 调用 `@openai/codex-sdk`，参考 KeyClaw 的 CodexRunner 实现。
+**决策**：Codex Provider 调用 `@openai/codex-sdk`，参考社区已有的 CodexRunner 实现思路。
 
 **Codex 特性**：
 - 轮次制（无中途推送）
@@ -42,7 +43,19 @@ Provider Abstraction Layer 是 Haro 的底层基础，负责统一管理多个 A
 
 **决策**：AgentProvider 接口采用超集设计，允许 Provider 特有能力暴露，而不仅限于最小公共集。
 
-**理由**：Claude 有封号顾虑，接口设计必须能区分和隔离不同 Provider 的行为差异。调用方可以通过 `AgentCapabilities` 查询 Provider 特有能力后再决定是否使用。
+**理由**：Claude 有封号顾虑，接口设计必须能区分和隔离不同 Provider 的行为差异。调用方通过 `AgentCapabilities` 查询 Provider 特有能力后再决定是否使用。
+
+### D5：每个 Provider 独立可插拔（对齐全局可插拔原则）
+
+**决策**：PAL 严格遵守 [No-Intrusion Plugin Principle](./overview.md#设计原则)。
+
+**具体要求**：
+- **独立注册 / 装载 / 卸载**：每个 Provider 是独立 npm 包或独立目录，可单独安装
+- **核心模块零硬编码**：Agent Runtime、Scenario Router、Evolution Engine 不得出现 `if providerId === 'claude'` 这类分支
+- **差异化通过 capabilities 暴露**：调用方先查 `provider.capabilities()` 再决定用不用特有能力
+- **新 Provider 接入不改核心代码**：只需实现 `AgentProvider` 接口 + 在 `~/.haro/config.yaml` 注册
+
+违规将被 lint 规则和 PR 评审拒绝。
 
 ## 两个 Provider 的具体实现
 
@@ -80,7 +93,7 @@ class ClaudeProvider implements AgentProvider {
 ### Codex Provider
 
 ```typescript
-// 基于 @openai/codex-sdk，参考 KeyClaw 的 CodexRunner
+// 基于 @openai/codex-sdk
 import { CodexClient } from '@openai/codex-sdk'
 
 class CodexProvider implements AgentProvider {
@@ -110,8 +123,8 @@ class CodexProvider implements AgentProvider {
 
 | Provider | 认证方式 | 参考 |
 |---------|---------|------|
-| Claude | 订阅自动认证（无需 API Key） | lark-bridge 的认证模式 |
-| Codex | API Key（通过 `~/.haro/config.yaml` 配置） | KeyClaw 的 API Key 管理 |
+| Claude | 订阅自动认证（无需 API Key） | lark-bridge 的认证模式（强绑定） |
+| Codex | API Key（通过 `~/.haro/config.yaml` 配置） | 社区实践 |
 
 **Claude 认证说明**：
 - 使用 `@anthropic-ai/claude-agent-sdk` 时，SDK 自动处理认证

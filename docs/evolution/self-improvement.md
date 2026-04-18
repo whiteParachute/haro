@@ -4,6 +4,24 @@
 
 Haro 的自我改进机制将平台本身作为被改进的对象，实现从单 Agent 进化（yoyo-evolve 的思路）到**平台级多 Agent 进化**的跨越。
 
+## 代谢机制：eat / shit（底层伴随机制）
+
+在四个层级之外，Haro 有一套独立的**代谢机制**，作为所有层级的底层伴随：
+
+- **eat**（摄入）：把外部知识 / 用户反馈 / 调研产出沉淀为 rules / skills / Agent 配置 / Memory Fabric 条目。带质量门槛（四问验证）和防膨胀检查。
+- **shit**（排出）：扫描现有外挂组件（rules / skills / MCP / memory），评估必要性，归档冗余项（可回滚）。
+
+两者与四层改进的关系：
+
+| 改进层级 | 与代谢的关系 |
+|---------|-------------|
+| L0 Prompt 优化 | 新 Prompt 指令通过 eat 沉淀；失活指令通过 shit 清除 |
+| L1 编排模式调整 | 新编排规则通过 eat 沉淀；未被触发的规则通过 shit 清除 |
+| L2 代码重构 | eat 不直接操作代码；shit 可淘汰被新实现取代的旧代码（提 PR） |
+| L3 架构演进 | 涉及 eat / shit 规则本身的演进 |
+
+详细规范：[specs/evolution-metabolism.md](../../specs/evolution-metabolism.md)。
+
 ## 自我改进的四个层级
 
 ### L0：Prompt 优化（Phase 2）
