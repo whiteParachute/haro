@@ -206,6 +206,27 @@ describe('MemoryFabric aria-memory compatibility [FEAT-007]', () => {
 });
 
 describe('MemoryFabric primary+backup [FEAT-007]', () => {
+  it('R10 读先主后备: hydrates from backup when primary is empty (codex final review)', async () => {
+    const primary = freshRoot();
+    const backup = freshRoot();
+    try {
+      // Stage a knowledge record directly in the backup root (no primary copy).
+      const backupScope = join(backup, 'agents/r10');
+      mkdirSync(join(backupScope, 'knowledge'), { recursive: true });
+      writeFileSync(
+        join(backupScope, 'knowledge', 'backup-recovery.md'),
+        '---\nsummary: backup-only record\nsource: backup-fixture\ndate: 2026-04-18\n---\n# backup-recovery\n\nR10 fallback should surface this content.\n',
+      );
+      const fabric = createMemoryFabric({ root: primary, backupRoot: backup });
+      const res = fabric.query({ scope: 'agent', agentId: 'r10', query: 'fallback' });
+      expect(res.hits.length).toBeGreaterThan(0);
+      expect(res.hits[0]?.source).toBe('backup-fixture');
+    } finally {
+      rmSync(primary, { recursive: true, force: true });
+      rmSync(backup, { recursive: true, force: true });
+    }
+  });
+
   it('AC10 write is mirrored to the backup root shortly after', async () => {
     const root = freshRoot();
     const backupRoot = freshRoot();

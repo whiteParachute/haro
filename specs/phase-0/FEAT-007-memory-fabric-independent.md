@@ -1,7 +1,7 @@
 ---
 id: FEAT-007
 title: Memory Fabric 独立能力（aria-memory 兼容 + 三层即时写 + 本 session 注入）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
@@ -214,3 +214,10 @@ Phase 2+ 设计细节另立 spec。
   - Q2 维护 → 完整照抄 aria-memory global_sleep 12 步；Phase 2+ 增强 OpenClaw 风格 Dreaming（短→长期晋升 + 质量评分 + 适配多端写入合并）
   - Q3 并发 → Promise-chain 串行化 + 原子 rename（单进程场景无需 OS file lock；与 OpenClaw 一致）
   - Q4 写入时机 → **重新设计**为三层即时写（T1 显式同步 + T2 事件异步 + T3 session 兜底）+ 本 session 立即可见（通过 Agent Runtime 每轮 query 前主动读 MemoryFabric，不依赖外部 hook）
+- 2026-04-18: whiteParachute — 实现完成 → done
+  - `@haro/core` 新增 memory/ 模块：MemoryFabric + MemoryIndex + SerialWriter + 原子 rename
+  - 三层即时写全部通过 MemoryIndex 保持本 session 可见；pending 文件带 `topic_slug` frontmatter 供 merge 精确分组（codex 评审修复 prefix 别名）
+  - maintenance() 按序执行 aria-memory 12 步并写出 `.last-sleep-at`/`meta.json`；幂等
+  - 主备镜像从 SerialWriter 临界区抽离，提供 `drainBackups()` 供测试/shutdown 精确等待（codex 评审修复同步阻塞）
+  - deterministicUuid 改为 sha256 完整摘要（codex 评审修复 16 字节前缀碰撞）
+  - 11 单测 + 1 边界扫描测试覆盖 AC1..AC11 全绿

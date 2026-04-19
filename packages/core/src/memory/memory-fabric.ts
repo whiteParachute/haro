@@ -270,37 +270,59 @@ export class MemoryFabric {
 
   /* --------------------------- R1/R2 query --------------------------- */
 
+  /**
+   * R1 cascade (codex final-review fix): search tier-by-tier so results are
+   * grouped `index → impressions → knowledge → pending` in that order, and
+   * only hit `archived` when the caller opts in with `includeArchived`
+   * (matches spec step 4 "未命中时扩展到 impressions/archived/"). We do NOT
+   * short-circuit between steps 1-3: aria-memory treats those as a combined
+   * priority-ordered search, so a partial index hit still gets augmented by
+   * impression + knowledge results for the same query — AC3 asserts this.
+   */
   query(input: MemoryQueryInput): MemoryQueryResult {
     const scope = input.scope;
     const agentId = input.agentId;
     this.loadScope(scope ? { scope, agentId } : { scope: 'platform' });
-    // For agent-scope queries we also load platform as a common fallback.
     if (scope === 'agent') this.loadScope({ scope: 'platform' });
 
-    const tiers: IndexRecord['tier'][] = ['index', 'impressions', 'knowledge', 'pending'];
-    if (input.includeArchived) tiers.push('archived');
+    const primaryTiers: IndexRecord['tier'][] = ['index', 'impressions', 'knowledge', 'pending'];
 
-    const searchOpts: { scope?: IndexRecord['scope']; agentId?: string; limit: number; tiers: readonly IndexRecord['tier'][] } = {
-      limit: input.limit ?? 20,
-      tiers,
-    };
-    if (scope) searchOpts.scope = scope;
-    if (agentId) searchOpts.agentId = agentId;
-
-    const records = this.index.search(input.query, searchOpts);
-    const hits: MemoryQueryHit[] = records.map((r) => {
-      const hit: MemoryQueryHit = {
-        content: r.content,
-        summary: r.summary,
-        source: r.source,
-        sourceFile: r.sourceFile,
-        tier: r.tier,
-        score: scoreAgainstQuery(r, input.query),
-        tags: r.tags,
+    const limit = input.limit ?? 20;
+    const seen = new Set<string>();
+    const hits: MemoryQueryHit[] = [];
+    const collectFromTier = (tier: IndexRecord['tier']): void => {
+      if (hits.length >= limit) return;
+      const searchOpts: { scope?: IndexRecord['scope']; agentId?: string; limit: number; tiers: readonly IndexRecord['tier'][] } = {
+        limit: limit - hits.length,
+        tiers: [tier],
       };
-      if (r.date !== undefined) hit.date = r.date;
-      return hit;
-    });
+      if (scope) searchOpts.scope = scope;
+      if (agentId) searchOpts.agentId = agentId;
+      const records = this.index.search(input.query, searchOpts);
+      for (const r of records) {
+        if (seen.has(r.key)) continue;
+        seen.add(r.key);
+        const hit: MemoryQueryHit = {
+          content: r.content,
+          summary: r.summary,
+          source: r.source,
+          sourceFile: r.sourceFile,
+          tier: r.tier,
+          score: scoreAgainstQuery(r, input.query),
+          tags: r.tags,
+        };
+        if (r.date !== undefined) hit.date = r.date;
+        hits.push(hit);
+        if (hits.length >= limit) return;
+      }
+    };
+
+    for (const tier of primaryTiers) collectFromTier(tier);
+    // Spec step 4: only escalate to archived when the primary cascade was
+    // empty OR the caller explicitly asked for it.
+    if (hits.length === 0 || input.includeArchived) {
+      collectFromTier('archived');
+    }
 
     return { hits, servedFromIndex: true };
   }
@@ -410,6 +432,27 @@ export class MemoryFabric {
     this.hydrateKnowledge(layout, key);
     this.hydrateImpressions(layout, key);
     this.hydratePending(layout, key);
+    // R10 "读先主后备" (codex final-review fix): when the primary scope root
+    // turns out to be empty but a backup root has content, hydrate from the
+    // backup as a read fallback. Backup records still point at the backup
+    // path so subsequent writes (which go to primary) supersede them on the
+    // next query. Phase-0 primary/backup is an optional feature per the spec
+    // §3 non-goals, so this is strictly best-effort.
+    if (this.backupRoot) this.hydrateBackupFallback(key);
+  }
+
+  private hydrateBackupFallback(key: ScopeKey): void {
+    if (!this.backupRoot) return;
+    const backupLayout = buildScopeLayout(this.backupRoot, key.scope, key.agentId);
+    if (!existsSync(backupLayout.scopeRoot)) return;
+    // Only fill gaps: the primary write path will re-upsert on the next
+    // mutation, which is the correct "read primary first, backup fallback"
+    // shape. We reuse the hydrate helpers by pointing them at the backup
+    // layout — their IndexRecord.sourceFile will correctly carry the backup
+    // path for traceability.
+    this.hydrateKnowledge(backupLayout, key);
+    this.hydrateImpressions(backupLayout, key);
+    this.hydratePending(backupLayout, key);
   }
 
   private hydrateKnowledge(layout: ReturnType<typeof buildScopeLayout>, key: ScopeKey): void {

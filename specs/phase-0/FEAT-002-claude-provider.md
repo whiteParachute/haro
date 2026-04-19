@@ -1,7 +1,7 @@
 ---
 id: FEAT-002
 title: Claude Provider（基于 claude-agent-sdk，防封号强绑定 lark-bridge）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
@@ -153,3 +153,10 @@ Phase 1：实现 `--resume <sdk_session_id>` 透传，参考 OpenClaw 的 Claude
   - Q2 → Phase 0 按 model 硬编码静态表；Phase 2 由动态重评估机制实现多源解析链（对齐 Hermes）
   - Q3 → 直接透传 SDK 的同名 `plan/auto/bypass`（OpenClaw 已验证路径）
   - Q4 → Phase 0 只落 `sessions.sdk_session_id` 字段；Phase 1 实现 `--resume` 透传
+- 2026-04-18: whiteParachute — 实现完成 → done
+  - 新增 `@haro/provider-claude` 包（ClaudeProvider + 事件映射 + 静态 capabilities + healthCheck 5s 兜底）
+  - `@haro/core` 新增 provider 子路径导出（AgentProvider/AgentEvent/AgentCapabilities/ProviderRegistry）
+  - 根级 ESLint 双层拦截：全局禁 `@anthropic-ai/sdk`；除 `packages/provider-claude/**` 外禁 `@anthropic-ai/claude-agent-sdk`
+  - Config schema 对 `providers.claude.apiKey` 硬拒绝并附 FEAT-002 指引
+  - 构造函数额外校验 `ANTHROPIC_API_KEY` 环境变量（codex 评审关闭封号绕路）
+  - 26 unit tests（含 AC1/AC2/AC4/AC5/AC6 覆盖）全绿
