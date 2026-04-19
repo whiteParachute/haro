@@ -21,3 +21,19 @@ export type {
   AgentErrorEvent,
   PermissionMode,
 } from './provider/index.js';
+export { MemoryFabric, createMemoryFabric } from './memory/index.js';
+export type {
+  MemoryFabricOptions,
+  MemoryScope,
+  MemoryWriteInput,
+  MemoryDepositInput,
+  MemoryQueryInput,
+  MemoryQueryResult,
+  MemoryQueryHit,
+  MemoryContextInput,
+  MemoryContextResult,
+  MemoryContextItem,
+  MemoryStats,
+  MemoryMaintenanceReport,
+  MemorySource,
+} from './memory/index.js';
