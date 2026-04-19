@@ -59,7 +59,7 @@ function parseFrontmatter(head: string): Frontmatter {
       currentKey = null;
       currentArr = null;
     }
-    const m = /^([A-Za-z0-9_\-]+):\s*(.*)$/.exec(raw);
+    const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(raw);
     if (!m) continue;
     const [, key, value] = m;
     if (!key) continue;

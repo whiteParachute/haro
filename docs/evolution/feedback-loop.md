@@ -153,7 +153,7 @@ OODA 循环负责**线性改进**，代谢机制负责**增减有度**：
 └──────────────────────────────────────────────┘
 ```
 
-- **eat**（摄入）：带质量门槛的知识沉淀（分桶到 CLAUDE.md / rules / skills / Memory）
+- **eat**（摄入）：带质量门槛的知识沉淀（Phase 0 直接写 Memory，其余产物进入 proposal bundle）
 - **shit**（排出）：扫描并归档最近 N 天未使用 / 冗余 / 被取代的外挂组件，可回滚
 
 代谢机制的完整规范见 [specs/evolution-metabolism.md](../../specs/evolution-metabolism.md)。

@@ -28,7 +28,7 @@
 | P0-5 | 单 Agent 执行循环 | 接收任务 → 选择 Provider → 调用 → 返回结果 |
 | P0-6 | CLI 入口（cli channel） | REPL + 单次命令模式；同时作为 Channel 层的第一个 adapter |
 | P0-7 | Memory Fabric 独立能力 | 原生读写 index.md + knowledge/，**不依赖外部系统**，同时兼容 aria-memory 目录格式 |
-| P0-8 | Channel 抽象层 + 飞书 adapter | `MessageChannel` 接口 + 复用 lark-bridge 作为飞书底层 |
+| P0-8 | Channel 抽象层 + 飞书 adapter | `MessageChannel` 接口 + 基于 lark-bridge-service 已验证 client 路径封装飞书 adapter |
 | P0-9 | Telegram Channel adapter | 基于 `grammy` 或 `node-telegram-bot-api` |
 | P0-10 | Skills 子系统 + 15 预装 | 安装/卸载/查询 + 记忆 6 + 自查 3 + loop + 飞书 3 + eat/shit |
 | P0-11 | 手动 eat / shit | `haro eat <url/path>` + `haro shit --scope ...` + 归档回滚 |
@@ -66,7 +66,7 @@
 
 **P0-6：CLI 入口**
 - [ ] commander.js 命令路由
-- [ ] `haro` — 启动 REPL（@clack/prompts）
+- [ ] `haro` — 启动 REPL（readline/promises + clack 一次性交互）
 - [ ] `haro run "..."` — 单次任务
 - [ ] `haro model` — 查看/切换 Provider 和 Model
 - [ ] `haro config` — 配置管理
@@ -87,7 +87,7 @@
 - [ ] 定义 `MessageChannel` 接口（见 `specs/channel-protocol.md`）
 - [ ] `ChannelRegistry` 注册表
 - [ ] `cli` channel（内置）
-- [ ] `feishu` channel（复用 lark-bridge 底层 SDK，薄封装）
+- [ ] `feishu` channel（基于 lark-bridge-service 已验证 client 路径，websocket 接入）
 - [ ] `~/.haro/channels/` 目录结构 + session 映射表
 - [ ] `haro channel` 命令族
 - [ ] 可插拔性 lint 规则（核心模块禁止出现 `channelId === 'xxx'` 特判）
@@ -95,8 +95,8 @@
 **P0-9：Telegram Channel adapter**
 - [ ] 基于 `grammy` 实现 `TelegramChannel`
 - [ ] 长轮询模式
-- [ ] 流式输出（edit message 节流）
-- [ ] `lark-setup` 风格的交互式接入向导（skill 形式）
+- [ ] 私聊流式输出（`@grammyjs/stream` + auto-retry），群聊降级为最终结果
+- [ ] `haro channel setup telegram` 交互式接入向导（内建于 channel 命令族）
 
 **P0-10：Skills 子系统 + 15 预装**
 - [ ] Skill 安装 / 卸载 / 查询（兼容 Claude Code skill 格式）
@@ -112,7 +112,7 @@
 
 **P0-11：手动 eat / shit**
 - [ ] `haro eat <url|path|text>` 命令
-- [ ] eat 质量门槛 + 四问验证 + 分桶决策 + 预览确认
+- [ ] eat 质量门槛 + 四问验证 + proposal bundle / Memory 写入 + 预览确认
 - [ ] `haro shit --scope <rules|skills|mcp|memory|all>` 命令
 - [ ] shit 扫描 → 评估 → 预览 → 归档
 - [ ] `~/.haro/archive/shit-<timestamp>/` 归档结构 + manifest.json

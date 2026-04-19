@@ -11,26 +11,12 @@
 ### MessageChannel
 
 ```typescript
-/**
- * 所有消息渠道必须实现此接口
- */
 interface MessageChannel {
-  /** Channel 唯一标识符，如 'feishu' | 'telegram' */
   readonly id: string
-
-  /** 启动渠道（建立连接、订阅事件、注册 webhook 等） */
   start(ctx: ChannelContext): Promise<void>
-
-  /** 停止渠道（断开连接、注销 webhook） */
   stop(): Promise<void>
-
-  /** 向指定会话发送消息（由 Agent Runtime 回调） */
   send(sessionId: string, msg: OutboundMessage): Promise<void>
-
-  /** 返回此 Channel 的能力矩阵 */
   capabilities(): ChannelCapabilities
-
-  /** 健康检查（凭据有效、服务可达） */
   healthCheck(): Promise<boolean>
 }
 ```
@@ -38,18 +24,9 @@ interface MessageChannel {
 ### ChannelContext
 
 ```typescript
-/**
- * 启动时由 Haro 注入的宿主能力。Channel 通过它向上层推送消息、
- * 拿到配置、写日志，不得直接 import Agent Runtime 等核心模块。
- */
 interface ChannelContext {
-  /** 读取渠道私有配置（从 ~/.haro/config.yaml 的 channels.<id>） */
   config: Record<string, unknown>
-
-  /** 向 Haro 投递入站消息（由 Scenario Router 接手分发） */
   onInbound(msg: InboundMessage): Promise<void>
-
-  /** 结构化日志句柄 */
   logger: Logger
 }
 ```
@@ -57,26 +34,12 @@ interface ChannelContext {
 ### ChannelCapabilities
 
 ```typescript
-/**
- * Channel 能力矩阵（超集设计，允许 Channel 特有能力暴露）
- */
 interface ChannelCapabilities {
-  /** 是否支持流式/增量消息推送 */
   streaming: boolean
-
-  /** 是否支持富文本（Markdown / Card） */
   richText: boolean
-
-  /** 是否支持文件/图片上传下载 */
   attachments: boolean
-
-  /** 是否支持会话级别的 thread/reply */
   threading: boolean
-
-  /** 是否需要 webhook 公网回调 */
   requiresWebhook: boolean
-
-  /** Channel 特有扩展能力 */
   extended?: Record<string, unknown>
 }
 ```
@@ -84,35 +47,20 @@ interface ChannelCapabilities {
 ### InboundMessage / OutboundMessage
 
 ```typescript
-/**
- * 入站消息：外部系统 → Haro
- */
 interface InboundMessage {
-  /** 渠道会话标识（如飞书 chat_id、Telegram chat_id） */
   sessionId: string
-  /** 渠道用户标识 */
   userId: string
-  /** 渠道来源（Channel.id） */
   channelId: string
-  /** 消息类型 */
   type: 'text' | 'file' | 'image' | 'command' | 'event'
-  /** 原始内容（不做压缩，遵守约束①传原文） */
   content: unknown
-  /** 时间戳 */
   timestamp: string
-  /** Channel 特有元数据（线程 ID、回复目标等） */
   meta?: Record<string, unknown>
 }
 
-/**
- * 出站消息：Haro → 外部系统
- */
 interface OutboundMessage {
   type: 'text' | 'markdown' | 'card' | 'file' | 'image'
   content: unknown
-  /** 是否是流式增量片段（仅 streaming channel 有效） */
   delta?: boolean
-  /** 回复的目标消息 ID（Thread） */
   replyTo?: string
 }
 ```
@@ -121,8 +69,9 @@ interface OutboundMessage {
 
 | Channel | 实现方式 | 认证 |
 |---------|---------|------|
-| `feishu` | 复用现有 [lark-bridge](https://github.com/...) 作为底层 SDK，包装成 Haro Channel | 飞书应用凭据（App ID + App Secret） |
-| `telegram` | 基于 `node-telegram-bot-api` 或 `grammy` | Bot Token |
+| `feishu` | 基于 `lark-bridge-service` 已验证的飞书 client 代码路径，封装为 Haro Channel | 飞书应用凭据（App ID + App Secret） |
+| `telegram` | 基于 `grammy` + 官方插件生态 | Bot Token |
+| `cli` | Haro 内置 | 无 |
 
 ## 注册机制
 
@@ -149,21 +98,26 @@ class ChannelRegistry {
 ## 配置示例
 
 ```yaml
-# ~/.haro/config.yaml
 channels:
   feishu:
     enabled: true
     appId: "${FEISHU_APP_ID}"
     appSecret: "${FEISHU_APP_SECRET}"
-    # 复用 lark-bridge 的现有配置格式
-    mode: "long-polling"   # long-polling | webhook
+    transport: websocket
+    sessionScope: per-chat
 
   telegram:
     enabled: true
     botToken: "${TELEGRAM_BOT_TOKEN}"
-    # 公网不可达时可用 long-polling 模式
-    mode: "long-polling"
+    transport: long-polling
+    allowedUpdates:
+      - message
+      - callback_query
 ```
+
+约定：
+- `transport` 是 Channel 侧连接方式，不是上层协议差异
+- Channel 若不需要该字段，可在实现层忽略；但配置/日志应回显真实 transport
 
 ## 可插拔与零侵入约束
 
@@ -173,11 +127,12 @@ channels:
 2. **核心模块零硬编码**：Agent Runtime / Scenario Router / Evolution Engine 不得出现 `if channelId === 'feishu'` 这类分支
 3. **特有能力通过 `capabilities()` 暴露**：调用方查询后再决定使用
 4. **可卸载**：`haro channel disable <id>` 应立即停止对应 Channel，核心功能不受影响
+5. **不落秘密到 state 文件**：凭据只来自 config / env，Channel 私有状态文件不得落 access token / app secret / bot token
 
 ## 入站消息流
 
 ```
-外部系统（飞书 / Telegram / …）
+外部系统（飞书 / Telegram / CLI / …）
     ↓
 MessageChannel.start() 建立连接
     ↓
@@ -185,14 +140,19 @@ MessageChannel.start() 建立连接
     ↓
 调用 ctx.onInbound(msg)
     ↓
-Haro Scenario Router 根据 sessionId / userId / content 路由到合适的 Agent / Team
-    ↓
-Agent 执行（Agent Runtime 不感知 channelId，只看到原始任务）
+Haro Scenario Router / Runner 根据 sessionId / userId / content 路由
     ↓
 输出结果 → ChannelRegistry.get(channelId).send(sessionId, out)
     ↓
 MessageChannel.send() 将结果写回外部系统
 ```
+
+## 目录与状态约束
+
+- Channel 私有状态位于 `~/.haro/channels/<id>/`
+- `sessions.sqlite` 用于 `chat_id/user_id → Haro sessionId` 映射
+- `state.json` 仅允许存放非敏感运行态（最近连接时间、offset、水位、transport 元数据等）
+- 若某 Channel 没有独立状态文件需求，可以省略 `state.json`
 
 ## 违规检测
 
@@ -200,6 +160,7 @@ Channel Registry 在注册 / 运行时检测：
 
 | 违规行为 | 检测方式 | 处理 |
 |---------|---------|------|
-| Channel 直接 import Agent Runtime | 静态依赖扫描（lint 规则） | 拒绝加载 |
-| InboundMessage 传摘要而非原文 | 在协议层无法检测，由代码评审保证 | 评审清单 |
-| 核心模块出现 `channelId` 特判 | lint 规则 + PR 检查 | 拒绝合并 |
+| Channel 直接 import Agent Runtime | 静态依赖扫描（lint / grep） | 拒绝加载 |
+| InboundMessage 传摘要而非原文 | 协议层无法自动检测，由代码评审 + fixture 校验保证 | 评审拦截 |
+| 核心模块出现 `channelId` 特判 | lint / grep + PR 检查 | 拒绝合并 |
+| state 文件持久化凭据 | fixture/集成测试检查 `state.json` | 拒绝合并 |
