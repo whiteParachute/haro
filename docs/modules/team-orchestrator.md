@@ -15,7 +15,7 @@ Team Orchestrator 负责多 Agent 协作编排。**本模块必须严格遵守 [
 
 ### 模式一：Parallel（并行覆盖）
 
-多个 Agent 并行探索同一问题的不同可能性，Orchestrator 合并结果。
+多个 Agent 围绕同一全局任务并行探索不同方向，Orchestrator 合并结果。
 
 **适用场景**：搜索空间探索、方案比较、A/B 测试
 
@@ -26,9 +26,10 @@ Orchestrator(任务) →├→ Agent B（探索方案 Y）→┤→ Orchestrator
 ```
 
 **实现要求**：
-- 所有 Agent 接收相同的原始任务描述和上下文（不传摘要）
+- 所有 Agent 都能访问同一份全局原始任务描述和核心上下文（不传摘要）
+- 不同 Agent 可以收到不同的探索方向 / 假设 / 搜索策略；这是 Parallel 的价值所在
 - Orchestrator 收集所有 Agent 的完整输出后才进行合并
-- 合并策略：投票、加权评分、对抗性评估
+- 合并策略：投票、加权评分、对抗性评估等
 
 ### 模式二：Debate（对抗性辩论）
 
@@ -67,7 +68,11 @@ Orchestrator Agent ─┼→ Worker B（子任务 2 原始材料）→┼→ Orc
                     └→ Worker C（子任务 3 原始材料）→┘
 ```
 
-**注意**：子任务分解必须按信息属性，不按角色：
+**注意**：子任务分解必须按信息属性，不按角色；Hub-Spoke 和 Parallel 的区别不在于"谁看全局信息"，而在于：
+- Parallel：多个成员给出互相竞争或互相校验的候选答案
+- Hub-Spoke：多个成员完成互补的子任务切片，最后再综合
+
+子任务分解必须按信息属性，不按角色：
 - 正确："Agent A 分析本地代码库，Agent B 搜索在线文档，Agent C 检查 CI 日志"
 - 错误："Agent A 是开发，Agent B 是测试，Agent C 是审查"
 
@@ -87,7 +92,7 @@ Orchestrator Agent ─┼→ Worker B（子任务 2 原始材料）→┼→ Orc
 
 ## Team 定义
 
-Team 本身也是一个 Agent（可递归组合），通过 YAML 配置：
+Team 本身也是一个 Agent（可递归组合），通过 YAML 配置。Phase 1 会使用独立的 TeamConfig schema；目录可以和普通 Agent 共存，但不复用 Phase 0 的 AgentConfig `.strict()` schema。
 
 ```yaml
 # ~/.haro/agents/review-team.yaml
@@ -103,6 +108,9 @@ members:
 
 # 编排模式
 orchestrationMode: parallel
+
+# Parallel / Hub-Spoke 显式声明合并策略
+mergeStrategy: adversarial-eval
 
 # Critic（对抗性验证）
 critic:
