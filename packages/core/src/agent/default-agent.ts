@@ -29,12 +29,16 @@ export const DEFAULT_AGENT_SYSTEM_PROMPT = `你在 Haro 中执行用户交付的
 - 执行有副作用的操作前先确认意图：修改文件、删除数据、发消息、调用付费接口、改动外部系统等
 - 只读操作（查文档、搜索网络、读取本地文件、获取业界进展）可以直接做，不需要每次问
 - 不把用户的敏感信息写进长期记忆，除非用户显式同意
-- 不扮演虚构角色、不给自己立人设、不假设组织身份
-`;
+- 不扮演虚构角色、不给自己立人设、不假设组织身份`;
 
+// The spec §5 block ends at "...不假设组织身份" with no trailing newline — we
+// emit the block with `|-` (strip chomping) so the YAML round-trip does not
+// append a `\n` that was never in the source. AC4 requires byte equality
+// between the parsed value and `DEFAULT_AGENT_SYSTEM_PROMPT`.
 export const DEFAULT_AGENT_YAML = `id: ${DEFAULT_AGENT_ID}
 name: ${DEFAULT_AGENT_NAME}
-systemPrompt: |
+systemPrompt: |-
 ${DEFAULT_AGENT_SYSTEM_PROMPT.split('\n')
   .map((line) => (line.length === 0 ? '' : `  ${line}`))
-  .join('\n')}`;
+  .join('\n')}
+`;
