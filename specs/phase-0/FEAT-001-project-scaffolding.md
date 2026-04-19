@@ -85,7 +85,7 @@ haro/
 ## 6. Acceptance Criteria / 验收标准
 
 - AC1: 在全新克隆的仓库中执行 `pnpm install && pnpm build`，无错误完成（对应 R1、R2）
-- AC2: 故意在 `~/.haro/config.yaml` 填入非法字段（如 `providers.claude.apiKey: 123`）启动时，进程立即退出并在 stderr 打印 Zod 校验路径 `providers.claude.apiKey: Expected string, received number`（对应 R3）
+- AC2: 故意在 `~/.haro/config.yaml` 填入非法字段（如 `providers.codex.defaultModel: 123`）启动时，进程立即退出并在 stderr 打印 Zod 校验路径 `providers.codex.defaultModel: Expected string, received number`（对应 R3）
 - AC3: 运行 `node -e "require('./packages/core/dist/logger').info('hi')"` 后，能在 stdout 看到 JSON 日志，同时 `~/.haro/logs/haro.log` 追加相同一行（对应 R4）
 - AC4: 连续两次执行 `scripts/init-db.ts`，第二次不产生错误且表结构不变（对应 R5）
 - AC5: 全新环境（无 `~/.haro/`）首次运行 CLI 占位命令后，`~/.haro/` 下 7 个子目录均被创建（对应 R6）

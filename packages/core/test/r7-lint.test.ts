@@ -13,7 +13,7 @@ describe('R7 no-provider-hardcode lint placeholder [FEAT-001]', () => {
   it('flags providerId === <literal> as a violation in core source', async () => {
     const eslint = new ESLint({ cwd: repoRoot });
     const results = await eslint.lintText(
-      'const providerId: string = "claude";\nif (providerId === "claude") { /* hardcoded */ }\n',
+      'const providerId: string = "example-provider";\nif (providerId === "example-provider") { /* hardcoded */ }\n',
       { filePath: resolve(repoRoot, 'packages/core/src/_r7-fixture-provider.ts') },
     );
     const messages = results.flatMap((r) => r.messages);
@@ -37,7 +37,7 @@ describe('R7 no-provider-hardcode lint placeholder [FEAT-001]', () => {
   it('does NOT flag identical patterns outside core (e.g. packages/cli/src)', async () => {
     const eslint = new ESLint({ cwd: repoRoot });
     const results = await eslint.lintText(
-      'const providerId: string = "claude";\nif (providerId === "claude") { /* allowed outside core */ }\n',
+      'const providerId: string = "example-provider";\nif (providerId === "example-provider") { /* allowed outside core */ }\n',
       { filePath: resolve(repoRoot, 'packages/cli/src/_r7-fixture.ts') },
     );
     const messages = results.flatMap((r) => r.messages);

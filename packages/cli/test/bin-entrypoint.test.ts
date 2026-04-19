@@ -17,16 +17,16 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-001]', () => {
     const home = mkdtempSync(join(tmpdir(), 'haro-bin-bad-'));
     try {
       mkdirSync(home, { recursive: true });
-      // Use a non-Claude field to exercise the generic Zod type-path reporting.
-      // (Claude's apiKey is now hard-rejected by FEAT-002 with a different
+      // Use a non-credential field to exercise the generic Zod type-path reporting.
+      // (Provider apiKey is hard-rejected with a different
       // message — see packages/cli/test/cli.test.ts for that dedicated AC.)
-      writeFileSync(join(home, 'config.yaml'), 'providers:\n  claude:\n    defaultModel: 123\n');
+      writeFileSync(join(home, 'config.yaml'), 'providers:\n  codex:\n    defaultModel: 123\n');
       const res = spawnSync(process.execPath, [bin], {
         env: { ...process.env, HARO_HOME: home },
         encoding: 'utf8',
       });
       expect(res.status).toBe(1);
-      expect(res.stderr).toContain('providers.claude.defaultModel');
+      expect(res.stderr).toContain('providers.codex.defaultModel');
       expect(res.stderr).toMatch(/Expected string, received number/i);
     } finally {
       rmSync(home, { recursive: true, force: true });

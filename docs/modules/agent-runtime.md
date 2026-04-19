@@ -22,7 +22,7 @@ interface AgentConfig {
   tools?: string[]              // 启用的工具名称列表（不填则使用 SDK 内置工具）
 
   // Provider 由选择规则引擎决定，以下字段为可选覆盖
-  defaultProvider?: string      // 覆盖选择规则，如 'claude' | 'codex'
+  defaultProvider?: string      // 覆盖选择规则，如 'codex'
   defaultModel?: string         // 覆盖选择规则的模型选择
 }
 ```
@@ -73,8 +73,8 @@ tools:
   - bash
 
 # 可选：覆盖 Provider 选择规则
-defaultProvider: claude
-defaultModel: claude-opus-4-5
+defaultProvider: codex
+defaultModel: gpt-5-codex
 ```
 
 ## 执行循环

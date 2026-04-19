@@ -38,7 +38,7 @@ describe('runCli [FEAT-001]', () => {
     mkdirSync(root, { recursive: true });
     writeFileSync(
       join(root, 'config.yaml'),
-      'providers:\n  claude:\n    defaultModel: 123\n',
+      'providers:\n  codex:\n    defaultModel: 123\n',
     );
     const stderr = new PassThrough();
     const chunks: string[] = [];
@@ -48,15 +48,15 @@ describe('runCli [FEAT-001]', () => {
     expect(res.action).toBe('config-error');
     expect(res.error).toBeInstanceOf(haroConfig.HaroConfigValidationError);
     const output = chunks.join('');
-    expect(output).toContain('providers.claude.defaultModel');
+    expect(output).toContain('providers.codex.defaultModel');
     expect(output).toMatch(/Expected string, received number/i);
   });
 
-  it('FEAT-002 AC3: apiKey in providers.claude causes startup exit referencing FEAT-002', () => {
+  it('FEAT-003 R5: apiKey in providers.codex causes startup exit referencing FEAT-003', () => {
     mkdirSync(root, { recursive: true });
     writeFileSync(
       join(root, 'config.yaml'),
-      'providers:\n  claude:\n    apiKey: "sk-xxx"\n',
+      'providers:\n  codex:\n    apiKey: "sk-xxx"\n',
     );
     const stderr = new PassThrough();
     const chunks: string[] = [];
@@ -65,8 +65,8 @@ describe('runCli [FEAT-001]', () => {
     expect(res.exitCode).toBe(1);
     expect(res.action).toBe('config-error');
     const output = chunks.join('');
-    expect(output).toContain('providers.claude.apiKey');
-    expect(output).toContain('FEAT-002');
-    expect(output).toContain('不应配置 apiKey');
+    expect(output).toContain('providers.codex.apiKey');
+    expect(output).toContain('FEAT-003');
+    expect(output).toContain('OPENAI_API_KEY');
   });
 });

@@ -68,7 +68,7 @@ describe('logger [FEAT-001]', () => {
     const logger = createLogger({ root, stdout: false, file: logFile, rolling: false });
     logger.info(
       {
-        providers: { claude: { apiKey: 'sk-live-should-not-appear' } },
+        providers: { codex: { apiKey: 'sk-live-should-not-appear' } },
         channels: { feishu: { appSecret: 'topsecret' } },
         headers: { authorization: 'Bearer xyz' },
         token: 'top-level-token-leak',

@@ -72,7 +72,7 @@ describe('initHaroDatabase [FEAT-001]', () => {
         .prepare(
           `INSERT INTO sessions (id, agent_id, provider, model, started_at, status) VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run('sess_test', 'agent_test', 'claude', 'claude-sonnet-4-5', '2026-04-18T00:00:00Z', 'running');
+        .run('sess_test', 'agent_test', 'codex', 'gpt-5-codex', '2026-04-18T00:00:00Z', 'running');
     } finally {
       first.database!.close();
     }

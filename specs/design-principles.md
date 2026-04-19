@@ -27,9 +27,9 @@
 
 **违规示例（禁止）**：
 ```typescript
-// 核心模块出现 if providerId === 'claude' 这类分支
-if (provider.id === 'claude') {
-  // claude 特殊处理
+// 核心模块出现 if providerId === 'codex' 这类分支
+if (provider.id === 'codex') {
+  // codex 特殊处理
 }
 ```
 

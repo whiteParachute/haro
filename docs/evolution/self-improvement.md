@@ -155,7 +155,7 @@ Phase 3 的核心能力：Haro 的代码由 Agent 自行维护。
   ↓
 设计 Agent（产出设计方案，遵守所有设计约束）
   ↓
-实现 Agent（修改代码，使用 Claude Provider 或 Codex Provider）
+实现 Agent（修改代码，使用 Codex Provider 或未来新增 Provider）
   ↓
 验证 Agent（对抗性测试，否定者角色）
   ↓

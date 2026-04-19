@@ -23,7 +23,6 @@
 | 序号 | 交付项 | 说明 |
 |------|--------|------|
 | P0-1 | 项目脚手架 | monorepo 结构 + Zod config + pino 日志 |
-| P0-2 | Claude Provider | 基于 `@anthropic-ai/claude-agent-sdk`，**调用方式与 lark-bridge 强绑定一致，禁止直调 Anthropic API** |
 | P0-3 | Codex Provider | 基于 `@openai/codex-sdk` |
 | P0-4 | 最小 Agent 定义 | `id + name + systemPrompt + tools? + defaultProvider? + defaultModel?` |
 | P0-5 | 单 Agent 执行循环 | 接收任务 → 选择 Provider → 调用 → 返回结果 |
@@ -42,15 +41,6 @@
 - [ ] Zod schema 定义全局配置结构
 - [ ] pino 日志配置（stdout + `~/.haro/logs/` 双输出）
 - [ ] SQLite 初始化脚本（sessions + session_events + workflow_checkpoints 表）
-
-**P0-2：Claude Provider**
-- [ ] 安装 `@anthropic-ai/claude-agent-sdk`
-- [ ] 实现 `ClaudeProvider implements AgentProvider`
-- [ ] 使用 `query()` 方法（参考 lark-bridge）
-- [ ] 订阅自动认证配置
-- [ ] AgentCapabilities 返回（streaming: true, toolLoop: true）
-- [ ] healthCheck() 实现
-- [ ] **合规审查**：确认不使用 `anthropic.messages.create()`
 
 **P0-3：Codex Provider**
 - [ ] 安装 `@openai/codex-sdk`
@@ -131,8 +121,7 @@
 ### Phase 0 验收标准
 
 - [ ] `haro run "列出当前目录下的 TypeScript 文件"` 成功执行并返回结果
-- [ ] Claude Provider 和 Codex Provider 均可独立使用
-- [ ] 合规审查通过（Claude Provider 不直调 Anthropic API）
+- [ ] Codex Provider 可独立使用
 - [ ] Session 数据写入 SQLite
 - [ ] 记忆文件在 session 结束后正确更新
 - [ ] `haro doctor` 能正确诊断 Provider + Channel 状态

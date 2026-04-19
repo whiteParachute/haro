@@ -55,7 +55,6 @@ Haro 不接受"岗位式 Agent"模型（违反 [多 Agent 约束⑤](../multi-ag
 
 `tools: string[]` **只是字符串透传**，schema 不校验工具名字是否存在。Haro 自己**不**管理或创建工具——Provider 带什么工具，Agent 就能用什么（对齐 multi-agent 约束⑤"工具决定能力"）：
 
-- Claude Provider：SDK 内置的 Read / Write / Bash / Grep / Glob / Edit / WebFetch / … 完整一套
 - Codex Provider（Phase 0）：`toolLoop: false`，`tools` 字段整体忽略（见 FEAT-003 R4）
 
 运行时由 Provider 对照自己 SDK 的内置工具名解析；YAML 里写了不存在的工具名 → warn + 丢弃，不抛错。
@@ -93,8 +92,8 @@ tools:
   - Grep
   - Glob
 # 可选覆盖（若指向未注册 provider / 未在实时模型清单内的 model，启动抛错）：
-defaultProvider: claude
-defaultModel: claude-opus-4-7
+defaultProvider: codex
+defaultModel: gpt-5-codex
 ```
 
 **默认示例 Agent（R6）**

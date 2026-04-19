@@ -8,7 +8,7 @@ const RESTRICTED_ROOTS = [
   join(repoRoot, 'packages/core/src'),
   join(repoRoot, 'packages/cli/src'),
   join(repoRoot, 'packages/providers/src'),
-  join(repoRoot, 'packages/provider-claude/src'),
+  join(repoRoot, 'packages/provider-codex/src'),
 ];
 const MEMORY_FABRIC_DIR = join(repoRoot, 'packages/core/src/memory');
 // AC11 regex from the spec — lifted almost verbatim but broadened a bit so

@@ -120,7 +120,7 @@ Haro 在进化中坚持"留精华、不堆数量"：
 
 | 层次 | 竞品 | 技术栈 | Haro 差异 |
 |------|------|--------|----------|
-| Agent 级自进化 | Hermes (NousResearch/hermes-agent, ~98.6k stars) — 技能自创建+自改进+记忆 | Python + aiosqlite + FTS5 | Haro 做平台级：多 Agent + 编排 + Prompt + 平台代码的全面自进化；底层调用方式禁止直调 Anthropic API（Hermes 有此风险，Haro 强绑定 claude-agent-sdk） |
+| Agent 级自进化 | Hermes (NousResearch/hermes-agent, ~98.6k stars) — 技能自创建+自改进+记忆 | Python + aiosqlite + FTS5 | Haro 做平台级：多 Agent + 编排 + Prompt + 平台代码的全面自进化；当前 Phase 0 正式实现收敛为 Codex Provider，但 PAL 继续保留多 Provider 抽象 |
 | 统一 Agent 平台 | OpenClaw — 多 Provider + 多 Channel + 丰富工具 | TypeScript + pnpm + sqlite-vec + LanceDB | Haro 借鉴其 allow/deny 工具过滤、Dreaming 记忆 consolidation、Channel 抽象；但其"直调 Anthropic API"路径在 Haro 永远禁止 |
 | Agent 团队管理 | Multica (~15.7k stars) — 管理多个 Agent CLI | — | Haro 是 runtime 层，Multica 是管理层；Haro 可作为 Multica 的 Provider |
 | 编排框架 | CrewAI / AutoGen / LangGraph | — | Haro 融合三者优点 + 自进化（它们都是静态的） |
@@ -150,5 +150,5 @@ Haro 在进化中坚持"留精华、不堆数量"：
 | 存储 | SQLite WAL + FTS5（Phase 0）→ sqlite-vec / LanceDB 向量（Phase 2+） | 参考 OpenClaw / Hermes |
 | 代码 Lint | ESLint + `@typescript-eslint/recommended` + `import/no-cycle`（Phase 2 由 eat/shit 代谢评估迁移 [oxlint](https://oxc.rs/docs/guide/usage/linter)，OpenClaw 已用） | 参考 OpenClaw（oxlint） |
 | 进化 | 内置 Cron + eat/shit 代谢 + GitHub Actions；Phase 2+ 加入 OpenClaw 风格 Dreaming（短→长期晋升） | 参考 yoyo-evolve / OpenClaw |
-| Agent SDK | **`@anthropic-ai/claude-agent-sdk`（防封号，强绑定 lark-bridge）** — 禁止直调 Anthropic API（Hermes/OpenClaw 均有此风险路径） | 对齐 lark-bridge |
+| Agent SDK | `@openai/codex-sdk`（Phase 0 当前正式实现） | 对齐现有 Codex Provider |
 | 消息渠道 | Channel 抽象层 + 飞书（复用 lark-bridge）+ Telegram | 参考 OpenClaw / KeyClaw |

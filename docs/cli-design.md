@@ -17,7 +17,7 @@ haro
 进入 REPL 后显示：
 ```
 Haro v0.1.0 — 自进化多 Agent 平台
-当前 Provider: claude (claude-sonnet-4-5)
+当前 Provider: codex (gpt-5-codex)
 输入 /help 查看可用命令
 
 >
@@ -51,18 +51,17 @@ haro model
 haro model --select
 
 # 直接切换
-haro model claude claude-opus-4-5
+haro model codex gpt-5-codex
 ```
 
 **输出示例**：
 ```
 当前配置：
-  Provider: claude
-  Model:    claude-sonnet-4-5
+  Provider: codex
+  Model:    gpt-5-codex
 
 可用 Provider：
-  ● claude   (healthy)  claude-haiku-4-5 / claude-sonnet-4-5 / claude-opus-4-5
-  ● codex    (healthy)  codex-1-mini / codex-1
+  ● codex    (healthy)  gpt-5-codex / gpt-5-mini
 ```
 
 ### `haro config`
@@ -104,9 +103,8 @@ Haro 系统诊断
   ✓ ~/.haro/selection-rules.yaml 存在且格式正确
 
 Provider 状态
-  ✓ claude                       认证有效，SDK 可访问
   ✗ codex                        API Key 未配置
-    → 请设置环境变量 OPENAI_API_KEY 或运行 haro config set providers.codex.apiKey <key>
+    → 请设置环境变量 OPENAI_API_KEY
 
 数据目录
   ✓ ~/.haro/agents/              存在，2 个 Agent 配置
@@ -203,7 +201,7 @@ Haro 运行状态
 今日成功率:    91.7% (11/12)
 
 最近 Session:
-  sess_abc123  code-reviewer  claude  完成  2分钟前
+  sess_abc123  code-reviewer  codex   完成  2分钟前
   sess_def456  haro-assistant codex   完成  15分钟前
 ```
 
@@ -216,7 +214,7 @@ Haro 运行状态
 | `/model` | 查看或切换当前 Provider/Model |
 | `/new` | 开始新的 session（清除当前上下文） |
 | `/retry` | 重试上一次请求 |
-| `/compress` | 压缩当前上下文（触发 compaction，仅 Claude） |
+| `/compress` | 压缩当前上下文（仅当当前 Provider 支持 context compaction） |
 | `/skills` | 查看和管理当前 Agent 的技能 |
 | `/usage` | 查看当前 session 的 token 用量 |
 | `/agent <id>` | 切换当前 Agent |

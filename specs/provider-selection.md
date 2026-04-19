@@ -35,7 +35,7 @@ Provider / Model 在生态里持续迭代（新版本、新定价、能力变化
 
 ### maxContextTokens 多源解析链（Phase 2 落地）
 
-Phase 0 采用 per-model 硬编码表（见 [FEAT-002](./phase-0/FEAT-002-claude-provider.md#maxcontexttokens-r4-细化)）。Phase 2 对齐 **Hermes (NousResearch/hermes-agent) 的多源动态解析链**：
+Phase 0 采用 Provider 自带的 `listModels()` + 进程内缓存。Phase 2 对齐 **Hermes (NousResearch/hermes-agent) 的多源动态解析链**：
 
 ```
 解析顺序（fail-through）：
@@ -103,8 +103,8 @@ interface RulePerformanceMetrics {
 {
   "event": "rule_reevaluation",
   "ruleId": "complex-reasoning",
-  "currentSelect": { "provider": "claude", "model": "claude-opus-4-5" },
-  "candidate": { "provider": "claude", "model": "claude-opus-4-7" },
+  "currentSelect": { "provider": "codex", "model": "gpt-5-codex" },
+  "candidate": { "provider": "codex", "model": "gpt-5-codex-latest" },
   "rationale": {
     "selfEval": "新模型自评分高 0.4（4.2 → 4.6）",
     "userFeedback": "过去 7 天 3 次用户显式选择新模型",
@@ -122,7 +122,7 @@ interface RulePerformanceMetrics {
 - **默认不自动 apply**：即使置信度高，默认只 propose 给用户确认
 - **灰度观察**：apply 后前 N 次调用仍保留旧模型作 shadow run（非阻塞），对比输出
 - **可回滚**：规则变更写入 git，支持 `haro provider rollback <rule-id>`
-- **封号类变更不自动化**：凡是涉及认证方式、SDK 切换的变更，必须人类手动执行（见 [PAL 的 D2 约束](../docs/architecture/provider-layer.md#d2claude-provider--必须使用-agent-sdk不得直调-anthropic-api)）
+- **认证方式变更不自动化**：凡是涉及认证方式、SDK 切换的变更，必须人类手动执行
 
 ### 与 Evolution 代谢的关系
 
@@ -197,7 +197,7 @@ const DEFAULT_SELECTION_RULES: SelectionRule[] = [
       model: 'codex-1',
     },
     fallback: [
-      { provider: 'claude', model: 'claude-sonnet-4-5' },
+      { provider: 'codex', model: 'gpt-5-mini' },
     ],
   },
   {
@@ -209,11 +209,11 @@ const DEFAULT_SELECTION_RULES: SelectionRule[] = [
       estimatedTokens: { min: 10000 },
     },
     select: {
-      provider: 'claude',
-      model: 'claude-opus-4-5',
+      provider: 'codex',
+      model: 'gpt-5-codex',
     },
     fallback: [
-      { provider: 'claude', model: 'claude-sonnet-4-5' },
+      { provider: 'codex', model: 'gpt-5-mini' },
       { provider: 'codex', model: 'codex-1' },
     ],
   },
@@ -226,8 +226,8 @@ const DEFAULT_SELECTION_RULES: SelectionRule[] = [
       estimatedTokens: { max: 2000 },
     },
     select: {
-      provider: 'claude',
-      model: 'claude-haiku-4-5',
+      provider: 'codex',
+      model: 'gpt-5-mini',
     },
     fallback: [
       { provider: 'codex', model: 'codex-1-mini' },
@@ -239,8 +239,8 @@ const DEFAULT_SELECTION_RULES: SelectionRule[] = [
     priority: 9999,
     match: {},
     select: {
-      provider: 'claude',
-      model: 'claude-sonnet-4-5',
+      provider: 'codex',
+      model: 'gpt-5-codex',
     },
     fallback: [
       { provider: 'codex', model: 'codex-1' },
@@ -266,8 +266,8 @@ rules:
       provider: codex
       model: codex-1
     fallback:
-      - provider: claude
-        model: claude-sonnet-4-5
+      - provider: codex
+        model: gpt-5-mini
 
   - id: design-docs
     description: 设计文档使用 Claude Opus
@@ -275,8 +275,8 @@ rules:
     match:
       tags: [design, architecture, spec]
     select:
-      provider: claude
-      model: claude-opus-4-5
+      provider: codex
+      model: gpt-5-codex
 ```
 
 ### 全局规则文件
@@ -310,8 +310,8 @@ rules:
   "event": "provider_fallback",
   "originalProvider": "codex",
   "originalModel": "codex-1",
-  "fallbackProvider": "claude",
-  "fallbackModel": "claude-sonnet-4-5",
+  "fallbackProvider": "codex",
+  "fallbackModel": "gpt-5-mini",
   "trigger": "rate_limit",
   "ruleId": "code-generation",
   "sessionId": "sess_xxx",

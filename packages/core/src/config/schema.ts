@@ -1,32 +1,6 @@
 import { z } from 'zod';
 
 /**
- * Claude Provider MUST NOT accept apiKey (FEAT-002 R7/AC3) — the subscription
- * flow is managed by `@anthropic-ai/claude-agent-sdk`. Direct API-key usage
- * would bypass the SDK and is the key封号 vector this whole provider guards
- * against. We keep the rest of the object passthrough-friendly so future
- * fields (toolsAllow/deny, resume hints, …) do not require a schema bump.
- */
-const claudeProviderConfigSchema = z
-  .object({
-    defaultModel: z.string().optional(),
-    toolsAllow: z.array(z.string()).optional(),
-    toolsDeny: z.array(z.string()).optional(),
-  })
-  .partial()
-  .passthrough()
-  .superRefine((value, ctx) => {
-    if (value && typeof value === 'object' && 'apiKey' in value) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['apiKey'],
-        message:
-          'Claude Provider 不应配置 apiKey（见 FEAT-002）— 订阅认证由 @anthropic-ai/claude-agent-sdk 自动处理',
-      });
-    }
-  });
-
-/**
  * Codex Provider config slot (FEAT-003 R5). Credentials are NOT taken from
  * YAML — the OPENAI_API_KEY env var is read at provider construction time.
  * The YAML side only carries non-credential overrides (e.g. `baseUrl` for
@@ -62,7 +36,6 @@ export const haroConfigSchema = z
   .object({
     providers: z
       .object({
-        claude: claudeProviderConfigSchema.optional(),
         codex: codexProviderConfigSchema.optional(),
       })
       .partial()

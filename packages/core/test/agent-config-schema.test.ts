@@ -29,8 +29,8 @@ describe('AgentConfig schema [FEAT-004 R1/R2]', () => {
       name: 'Foo Bar',
       systemPrompt: 'ok',
       tools: ['Read', 'Grep'],
-      defaultProvider: 'claude',
-      defaultModel: 'claude-opus-4-7',
+      defaultProvider: 'codex',
+      defaultModel: 'gpt-5-codex',
     });
     expect(res.ok).toBe(true);
   });

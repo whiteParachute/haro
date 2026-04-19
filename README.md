@@ -34,7 +34,7 @@
 │   Actor 模型 │ hub-spoke │ Memory Fabric      │
 ├─────────────────────────────────────────────┤
 │       Provider Abstraction Layer             │
-│   Claude │ Codex │ ... （谁在回答）             │
+│   Codex │ ... （谁在回答）                     │
 ├─────────────────────────────────────────────┤
 │       Channel Abstraction Layer              │
 │   CLI │ Feishu │ Telegram │ ... （从哪里来）    │
@@ -124,8 +124,7 @@ haro shit --scope skills --dry-run
 ## 技术选型要点
 
 - TypeScript (Node.js 22) 为主，其他语言按需引入
-- **Claude 调用方式必须与 lark-bridge 一致**（使用 `@anthropic-ai/claude-agent-sdk`，防止违反 Claude 规定导致订阅封号）
-- 其余技术栈（运行时、存储、记忆）仅为"参考"相邻项目，非强绑定
+- 当前 Phase 0 仅保留 Codex Provider；其余技术栈（运行时、存储、记忆）仅为"参考"相邻项目，非强绑定
 
 ## License
 

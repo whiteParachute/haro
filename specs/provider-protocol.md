@@ -4,6 +4,8 @@
 
 本文档定义 Haro Provider Abstraction Layer 的核心接口协议。所有 Provider 实现必须遵守此协议。
 
+当前仓库只保留 Codex Provider 的正式实现，但协议层继续保持多 Provider 抽象，便于未来按同一契约接入其他 Provider。
+
 ## 核心接口定义
 
 ### AgentProvider
@@ -13,7 +15,7 @@
  * 所有 Agent Provider 必须实现此接口
  */
 interface AgentProvider {
-  /** Provider 唯一标识符，如 'claude' | 'codex' */
+  /** Provider 唯一标识符，如 'codex' */
   readonly id: string
 
   /**
@@ -40,8 +42,8 @@ interface AgentProvider {
 ```typescript
 /**
  * Provider 能力矩阵（超集设计，Provider 特有能力可暴露）
- * 
- * 超集设计原则（D4）：接口允许 Provider 特有能力暴露，
+ *
+ * 超集设计原则：接口允许 Provider 特有能力暴露，
  * 调用方通过 capabilities() 查询后决定是否使用特有能力。
  */
 interface AgentCapabilities {
@@ -54,10 +56,10 @@ interface AgentCapabilities {
   /** 是否支持上下文压缩 */
   contextCompaction: boolean
 
-  /** 是否支持通过 ID 延续上下文（Codex 特有） */
+  /** 是否支持通过 ID 延续上下文 */
   contextContinuation?: boolean
 
-  /** 支持的权限模式（Claude 特有） */
+  /** 支持的权限模式（Provider 特有，可选） */
   permissionModes?: Array<'plan' | 'auto' | 'bypass'>
 
   /** 支持的最大上下文 token 数 */
@@ -88,7 +90,7 @@ interface AgentQueryParams {
   sessionContext?: {
     /** 会话 ID */
     sessionId: string
-    /** 前一次响应 ID（Codex 的 previous_response_id） */
+    /** 前一次响应 ID */
     previousResponseId?: string
   }
 
@@ -98,7 +100,7 @@ interface AgentQueryParams {
   /** 覆盖默认模型 */
   model?: string
 
-  /** 权限模式（Claude 特有） */
+  /** 权限模式（Provider 特有，可选） */
   permissionMode?: 'plan' | 'auto' | 'bypass'
 }
 ```
@@ -148,7 +150,7 @@ interface AgentResultEvent {
   type: 'result'
   /** 最终结果文本 */
   content: string
-  /** 本轮的 response ID（用于 Codex 上下文延续） */
+  /** 本轮的 response ID（用于上下文延续） */
   responseId?: string
   /** token 用量统计 */
   usage?: {
@@ -170,31 +172,18 @@ interface AgentErrorEvent {
 
 ## 认证协议
 
-### Claude Provider 认证
-
-- **方式**：订阅自动认证（参考 lark-bridge）
-- **SDK**：`@anthropic-ai/claude-agent-sdk`
-- **⚠️ 禁止**：直接使用 Anthropic API Key 调用 `anthropic.messages.create()`
-- 认证由 SDK 内部管理，Haro 不直接接触凭证
-
-```yaml
-# ~/.haro/config.yaml
-providers:
-  claude:
-    # 无需配置 API Key，SDK 自动处理订阅认证
-    # 不得添加 apiKey 字段，否则会绕过 Agent SDK
-```
-
 ### Codex Provider 认证
 
-- **方式**：API Key（参考 KeyClaw 的实现）
+- **方式**：API Key（通过环境变量传递）
 - **SDK**：`@openai/codex-sdk`
+- Haro 不从 YAML 读取 `apiKey`；凭证统一经 `OPENAI_API_KEY` 环境变量注入
 
 ```yaml
 # ~/.haro/config.yaml
 providers:
   codex:
-    apiKey: "${OPENAI_API_KEY}"
+    # 凭证通过 OPENAI_API_KEY 环境变量传递
+    baseUrl: "https://api.openai.com/v1"   # 可选企业端点覆盖
 ```
 
 ## 注册机制

@@ -45,7 +45,7 @@ describe('resolveAgentDefaults [FEAT-004 R8]', () => {
 
   it('AC7: unknown defaultProvider throws with detail', async () => {
     const reg = new ProviderRegistry();
-    reg.register(fakeProvider('claude'));
+    reg.register(fakeProvider('codex'));
     await expect(
       resolveAgentDefaults(cfg({ defaultProvider: 'unknown-provider' }), reg),
     ).rejects.toMatchObject({
@@ -72,10 +72,10 @@ describe('resolveAgentDefaults [FEAT-004 R8]', () => {
 
   it('accepts defaultProvider+defaultModel when both resolve', async () => {
     const reg = new ProviderRegistry();
-    reg.register(fakeProvider('claude', ['claude-opus-4-7']));
+    reg.register(fakeProvider('codex', ['gpt-5-codex']));
     await expect(
       resolveAgentDefaults(
-        cfg({ defaultProvider: 'claude', defaultModel: 'claude-opus-4-7' }),
+        cfg({ defaultProvider: 'codex', defaultModel: 'gpt-5-codex' }),
         reg,
       ),
     ).resolves.toBeUndefined();
@@ -90,10 +90,10 @@ describe('resolveAgentDefaults [FEAT-004 R8]', () => {
 
   it('rejects defaultModel when provider does not expose listModels()', async () => {
     const reg = new ProviderRegistry();
-    reg.register(fakeProvider('claude')); // no listModels
+    reg.register(fakeProvider('codex')); // no listModels
     await expect(
       resolveAgentDefaults(
-        cfg({ defaultProvider: 'claude', defaultModel: 'x' }),
+        cfg({ defaultProvider: 'codex', defaultModel: 'x' }),
         reg,
       ),
     ).rejects.toBeInstanceOf(AgentConfigResolutionError);
