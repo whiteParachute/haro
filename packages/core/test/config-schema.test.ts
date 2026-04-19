@@ -10,8 +10,11 @@ import {
 import { loadHaroConfig } from '../src/config/loader.js';
 
 describe('config schema [FEAT-001]', () => {
-  it('AC2 rejects providers.claude.apiKey when not a string and reports the exact path', () => {
-    const bad = { providers: { claude: { apiKey: 123 } } };
+  it('AC2 rejects providers.claude.defaultModel when not a string and reports the exact path', () => {
+    // Note: apiKey is now specifically forbidden by FEAT-002, so we use
+    // defaultModel (which still accepts a string) to cover the generic
+    // Zod-type-path reporting expectation of FEAT-001 AC2.
+    const bad = { providers: { claude: { defaultModel: 123 } } };
     try {
       parseHaroConfig('test', bad);
       throw new Error('expected validation failure');
@@ -19,10 +22,10 @@ describe('config schema [FEAT-001]', () => {
       expect(err).toBeInstanceOf(HaroConfigValidationError);
       const issues = (err as HaroConfigValidationError).issues;
       expect(issues).toHaveLength(1);
-      expect(issues[0]?.path).toBe('providers.claude.apiKey');
+      expect(issues[0]?.path).toBe('providers.claude.defaultModel');
       expect(issues[0]?.message).toMatch(/Expected string, received number/i);
       const msg = (err as Error).message;
-      expect(msg).toContain('providers.claude.apiKey');
+      expect(msg).toContain('providers.claude.defaultModel');
       expect(msg).toMatch(/Expected string, received number/i);
     }
   });
@@ -87,7 +90,7 @@ describe('config loader [FEAT-001]', () => {
   it('AC2 end-to-end: loader surfaces Zod errors on malformed global config', () => {
     writeFileSync(
       join(globalRoot, 'config.yaml'),
-      'providers:\n  claude:\n    apiKey: 123\n',
+      'providers:\n  claude:\n    defaultModel: 123\n',
     );
     expect(() => loadHaroConfig({ globalRoot })).toThrowError(HaroConfigValidationError);
   });

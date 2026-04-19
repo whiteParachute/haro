@@ -24,6 +24,21 @@ module.exports = {
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     '@typescript-eslint/no-explicit-any': 'warn',
     'no-console': 'off',
+    // FEAT-002 R6: global ban on @anthropic-ai/sdk (raw Anthropic API). The
+    // only compliant Claude path is `@anthropic-ai/claude-agent-sdk`, and even
+    // that is restricted below to the provider-claude package.
+    'no-restricted-imports': [
+      'error',
+      {
+        paths: [
+          {
+            name: '@anthropic-ai/sdk',
+            message:
+              'FEAT-002 R6: do NOT import @anthropic-ai/sdk — the only compliant Claude entrypoint is @anthropic-ai/claude-agent-sdk inside @haro/provider-claude.',
+          },
+        ],
+      },
+    ],
   },
   overrides: [
     {
@@ -83,3 +98,34 @@ module.exports = {
     '**/*.cjs',
   ],
 };
+
+// FEAT-002 R6: scope @anthropic-ai/claude-agent-sdk imports to the
+// provider-claude package only. The override below applies to every package
+// under packages/**/src (except provider-claude itself, which gets an opt-out
+// override added *after* this one so its rule config wins). Inverting the
+// scope this way means new packages inherit the ban by default — the
+// previous allowlist approach silently failed for any package we forgot to
+// enumerate.
+module.exports.overrides.push({
+  files: ['packages/**/src/**/*.ts'],
+  excludedFiles: ['packages/provider-claude/**'],
+  rules: {
+    'no-restricted-imports': [
+      'error',
+      {
+        paths: [
+          {
+            name: '@anthropic-ai/sdk',
+            message:
+              'FEAT-002 R6: do NOT import @anthropic-ai/sdk — the only compliant Claude entrypoint is @anthropic-ai/claude-agent-sdk inside @haro/provider-claude.',
+          },
+          {
+            name: '@anthropic-ai/claude-agent-sdk',
+            message:
+              'FEAT-002 R6: @anthropic-ai/claude-agent-sdk is only allowed inside @haro/provider-claude. Core / CLI / generic provider packages must go through the AgentProvider abstraction.',
+          },
+        ],
+      },
+    ],
+  },
+});

@@ -5,3 +5,19 @@ export { buildHaroPaths, resolveHaroRoot, REQUIRED_HARO_SUBDIRS } from './paths.
 export type { HaroPaths } from './paths.js';
 export { createLogger, getDefaultLogger } from './logger/index.js';
 export type { LoggerOptions, HaroLogger, LogLevel } from './logger/index.js';
+export {
+  ProviderRegistry,
+} from './provider/index.js';
+export type {
+  AgentProvider,
+  AgentQueryParams,
+  AgentSessionContext,
+  AgentCapabilities,
+  AgentEvent,
+  AgentTextEvent,
+  AgentToolCallEvent,
+  AgentToolResultEvent,
+  AgentResultEvent,
+  AgentErrorEvent,
+  PermissionMode,
+} from './provider/index.js';

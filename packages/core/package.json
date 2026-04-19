@@ -29,6 +29,10 @@
     "./paths": {
       "types": "./dist/paths.d.ts",
       "default": "./dist/paths.js"
+    },
+    "./provider": {
+      "types": "./dist/provider/index.d.ts",
+      "default": "./dist/provider/index.js"
     }
   },
   "files": [
