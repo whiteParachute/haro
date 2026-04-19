@@ -1,11 +1,11 @@
 ---
 id: FEAT-004
 title: 最小 Agent 定义（配置 + YAML 加载 + 注册表）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-18
+updated: 2026-04-19
 related:
   - ../../docs/modules/agent-runtime.md
   - ../multi-agent-design-constraints.md
@@ -166,3 +166,8 @@ prompt 设计对照原则：
   - Q4 → Phase 0 不支持项目级覆盖
   - R7 改写 → 从"ESLint 拦截硬编码"→"原则性声明 + BUG 兜底"：不加护栏，靠设计纪律；发现违反立 BUG。AC5 降级为开发期人工 grep 而非 CI 规则
   - R6 → 补齐默认 `haro-assistant.yaml` 内容；systemPrompt 对照 multi-agent 约束 + overview §2.2 自我进化逐条审核（只读操作含"搜索网络"放行；副作用操作需确认）
+- 2026-04-19: whiteParachute — 实现合入 → done
+  - `@haro/core/agent` 落地 `AgentConfig` + Zod `.strict()` schema + `AgentRegistry` + 目录扫描 loader + 默认示例 bootstrap；AC5 grep quick-check 固化为 `agent-id-hardcode-guard.test.ts`
+  - R8/AC7 startup 校验：当 Agent 带 `defaultProvider` 或 `defaultModel` 而 loader 没拿到 `providerRegistry` 时，直接抛 `AgentConfigResolutionError { kind: 'missing-provider-registry' }`，不静默降级
+  - R6 bootstrap 触发条件收紧为"目录严格为空"（任何 `.gitkeep`/README 都尊重为用户意图，不覆盖）
+  - 单测 70 条（含 AC1/AC2/AC3/AC4/AC6/AC7 覆盖 + bootstrap byte-level 校验 + 非 YAML 文件忽略 + 坏 YAML 告警）；`pnpm build` / `pnpm test` 全绿

@@ -1,11 +1,11 @@
 ---
 id: FEAT-003
 title: Codex Provider（基于 @openai/codex-sdk）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-18
+updated: 2026-04-19
 related:
   - ../provider-protocol.md
   - ../../docs/architecture/provider-layer.md
@@ -125,3 +125,8 @@ Session 级 `response_id` 存储由 FEAT-005 的 Agent Runtime 负责，本 spec
   - R5 认证 → 不做 YAML `${ENV}` 插值；Provider 构造时直接读 `process.env.OPENAI_API_KEY`；`providers.codex` 配置只收 `baseUrl` 等非凭证字段
   - 原 AC6（latency_ms 落库）撤回 → 延迟观测由 FEAT-005 Runner 通过 pino 结构化日志统一处理；本 spec 不再要求 `session_events` 加列
   - 新 AC6 → 硬编码模型 id 的 grep 反检查；新 AC7 → `context_too_long` 必须携带 `hint: save-and-clear`
+- 2026-04-19: whiteParachute — 实现合入 → done
+  - `@haro/provider-codex` 落地 `CodexProvider` + `listModels()` TTL 缓存 + 错误翻译；29 单测（`capabilities.test.ts` / `context-continuation.test.ts` / `error-mapping.test.ts` / `health-check.test.ts` / `list-models.test.ts` / `schema.test.ts`）全绿
+  - AC6 的硬编码模型 id grep 作为测试内置（`list-models.test.ts`）；AC7 的 `context_too_long + hint='save-and-clear'` 在 `error-mapping.test.ts` / `context-continuation.test.ts` 双重断言
+  - `healthCheck()` 的 5s 超时竞态补齐了计时器 cleanup，避免每次调用留一个 pending timer
+  - AC1/AC2/AC3 live 路径新增 `smoke.live.test.ts` / `auth-failure.live.test.ts`（`test:live` 显式触发；默认 test run 排除）

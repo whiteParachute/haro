@@ -153,14 +153,19 @@ export class CodexProvider implements AgentProvider {
       // Force a fresh fetch — health needs the live answer, not a stale
       // cache from minutes ago.
       this.lister.invalidate();
-      const result = await Promise.race([
-        this.lister.listModels().then(() => true).catch(() => false),
-        new Promise<false>((resolve) => {
-          const id = setTimeout(() => resolve(false), 5_000);
-          id.unref?.();
-        }),
-      ]);
-      return result;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      try {
+        const result = await Promise.race([
+          this.lister.listModels().then(() => true).catch(() => false),
+          new Promise<false>((resolve) => {
+            timer = setTimeout(() => resolve(false), 5_000);
+            timer.unref?.();
+          }),
+        ]);
+        return result;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     } catch {
       return false;
     }

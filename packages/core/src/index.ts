@@ -21,6 +21,36 @@ export type {
   AgentErrorEvent,
   PermissionMode,
 } from './provider/index.js';
+export {
+  AgentRegistry,
+  AgentIdConflictError,
+  AgentNotFoundError,
+  agentConfigSchema,
+  parseAgentConfig,
+  AgentSchemaValidationError,
+  buildUnknownFieldMessage,
+  AGENT_ID_PATTERN,
+  AGENT_ID_MAX_LENGTH,
+  resolveAgentDefaults,
+  AgentConfigResolutionError,
+  bootstrapDefaultAgentFile,
+  loadAgentsFromDir,
+  DEFAULT_AGENT_ID,
+  DEFAULT_AGENT_FILE,
+  DEFAULT_AGENT_NAME,
+  DEFAULT_AGENT_SYSTEM_PROMPT,
+  DEFAULT_AGENT_YAML,
+} from './agent/index.js';
+export type {
+  AgentConfig,
+  AgentSchemaValidationResult,
+  AgentSchemaValidationOk,
+  AgentSchemaValidationErr,
+  BootstrapDefaultAgentResult,
+  ListModelsCapable,
+  LoadAgentsOptions,
+  LoadAgentsReport,
+} from './agent/index.js';
 export { MemoryFabric, createMemoryFabric } from './memory/index.js';
 export type {
   MemoryFabricOptions,
