@@ -68,6 +68,14 @@ export interface AgentErrorEvent {
   code: string;
   message: string;
   retryable: boolean;
+  /**
+   * Optional handling hint surfaced to the upper layer (FEAT-005 Runner).
+   * Example: `'save-and-clear'` for `code === 'context_too_long'` —
+   * Provider stays stateless, Runner decides to wrap up the session via
+   * MemoryFabric and re-issue the query without `previousResponseId`.
+   * See FEAT-003 §5 "上下文超长处理（分层）" + AC7.
+   */
+  hint?: string;
 }
 
 export type AgentEvent =

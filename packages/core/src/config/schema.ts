@@ -1,13 +1,5 @@
 import { z } from 'zod';
 
-const providerConfigSchema = z
-  .object({
-    apiKey: z.string().optional(),
-    defaultModel: z.string().optional(),
-  })
-  .partial()
-  .passthrough();
-
 /**
  * Claude Provider MUST NOT accept apiKey (FEAT-002 R7/AC3) — the subscription
  * flow is managed by `@anthropic-ai/claude-agent-sdk`. Direct API-key usage
@@ -34,6 +26,31 @@ const claudeProviderConfigSchema = z
     }
   });
 
+/**
+ * Codex Provider config slot (FEAT-003 R5). Credentials are NOT taken from
+ * YAML — the OPENAI_API_KEY env var is read at provider construction time.
+ * The YAML side only carries non-credential overrides (e.g. `baseUrl` for
+ * enterprise endpoints). We refuse `apiKey` here so a mistakenly-pasted key
+ * fails loud rather than silently bypassing the env-only auth path.
+ */
+const codexProviderConfigSchema = z
+  .object({
+    baseUrl: z.string().url().optional(),
+    defaultModel: z.string().optional(),
+  })
+  .partial()
+  .passthrough()
+  .superRefine((value, ctx) => {
+    if (value && typeof value === 'object' && 'apiKey' in value) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['apiKey'],
+        message:
+          'Codex Provider 不接受 YAML 配置中的 apiKey（见 FEAT-003 R5）— 请通过 OPENAI_API_KEY 环境变量传递凭证',
+      });
+    }
+  });
+
 const channelBaseSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -46,7 +63,7 @@ export const haroConfigSchema = z
     providers: z
       .object({
         claude: claudeProviderConfigSchema.optional(),
-        codex: providerConfigSchema.optional(),
+        codex: codexProviderConfigSchema.optional(),
       })
       .partial()
       .passthrough()

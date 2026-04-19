@@ -3,6 +3,8 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/cli" },
-    { "path": "./packages/providers" }
+    { "path": "./packages/providers" },
+    { "path": "./packages/provider-claude" },
+    { "path": "./packages/provider-codex" }
   ]
 }
