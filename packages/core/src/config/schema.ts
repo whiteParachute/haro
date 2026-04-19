@@ -105,6 +105,13 @@ export const haroConfigSchema = z
       .partial()
       .passthrough()
       .optional(),
+    runtime: z
+      .object({
+        taskTimeoutMs: z.number().int().positive().optional(),
+      })
+      .partial()
+      .passthrough()
+      .optional(),
     defaultAgent: z.string().optional(),
   })
   .partial()

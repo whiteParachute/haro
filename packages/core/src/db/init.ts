@@ -36,6 +36,23 @@ function probeFts5(db: Database.Database): boolean {
   }
 }
 
+function hasColumn(
+  db: Database.Database,
+  table: string,
+  column: string,
+): boolean {
+  const rows = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === column);
+}
+
+function runMigrations(db: Database.Database): void {
+  if (!hasColumn(db, 'sessions', 'context_ref')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN context_ref TEXT`);
+  }
+}
+
 /**
  * Initialize the Haro SQLite database. Idempotent: may be called repeatedly
  * without side effects beyond opening + verifying the schema.
@@ -66,6 +83,7 @@ export function initHaroDatabase(opts: InitDbOptions = {}): InitDbResult {
           for (const ddl of table.supportingDdl) db.exec(ddl);
         }
       }
+      runMigrations(db);
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');

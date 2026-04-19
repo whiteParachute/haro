@@ -14,6 +14,7 @@ export const HARO_TABLES: readonly TableDefinition[] = [
       model TEXT NOT NULL,
       started_at TEXT NOT NULL,
       ended_at TEXT,
+      context_ref TEXT,
       status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed'))
     )`,
     supportingDdl: [

@@ -73,3 +73,4 @@ coverage/
 tmp/
 temp/
 .tmp/
+.omx/
