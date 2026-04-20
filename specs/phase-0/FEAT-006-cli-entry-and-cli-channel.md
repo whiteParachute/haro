@@ -1,11 +1,11 @@
 ---
 id: FEAT-006
 title: CLI 入口 + cli channel（REPL + 单次命令 + slash 命令）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-19
+updated: 2026-04-20
 related:
   - ../../docs/cli-design.md
   - ../channel-protocol.md
@@ -123,3 +123,7 @@ haro 启动
   - Q2 → `/retry` 使用新 session + synthetic event 关联旧 session；不复用旧 sessionId
   - Q3 → `--no-memory` 为最高优先级 session override，关闭 memory read/write 与 wrapup
   - Q4 → slash 命令坚持本地路由，不走通用 Channel 协议，避免 CLI 专有语义泄漏到其他 channel
+- 2026-04-20: whiteParachute — done
+  - `packages/cli/src/{index,channel}.ts`、`packages/cli/bin/haro.js` 与 `packages/cli/package.json` 落地 commander CLI + `CliChannel`，打通 `haro` REPL、`haro run`、`haro model` / `config` / `doctor` / `status`，并保持 slash 命令本地消费
+  - `packages/core/src/runtime/{runner,types}.ts` 为 `/new` 增加 per-session continuation reset 开关，确保 FEAT-006 仍复用 FEAT-005 Runner 主路径而不是分叉第二套执行栈
+  - `packages/cli/test/{cli,bin-entrypoint}.test.ts` 补齐 run / REPL / doctor / retry synthetic event / no-memory / model state / config error / binary entrypoint 覆盖；2026-04-20 手动复核 Ctrl-C 退出路径后完成交付

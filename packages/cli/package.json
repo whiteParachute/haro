@@ -2,7 +2,7 @@
   "name": "@haro/cli",
   "version": "0.0.0",
   "private": true,
-  "description": "Haro CLI entry point (placeholder — full command surface arrives in later FEAT specs)",
+  "description": "Haro CLI entry point and CLI channel runtime surface (FEAT-006)",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -18,7 +18,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@haro/core": "workspace:*"
+    "@clack/prompts": "^0.10.1",
+    "@haro/core": "workspace:*",
+    "@haro/provider-codex": "workspace:*",
+    "commander": "^12.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

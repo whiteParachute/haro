@@ -154,7 +154,13 @@ export class AgentRunner {
           events.push(unavailable);
           finalEvent = unavailable;
         } else {
-          const sessionContext = this.loadContinuationContext(db, agent.id, candidate.provider);
+          const sessionContext = this.loadContinuationContext(
+            db,
+            agent.id,
+            candidate.provider,
+            sessionId,
+            input.continueLatestSession !== false,
+          );
           const outcome = await this.runAttempt({
             provider,
             sessionId,
@@ -334,7 +340,12 @@ export class AgentRunner {
     db: Database.Database,
     agentId: string,
     provider: string,
+    currentSessionId: string,
+    continueLatestSession: boolean,
   ): { sessionId: string; previousResponseId?: string } {
+    if (!continueLatestSession) {
+      return { sessionId: currentSessionId };
+    }
     const prior = db
       .prepare(
         `SELECT id, context_ref

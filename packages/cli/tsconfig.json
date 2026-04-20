@@ -3,9 +3,14 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "composite": true
+    "composite": true,
+    "paths": {
+      "@haro/provider-codex": ["../provider-codex/dist/index.d.ts"],
+      "@clack/prompts": ["../../node_modules/@clack/prompts/dist/index.d.ts"],
+      "commander": ["../../node_modules/commander/typings/index.d.ts"]
+    }
   },
-  "references": [{ "path": "../core" }],
+  "references": [{ "path": "../core" }, { "path": "../provider-codex" }],
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

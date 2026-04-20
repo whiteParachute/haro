@@ -69,6 +69,7 @@ export interface RunAgentInput {
   model?: string;
   noMemory?: boolean;
   retryOfSessionId?: string;
+  continueLatestSession?: boolean;
 }
 
 export interface RunAgentResult {
