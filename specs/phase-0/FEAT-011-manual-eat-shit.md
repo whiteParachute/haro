@@ -1,11 +1,11 @@
 ---
 id: FEAT-011
 title: 手动 eat / shit（代谢命令 + 归档回滚）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-19
+updated: 2026-04-20
 related:
   - ../evolution-metabolism.md
   - ./FEAT-010-skills-subsystem.md
@@ -147,3 +147,7 @@ else → 提示二义性，要求 --as url|path|text
   - Q3 → 被取代判定只允许保守启发式 + 人工确认，不做无证据语义删除
   - Q4 → GitHub repo 默认只读 README/说明；`--deep` 才扩大读取范围
   - Q5 → skills 不直接安装到 active 目录，先生成 proposal bundle，由用户后续 install/promote
+- 2026-04-20: whiteParachute — done
+  - `packages/skills/src/metabolism.ts` 落地 eat / shit / rollback 的 Phase 0 手动代谢流程：输入识别、最小文本抓取、质量门槛、memory 写入、proposal bundle、防膨胀检查、skills/memory/rules/mcp 扫描、归档与回滚
+  - `packages/skills/src/manager.ts` 通过 `invokeCommandSkill('eat'|'shit', ...)` 暴露命令级技能入口；`packages/cli/src/index.ts` 新增 `haro eat` / `haro shit` / `haro shit rollback`，保持 CLI 只做参数桥接
+  - `packages/skills/test/metabolism.test.ts` 与 `packages/cli/test/cli.test.ts` 补齐 reject / bundle / dry-run / archive / rollback / CLI bridge 覆盖，并复用 FEAT-010 的 usage 统计与预装白名单

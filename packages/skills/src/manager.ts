@@ -5,8 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { buildHaroPaths, createMemoryFabric } from '@haro/core';
 import type { MemoryFabric } from '@haro/core';
 import { parseSkillFile } from './frontmatter.js';
+import { rollbackShit, runEat, runShit, type EatCommandInput, type ShitCommandInput, type ShitRollbackInput } from './metabolism.js';
 import { SkillUsageTracker } from './usage-tracker.js';
-import type { InstalledSkillsManifest, SkillDescriptor, SkillManifestEntry, SkillPrepareResult, SkillResolution } from './types.js';
+import type { InstalledSkillsManifest, SkillCommandResult, SkillDescriptor, SkillManifestEntry, SkillPrepareResult, SkillResolution } from './types.js';
 
 const RESOURCE_ROOT = resolve(__dirname, '..', 'resources');
 const PREINSTALLED_ROOT = join(RESOURCE_ROOT, 'preinstalled');
@@ -241,6 +242,22 @@ export class SkillsManager {
 
   getUsage(skillId: string) {
     return this.usage.get(skillId);
+  }
+
+  async invokeCommandSkill(
+    skillId: 'eat' | 'shit',
+    input: Omit<EatCommandInput, 'root'> | Omit<ShitCommandInput, 'root'> | Omit<ShitRollbackInput, 'root'>,
+  ): Promise<SkillCommandResult> {
+    this.ensureInitialized();
+    const entry = this.requireEntry(skillId);
+    this.usage.record(entry, this.now().toISOString());
+    if (skillId === 'eat') {
+      return runEat({ ...(input as Omit<EatCommandInput, 'root'>), root: this.root });
+    }
+    if ('archiveId' in input) {
+      return rollbackShit({ ...(input as Omit<ShitRollbackInput, 'root'>), root: this.root });
+    }
+    return runShit({ ...(input as Omit<ShitCommandInput, 'root'>), root: this.root });
   }
 
   close(): void {

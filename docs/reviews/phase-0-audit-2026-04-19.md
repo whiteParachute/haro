@@ -1,6 +1,6 @@
 # Phase 0 audit — 2026-04-19
 
-_Last refreshed: 2026-04-20 after the FEAT-010 implementation slice._
+_Last refreshed: 2026-04-20 after the FEAT-011 implementation slice._
 
 ## Scope and source of truth
 
@@ -37,9 +37,9 @@ Notable Phase-0-ready code now checked in under these packages includes:
 - Feishu adapter (`packages/channel-feishu/src/*`)
 - Telegram adapter (`packages/channel-telegram/src/*`)
 - skills subsystem (`packages/skills/src/*` + `packages/skills/resources/*`)
-- CLI runtime surface (`packages/cli/src/{index,channel}.ts`) wired to the FEAT-005 runner and FEAT-008/009/010 command families
+- CLI runtime surface (`packages/cli/src/{index,channel}.ts`) wired to the FEAT-005 runner and FEAT-008/009/010/011 command families
 
-There are still **no** checked-in packages for manual eat/shit flows.
+There are no remaining unchecked-in Phase 0 packages in the current contract.
 
 ## Phase 0 delivery matrix
 
@@ -54,7 +54,7 @@ There are still **no** checked-in packages for manual eat/shit flows.
 | P0-8 Channel 抽象层 + 飞书 | `done` | `packages/channel/src/*` implements shared channel protocol / registry / session store; `packages/channel-feishu/src/*` implements the Feishu adapter; `packages/cli/src/index.ts` exposes `haro channel list/enable/disable/remove/doctor/setup` | Delivered |
 | P0-9 Telegram Channel | `done` | `packages/channel-telegram/src/*` implements the Telegram adapter with long polling, private-stream draft support, attachment metadata preservation, and CLI wiring through the FEAT-008 channel command family | Delivered |
 | P0-10 Skills 子系统 + 15 预装 | `done` | `packages/skills/src/*` implements the skills runtime/manifest/install/usage flow; `packages/skills/resources/preinstalled/*` vendors 15 preinstalled skills; `packages/cli/src/index.ts` exposes `haro skills list/install/uninstall/info/enable/disable` | Delivered |
-| P0-11 手动 eat / shit | `approved` | No checked-in eat/shit CLI or skill runtime integration found in current tree | **Missing / not complete** |
+| P0-11 手动 eat / shit | `done` | `packages/skills/src/metabolism.ts` implements eat/shit/rollback; `packages/skills/src/manager.ts` exposes command-skill invocation; `packages/cli/src/index.ts` exposes `haro eat` / `haro shit` / `haro shit rollback` | Delivered |
 
 ## Evidence for FEAT-006 landing
 
@@ -222,40 +222,64 @@ Current checked-in FEAT-010 coverage now includes:
   - explicit `/memory` trigger
   - description match preferring `remember` over `eat`
 
+## Evidence for FEAT-011 landing
+
+### 1. Manual eat / shit command flow is now checked in
+
+What exists now:
+
+- `packages/skills/src/metabolism.ts` implements:
+  - eat input detection
+  - minimal text loading
+  - rejection gates
+  - memory write + proposal bundle generation
+  - anti-bloat proposal suppression
+  - shit candidate scan / archive / rollback
+- `packages/skills/src/manager.ts` exposes `invokeCommandSkill('eat'|'shit', ...)`
+- `packages/cli/src/index.ts` exposes `haro eat`, `haro shit`, and `haro shit rollback`
+
+### 2. FEAT-011 verification coverage is now present
+
+Current checked-in FEAT-011 coverage now includes:
+
+- `packages/skills/test/metabolism.test.ts`
+  - generic-knowledge rejection
+  - ambiguous input rejection
+  - bundle generation
+  - anti-bloat guard
+  - shit dry-run / archive / rollback
+- `packages/cli/test/cli.test.ts`
+  - `haro eat` bridge
+  - `haro shit --dry-run`
+  - `haro shit rollback`
+
 ## Remaining confirmed gaps
 
-The remaining implementation gap now starts at FEAT-011.
-
-### 1. Manual eat/shit are still not checked in
-
-No committed implementation was found for:
-
-- a skills runtime/manifest/install flow (`FEAT-010`)
-- preinstalled skill packaging
-- manual `haro eat` / `haro shit` command paths (`FEAT-011`)
+No remaining Phase 0 implementation gaps are confirmed in the current repository snapshot.
 
 ## Documentation decision log
 
 ### FEAT-006 status is now reconciled
 
-`specs/phase-0/FEAT-010-skills-subsystem.md` now matches the shipped repo evidence and has been advanced to `done`. The next material delivery gap in Phase 0 therefore starts at FEAT-011.
+`specs/phase-0/FEAT-011-manual-eat-shit.md` now matches the shipped repo evidence and has been advanced to `done`. The approved Phase 0 contract is now fully represented in code and docs.
 
 ### No new cross-spec contradiction found
 
-I still did **not** find a clear case where two specs disagree and require immediate arbitration. The practical issue is now narrowed further: FEAT-010 has landed in code, while FEAT-011 remains unimplemented.
+I still did **not** find a clear case where two specs disagree and require immediate arbitration. The remaining work is no longer a Phase 0 implementation gap; it is final verification + cleanliness confirmation before push.
 
 ## Verification snapshot
 
-Verification was rerun in the current worktree after the FEAT-010 changes landed.
+Verification was rerun in the current worktree after the FEAT-011 changes landed.
 
 - `pnpm lint` ✅
 - `pnpm test` ✅
 - `pnpm build` ✅
 - manual REPL Ctrl-C shutdown validation ✅
 
-These checks cover the FEAT-010 skills slice plus the existing FEAT-001 / FEAT-003 / FEAT-004 / FEAT-005 / FEAT-006 / FEAT-007 / FEAT-008 / FEAT-009 foundations already present in this branch.
+These checks cover the FEAT-011 manual metabolism slice plus the existing FEAT-001 / FEAT-003 / FEAT-004 / FEAT-005 / FEAT-006 / FEAT-007 / FEAT-008 / FEAT-009 / FEAT-010 foundations already present in this branch.
 
 ## Recommended next steps
 
-1. Wire `eat` / `shit` through the FEAT-010 skill runtime under FEAT-011.
-2. After the final slice lands, rerun `pnpm lint`, `pnpm test`, and `pnpm build`, then refresh this audit before marking Phase 0 complete.
+1. Rerun `pnpm lint`, `pnpm test`, and `pnpm build` once more on the post-FEAT-011 worktree.
+2. Confirm the worktree is clean and no unresolved risk remains.
+3. Push `origin main` only after the final cleanliness check passes.

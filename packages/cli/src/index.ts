@@ -94,6 +94,8 @@ export type RunCliAction =
   | 'status'
   | 'channel'
   | 'skills'
+  | 'eat'
+  | 'shit'
   | 'config-error';
 
 export interface RunCliResult {
@@ -336,6 +338,7 @@ function buildProgram(app: AppContext): Command {
 
   registerChannelCommands(program, app);
   registerSkillsCommands(program, app);
+  registerMetabolismCommands(program, app);
 
   return program;
 }
@@ -503,6 +506,64 @@ function registerSkillsCommands(program: Command, app: AppContext): void {
         }
         app.stdout.write(`Disabled skill '${entry.id}'\n`);
       });
+    },
+    program,
+  );
+}
+
+function registerMetabolismCommands(program: Command, app: AppContext): void {
+  registerCommand(
+    'eat',
+    (cmd) => {
+      cmd
+        .argument('<input>', 'url | path | text')
+        .option('--yes', 'skip confirmation')
+        .option('--as <kind>', 'force input kind')
+        .option('--deep', 'expand GitHub/path loading')
+        .action(async (value: string, options: { yes?: boolean; as?: 'url' | 'path' | 'text'; deep?: boolean }) => {
+          const result = await app.skills.invokeCommandSkill('eat', {
+            input: value,
+            yes: options.yes,
+            as: options.as,
+            deep: options.deep,
+            stdin: app.stdin,
+            stdout: app.stdout,
+          });
+          app.stdout.write(`${result.output}\n`);
+        });
+    },
+    program,
+  );
+
+  registerCommand(
+    'shit',
+    (cmd) => {
+      cmd
+        .option('--scope <scope>', 'rules|skills|mcp|memory|all')
+        .option('--days <n>', 'staleness window in days', (value) => Number.parseInt(value, 10))
+        .option('--dry-run', 'preview candidates only')
+        .option('--confirm-high', 'allow high-risk items')
+        .action(async (options: { scope?: 'rules' | 'skills' | 'mcp' | 'memory' | 'all'; days?: number; dryRun?: boolean; confirmHigh?: boolean }) => {
+          const result = await app.skills.invokeCommandSkill('shit', {
+            scope: options.scope,
+            days: options.days,
+            dryRun: options.dryRun,
+            confirmHigh: options.confirmHigh,
+          });
+          app.stdout.write(`${result.output}\n`);
+        });
+
+      cmd
+        .command('rollback')
+        .argument('<archiveId>', 'archive id')
+        .option('--item <path>', 'restore a single archived item')
+        .action(async (archiveId: string, options: { item?: string }) => {
+          const result = await app.skills.invokeCommandSkill('shit', {
+            archiveId,
+            item: options.item,
+          });
+          app.stdout.write(`${result.output}\n`);
+        });
     },
     program,
   );
@@ -1211,7 +1272,7 @@ function buildLogger(root?: string): CliLogger {
 function inferAction(argv: readonly string[]): RunCliAction {
   if (argv.length === 0) return 'repl';
   const first = argv[0];
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit') {
     return first;
   }
   if (first === 'help' || first === '--help') {

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -600,6 +600,121 @@ describe('runCli [FEAT-006]', () => {
     } finally {
       usageDb.close();
     }
+  });
+
+  it('FEAT-011 AC12: haro eat bridges into the skills runtime and writes archives/memory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-eat-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const sourceFile = join(root, 'eat-source.md');
+    writeFileSync(
+      sourceFile,
+      ['Principle: Keep interfaces narrow', 'Rule: Always validate input.', 'Workflow: 1. Inspect 2. Apply'].join('\n'),
+      'utf8',
+    );
+
+    const result = await runCli({
+      argv: ['eat', sourceFile, '--yes', '--as', 'path'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'provider should not run', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(root, 'archive', 'eat-proposals'))).toBe(true);
+    expect(existsSync(join(root, 'memory', 'agents', 'haro-assistant', 'index.md'))).toBe(true);
+  });
+
+  it('FEAT-011 AC7/AC9: haro shit dry-run and rollback bridge into the skills runtime', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-shit-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const skillDir = join(root, 'user-skill');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: custom-skill\ndescription: \"Custom\"\n---\n\nBody\n', 'utf8');
+
+    const install = await runCli({
+      argv: ['skills', 'install', skillDir],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+    expect(install.exitCode).toBe(0);
+
+    const dryRunOut = new PassThrough();
+    const chunks: string[] = [];
+    dryRunOut.on('data', (chunk) => chunks.push(String(chunk)));
+    const dryRun = await runCli({
+      argv: ['shit', '--scope', 'skills', '--days', '0', '--dry-run'],
+      root,
+      stdout: dryRunOut,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+    expect(dryRun.exitCode).toBe(0);
+    expect(chunks.join('')).toContain('custom-skill');
+
+    const execOut = new PassThrough();
+    const execChunks: string[] = [];
+    execOut.on('data', (chunk) => execChunks.push(String(chunk)));
+    const archived = await runCli({
+      argv: ['shit', '--scope', 'skills', '--days', '0', '--confirm-high'],
+      root,
+      stdout: execOut,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+    expect(archived.exitCode).toBe(0);
+    const archiveRoot = join(root, 'archive');
+    const archiveEntries = require('node:fs').readdirSync(archiveRoot).filter((name: string) => name.startsWith('shit-')).sort();
+    expect(archiveEntries.length).toBeGreaterThan(0);
+
+    const rollback = await runCli({
+      argv: ['shit', 'rollback', archiveEntries[archiveEntries.length - 1]!],
+      root,
+      stdout: new PassThrough(),
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+    expect(rollback.exitCode).toBe(0);
+    expect(existsSync(join(root, 'skills', 'user', 'custom-skill', 'SKILL.md'))).toBe(true);
   });
 
   it('/new clears the current continuation so the next task starts a fresh session context', async () => {

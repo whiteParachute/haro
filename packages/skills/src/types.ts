@@ -55,3 +55,7 @@ export interface SkillPrepareResult {
   finalTask?: string;
   directOutput?: string;
 }
+
+export interface SkillCommandResult {
+  output: string;
+}
