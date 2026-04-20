@@ -262,27 +262,43 @@ export class AgentRunner {
       sessionContext: input.sessionContext,
     });
     const events: AgentEvent[] = [];
+    let timedOut = false;
+    let timeoutEvent: AgentErrorEvent | null = null;
+    let terminalCommitted = false;
+    const appendEvent = (event: AgentEvent): boolean => {
+      if (terminalCommitted) return false;
+      this.insertEvent(input.db, input.sessionId, event);
+      events.push(event);
+      if (event.type === 'result') {
+        terminalCommitted = true;
+        this.updateContextRef(input.db, input.sessionId, event.responseId);
+      } else if (event.type === 'error') {
+        terminalCommitted = true;
+      }
+      return true;
+    };
     const consume = (async (): Promise<QueryAttemptOutcome> => {
       let terminal: AgentResultEvent | AgentErrorEvent | null = null;
       for await (const event of iterator) {
-        this.insertEvent(input.db, input.sessionId, event);
-        events.push(event);
+        if (!appendEvent(event)) continue;
         if (event.type === 'result') {
           terminal = event;
-          this.updateContextRef(input.db, input.sessionId, event.responseId);
         } else if (event.type === 'error') {
           terminal = event;
         }
       }
       if (!terminal) {
-        terminal = {
-          type: 'error',
-          code: 'missing_terminal_event',
-          message: `Provider '${input.provider.id}' completed without a terminal result/error event`,
-          retryable: false,
-        };
-        this.insertEvent(input.db, input.sessionId, terminal);
-        events.push(terminal);
+        if (timedOut && timeoutEvent) {
+          terminal = timeoutEvent;
+        } else {
+          terminal = {
+            type: 'error',
+            code: 'missing_terminal_event',
+            message: `Provider '${input.provider.id}' completed without a terminal result/error event`,
+            retryable: false,
+          };
+          appendEvent(terminal);
+        }
       }
       return { events, terminal };
     })();
@@ -292,20 +308,19 @@ export class AgentRunner {
       return await Promise.race([
         consume,
         new Promise<QueryAttemptOutcome>((resolve) => {
-          timer = setTimeout(async () => {
-            const timeoutEvent: AgentErrorEvent = {
+          timer = setTimeout(() => {
+            timeoutEvent = {
               type: 'error',
               code: 'timeout',
               message: `Task timed out after ${input.timeoutMs}ms`,
               retryable: true,
             };
-            try {
-              await iterator.return?.(undefined);
-            } catch {
+            timedOut = true;
+            appendEvent(timeoutEvent);
+            void iterator.return?.(undefined).catch(() => {
               // Best effort — some generators won't implement return().
-            }
-            this.insertEvent(input.db, input.sessionId, timeoutEvent);
-            resolve({ events: [...events, timeoutEvent], terminal: timeoutEvent });
+            });
+            resolve({ events: [...events], terminal: timeoutEvent });
           }, input.timeoutMs);
           timer.unref?.();
         }),
@@ -498,16 +513,16 @@ export class AgentRunner {
         outcome: input.outcome,
       },
     ];
-    existing.keyDecisions = [
-      ...existing.keyDecisions,
-      {
-        timestamp,
-        ruleId: input.ruleId,
-        provider: input.provider,
-        model: input.model,
-      },
-    ];
     if (input.outcome === 'completed') {
+      existing.keyDecisions = [
+        ...existing.keyDecisions,
+        {
+          timestamp,
+          ruleId: input.ruleId,
+          provider: input.provider,
+          model: input.model,
+        },
+      ];
       existing.pendingWork = existing.pendingWork.filter(
         (item) => item !== taskPreview,
       );
@@ -595,5 +610,5 @@ function applyInputOverrides(
 }
 
 function shouldFallback(event: AgentErrorEvent): boolean {
-  return event.retryable || FALLBACK_TRIGGERS.has(event.code);
+  return FALLBACK_TRIGGERS.has(event.code);
 }

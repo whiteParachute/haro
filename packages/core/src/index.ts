@@ -67,3 +67,22 @@ export type {
   MemoryMaintenanceReport,
   MemorySource,
 } from './memory/index.js';
+export {
+  AgentRunner,
+  DEFAULT_SELECTION_RULES,
+  loadSelectionRules,
+  resolveSelection,
+  SelectionResolutionError,
+} from './runtime/index.js';
+export type {
+  AgentRunnerOptions,
+  ModelSelectionStrategy,
+  SelectionTarget,
+  SelectionRuleMatch,
+  SelectionRule,
+  SelectionContext,
+  ResolvedSelectionCandidate,
+  ResolvedSelection,
+  RunAgentInput,
+  RunAgentResult,
+} from './runtime/index.js';

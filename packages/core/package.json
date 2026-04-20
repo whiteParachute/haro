@@ -41,6 +41,10 @@
     "./agent": {
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
     }
   },
   "files": [

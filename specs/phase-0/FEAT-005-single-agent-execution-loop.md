@@ -1,11 +1,11 @@
 ---
 id: FEAT-005
 title: 单 Agent 执行循环（选择规则 + Runner + 事件流 + 跨 session 状态）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-19
+updated: 2026-04-20
 related:
   - ../provider-selection.md
   - ../provider-protocol.md
@@ -141,3 +141,7 @@ async function run(task: string, agentId: string): Promise<RunResult> {
   - Q2 → continuation 状态统一落 `sessions.context_ref`；Codex 的 `previousResponseId` 走该字段
   - Q3 → 全部 fallback 失败后不写记忆，仅写日志与终态 error
   - Q4 → Runner 层支持统一超时，Phase 0 先用 `HARO_TASK_TIMEOUT_MS` / `runtime.taskTimeoutMs`
+- 2026-04-20: whiteParachute — done
+  - `packages/core/src/runtime/{runner,selection,types,index}.ts` 打通 FEAT-005 的 Runner / 规则解析 / 公共导出面；`@haro/core` 新增 runtime 导出，供 FEAT-006 复用
+  - 新增 `selection-engine.test.ts`、`runner.test.ts`、`provider-id-hardcode-guard.test.ts`，覆盖规则优先级、fallback、continuation、timeout、state.json、SQLite 事件写入与 AC8 grep
+  - `docs/modules/agent-runtime.md` 与 `docs/reviews/phase-0-audit-2026-04-19.md` 同步更新，明确 FEAT-005 已交付、FEAT-006 仍为下一个缺口

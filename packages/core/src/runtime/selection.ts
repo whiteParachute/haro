@@ -61,6 +61,16 @@ interface ProviderWithModels {
   listModels?: () => Promise<readonly ModelInfo[]>;
 }
 
+export class SelectionResolutionError extends Error {
+  readonly providerId?: string;
+
+  constructor(message: string, providerId?: string) {
+    super(message);
+    this.name = 'SelectionResolutionError';
+    this.providerId = providerId;
+  }
+}
+
 export const DEFAULT_SELECTION_RULES: readonly SelectionRule[] = Object.freeze([
   {
     id: 'code-generation',
@@ -234,8 +244,13 @@ function ruleMatches(
 async function resolveAgentDefaults(
   context: SelectionContext,
 ): Promise<ResolvedSelection> {
+  if (context.agent.defaultModel && !context.agent.defaultProvider) {
+    throw new SelectionResolutionError(
+      `Agent '${context.agent.id}' declares defaultModel='${context.agent.defaultModel}' without a defaultProvider (FEAT-004 R8)`,
+    );
+  }
   const source: SelectionTarget = {
-    provider: context.agent.defaultProvider ?? 'codex',
+    provider: context.agent.defaultProvider!,
   };
   if (context.agent.defaultModel) {
     source.model = context.agent.defaultModel;
@@ -277,7 +292,7 @@ async function resolveTarget(
   context: SelectionContext,
 ): Promise<ResolvedSelectionCandidate> {
   const provider = context.providerRegistry.get(target.provider);
-  const model = await resolveModel(provider as ProviderWithModels, target);
+  const model = await resolveModel(target.provider, provider as ProviderWithModels, target);
   return {
     provider: target.provider,
     model,
@@ -286,13 +301,17 @@ async function resolveTarget(
 }
 
 async function resolveModel(
+  providerId: string,
   provider: ProviderWithModels,
   target: SelectionTarget,
 ): Promise<string> {
   if (target.model) return target.model;
   const models = typeof provider.listModels === 'function' ? await provider.listModels() : [];
   if (models.length === 0) {
-    return target.modelSelection ?? 'provider-default';
+    throw new SelectionResolutionError(
+      `Provider '${providerId}' could not resolve modelSelection='${target.modelSelection ?? 'provider-default'}' because listModels() returned no models`,
+      providerId,
+    );
   }
   const strategy = target.modelSelection ?? 'provider-default';
   switch (strategy) {
