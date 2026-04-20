@@ -188,7 +188,15 @@ export function createLogger(opts: LoggerOptions = {}): HaroLogger {
 // log line flushed to file before exit). Opt into pino-roll rotation by calling
 // `createLogger({ rolling: true, ... })` explicitly or by setting
 // `HARO_LOG_ROLLING=1`. See logger createLogger JSDoc for rationale.
-const defaultLogger = createLogger({ rolling: false });
+const defaultLogger = (() => {
+  try {
+    return createLogger({ rolling: false });
+  } catch {
+    // Keep module import safe in constrained environments (e.g. read-only
+    // HOME during subprocess tests) by falling back to stdout-only logging.
+    return createLogger({ rolling: false, file: null });
+  }
+})();
 
 export default defaultLogger;
 

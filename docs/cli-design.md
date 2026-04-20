@@ -30,6 +30,23 @@ Haro v0.1.0 — 自进化多 Agent 平台
 >
 ```
 
+### `haro setup` / `haro onboard`
+
+首次引导命令。`onboard` 是 `setup` 的别名。
+
+```bash
+haro setup
+haro onboard
+```
+
+**Phase 0 最小职责**：
+- 检查 Node 版本（`>=22`）
+- 检查 `pnpm` 是否可用
+- 检查 `~/.haro/` 数据目录可写
+- 检查 `OPENAI_API_KEY`
+- 写入非敏感默认配置（例如 `providers.codex.defaultModel`）
+- 输出明确下一步：`haro doctor` / `haro run "..."` / `haro channel setup feishu`
+
 ### `haro run`
 
 单次任务执行，不进入 REPL。

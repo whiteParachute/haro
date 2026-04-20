@@ -29,6 +29,7 @@ import {
   type InboundMessage,
   type MessageChannel,
 } from './channel.js';
+import { runSetup, type SetupRunDeps } from './setup.js';
 
 const VERSION = '0.0.0';
 const CLI_CHANNEL_STATE_FILE = 'state.json';
@@ -81,6 +82,7 @@ export interface RunCliOptions {
     createSessionId?: () => string;
     argv?: readonly string[];
   }) => Promise<readonly ChannelRegistration[]>;
+  setupDeps?: SetupRunDeps;
 }
 
 export type RunCliAction =
@@ -88,6 +90,7 @@ export type RunCliAction =
   | 'help'
   | 'run'
   | 'repl'
+  | 'setup'
   | 'model'
   | 'config'
   | 'doctor'
@@ -257,6 +260,25 @@ function buildProgram(app: AppContext): Command {
             }
           },
         );
+    },
+    program,
+  );
+
+  registerCommand(
+    'setup',
+    (cmd) => {
+      cmd.alias('onboard').action(async () => {
+        const report = await runSetup({
+          paths: app.paths,
+          loaded: app.loaded,
+          providerRegistry: app.providerRegistry,
+          deps: app.opts.setupDeps,
+        });
+        app.stdout.write(report.text);
+        if (!report.ok) {
+          throw new CommanderExit(1, 'setup found blockers');
+        }
+      });
     },
     program,
   );
@@ -1273,6 +1295,9 @@ function buildLogger(root?: string): CliLogger {
 function inferAction(argv: readonly string[]): RunCliAction {
   if (argv.length === 0) return 'repl';
   const first = argv[0];
+  if (first === 'setup' || first === 'onboard') {
+    return 'setup';
+  }
   if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit') {
     return first;
   }
