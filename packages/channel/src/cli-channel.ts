@@ -96,12 +96,13 @@ export class CliChannel implements MessageChannel {
         }
         if (trimmed.startsWith('/') && this.onLocalCommand) {
           const consumed = await this.onLocalCommand(trimmed, this);
-          this.output.write(this.prompt);
-          if (consumed) continue;
-        } else {
-          await this.submitText(trimmed);
-          if (!this.stopped) this.output.write(this.prompt);
+          if (consumed) {
+            this.output.write(this.prompt);
+            continue;
+          }
         }
+        await this.submitText(trimmed);
+        if (!this.stopped) this.output.write(this.prompt);
       }
     } finally {
       this.rl?.close();

@@ -489,6 +489,119 @@ describe('runCli [FEAT-006]', () => {
     expect(chunks.join('')).not.toContain('telegram');
   });
 
+  it('FEAT-010 AC1/AC3: skills list shows preinstalled skills and uninstall protects memory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-skills-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const listResult = await runCli({
+      argv: ['skills', 'list'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(listResult.exitCode).toBe(0);
+    expect(chunks.join('')).toContain('memory\tenabled\tpreinstalled');
+    expect(chunks.join('')).toContain('eat\tenabled\tpreinstalled');
+
+    const uninstall = await runCli({
+      argv: ['skills', 'uninstall', 'memory'],
+      root,
+      stderr: new PassThrough(),
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+    expect(uninstall.exitCode).toBe(1);
+  });
+
+  it('FEAT-010 AC4: explicit /memory triggers the skill and writes usage', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-memory-skill-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const runPromise = runCli({
+      argv: [],
+      root,
+      stdin,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'provider should not run', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
+    });
+
+    stdin.write('/memory 查一下 xxx\n');
+    stdin.end();
+    await runPromise;
+
+    const usageDb = require('better-sqlite3')(join(root, 'skills', 'usage.sqlite'));
+    try {
+      const row = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('memory') as { use_count: number };
+      expect(row.use_count).toBe(1);
+    } finally {
+      usageDb.close();
+    }
+    expect(chunks.join('')).not.toContain('provider should not run');
+  });
+
+  it('FEAT-010 AC8: description matching picks remember before eat', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-remember-auto-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const result = await runCli({
+      argv: ['run', '记住这个偏好：以后默认中文回答'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'provider should not run', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const usageDb = require('better-sqlite3')(join(root, 'skills', 'usage.sqlite'));
+    try {
+      const remember = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('remember') as { use_count: number };
+      const eat = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('eat') as { use_count?: number } | undefined;
+      expect(remember.use_count).toBe(1);
+      expect(eat?.use_count ?? 0).toBe(0);
+    } finally {
+      usageDb.close();
+    }
+  });
+
   it('/new clears the current continuation so the next task starts a fresh session context', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-new-'));
     roots.push(root);

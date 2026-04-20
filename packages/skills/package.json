@@ -1,0 +1,30 @@
+{
+  "name": "@haro/skills",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Haro skills subsystem and preinstalled skill management (FEAT-010)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "resources"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@haro/core": "workspace:*",
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.18.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

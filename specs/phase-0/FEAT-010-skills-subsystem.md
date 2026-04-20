@@ -1,11 +1,11 @@
 ---
 id: FEAT-010
 title: Skills 子系统 + 15 预装 skill
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-19
+updated: 2026-04-20
 related:
   - ../../docs/modules/skills-system.md
   - ../evolution-metabolism.md
@@ -145,3 +145,7 @@ scripts/prepare-preinstalled.ts
   - Q3 → Haro 自研 skill 的仓库级 license 由仓库发布策略统一管理；此 feature 只要求暴露当前 license 状态，不把 license 选择做成实现 blocker
   - Q4 → 预装 skill 版本以 commit SHA 冻结，记录在 `preinstalled-manifest.json`
   - Q5 → 安装符号链接路径时 follow + copy，并在 manifest 中记录 `resolvedFrom`
+- 2026-04-20: whiteParachute — done
+  - `packages/skills` 落地 SkillsManager、installed/preinstalled manifest、usage.sqlite、git/path 安装、启停/卸载保护、以及显式 slash / description 匹配路由
+  - `packages/skills/resources/preinstalled/` 与 `preinstalled-manifest.json` 交付 15 个预装 skill 快照，保留 source / pinnedCommit / license / keywords / handler 元数据，并在首次启动时展开到 `~/.haro/skills/preinstalled/`
+  - `packages/cli/src/index.ts` 挂载 `haro skills list/install/uninstall/info/enable/disable`，`/skills` 改为列出已装 skill，未知 slash 命令可下沉到 Skills 路由；`packages/cli/test/cli.test.ts` 与 `packages/skills/test/preinstall-expand.test.ts` 补齐 preinstall / uninstall-guard / usage / trigger / symlink / git install 覆盖

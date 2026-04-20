@@ -22,6 +22,9 @@
       ],
       "@haro/channel-telegram": [
         "../channel-telegram/dist/index.d.ts"
+      ],
+      "@haro/skills": [
+        "../skills/dist/index.d.ts"
       ]
     }
   },
@@ -37,6 +40,9 @@
     },
     {
       "path": "../channel-telegram"
+    },
+    {
+      "path": "../skills"
     },
     {
       "path": "../provider-codex"

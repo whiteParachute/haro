@@ -17,6 +17,7 @@ import {
   type HaroPaths,
 } from '@haro/core';
 import { createCodexProvider } from '@haro/provider-codex';
+import { SkillsManager } from '@haro/skills';
 import * as haroConfig from '@haro/core/config';
 import type { HaroConfig, LoadedConfig } from '@haro/core/config';
 import type { AgentEvent, AgentProvider } from '@haro/core/provider';
@@ -92,6 +93,7 @@ export type RunCliAction =
   | 'doctor'
   | 'status'
   | 'channel'
+  | 'skills'
   | 'config-error';
 
 export interface RunCliResult {
@@ -145,6 +147,7 @@ interface AppContext {
   createdDirs: string[];
   cliChannel: CliChannel;
   replState?: ReplState;
+  skills: SkillsManager;
 }
 
 class CommanderExit extends Error {
@@ -195,9 +198,11 @@ export async function runCli(opts: RunCliOptions = {}): Promise<RunCliResult> {
   try {
     await program.parseAsync(['node', 'haro', ...argv], { from: 'node' });
     await app.channelRegistry.stop();
+    app.skills.close();
     return commandResult(app, inferAction(argv), 0);
   } catch (err) {
     await app.channelRegistry.stop();
+    app.skills.close();
     if (err instanceof CommanderExit) {
       return commandResult(app, inferAction(argv), err.code, err);
     }
@@ -330,6 +335,7 @@ function buildProgram(app: AppContext): Command {
   );
 
   registerChannelCommands(program, app);
+  registerSkillsCommands(program, app);
 
   return program;
 }
@@ -419,6 +425,84 @@ function registerChannelCommands(program: Command, app: AppContext): void {
           app.channelRegistry.enable(id);
           app.stdout.write(`${result.message}\n`);
         });
+    },
+    program,
+  );
+}
+
+function registerSkillsCommands(program: Command, app: AppContext): void {
+  registerCommand(
+    'skills',
+    (cmd) => {
+      cmd.description('Manage installed skills');
+
+      cmd.command('list').action(async () => {
+        const rows = app.skills.list().map((entry) =>
+          [entry.id, entry.enabled ? 'enabled' : 'disabled', entry.source, entry.isPreinstalled ? 'preinstalled' : 'user'].join('\t'),
+        );
+        app.stdout.write(`${rows.join('\n')}\n`);
+      });
+
+      cmd.command('info').argument('<id>', 'skill id').action(async (id: string) => {
+        let info;
+        try {
+          info = app.skills.info(id);
+        } catch (error) {
+          throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
+        }
+        const payload = {
+          id: info.id,
+          source: info.source,
+          pinnedCommit: info.pinnedCommit,
+          license: info.license,
+          description: info.descriptor.description,
+          enabled: info.enabled,
+          ...(info.resolvedFrom ? { resolvedFrom: info.resolvedFrom } : {}),
+        };
+        app.stdout.write(
+          `${JSON.stringify(payload, null, 2)}\n`,
+        );
+      });
+
+      cmd.command('install').argument('<source>', 'git url / local path / marketplace:name').action(async (source: string) => {
+        let entry;
+        try {
+          entry = app.skills.install(source);
+        } catch (error) {
+          throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
+        }
+        app.stdout.write(`Installed skill '${entry.id}' from ${entry.originalSource}\n`);
+      });
+
+      cmd.command('uninstall').argument('<id>', 'skill id').action(async (id: string) => {
+        let entry;
+        try {
+          entry = app.skills.uninstall(id);
+        } catch (error) {
+          throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
+        }
+        app.stdout.write(`Uninstalled skill '${entry.id}'\n`);
+      });
+
+      cmd.command('enable').argument('<id>', 'skill id').action(async (id: string) => {
+        let entry;
+        try {
+          entry = app.skills.enable(id);
+        } catch (error) {
+          throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
+        }
+        app.stdout.write(`Enabled skill '${entry.id}'\n`);
+      });
+
+      cmd.command('disable').argument('<id>', 'skill id').action(async (id: string) => {
+        let entry;
+        try {
+          entry = app.skills.disable(id);
+        } catch (error) {
+          throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
+        }
+        app.stdout.write(`Disabled skill '${entry.id}'\n`);
+      });
     },
     program,
   );
@@ -514,10 +598,12 @@ async function bootstrapApp(
     providerRegistry,
     agentRegistry,
     runner,
+    skills: new SkillsManager({ root: paths.root }),
     createdDirs: dirResult.created,
     cliChannel: undefined as unknown as CliChannel,
     replState: undefined,
   } satisfies AppContext;
+  app.skills.ensureInitialized();
 
   app.cliChannel = (input.channelFactory ?? defaultChannelFactory)({
     stdout: input.stdout,
@@ -629,6 +715,7 @@ async function executeTask(
   channel?: MessageChannel,
 ) {
   app.agentRegistry.get(input.agentId);
+  const prepared = await app.skills.prepareTask(input.task, { agentId: input.agentId });
   const outputChannel =
     channel ??
     (app.opts.channelFactory ?? defaultChannelFactory)({
@@ -646,6 +733,23 @@ async function executeTask(
       onInbound: async () => undefined,
     });
   }
+  if (prepared.directOutput) {
+    await outputChannel.send(input.retryOfSessionId ?? 'skill-direct', {
+      type: 'text',
+      content: prepared.directOutput,
+    });
+    return {
+      sessionId: input.retryOfSessionId ?? 'skill-direct',
+      ruleId: 'skill-direct',
+      provider: input.provider ?? 'skill-runtime',
+      model: input.model ?? 'skill-runtime',
+      events: [],
+      finalEvent: {
+        type: 'result' as const,
+        content: prepared.directOutput,
+      },
+    };
+  }
 
   let liveDispatch = Promise.resolve();
   const queueLiveEvent = (event: AgentEvent, sessionId: string): void => {
@@ -660,7 +764,7 @@ async function executeTask(
     );
   };
   const result = await app.runner.run({
-    task: input.task,
+    task: prepared.finalTask ?? input.task,
     agentId: input.agentId,
     ...(input.provider ? { provider: input.provider } : {}),
     ...(input.model ? { model: input.model } : {}),
@@ -768,7 +872,12 @@ async function handleSlashCommand(
     }
 
     case '/skills':
-      channel.writeLine('FEAT-010 尚未交付：当前仅保留 /skills 占位说明。');
+      channel.writeLine(
+        app.skills
+          .list()
+          .map((entry) => `${entry.id}\t${entry.enabled ? 'enabled' : 'disabled'}\t${entry.source}`)
+          .join('\n'),
+      );
       return true;
 
     case '/usage': {
@@ -1102,7 +1211,7 @@ function buildLogger(root?: string): CliLogger {
 function inferAction(argv: readonly string[]): RunCliAction {
   if (argv.length === 0) return 'repl';
   const first = argv[0];
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills') {
     return first;
   }
   if (first === 'help' || first === '--help') {

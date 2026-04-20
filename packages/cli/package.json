@@ -10,7 +10,8 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "resources"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -24,7 +25,8 @@
     "commander": "^12.1.0",
     "@haro/channel": "workspace:*",
     "@haro/channel-feishu": "workspace:*",
-    "@haro/channel-telegram": "workspace:*"
+    "@haro/channel-telegram": "workspace:*",
+    "@haro/skills": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
