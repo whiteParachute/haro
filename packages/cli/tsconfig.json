@@ -5,12 +5,42 @@
     "outDir": "./dist",
     "composite": true,
     "paths": {
-      "@haro/provider-codex": ["../provider-codex/dist/index.d.ts"],
-      "@clack/prompts": ["../../node_modules/@clack/prompts/dist/index.d.ts"],
-      "commander": ["../../node_modules/commander/typings/index.d.ts"]
+      "@haro/provider-codex": [
+        "../provider-codex/dist/index.d.ts"
+      ],
+      "@clack/prompts": [
+        "../../node_modules/@clack/prompts/dist/index.d.ts"
+      ],
+      "commander": [
+        "../../node_modules/commander/typings/index.d.ts"
+      ],
+      "@haro/channel": [
+        "../channel/dist/index.d.ts"
+      ],
+      "@haro/channel-feishu": [
+        "../channel-feishu/dist/index.d.ts"
+      ]
     }
   },
-  "references": [{ "path": "../core" }, { "path": "../provider-codex" }],
-  "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules"]
+  "references": [
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../channel"
+    },
+    {
+      "path": "../channel-feishu"
+    },
+    {
+      "path": "../provider-codex"
+    }
+  ],
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
 }

@@ -1,9 +1,23 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/cli" },
-    { "path": "./packages/providers" },
-    { "path": "./packages/provider-codex" }
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/channel"
+    },
+    {
+      "path": "./packages/channel-feishu"
+    },
+    {
+      "path": "./packages/cli"
+    },
+    {
+      "path": "./packages/providers"
+    },
+    {
+      "path": "./packages/provider-codex"
+    }
   ]
 }

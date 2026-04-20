@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentRegistry, AgentRunner, ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
+import type { ChannelRegistration, ManagedChannel } from '../src/channel.js';
 
 class StubProvider implements AgentProvider {
   readonly id = 'codex';
@@ -125,6 +126,12 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        createTestChannelRegistration({
+          id: 'feishu',
+          enabled: false,
+        }),
+      ],
     });
 
     stdin.write('/help\n');
@@ -204,6 +211,150 @@ describe('runCli [FEAT-006]', () => {
     expect(report).toHaveProperty('providers');
     expect(report).toHaveProperty('dataDir');
     expect(report).toHaveProperty('sqlite');
+  });
+
+  it('FEAT-008 AC1: channel list shows cli + feishu with enablement state', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-list-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['channel', 'list'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const output = chunks.join('');
+    expect(output).toContain('cli\tenabled\tbuiltin');
+    expect(output).toContain('feishu\tdisabled\tpackage');
+  });
+
+  it('FEAT-008 AC2: channel setup feishu persists enabled config via wizard', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-setup-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+
+    const runPromise = runCli({
+      argv: ['channel', 'setup', 'feishu'],
+      root,
+      stdin,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        createTestChannelRegistration({
+          id: 'feishu',
+          enabled: false,
+          setup: async () => ({
+            ok: true,
+            config: {
+              enabled: true,
+              appId: 'cli_test_app',
+              appSecret: 'secret_value',
+              transport: 'websocket',
+              sessionScope: 'per-user',
+            },
+            message: 'Feishu configured',
+          }),
+        }),
+      ],
+    });
+
+    const result = await runPromise;
+    expect(result.exitCode).toBe(0);
+    const config = JSON.parse(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
+      channels: { feishu: { enabled: boolean; appId: string; appSecret: string; sessionScope: string } };
+    };
+    expect(config.channels.feishu).toMatchObject({
+      enabled: true,
+      appId: 'cli_test_app',
+      appSecret: 'secret_value',
+      sessionScope: 'per-user',
+    });
+  });
+
+  it('FEAT-008 AC8: channel doctor feishu exits non-zero and prints reason on credential failure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-doctor-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['channel', 'doctor', 'feishu'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        createTestChannelRegistration({
+          id: 'feishu',
+          enabled: true,
+          doctor: async () => ({
+            ok: false,
+            code: '401',
+            message: 'Unauthorized',
+          }),
+        }),
+      ],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(chunks.join('')).toContain('Unauthorized');
+  });
+
+  it('FEAT-008 AC7: cli runtime still works when no external channel package is registered', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-no-feishu-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['run', 'hello'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'still works', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(chunks.join('')).toContain('still works');
   });
 
   it('/new clears the current continuation so the next task starts a fresh session context', async () => {
@@ -373,3 +524,44 @@ describe('runCli [FEAT-006]', () => {
     });
   });
 });
+
+function createTestChannelRegistration(input: {
+  id: string;
+  enabled: boolean;
+  setup?: ManagedChannel['setup'];
+  doctor?: ManagedChannel['doctor'];
+}): ChannelRegistration {
+  const channel: ManagedChannel = {
+    id: input.id,
+    async start() {
+      return undefined;
+    },
+    async stop() {
+      return undefined;
+    },
+    async send() {
+      return undefined;
+    },
+    capabilities() {
+      return {
+        streaming: false,
+        richText: false,
+        attachments: true,
+        threading: false,
+        requiresWebhook: false,
+      } as const;
+    },
+    async healthCheck() {
+      return true;
+    },
+    ...(input.setup ? { setup: input.setup } : {}),
+    ...(input.doctor ? { doctor: input.doctor } : {}),
+  };
+  return {
+    channel,
+    enabled: input.enabled,
+    removable: true,
+    source: 'package',
+    displayName: input.id,
+  };
+}

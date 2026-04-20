@@ -1,6 +1,6 @@
 # Phase 0 audit — 2026-04-19
 
-_Last refreshed: 2026-04-20 after the FEAT-006 implementation slice._
+_Last refreshed: 2026-04-20 after the FEAT-008 implementation slice._
 
 ## Scope and source of truth
 
@@ -16,9 +16,11 @@ Per `specs/README.md`, the `specs/` tree is the single source of truth. This ref
 
 ## Repository snapshot
 
-Current implementation surfaces in this tree are concentrated in four packages:
+Current implementation surfaces in this tree are concentrated in six packages:
 
 - `packages/core`
+- `packages/channel`
+- `packages/channel-feishu`
 - `packages/cli`
 - `packages/provider-codex`
 - `packages/providers`
@@ -29,9 +31,11 @@ Notable Phase-0-ready code now checked in under these packages includes:
 - agent schema + loader + registry
 - memory fabric
 - single-agent runtime (`packages/core/src/runtime/*`)
-- CLI runtime surface (`packages/cli/src/{index,channel}.ts`) wired to the FEAT-005 runner
+- shared channel protocol / registry / session store (`packages/channel/src/*`)
+- Feishu adapter (`packages/channel-feishu/src/*`)
+- CLI runtime surface (`packages/cli/src/{index,channel}.ts`) wired to the FEAT-005 runner and FEAT-008 channel commands
 
-There are still **no** checked-in packages for external channels, skills, or manual eat/shit flows.
+There are still **no** checked-in packages for Telegram, skills, or manual eat/shit flows.
 
 ## Phase 0 delivery matrix
 
@@ -43,7 +47,7 @@ There are still **no** checked-in packages for external channels, skills, or man
 | P0-5 单 Agent 执行循环 | `done` | `packages/core/src/runtime/*` implements `AgentRunner`, selection rules, session persistence, fallback logging, continuation restore, timeout handling, and runtime exports | Delivered |
 | P0-6 CLI 入口（cli channel） | `done` | `packages/cli/src/index.ts` implements commander-based `haro` / `haro run` / `haro model` / `haro config` / `haro doctor` / `haro status`; `packages/cli/src/channel.ts` implements a `CliChannel` + local `ChannelRegistry`; tests cover REPL slash commands, retry synthetic event, doctor, no-memory, `/new` continuation reset, and CLI-local model state | Delivered |
 | P0-7 Memory Fabric 独立能力 | `done` | `packages/core/src/memory/*` implements MemoryFabric, pending merge, maintenance, context lookup | Delivered |
-| P0-8 Channel 抽象层 + 飞书 | `approved` | No checked-in Feishu adapter / generic shared channel package beyond the FEAT-006 CLI-local surface | **Missing / not complete** |
+| P0-8 Channel 抽象层 + 飞书 | `done` | `packages/channel/src/*` implements shared channel protocol / registry / session store; `packages/channel-feishu/src/*` implements the Feishu adapter; `packages/cli/src/index.ts` exposes `haro channel list/enable/disable/remove/doctor/setup` | Delivered |
 | P0-9 Telegram Channel | `approved` | No checked-in Telegram adapter/package found in current tree | **Missing / not complete** |
 | P0-10 Skills 子系统 + 15 预装 | `approved` | No checked-in skills runtime/manifest/preinstalled packaging found in current tree | **Missing / not complete** |
 | P0-11 手动 eat / shit | `approved` | No checked-in eat/shit CLI or skill runtime integration found in current tree | **Missing / not complete** |
@@ -93,19 +97,62 @@ Current checked-in CLI coverage now includes:
   - shipped binary version path
   - shipped binary config validation failure path
 
+## Evidence for FEAT-008 landing
+
+### 1. Shared channel layer is now checked in
+
+What exists now:
+
+- `packages/channel/src/protocol.ts` defines the shared `MessageChannel` contract
+- `packages/channel/src/registry.ts` implements `ChannelRegistry` with `register/get/list/enable/disable/remove`
+- `packages/channel/src/session-store.ts` persists channel session mapping to `~/.haro/channels/<id>/sessions.sqlite`, attempts WAL, and warns when SQLite falls back
+- `packages/cli/src/channel.ts` now re-exports the shared channel layer instead of carrying a CLI-only copy
+
+### 2. Feishu adapter is now checked in
+
+What exists now:
+
+- `packages/channel-feishu/src/client.ts` adapts the lark-bridge websocket client pattern around the official Feishu Node SDK
+- `packages/channel-feishu/src/feishu-channel.ts` implements `FeishuChannel` with:
+  - websocket event intake
+  - `per-chat` / `per-user` session mapping
+  - stable attachment metadata in `meta.attachments`
+  - `state.json` redaction (no `tenant_access_token` / `appSecret`)
+  - `doctor()` / `setup()` support for the CLI channel command family
+
+### 3. FEAT-008 CLI surface is now wired
+
+What exists now:
+
+- `packages/cli/src/index.ts` exposes `haro channel list/enable/disable/remove/doctor/setup`
+- startup uses the shared registry and only starts enabled external channels
+- the Feishu package is treated as optional at startup, preserving CLI-only execution when the package is unavailable
+
+### 4. FEAT-008 verification coverage is now present
+
+Current checked-in FEAT-008 coverage now includes:
+
+- `packages/channel/test/channel-registry.test.ts`
+- `packages/channel-feishu/test/feishu-inbound-mapping.test.ts`
+- `packages/channel-feishu/test/session-mapping.test.ts`
+- `packages/channel-feishu/test/state-redaction.test.ts`
+- `packages/cli/test/cli.test.ts`
+  - `channel list`
+  - `channel setup feishu`
+  - `channel doctor feishu`
+  - CLI-only pluggability when no external channel package is registered
+
 ## Remaining confirmed gaps
 
-The remaining implementation gap now starts at FEAT-008.
+The remaining implementation gap now starts at FEAT-009.
 
-### 1. Shared channel layer + external adapters are still not checked in
+### 1. Telegram adapter is still not checked in
 
 The current monorepo still has no committed implementation for:
 
-- the broader shared channel abstraction / registry expected to serve Feishu and Telegram (`FEAT-008`)
-- Feishu adapter code
 - Telegram adapter code
-
-The FEAT-006 CLI-local channel surface is enough to satisfy the approved CLI contract, but it is **not** the rest of P0-8/P0-9.
+- long-polling runtime wiring
+- private-streaming / group fallback handling
 
 ### 2. Skills + eat/shit are still not checked in
 
@@ -119,26 +166,26 @@ No committed implementation was found for:
 
 ### FEAT-006 status is now reconciled
 
-`specs/phase-0/FEAT-006-cli-entry-and-cli-channel.md` now matches the shipped repo evidence and has been advanced to `done`. The next material delivery gap in Phase 0 therefore starts at FEAT-008.
+`specs/phase-0/FEAT-008-channel-abstraction-and-feishu.md` now matches the shipped repo evidence and has been advanced to `done`. The next material delivery gap in Phase 0 therefore starts at FEAT-009.
 
 ### No new cross-spec contradiction found
 
-I still did **not** find a clear case where two specs disagree and require immediate arbitration. The practical issue is now narrowed further: FEAT-006 has landed in code, while FEAT-008 through FEAT-011 remain unimplemented.
+I still did **not** find a clear case where two specs disagree and require immediate arbitration. The practical issue is now narrowed further: FEAT-008 has landed in code, while FEAT-009 through FEAT-011 remain unimplemented.
 
 ## Verification snapshot
 
-Verification was rerun in the current worktree after the FEAT-006 changes landed.
+Verification was rerun in the current worktree after the FEAT-008 changes landed.
 
 - `pnpm lint` ✅
 - `pnpm test` ✅
 - `pnpm build` ✅
 - manual REPL Ctrl-C shutdown validation ✅
 
-These checks cover the FEAT-006 CLI surface plus the existing FEAT-001 / FEAT-003 / FEAT-004 / FEAT-005 / FEAT-007 foundations already present in this branch.
+These checks cover the FEAT-008 channel abstraction + Feishu slice plus the existing FEAT-001 / FEAT-003 / FEAT-004 / FEAT-005 / FEAT-006 / FEAT-007 foundations already present in this branch.
 
 ## Recommended next steps
 
-1. Advance the shared channel abstraction and Feishu adapter work under FEAT-008.
-2. Add the Telegram adapter under FEAT-009.
-3. Add the skills subsystem and then wire `eat` / `shit` through it.
-4. After FEAT-008+ land, rerun `pnpm lint`, `pnpm test`, and `pnpm build`, then refresh this audit before marking Phase 0 complete.
+1. Add the Telegram adapter under FEAT-009.
+2. Add the skills subsystem under FEAT-010.
+3. Wire `eat` / `shit` through the FEAT-010 skill runtime under FEAT-011.
+4. After each remaining slice lands, rerun `pnpm lint`, `pnpm test`, and `pnpm build`, then refresh this audit before advancing the next gate.

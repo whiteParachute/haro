@@ -1,11 +1,11 @@
 ---
 id: FEAT-008
 title: Channel 抽象层 + 飞书 adapter（复用 lark-bridge）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-19
+updated: 2026-04-20
 related:
   - ../channel-protocol.md
   - ../../docs/modules/channel-layer.md
@@ -120,3 +120,7 @@ grep -rE "channelId\s*===|channel\.id\s*===" packages/core packages/cli packages
   - Q3 → 飞书 Card / rich text 推迟到 Phase 1；Phase 0 统一 Markdown/文本降级
   - Q4 → Phase 0 不做飞书增量编辑；`capabilities.streaming = false`，规避未验证的 edit 节流策略
   - Q5 → `state.json` 禁止持久化 access token；凭据只从 config/env 读取
+- 2026-04-20: whiteParachute — done
+  - `packages/channel` 落地共享 `MessageChannel` 协议、`ChannelRegistry`、CLI 复用的 `CliChannel`、以及带 WAL 降级告警的 `ChannelSessionStore`
+  - `packages/channel-feishu` 落地 `FeishuChannel`：复用 lark-bridge 的 websocket client 思路对接飞书事件流，保留 `InboundMessage.content` 原文、把稳定附件标识落到 `meta.attachments`，并保证 `state.json` 仅存非敏感运行态
+  - `packages/cli/src/index.ts` 挂载 `haro channel list/enable/disable/remove/doctor/setup` 命令族，支持按配置启停 Feishu；`packages/cli/test/cli.test.ts` 与 `packages/channel-feishu/test/*.test.ts` 补齐 registry / setup / doctor / inbound mapping / session scope / redaction / pluggability 覆盖
