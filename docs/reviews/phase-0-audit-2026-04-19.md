@@ -1,6 +1,6 @@
 # Phase 0 audit — 2026-04-19
 
-_Last refreshed: 2026-04-20 after the FEAT-008 implementation slice._
+_Last refreshed: 2026-04-20 after the FEAT-009 implementation slice._
 
 ## Scope and source of truth
 
@@ -16,11 +16,12 @@ Per `specs/README.md`, the `specs/` tree is the single source of truth. This ref
 
 ## Repository snapshot
 
-Current implementation surfaces in this tree are concentrated in six packages:
+Current implementation surfaces in this tree are concentrated in seven packages:
 
 - `packages/core`
 - `packages/channel`
 - `packages/channel-feishu`
+- `packages/channel-telegram`
 - `packages/cli`
 - `packages/provider-codex`
 - `packages/providers`
@@ -33,9 +34,10 @@ Notable Phase-0-ready code now checked in under these packages includes:
 - single-agent runtime (`packages/core/src/runtime/*`)
 - shared channel protocol / registry / session store (`packages/channel/src/*`)
 - Feishu adapter (`packages/channel-feishu/src/*`)
-- CLI runtime surface (`packages/cli/src/{index,channel}.ts`) wired to the FEAT-005 runner and FEAT-008 channel commands
+- Telegram adapter (`packages/channel-telegram/src/*`)
+- CLI runtime surface (`packages/cli/src/{index,channel}.ts`) wired to the FEAT-005 runner and FEAT-008/009 channel commands
 
-There are still **no** checked-in packages for Telegram, skills, or manual eat/shit flows.
+There are still **no** checked-in packages for skills or manual eat/shit flows.
 
 ## Phase 0 delivery matrix
 
@@ -48,7 +50,7 @@ There are still **no** checked-in packages for Telegram, skills, or manual eat/s
 | P0-6 CLI 入口（cli channel） | `done` | `packages/cli/src/index.ts` implements commander-based `haro` / `haro run` / `haro model` / `haro config` / `haro doctor` / `haro status`; `packages/cli/src/channel.ts` implements a `CliChannel` + local `ChannelRegistry`; tests cover REPL slash commands, retry synthetic event, doctor, no-memory, `/new` continuation reset, and CLI-local model state | Delivered |
 | P0-7 Memory Fabric 独立能力 | `done` | `packages/core/src/memory/*` implements MemoryFabric, pending merge, maintenance, context lookup | Delivered |
 | P0-8 Channel 抽象层 + 飞书 | `done` | `packages/channel/src/*` implements shared channel protocol / registry / session store; `packages/channel-feishu/src/*` implements the Feishu adapter; `packages/cli/src/index.ts` exposes `haro channel list/enable/disable/remove/doctor/setup` | Delivered |
-| P0-9 Telegram Channel | `approved` | No checked-in Telegram adapter/package found in current tree | **Missing / not complete** |
+| P0-9 Telegram Channel | `done` | `packages/channel-telegram/src/*` implements the Telegram adapter with long polling, private-stream draft support, attachment metadata preservation, and CLI wiring through the FEAT-008 channel command family | Delivered |
 | P0-10 Skills 子系统 + 15 预装 | `approved` | No checked-in skills runtime/manifest/preinstalled packaging found in current tree | **Missing / not complete** |
 | P0-11 手动 eat / shit | `approved` | No checked-in eat/shit CLI or skill runtime integration found in current tree | **Missing / not complete** |
 
@@ -142,19 +144,52 @@ Current checked-in FEAT-008 coverage now includes:
   - `channel doctor feishu`
   - CLI-only pluggability when no external channel package is registered
 
+## Evidence for FEAT-009 landing
+
+### 1. Telegram adapter is now checked in
+
+What exists now:
+
+- `packages/channel-telegram/src/telegram-channel.ts` implements `TelegramChannel`
+- `packages/channel-telegram/src/transport.ts` wraps `grammy` long polling, `@grammyjs/auto-retry`, and `@grammyjs/stream`
+- `packages/channel-telegram/src/config.ts` resolves env-interpolated `botToken`, transport, allowed updates, and session scope
+
+### 2. Private-stream / group-fallback behavior is now encoded
+
+What exists now:
+
+- private chats accept text deltas and feed them into the Telegram stream plugin
+- group chats ignore delta drafts and only receive the final response
+- non-streaming providers still yield a single final message path
+
+### 3. FEAT-009 verification coverage is now present
+
+Current checked-in FEAT-009 coverage now includes:
+
+- `packages/channel-telegram/test/telegram-inbound.test.ts`
+- `packages/channel-telegram/test/session-scope.test.ts`
+- `packages/channel-telegram/test/stream-mode.test.ts`
+- `packages/channel-telegram/test/attachment-meta.test.ts`
+- `packages/cli/test/cli.test.ts`
+  - `channel setup telegram`
+  - `channel doctor telegram`
+  - pluggability when Telegram is absent but Feishu remains registered
+- `packages/core/test/runtime-runner.test.ts`
+  - event callback ordering for streaming-capable channels
+
 ## Remaining confirmed gaps
 
-The remaining implementation gap now starts at FEAT-009.
+The remaining implementation gap now starts at FEAT-010.
 
-### 1. Telegram adapter is still not checked in
+### 1. Skills subsystem is still not checked in
 
 The current monorepo still has no committed implementation for:
 
-- Telegram adapter code
-- long-polling runtime wiring
-- private-streaming / group fallback handling
+- skills runtime / install / uninstall / info / enable / disable
+- preinstalled skill expansion and manifest generation
+- usage tracking / trigger routing
 
-### 2. Skills + eat/shit are still not checked in
+### 2. Manual eat/shit are still not checked in
 
 No committed implementation was found for:
 
@@ -166,26 +201,25 @@ No committed implementation was found for:
 
 ### FEAT-006 status is now reconciled
 
-`specs/phase-0/FEAT-008-channel-abstraction-and-feishu.md` now matches the shipped repo evidence and has been advanced to `done`. The next material delivery gap in Phase 0 therefore starts at FEAT-009.
+`specs/phase-0/FEAT-009-telegram-channel.md` now matches the shipped repo evidence and has been advanced to `done`. The next material delivery gap in Phase 0 therefore starts at FEAT-010.
 
 ### No new cross-spec contradiction found
 
-I still did **not** find a clear case where two specs disagree and require immediate arbitration. The practical issue is now narrowed further: FEAT-008 has landed in code, while FEAT-009 through FEAT-011 remain unimplemented.
+I still did **not** find a clear case where two specs disagree and require immediate arbitration. The practical issue is now narrowed further: FEAT-009 has landed in code, while FEAT-010 and FEAT-011 remain unimplemented.
 
 ## Verification snapshot
 
-Verification was rerun in the current worktree after the FEAT-008 changes landed.
+Verification was rerun in the current worktree after the FEAT-009 changes landed.
 
 - `pnpm lint` ✅
 - `pnpm test` ✅
 - `pnpm build` ✅
 - manual REPL Ctrl-C shutdown validation ✅
 
-These checks cover the FEAT-008 channel abstraction + Feishu slice plus the existing FEAT-001 / FEAT-003 / FEAT-004 / FEAT-005 / FEAT-006 / FEAT-007 foundations already present in this branch.
+These checks cover the FEAT-009 Telegram slice plus the existing FEAT-001 / FEAT-003 / FEAT-004 / FEAT-005 / FEAT-006 / FEAT-007 / FEAT-008 foundations already present in this branch.
 
 ## Recommended next steps
 
-1. Add the Telegram adapter under FEAT-009.
-2. Add the skills subsystem under FEAT-010.
-3. Wire `eat` / `shit` through the FEAT-010 skill runtime under FEAT-011.
-4. After each remaining slice lands, rerun `pnpm lint`, `pnpm test`, and `pnpm build`, then refresh this audit before advancing the next gate.
+1. Add the skills subsystem under FEAT-010.
+2. Wire `eat` / `shit` through the FEAT-010 skill runtime under FEAT-011.
+3. After each remaining slice lands, rerun `pnpm lint`, `pnpm test`, and `pnpm build`, then refresh this audit before advancing the next gate.

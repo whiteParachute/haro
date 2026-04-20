@@ -193,6 +193,49 @@ describe('AgentRunner [FEAT-005]', () => {
     expect(state.pendingWork).toEqual([]);
   });
 
+  it('emits events through the optional onEvent callback in provider order', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runner-events-'));
+    tempRoots.push(root);
+
+    const provider = new ScriptedProvider({
+      id: 'codex',
+      models: [{ id: 'codex-default', created: 1, maxContextTokens: 32_000 }],
+      handler: async function* (): AsyncGenerator<AgentEvent, void, void> {
+        yield { type: 'text', content: 'chunk-1', delta: true };
+        yield { type: 'text', content: 'chunk-2', delta: true };
+        yield { type: 'result', content: 'final', responseId: 'resp-1' };
+      },
+    });
+    const providerRegistry = new ProviderRegistry();
+    providerRegistry.register(provider);
+    const runner = new AgentRunner({
+      agentRegistry: createAgentRegistry({
+        defaultProvider: 'codex',
+        defaultModel: 'codex-default',
+      }),
+      providerRegistry,
+      root,
+      loadConfig: () => TEST_CONFIG,
+      logger: silentLogger,
+    });
+
+    const seen: AgentEvent[] = [];
+    const result = await runner.run({
+      agentId: 'haro-assistant',
+      task: 'stream this',
+      onEvent: (event) => {
+        seen.push(event);
+      },
+    });
+
+    expect(result.finalEvent).toMatchObject({ type: 'result', content: 'final' });
+    expect(seen).toEqual([
+      { type: 'text', content: 'chunk-1', delta: true },
+      { type: 'text', content: 'chunk-2', delta: true },
+      { type: 'result', content: 'final', responseId: 'resp-1' },
+    ]);
+  });
+
   it('falls back to the next provider and records provider_fallback_log', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-runner-fallback-'));
     tempRoots.push(root);

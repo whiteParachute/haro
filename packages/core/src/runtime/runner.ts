@@ -171,6 +171,7 @@ export class AgentRunner {
             sessionContext,
             timeoutMs,
             db,
+            onEvent: input.onEvent,
           });
           events.push(...outcome.events);
           finalEvent = outcome.terminal;
@@ -259,6 +260,7 @@ export class AgentRunner {
     sessionContext: { sessionId: string; previousResponseId?: string };
     timeoutMs: number;
     db: Database.Database;
+    onEvent?: (event: AgentEvent, sessionId: string) => void;
   }): Promise<QueryAttemptOutcome> {
     const iterator = input.provider.query({
       prompt: input.task,
@@ -275,6 +277,7 @@ export class AgentRunner {
       if (terminalCommitted) return false;
       this.insertEvent(input.db, input.sessionId, event);
       events.push(event);
+      input.onEvent?.(event, input.sessionId);
       if (event.type === 'result') {
         terminalCommitted = true;
         this.updateContextRef(input.db, input.sessionId, event.responseId);

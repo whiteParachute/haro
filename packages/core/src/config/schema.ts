@@ -75,6 +75,9 @@ export const haroConfigSchema = z
           .extend({
             botToken: z.string().optional(),
             mode: z.string().optional(),
+            transport: z.string().optional(),
+            sessionScope: z.string().optional(),
+            allowedUpdates: z.array(z.string()).optional(),
           })
           .optional(),
       })

@@ -70,6 +70,7 @@ export interface RunAgentInput {
   noMemory?: boolean;
   retryOfSessionId?: string;
   continueLatestSession?: boolean;
+  onEvent?: (event: AgentEvent, sessionId: string) => void;
 }
 
 export interface RunAgentResult {

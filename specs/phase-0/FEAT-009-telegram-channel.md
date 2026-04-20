@@ -1,11 +1,11 @@
 ---
 id: FEAT-009
 title: Telegram Channel adapter（grammy + 长轮询）
-status: approved
+status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-19
+updated: 2026-04-20
 related:
   - ../channel-protocol.md
   - ../../docs/modules/channel-layer.md
@@ -103,3 +103,7 @@ FEAT-008 交付 Channel 抽象和飞书 adapter。Telegram 是第二个外部消
   - Q2 → 不手写 500ms edit 节流；Phase 0 改为官方 `@grammyjs/stream` + `@grammyjs/auto-retry`，仅在私聊启用
   - Q3 → 不新增 `telegram-setup` 预装 skill；继续由 `haro channel setup telegram` 承担接入向导
   - Q4 → 附件不长期保存临时 URL，只保留 `file_id/file_unique_id`，下载时再临时换取 URL
+- 2026-04-20: whiteParachute — done
+  - `packages/channel-telegram` 落地 `TelegramChannel`，基于 `grammy` + `@grammyjs/auto-retry` + `@grammyjs/stream` 提供长轮询接入、私聊流式草稿、群聊终态降级、`getMe()` 健康检查，以及 `file_id/file_unique_id` 附件元数据保真
+  - `packages/core/src/runtime/{types,runner}.ts` 为 FEAT-009 增加可选事件回调，使流式 text delta 能在不修改 FEAT-005/006 目标边界的前提下经由通用 channel 路径实时透传
+  - `packages/cli/src/index.ts` 扩展可选 Telegram 包装载；`packages/cli/test/cli.test.ts` 与 `packages/channel-telegram/test/*.test.ts` 补齐 setup / doctor / pluggability / session-scope / attachment-meta / stream-mode 覆盖

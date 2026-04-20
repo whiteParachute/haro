@@ -19,7 +19,7 @@ import {
 import { createCodexProvider } from '@haro/provider-codex';
 import * as haroConfig from '@haro/core/config';
 import type { HaroConfig, LoadedConfig } from '@haro/core/config';
-import type { AgentProvider } from '@haro/core/provider';
+import type { AgentEvent, AgentProvider } from '@haro/core/provider';
 import {
   ChannelRegistry,
   CliChannel,
@@ -629,16 +629,6 @@ async function executeTask(
   channel?: MessageChannel,
 ) {
   app.agentRegistry.get(input.agentId);
-  const result = await app.runner.run({
-    task: input.task,
-    agentId: input.agentId,
-    ...(input.provider ? { provider: input.provider } : {}),
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.noMemory ? { noMemory: true } : {}),
-    ...(input.retryOfSessionId ? { retryOfSessionId: input.retryOfSessionId } : {}),
-    ...(input.continueLatestSession === false ? { continueLatestSession: false } : {}),
-  });
-
   const outputChannel =
     channel ??
     (app.opts.channelFactory ?? defaultChannelFactory)({
@@ -657,8 +647,35 @@ async function executeTask(
     });
   }
 
+  let liveDispatch = Promise.resolve();
+  const queueLiveEvent = (event: AgentEvent, sessionId: string): void => {
+    if (event.type !== 'text' || event.delta !== true) return;
+    if (!outputChannel.capabilities().streaming) return;
+    liveDispatch = liveDispatch.then(() =>
+      outputChannel.send(sessionId, {
+        type: 'text',
+        content: event.content,
+        delta: true,
+      }),
+    );
+  };
+  const result = await app.runner.run({
+    task: input.task,
+    agentId: input.agentId,
+    ...(input.provider ? { provider: input.provider } : {}),
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.noMemory ? { noMemory: true } : {}),
+    ...(input.retryOfSessionId ? { retryOfSessionId: input.retryOfSessionId } : {}),
+    ...(input.continueLatestSession === false ? { continueLatestSession: false } : {}),
+    onEvent: queueLiveEvent,
+  });
+  await liveDispatch;
+
   for (const event of result.events) {
     if (event.type === 'text') {
+      if (event.delta === true && outputChannel.capabilities().streaming) {
+        continue;
+      }
       await outputChannel.send(result.sessionId, {
         type: 'text',
         content: event.content,
@@ -866,36 +883,58 @@ async function createDefaultAdditionalChannels(input: {
   createSessionId?: () => string;
   argv?: readonly string[];
 }): Promise<readonly ChannelRegistration[]> {
-  const feishuConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'feishu');
   const firstArg = input.argv?.[0];
-  const shouldLoadFeishu = firstArg === 'channel' || feishuConfig.enabled === true;
-  if (!shouldLoadFeishu) {
-    return [];
+  const registrations: ChannelRegistration[] = [];
+
+  const feishuConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'feishu');
+  if (firstArg === 'channel' || feishuConfig.enabled === true) {
+    try {
+      const { FeishuChannel } = await import('@haro/channel-feishu');
+      registrations.push({
+        channel: new FeishuChannel({
+          root: input.root,
+          logger: input.logger,
+          config: feishuConfig,
+          createSessionId: input.createSessionId,
+        }),
+        enabled: feishuConfig.enabled === true,
+        removable: true,
+        source: 'package',
+        displayName: 'Feishu',
+      });
+    } catch (error) {
+      input.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Optional channel package @haro/channel-feishu is unavailable; continuing without Feishu',
+      );
+    }
   }
-  let FeishuChannelCtor: typeof import('@haro/channel-feishu').FeishuChannel;
-  try {
-    ({ FeishuChannel: FeishuChannelCtor } = await import('@haro/channel-feishu'));
-  } catch (error) {
-    input.logger.warn(
-      { error: error instanceof Error ? error.message : String(error) },
-      'Optional channel package @haro/channel-feishu is unavailable; continuing without Feishu',
-    );
-    return [];
+
+  const telegramConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'telegram');
+  if (firstArg === 'channel' || telegramConfig.enabled === true) {
+    try {
+      const { TelegramChannel } = await import('@haro/channel-telegram');
+      registrations.push({
+        channel: new TelegramChannel({
+          root: input.root,
+          logger: input.logger,
+          config: telegramConfig,
+          createSessionId: input.createSessionId,
+        }),
+        enabled: telegramConfig.enabled === true,
+        removable: true,
+        source: 'package',
+        displayName: 'Telegram',
+      });
+    } catch (error) {
+      input.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Optional channel package @haro/channel-telegram is unavailable; continuing without Telegram',
+      );
+    }
   }
-  return [
-    {
-      channel: new FeishuChannelCtor({
-        root: input.root,
-        logger: input.logger,
-        config: feishuConfig,
-        createSessionId: input.createSessionId,
-      }),
-      enabled: feishuConfig.enabled === true,
-      removable: true,
-      source: 'package',
-      displayName: 'Feishu',
-    },
-  ];
+
+  return registrations;
 }
 
 function readChannelConfig(config: { channels?: HaroConfig['channels'] }, id: string): Record<string, unknown> {

@@ -11,6 +11,9 @@
       "path": "./packages/channel-feishu"
     },
     {
+      "path": "./packages/channel-telegram"
+    },
+    {
       "path": "./packages/cli"
     },
     {

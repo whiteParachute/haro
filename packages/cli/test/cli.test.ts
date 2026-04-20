@@ -172,6 +172,7 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
     });
 
     stdin.write('你好，帮我总结一下\n');
@@ -203,6 +204,7 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
     });
 
     expect(result.exitCode).toBe(1);
@@ -233,12 +235,23 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        createTestChannelRegistration({
+          id: 'feishu',
+          enabled: false,
+        }),
+        createTestChannelRegistration({
+          id: 'telegram',
+          enabled: false,
+        }),
+      ],
     });
 
     expect(result.exitCode).toBe(0);
     const output = chunks.join('');
     expect(output).toContain('cli\tenabled\tbuiltin');
     expect(output).toContain('feishu\tdisabled\tpackage');
+    expect(output).toContain('telegram\tdisabled\tpackage');
   });
 
   it('FEAT-008 AC2: channel setup feishu persists enabled config via wizard', async () => {
@@ -357,6 +370,125 @@ describe('runCli [FEAT-006]', () => {
     expect(chunks.join('')).toContain('still works');
   });
 
+  it('FEAT-009 AC1: channel setup telegram persists enabled config via existing channel commands', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-telegram-setup-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+
+    const result = await runCli({
+      argv: ['channel', 'setup', 'telegram'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        createTestChannelRegistration({
+          id: 'telegram',
+          enabled: false,
+          setup: async () => ({
+            ok: true,
+            config: {
+              enabled: true,
+              botToken: '${TELEGRAM_BOT_TOKEN}',
+              transport: 'long-polling',
+              allowedUpdates: ['message'],
+              sessionScope: 'per-user',
+            },
+            message: 'Telegram configured',
+          }),
+        }),
+      ],
+    });
+
+    expect(result.exitCode).toBe(0);
+    const config = JSON.parse(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
+      channels: { telegram: { enabled: boolean; botToken: string; transport: string; sessionScope: string } };
+    };
+    expect(config.channels.telegram).toMatchObject({
+      enabled: true,
+      botToken: '${TELEGRAM_BOT_TOKEN}',
+      transport: 'long-polling',
+      sessionScope: 'per-user',
+    });
+  });
+
+  it('FEAT-009 AC5: channel doctor telegram exits non-zero and prints Unauthorized on bad token', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-telegram-doctor-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['channel', 'doctor', 'telegram'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        createTestChannelRegistration({
+          id: 'telegram',
+          enabled: true,
+          doctor: async () => ({
+            ok: false,
+            code: '401',
+            message: 'Unauthorized',
+          }),
+        }),
+      ],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(chunks.join('')).toContain('Unauthorized');
+  });
+
+  it('FEAT-009 AC7: cli still works when telegram package is absent but feishu remains registered', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-telegram-plug-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['channel', 'list'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        createTestChannelRegistration({
+          id: 'feishu',
+          enabled: true,
+        }),
+      ],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(chunks.join('')).toContain('feishu\tenabled\tpackage');
+    expect(chunks.join('')).not.toContain('telegram');
+  });
+
   it('/new clears the current continuation so the next task starts a fresh session context', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-new-'));
     roots.push(root);
@@ -383,6 +515,7 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
     });
 
     stdin.write('第一轮\n');
@@ -421,6 +554,7 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
     });
 
     stdin.write('第一次任务\n');

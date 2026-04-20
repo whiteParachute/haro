@@ -19,6 +19,9 @@
       ],
       "@haro/channel-feishu": [
         "../channel-feishu/dist/index.d.ts"
+      ],
+      "@haro/channel-telegram": [
+        "../channel-telegram/dist/index.d.ts"
       ]
     }
   },
@@ -31,6 +34,9 @@
     },
     {
       "path": "../channel-feishu"
+    },
+    {
+      "path": "../channel-telegram"
     },
     {
       "path": "../provider-codex"

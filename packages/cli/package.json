@@ -23,7 +23,8 @@
     "@haro/provider-codex": "workspace:*",
     "commander": "^12.1.0",
     "@haro/channel": "workspace:*",
-    "@haro/channel-feishu": "workspace:*"
+    "@haro/channel-feishu": "workspace:*",
+    "@haro/channel-telegram": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
