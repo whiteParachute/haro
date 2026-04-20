@@ -6,6 +6,7 @@ import type { AgentRegistry } from '../agent/registry.js';
 import { loadHaroConfig, type LoadedConfig } from '../config/loader.js';
 import { initHaroDatabase } from '../db/init.js';
 import { createLogger, type HaroLogger } from '../logger/index.js';
+import { createMemoryFabric, type MemoryFabric } from '../memory/index.js';
 import { buildHaroPaths } from '../paths.js';
 import type {
   AgentErrorEvent,
@@ -31,6 +32,8 @@ interface MemoryWrapupHook {
   (input: { sessionId: string; agentId: string; task: string; result: string }): Promise<void>;
 }
 
+type MemoryRuntime = Pick<MemoryFabric, 'contextFor' | 'wrapupSession'>;
+
 export interface AgentRunnerOptions {
   agentRegistry: AgentRegistry;
   providerRegistry: ProviderRegistry;
@@ -43,6 +46,7 @@ export interface AgentRunnerOptions {
   loadConfig?: () => LoadedConfig;
   taskTimeoutMs?: number;
   memoryWrapupHook?: MemoryWrapupHook;
+  memoryFabric?: MemoryRuntime;
 }
 
 interface SessionStateRecord {
@@ -78,6 +82,8 @@ export class AgentRunner {
   private readonly now: () => Date;
   private readonly createSessionId: () => string;
   private readonly logger: Pick<HaroLogger, 'debug' | 'info' | 'warn' | 'error'>;
+  private memoryFabric: MemoryRuntime | null | undefined;
+  private memoryFabricKey?: string;
 
   constructor(options: AgentRunnerOptions) {
     this.options = options;
@@ -154,27 +160,72 @@ export class AgentRunner {
           events.push(unavailable);
           finalEvent = unavailable;
         } else {
-          const sessionContext = this.loadContinuationContext(
+          let sessionContext = this.loadContinuationContext(
             db,
             agent.id,
             candidate.provider,
             sessionId,
             input.continueLatestSession !== false,
           );
-          const outcome = await this.runAttempt({
-            provider,
-            sessionId,
-            task: input.task,
-            systemPrompt: agent.systemPrompt,
-            model: candidate.model,
-            tools: agent.tools,
-            sessionContext,
-            timeoutMs,
-            db,
-            onEvent: input.onEvent,
-          });
-          events.push(...outcome.events);
-          finalEvent = outcome.terminal;
+          let contextResetRetried = false;
+          let attemptActive = true;
+
+          while (attemptActive) {
+            const outcome = await this.runAttempt({
+              provider,
+              sessionId,
+              task: input.task,
+              systemPrompt: this.buildSystemPrompt({
+                agentId: agent.id,
+                basePrompt: agent.systemPrompt,
+                task: input.task,
+                noMemory: input.noMemory === true,
+                config,
+              }),
+              model: candidate.model,
+              tools: agent.tools,
+              sessionContext,
+              timeoutMs,
+              db,
+              onEvent: input.onEvent,
+            });
+            events.push(...outcome.events);
+            finalEvent = outcome.terminal;
+
+            if (
+              !contextResetRetried &&
+              finalEvent.type === 'error' &&
+              finalEvent.code === 'context_too_long' &&
+              finalEvent.hint === 'save-and-clear'
+            ) {
+              contextResetRetried = true;
+              await this.handleSaveAndClear({
+                config,
+                sessionId,
+                agentId: agent.id,
+                task: input.task,
+                model: candidate.model,
+                provider: candidate.provider,
+                events: outcome.events,
+                noMemory: input.noMemory === true,
+              });
+              sessionContext = { sessionId };
+              continue;
+            }
+
+            attemptActive = false;
+          }
+        }
+
+        if (!finalEvent) {
+          finalEvent = {
+            type: 'error',
+            code: 'runtime_error',
+            message: `Provider '${candidate.provider}' finished without a terminal event`,
+            retryable: false,
+          };
+          this.insertEvent(db, sessionId, finalEvent);
+          events.push(finalEvent);
         }
 
         if (finalEvent.type === 'result') {
@@ -561,6 +612,96 @@ export class AgentRunner {
     await this.options.memoryWrapupHook(wrapup);
   }
 
+  private buildSystemPrompt(input: {
+    agentId: string;
+    basePrompt: string;
+    task: string;
+    noMemory: boolean;
+    config: LoadedConfig;
+  }): string {
+    if (input.noMemory) return input.basePrompt;
+    const memoryFabric = this.resolveMemoryFabric(input.config);
+    if (!memoryFabric) return input.basePrompt;
+
+    const context = memoryFabric.contextFor({
+      agentId: input.agentId,
+      query: input.task,
+    });
+    if (context.items.length === 0) return input.basePrompt;
+
+    const memorySection = [
+      '<memory-context>',
+      ...context.items.map((item) => {
+        const datePrefix = item.date ? `[${item.date}] ` : '';
+        return `- ${datePrefix}${item.summary} → ${item.sourceFile}`;
+      }),
+      '</memory-context>',
+    ].join('\n');
+
+    return input.basePrompt.length > 0
+      ? `${input.basePrompt}\n\n${memorySection}`
+      : memorySection;
+  }
+
+  private async handleSaveAndClear(input: {
+    config: LoadedConfig;
+    sessionId: string;
+    agentId: string;
+    task: string;
+    provider: string;
+    model: string;
+    events: readonly AgentEvent[];
+    noMemory: boolean;
+  }): Promise<void> {
+    if (input.noMemory) {
+      this.logger.warn?.(
+        { sessionId: input.sessionId, provider: input.provider, model: input.model },
+        'context_too_long received under --no-memory; retrying with cleared continuation only',
+      );
+      return;
+    }
+
+    const memoryFabric = this.resolveMemoryFabric(input.config);
+    if (!memoryFabric) {
+      this.logger.warn?.(
+        { sessionId: input.sessionId, provider: input.provider, model: input.model },
+        'context_too_long received but MemoryFabric is unavailable; retrying with cleared continuation only',
+      );
+      return;
+    }
+
+    await memoryFabric.wrapupSession({
+      scope: 'agent',
+      agentId: input.agentId,
+      wrapupId: input.sessionId,
+      topic: `context-too-long-${slugPreview(input.task)}`,
+      summary: `Continuation recovery for ${previewTask(input.task)}`,
+      transcript: renderAttemptTranscript(input),
+      source: 'runtime-save-and-clear',
+    });
+  }
+
+  private resolveMemoryFabric(config: LoadedConfig): MemoryRuntime | null {
+    if (this.options.memoryFabric) return this.options.memoryFabric;
+    if (this.memoryFabric !== undefined) return this.memoryFabric;
+
+    const paths = buildHaroPaths(this.options.root);
+    const primaryRoot =
+      config.config.memory?.primary?.path ??
+      config.config.memory?.path ??
+      paths.dirs.memory;
+    const backupRoot = config.config.memory?.backup?.path;
+    const key = `${primaryRoot}::${backupRoot ?? ''}`;
+
+    if (this.memoryFabric && this.memoryFabricKey === key) return this.memoryFabric;
+    this.memoryFabricKey = key;
+    this.memoryFabric = createMemoryFabric({
+      root: primaryRoot,
+      ...(backupRoot ? { backupRoot } : {}),
+    });
+    return this.memoryFabric;
+  }
+
   private resolveTimeoutMs(config: LoadedConfig): number {
     if (this.options.taskTimeoutMs !== undefined) return this.options.taskTimeoutMs;
     const env = process.env.HARO_TASK_TIMEOUT_MS;
@@ -600,6 +741,43 @@ function parseContextRef(
 
 function previewTask(task: string): string {
   return task.replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function slugPreview(task: string): string {
+  const normalized = task
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return normalized.length > 0 ? normalized.slice(0, 48) : 'task';
+}
+
+function renderAttemptTranscript(input: {
+  task: string;
+  provider: string;
+  model: string;
+  events: readonly AgentEvent[];
+}): string {
+  const sections = [
+    `Task: ${input.task}`,
+    `Provider: ${input.provider}`,
+    `Model: ${input.model}`,
+    'Events:',
+    ...input.events.map((event) => {
+      switch (event.type) {
+        case 'text':
+          return `- text: ${event.content}`;
+        case 'result':
+          return `- result: ${event.content}`;
+        case 'error':
+          return `- error(${event.code}${event.hint ? `, hint=${event.hint}` : ''}): ${event.message}`;
+        case 'tool_call':
+          return `- tool_call(${event.toolName}): ${JSON.stringify(event.toolInput)}`;
+        case 'tool_result':
+          return `- tool_result(${event.callId}${event.isError ? ', error' : ''}): ${JSON.stringify(event.result)}`;
+      }
+    }),
+  ];
+  return sections.join('\n');
 }
 
 function readJson<T>(file: string): T | undefined {

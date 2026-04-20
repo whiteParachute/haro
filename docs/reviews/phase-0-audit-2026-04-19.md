@@ -257,6 +257,23 @@ Current checked-in FEAT-011 coverage now includes:
 
 No remaining Phase 0 implementation gaps are confirmed in the current repository snapshot.
 
+## Release-QA addendum — 2026-04-20
+
+A final release-style QA pass uncovered and fixed two contract-level issues before sign-off:
+
+1. **CLI machine-readable commands were leaking bootstrap logs into stdout**
+   - Fix: `packages/cli/src/index.ts` now builds the CLI logger with `stdout: false`, keeping `haro status` / `haro channel list` JSON-tabular output clean.
+   - Regression evidence: `packages/cli/test/bin-entrypoint.test.ts`
+
+2. **The shipped bin path was not passing parsed argv into bootstrap**
+   - Impact: on a clean home directory, `haro channel list` only showed the builtin `cli` channel instead of also registering disabled optional adapters (`feishu`, `telegram`) for management commands.
+   - Fix: `packages/cli/src/index.ts` now forwards `argv` into `bootstrapApp(...)`, restoring the intended FEAT-008/009 management surface.
+   - Regression evidence: `packages/cli/test/bin-entrypoint.test.ts`
+
+3. **AgentRunner was missing FEAT-007 memory injection and FEAT-003/005 save-and-clear recovery**
+   - Fix: `packages/core/src/runtime/runner.ts` now injects `MemoryFabric.contextFor(...)` before provider query and handles `context_too_long + hint='save-and-clear'` by wrapping up memory and retrying once with cleared continuation.
+   - Regression evidence: `packages/core/test/runner.test.ts`
+
 ## Documentation decision log
 
 ### FEAT-006 status is now reconciled
@@ -269,11 +286,14 @@ I still did **not** find a clear case where two specs disagree and require immed
 
 ## Verification snapshot
 
-Verification was rerun in the current worktree after the FEAT-011 changes landed.
+Verification was rerun in the current worktree after the FEAT-011 changes landed and again after the 2026-04-20 release-QA fixes above.
 
 - `pnpm lint` ✅
 - `pnpm test` ✅
 - `pnpm build` ✅
+- `npx tsc --noEmit --pretty false --project ./tsconfig.json` ✅
+- `pnpm smoke` ✅
+- CLI smoke: `haro status` / `haro channel list` / `haro skills list` / `haro skills info remember` / `haro eat README.md --as path --yes` / `haro shit --scope skills --dry-run --days 1` ✅
 - manual REPL Ctrl-C shutdown validation ✅
 
 These checks cover the FEAT-011 manual metabolism slice plus the existing FEAT-001 / FEAT-003 / FEAT-004 / FEAT-005 / FEAT-006 / FEAT-007 / FEAT-008 / FEAT-009 / FEAT-010 foundations already present in this branch.

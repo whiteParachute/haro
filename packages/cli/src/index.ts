@@ -182,7 +182,7 @@ export async function runCli(opts: RunCliOptions = {}): Promise<RunCliResult> {
     return { exitCode: 0, action: 'version', paths, createdDirs: [] };
   }
 
-  const bootstrap = await bootstrapApp({ ...opts, stdout, stderr, stdin });
+  const bootstrap = await bootstrapApp({ ...opts, argv, stdout, stderr, stdin });
   if ('error' in bootstrap) {
     stderr.write(`${bootstrap.error.message}\n`);
     return {
@@ -1266,6 +1266,7 @@ function buildLogger(root?: string): CliLogger {
   return createLogger({
     root,
     name: 'cli.runtime',
+    stdout: false,
   });
 }
 

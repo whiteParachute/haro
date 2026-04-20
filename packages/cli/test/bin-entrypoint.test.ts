@@ -32,4 +32,38 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it('shipped binary status emits clean JSON without bootstrap log noise', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-status-'));
+    try {
+      const res = spawnSync(process.execPath, [bin, 'status'], {
+        env: { ...process.env, HARO_HOME: home },
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      expect(() => JSON.parse(res.stdout)).not.toThrow();
+      expect(res.stdout).not.toContain('Created default Agent');
+      expect(res.stderr).toBe('');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('shipped binary channel list includes optional adapters on a clean home', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-channel-list-'));
+    try {
+      const res = spawnSync(process.execPath, [bin, 'channel', 'list'], {
+        env: { ...process.env, HARO_HOME: home },
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      expect(res.stdout).toContain('cli\tenabled\tbuiltin');
+      expect(res.stdout).toContain('feishu\tdisabled\tpackage');
+      expect(res.stdout).toContain('telegram\tdisabled\tpackage');
+      expect(res.stdout).not.toContain('Created default Agent');
+      expect(res.stderr).not.toContain('Created default Agent');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

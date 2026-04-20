@@ -375,4 +375,126 @@ describe('AgentRunner [FEAT-005]', () => {
       'memory-wrapup hook skipped',
     );
   });
+
+  it('FEAT-007 AC4: injects MemoryFabric context into the provider system prompt', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runner-memory-context-'));
+    roots.push(root);
+    const seenSystemPrompts: string[] = [];
+    const memoryFabric = {
+      contextFor: vi.fn(() => ({
+        items: [
+          {
+            summary: '用户偏爱简洁回答',
+            source: 'remember',
+            sourceFile: '/memory/agents/haro-assistant/knowledge/preferences.md',
+            date: '2026-04-20',
+            tier: 'knowledge' as const,
+          },
+        ],
+      })),
+      wrapupSession: vi.fn(async () => ({ file: '/tmp/fake', key: 'fake' })),
+    };
+
+    const runner = new AgentRunner({
+      root,
+      agentRegistry: createAgentRegistry(),
+      providerRegistry: createProviderRegistry(
+        new MockProvider({
+          models: [{ id: 'codex-primary', created: 1, maxContextTokens: 8_000 }],
+          query: async function* (params) {
+            seenSystemPrompts.push(params.systemPrompt ?? '');
+            yield { type: 'result', content: 'done', responseId: 'resp-memory-context' };
+          },
+        }),
+      ),
+      createSessionId: () => 'sess-memory-context',
+      loadConfig: () => createLoadedConfig(),
+      memoryFabric,
+    });
+
+    const result = await runner.run({
+      task: '请保持简洁地回答',
+      agentId: 'haro-assistant',
+    });
+
+    expect(result.finalEvent.type).toBe('result');
+    expect(memoryFabric.contextFor).toHaveBeenCalledWith({
+      agentId: 'haro-assistant',
+      query: '请保持简洁地回答',
+    });
+    expect(seenSystemPrompts[0]).toContain('You are helpful.');
+    expect(seenSystemPrompts[0]).toContain('<memory-context>');
+    expect(seenSystemPrompts[0]).toContain('用户偏爱简洁回答');
+  });
+
+  it('FEAT-003/005: handles context_too_long save-and-clear by wrapping up memory and retrying without continuation', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runner-save-clear-'));
+    roots.push(root);
+    const previousResponseIds: Array<string | undefined> = [];
+    const memoryFabric = {
+      contextFor: vi.fn(() => ({ items: [] })),
+      wrapupSession: vi.fn(async () => ({ file: '/tmp/fake-wrapup.md', key: 'wrapup-key' })),
+    };
+    let callCount = 0;
+
+    const runner = new AgentRunner({
+      root,
+      agentRegistry: createAgentRegistry(),
+      providerRegistry: createProviderRegistry(
+        new MockProvider({
+          models: [{ id: 'codex-primary', created: 1, maxContextTokens: 8_000 }],
+          query: async function* (params) {
+            callCount += 1;
+            previousResponseIds.push(params.sessionContext?.previousResponseId);
+            if (callCount === 1) {
+              yield { type: 'result', content: 'first run', responseId: 'resp-1' };
+              return;
+            }
+            if (callCount === 2) {
+              yield {
+                type: 'error',
+                code: 'context_too_long',
+                message: 'context too long',
+                retryable: false,
+                hint: 'save-and-clear',
+              };
+              return;
+            }
+            yield { type: 'result', content: 'recovered after clear', responseId: 'resp-2' };
+          },
+        }),
+      ),
+      createSessionId: () => `sess-save-clear-${callCount + 1}`,
+      loadConfig: () => createLoadedConfig(),
+      memoryFabric,
+    });
+
+    await runner.run({ task: '第一次运行', agentId: 'haro-assistant' });
+    const result = await runner.run({ task: '第二次运行', agentId: 'haro-assistant' });
+
+    expect(result.finalEvent).toMatchObject({
+      type: 'result',
+      content: 'recovered after clear',
+    });
+    expect(previousResponseIds).toEqual([undefined, 'resp-1', undefined]);
+    expect(memoryFabric.wrapupSession).toHaveBeenCalledTimes(1);
+    expect(memoryFabric.wrapupSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: 'agent',
+        agentId: 'haro-assistant',
+        wrapupId: 'sess-save-clear-2',
+        source: 'runtime-save-and-clear',
+      }),
+    );
+
+    const db = openDb(root);
+    try {
+      const fallbackCount = db
+        .prepare('SELECT COUNT(*) AS count FROM provider_fallback_log WHERE session_id = ?')
+        .get('sess-save-clear-2') as { count: number };
+      expect(fallbackCount.count).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
 });
