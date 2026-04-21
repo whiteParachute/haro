@@ -76,49 +76,83 @@ Haro 不追求能力数量持续增长，而追求能力结构持续优化：
 
 ## 快速开始
 
-> 当前推荐路径仍然是**从源码运行**；但首次使用已经收敛到一个统一入口：`haro setup` / `haro onboard`。
+### 安装（推荐）
+
+**macOS / Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/haro-ai/haro/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell)**
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/haro-ai/haro/main/scripts/install.ps1 | iex
+```
+
+**或者使用 npm / pnpm 全局安装**
+
+```bash
+npm install -g @haro/cli@latest
+# 或
+pnpm add -g @haro/cli@latest
+```
 
 ### 环境要求
 
 - Node.js `>= 22`
-- pnpm `10.x`
 - `OPENAI_API_KEY`（当前正式实现的 Provider 是 Codex，凭证必须通过环境变量提供）
 
 ### 最短可跑通路径
 
 ```bash
-# 1. 安装依赖
-pnpm install
-
-# 2. 构建
-pnpm build
-
-# 3. 配置 Provider 凭证
+# 1. 配置 Provider 凭证
 export OPENAI_API_KEY=<your-key>
 
-# 4. 跑首次引导
-pnpm haro setup
+# 2. 跑首次引导
+haro setup
 # 或
-pnpm haro onboard
+haro onboard
 
-# 5. 先做诊断
+# 3. 先做诊断
+haro doctor
+
+# 4. 执行第一条任务
+haro run "列出当前目录下的 TypeScript 文件"
+
+# 5. 进入交互式 REPL
+haro
+```
+
+`setup/onboard` 会检查 Node / pnpm / `~/.haro/` / `OPENAI_API_KEY`，并把默认的非敏感配置写入 `~/.haro/config.yaml`。
+如果第 3 步里 `providers.codex.healthy` 仍然是 `false`，优先检查：
+
+- `OPENAI_API_KEY` 是否已导出到当前 shell
+- 当前 shell 是否和执行 `haro` 的 shell 是同一个会话
+- 网络是否可访问 Codex 所需接口
+
+### 从源码运行（开发备选）
+
+如果你希望参与开发或使用最新源码：
+
+```bash
+# 1. Clone 仓库
+git clone https://github.com/haro-ai/haro.git
+cd haro
+
+# 2. 安装依赖
+pnpm install
+
+# 3. 构建
+pnpm build
+
+# 4. 使用仓库内 CLI
+pnpm haro setup
 pnpm haro doctor
-
-# 6. 执行第一条任务
 pnpm haro run "列出当前目录下的 TypeScript 文件"
-
-# 7. 进入交互式 REPL
-pnpm haro
 ```
 
 > 注：`pnpm setup` 与 pnpm 内置命令冲突，等价路径为 `pnpm run setup` 或 `pnpm haro setup`。
-
-`setup/onboard` 会检查 Node / pnpm / `~/.haro/` / `OPENAI_API_KEY`，并把默认的非敏感配置写入 `~/.haro/config.yaml`。
-如果第 5 步里 `providers.codex.healthy` 仍然是 `false`，优先检查：
-
-- `OPENAI_API_KEY` 是否已导出到当前 shell
-- 当前 shell 是否和执行 `pnpm haro` 的 shell 是同一个会话
-- 网络是否可访问 Codex 所需接口
 
 ### 常用命令
 

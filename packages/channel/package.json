@@ -1,8 +1,10 @@
 {
   "name": "@haro/channel",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Haro shared channel abstraction and registry (FEAT-008)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

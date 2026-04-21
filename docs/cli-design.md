@@ -165,6 +165,21 @@ haro gateway doctor         # 诊断 gateway 进程与所有 enabled channels
 - Channel 私有状态：`~/.haro/channels/<id>/state.json` + `sessions.sqlite`
 - 凭据：只来自环境变量 / config，不落盘到 state 文件
 
+### `haro update`
+
+检查 npm registry 上是否有更新的 Haro CLI 版本，并提示升级命令。
+
+```bash
+haro update        # 检查更新并提示升级命令
+haro update --check # 仅预览，不输出安装提示
+```
+
+**行为**：
+- 向 `https://registry.npmjs.org/@haro/cli/latest` 查询最新版本
+- 若当前版本 < 最新版本：输出版本差异与升级命令（`npm install -g @haro/cli@latest`）
+- 若当前版本 == 最新版本：提示已是最新
+- 若 registry 不可达（如尚未发布）：输出友好错误，不中断其他命令
+
 ### `haro eat` / `haro shit`
 
 进化代谢。详见 [Evolution 代谢机制规范](../specs/evolution-metabolism.md)。

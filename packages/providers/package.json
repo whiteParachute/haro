@@ -1,8 +1,10 @@
 {
   "name": "@haro/providers",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Haro Provider implementations (placeholder — concrete providers arrive in FEAT-002 / FEAT-003)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [

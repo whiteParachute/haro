@@ -11,7 +11,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
   it('shipped binary --version exits 0', () => {
     const res = spawnSync(process.execPath, [bin, '--version'], { encoding: 'utf8' });
     expect(res.status).toBe(0);
-    expect(res.stdout.trim()).toBe('0.0.0');
+    expect(res.stdout.trim()).toBe('0.1.0');
   });
 
   it('shipped binary reports config validation paths on startup errors', () => {
@@ -57,7 +57,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
     });
     expect(res.status).toBe(0);
     const lastLine = res.stdout.trim().split('\n').pop()?.trim();
-    expect(lastLine).toBe('0.0.0');
+    expect(lastLine).toBe('0.1.0');
   });
 
   it('shipped binary channel list includes optional adapters on a clean home', () => {

@@ -999,6 +999,123 @@ describe('runCli [FEAT-006]', () => {
       defaultModel: 'codex-primary',
     });
   });
+
+  it('M4: haro update reports latest version and upgrade command', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-update-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['update'],
+      root,
+      stdout,
+      fetchLatestNpmVersion: async () => '9.9.9',
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.action).toBe('update');
+    const output = chunks.join('');
+    expect(output).toContain('发现新版本');
+    expect(output).toContain('0.1.0 → 9.9.9');
+    expect(output).toContain('npm install -g @haro/cli@latest');
+  });
+
+  it('M4: haro update --check prints preview without install prompt', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-update-check-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['update', '--check'],
+      root,
+      stdout,
+      fetchLatestNpmVersion: async () => '9.9.9',
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const output = chunks.join('');
+    expect(output).toContain('升级命令');
+  });
+
+  it('M4: haro update reports already on latest when versions match', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-update-latest-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['update'],
+      root,
+      stdout,
+      fetchLatestNpmVersion: async () => '0.1.0',
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const output = chunks.join('');
+    expect(output).toContain('当前已是最新版本 0.1.0');
+  });
+
+  it('M4: haro update exits non-zero when registry is unreachable', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-update-fail-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['update'],
+      root,
+      stdout,
+      fetchLatestNpmVersion: async () => {
+        throw new Error('npm registry returned 404');
+      },
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(1);
+    const output = chunks.join('');
+    expect(output).toContain('无法检查更新');
+  });
 });
 
 function createTestChannelRegistration(input: {

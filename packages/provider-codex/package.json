@@ -1,8 +1,10 @@
 {
   "name": "@haro/provider-codex",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Haro Codex Provider — wraps @openai/codex-sdk (FEAT-003)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

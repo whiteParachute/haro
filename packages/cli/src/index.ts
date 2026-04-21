@@ -31,7 +31,7 @@ import {
 } from './channel.js';
 import { runSetup, type SetupRunDeps } from './setup.js';
 
-const VERSION = '0.0.0';
+const VERSION = '0.1.0';
 const CLI_CHANNEL_STATE_FILE = 'state.json';
 const DEFAULT_TASK = '列出当前目录下的 TypeScript 文件';
 
@@ -83,6 +83,7 @@ export interface RunCliOptions {
     argv?: readonly string[];
   }) => Promise<readonly ChannelRegistration[]>;
   setupDeps?: SetupRunDeps;
+  fetchLatestNpmVersion?: (pkg: string) => Promise<string>;
 }
 
 export type RunCliAction =
@@ -100,6 +101,7 @@ export type RunCliAction =
   | 'eat'
   | 'shit'
   | 'gateway'
+  | 'update'
   | 'config-error';
 
 export interface RunCliResult {
@@ -363,6 +365,7 @@ function buildProgram(app: AppContext): Command {
   registerSkillsCommands(program, app);
   registerMetabolismCommands(program, app);
   registerGatewayCommands(program, app);
+  registerUpdateCommand(program, app);
 
   return program;
 }
@@ -643,6 +646,97 @@ function registerGatewayCommands(program: Command, app: AppContext): void {
     },
     program,
   );
+}
+
+function registerUpdateCommand(program: Command, app: AppContext): void {
+  registerCommand(
+    'update',
+    (cmd) => {
+      cmd.description('Check for updates to Haro CLI').option('--check', 'preview only, do not prompt install').action(async (options: { check?: boolean }) => {
+        const result = await runUpdate({
+          current: VERSION,
+          pkg: '@haro/cli',
+          checkOnly: options.check ?? false,
+          stdout: app.stdout,
+          fetchLatest: app.opts.fetchLatestNpmVersion ?? defaultFetchLatestNpmVersion,
+        });
+        app.stdout.write(result.message);
+        if (result.exitCode !== 0) {
+          throw new CommanderExit(result.exitCode, result.message);
+        }
+      });
+    },
+    program,
+  );
+}
+
+async function defaultFetchLatestNpmVersion(pkg: string): Promise<string> {
+  const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`);
+  if (!res.ok) {
+    throw new Error(`npm registry returned ${res.status}`);
+  }
+  const data = (await res.json()) as { version: string };
+  return data.version;
+}
+
+interface UpdateResult {
+  exitCode: number;
+  message: string;
+}
+
+async function runUpdate(input: {
+  current: string;
+  pkg: string;
+  checkOnly: boolean;
+  stdout: NodeJS.WritableStream;
+  fetchLatest: (pkg: string) => Promise<string>;
+}): Promise<UpdateResult> {
+  let latest: string;
+  try {
+    latest = await input.fetchLatest(input.pkg);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      exitCode: 1,
+      message: `无法检查更新：${msg}\n`,
+    };
+  }
+
+  const cmp = compareSemver(input.current, latest);
+  if (cmp === 0) {
+    return {
+      exitCode: 0,
+      message: `当前已是最新版本 ${input.current}\n`,
+    };
+  }
+  if (cmp > 0) {
+    return {
+      exitCode: 0,
+      message: `当前版本 ${input.current} 高于 registry 版本 ${latest}\n`,
+    };
+  }
+
+  const action = input.checkOnly
+    ? `发现新版本：${input.current} → ${latest}\n升级命令：npm install -g ${input.pkg}@latest\n`
+    : `发现新版本：${input.current} → ${latest}\n请运行：npm install -g ${input.pkg}@latest\n`;
+
+  return { exitCode: 0, message: action };
+}
+
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string) =>
+    v
+      .replace(/^v/, '')
+      .split('.')
+      .map((n) => Number.parseInt(n, 10));
+  const av = parse(a);
+  const bv = parse(b);
+  for (let i = 0; i < 3; i++) {
+    const an = av[i] ?? 0;
+    const bn = bv[i] ?? 0;
+    if (an !== bn) return an > bn ? 1 : -1;
+  }
+  return 0;
 }
 
 async function bootstrapApp(
@@ -1352,7 +1446,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

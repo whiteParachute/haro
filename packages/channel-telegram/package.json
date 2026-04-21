@@ -1,8 +1,10 @@
 {
   "name": "@haro/channel-telegram",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Haro Telegram channel adapter with grammY long polling (FEAT-009)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
