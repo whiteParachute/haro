@@ -10,6 +10,8 @@ Haro CLI 采用三层组合：
 
 目标是：**REPL 可持续、命令面清晰、Channel 抽象一致**。
 
+> 如果你是第一次使用 Haro，建议先阅读 [Getting Started](./getting-started.md)。
+
 ## 开发态入口
 
 在源码仓库中，可直接使用顶层 pnpm 脚本调用 CLI，无需记忆深路径：
@@ -45,7 +47,7 @@ Haro v0.1.0 — 自进化多 Agent 平台
 
 ### `haro setup` / `haro onboard`
 
-首次引导命令。`onboard` 是 `setup` 的别名。
+首次引导命令。`onboard` 是 `setup` 的别名。详见 [Getting Started](./getting-started.md)。
 
 ```bash
 haro setup
@@ -89,7 +91,7 @@ haro model codex <live-model-id>
 
 ### `haro config`
 
-配置管理。
+配置管理。详见 [Configuration](./configuration.md)。
 
 ```bash
 haro config
@@ -105,7 +107,7 @@ haro config get providers.codex.defaultModel
 
 ### `haro doctor`
 
-系统诊断，检查 Phase 0 核心组件的健康状态。
+系统诊断，检查 Phase 0 核心组件的健康状态。排查指南见 [Troubleshooting](./troubleshooting.md)。
 
 ```bash
 haro doctor
@@ -131,7 +133,7 @@ haro skills enable <skill-name>
 
 ### `haro channel`
 
-消息渠道管理。详见 [Channel Layer 设计](./modules/channel-layer.md)。
+消息渠道管理。详见 [Channel Layer 设计](./modules/channel-layer.md) 与 [Channels 用户指南](./channels.md)。
 
 ```bash
 haro channel list
@@ -145,7 +147,7 @@ haro channel setup telegram
 
 ### `haro gateway`
 
-Gateway / daemon 控制，统一启动所有 enabled 的外部消息渠道（Feishu / Telegram），使 Haro 成为持续运行的助手。
+Gateway / daemon 控制，统一启动所有 enabled 的外部消息渠道（Feishu / Telegram），使 Haro 成为持续运行的助手。详见 [Channels 用户指南](./channels.md#gateway-控制)。
 
 ```bash
 haro gateway start          # 前台运行，统一启动所有 enabled channels
@@ -231,3 +233,11 @@ haro status
 - stdout：开发模式可读输出
 - 文件：`~/.haro/logs/haro.log`
 - `haro doctor` 会检查日志目录可写性与最近错误摘要
+
+## 相关文档
+
+- [Getting Started](./getting-started.md) — 从安装到跑通第一条任务
+- [Install](./install.md) — 全平台安装与卸载
+- [Configuration](./configuration.md) — 配置层级、环境变量与敏感数据原则
+- [Channels](./channels.md) — Channel 启用、配置与 Gateway 控制
+- [Troubleshooting](./troubleshooting.md) — 常见故障排查
