@@ -38,6 +38,11 @@ export async function runSetup(input: {
   const pnpmCheck = runCommand('pnpm', ['--version']);
   const pnpmVersion = pnpmCheck.stdout?.trim() ?? '';
   const pnpmOk = pnpmCheck.status === 0 && pnpmVersion.length > 0;
+  const npmCheck = runCommand('npm', ['--version']);
+  const npmVersion = npmCheck.stdout?.trim() ?? '';
+  const npmOk = npmCheck.status === 0 && npmVersion.length > 0;
+  const pkgManagerOk = pnpmOk || npmOk;
+  const pkgManagerDetail = pnpmOk ? `pnpm ${pnpmVersion}` : npmOk ? `npm ${npmVersion}` : '未检测到';
   const rootWritable = await isWritable(input.paths.root);
   const apiKeyPresent = typeof env.OPENAI_API_KEY === 'string' && env.OPENAI_API_KEY.trim().length > 0;
 
@@ -57,13 +62,13 @@ export async function runSetup(input: {
 
   const blockers: string[] = [];
   if (!nodeOk) blockers.push(`Node.js 版本不满足要求（当前 ${nodeVersion}，需要 >= 22）`);
-  if (!pnpmOk) blockers.push('未检测到可用的 pnpm');
+  if (!pkgManagerOk) blockers.push('未检测到可用的包管理器（pnpm 或 npm）');
   if (!rootWritable) blockers.push(`数据目录不可写：${input.paths.root}`);
   if (!apiKeyPresent) blockers.push('未检测到 OPENAI_API_KEY');
 
   const checks = [
     renderCheck('Node.js >= 22', nodeOk, nodeVersion),
-    renderCheck('pnpm 可用', pnpmOk, pnpmVersion || '未检测到版本'),
+    renderCheck('包管理器可用', pkgManagerOk, pkgManagerDetail),
     renderCheck('Haro 数据目录可写', rootWritable, input.paths.root),
     renderCheck('OPENAI_API_KEY 已设置', apiKeyPresent, apiKeyPresent ? '已检测到环境变量' : '缺失'),
     renderCheck(

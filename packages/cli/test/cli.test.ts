@@ -1116,6 +1116,72 @@ describe('runCli [FEAT-006]', () => {
     const output = chunks.join('');
     expect(output).toContain('无法检查更新');
   });
+
+  it('M4-fix: haro update runs even when local config is broken', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-update-bad-config-'));
+    roots.push(root);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'config.yaml'), 'providers:\n  codex:\n    defaultModel: 123\n');
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['update'],
+      root,
+      stdout,
+      fetchLatestNpmVersion: async () => '9.9.9',
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.action).toBe('update');
+    const output = chunks.join('');
+    expect(output).toContain('发现新版本');
+  });
+
+  it('M4-fix: setup passes when npm is available but pnpm is missing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-setup-npm-only-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['setup'],
+      root,
+      stdout,
+      setupDeps: {
+        nodeVersion: 'v22.3.0',
+        env: { OPENAI_API_KEY: 'test-key' },
+        runCommand: (cmd: string, _args: readonly string[]) => {
+          if (cmd === 'pnpm') {
+            return { status: 1, stdout: '', stderr: 'command not found' };
+          }
+          if (cmd === 'npm') {
+            return { status: 0, stdout: '10.9.0\n' };
+          }
+          return { status: 0, stdout: '' };
+        },
+      },
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            models: [{ id: 'codex-primary' }],
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.action).toBe('setup');
+    const output = chunks.join('');
+    expect(output).toContain('npm 10.9.0');
+    expect(output).not.toContain('未检测到可用的包管理器');
+  });
 });
 
 function createTestChannelRegistration(input: {

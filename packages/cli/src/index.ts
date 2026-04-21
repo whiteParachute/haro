@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -186,6 +187,19 @@ export async function runCli(opts: RunCliOptions = {}): Promise<RunCliResult> {
   if (argv.includes('--version') || argv[0] === 'version') {
     stdout.write(`${VERSION}\n`);
     return { exitCode: 0, action: 'version', paths, createdDirs: [] };
+  }
+
+  if (argv[0] === 'update') {
+    const checkOnly = argv.includes('--check');
+    const result = await runUpdate({
+      current: VERSION,
+      pkg: '@haro/cli',
+      checkOnly,
+      stdout,
+      fetchLatest: opts.fetchLatestNpmVersion ?? defaultFetchLatestNpmVersion,
+    });
+    stdout.write(result.message);
+    return { exitCode: result.exitCode, action: 'update', paths, createdDirs: [] };
   }
 
   const bootstrap = await bootstrapApp({ ...opts, argv, stdout, stderr, stdin });
@@ -671,7 +685,24 @@ function registerUpdateCommand(program: Command, app: AppContext): void {
 }
 
 async function defaultFetchLatestNpmVersion(pkg: string): Promise<string> {
-  const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`);
+  let registry = process.env.NPM_CONFIG_REGISTRY?.replace(/\/$/, '') ?? '';
+  if (!registry) {
+    try {
+      const result = spawnSync('npm', ['config', 'get', 'registry'], { encoding: 'utf8' });
+      if (result.status === 0) {
+        const configured = result.stdout.trim();
+        if (configured) {
+          registry = configured.replace(/\/$/, '');
+        }
+      }
+    } catch {
+      // fallback to default
+    }
+  }
+  if (!registry) {
+    registry = 'https://registry.npmjs.org';
+  }
+  const res = await fetch(`${registry}/${pkg}/latest`);
   if (!res.ok) {
     throw new Error(`npm registry returned ${res.status}`);
   }

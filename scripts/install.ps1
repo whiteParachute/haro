@@ -79,9 +79,9 @@ if ($pkgVersion) {
 Write-Info "正在安装 $HaroPkg ..."
 try {
     if ($pkgManager -eq "pnpm") {
-        pnpm add -g "$HaroPkg"@latest | Out-Host
+        pnpm add -g "${HaroPkg}@latest" | Out-Host
     } else {
-        npm install -g "$HaroPkg"@latest | Out-Host
+        npm install -g "${HaroPkg}@latest" | Out-Host
     }
 } catch {
     Write-ErrorX "全局安装失败。请检查网络或 registry 配置。"
