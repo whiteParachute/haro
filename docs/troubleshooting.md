@@ -66,10 +66,17 @@ haro doctor
 
 ### 5. Channel 健康状态
 
-如果 `channels.feishu.healthy` 或 `channels.telegram.healthy` 为 `false`：
+`haro doctor` 本身不输出 `channels` 健康块。要排查 Channel 问题，应直接使用 Channel 级诊断命令：
 
-- 运行 `haro channel doctor feishu` 或 `haro channel doctor telegram` 获取详细错误码
-- 常见错误：`missing_credentials` → 环境变量未设置或配置引用语法错误
+```bash
+haro channel doctor feishu
+haro channel doctor telegram
+```
+
+常见错误码：
+
+- `missing_credentials` → 环境变量未设置，或 `config.yaml` 中的 `${...}` 引用语法错误
+- 网络超时 → 检查当前网络是否可到达飞书/Telegram 服务端
 
 ## OPENAI_API_KEY 常见问题
 

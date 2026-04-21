@@ -149,7 +149,7 @@ Haro 在设计上强制区分**配置**与**凭证**：
 | `TELEGRAM_BOT_TOKEN` | 环境变量 → Channel 内存 | 同上 |
 | Channel state | `~/.haro/channels/<id>/state.json` | 禁止写入任何凭证字段；仅保存 transport、sessionScope、lastConnectedAt 等非敏感运行态 |
 
-如果运行 `haro setup` 或 `haro channel setup <id>`，交互过程中输入的凭证也不会被保存到 `config.yaml`；只有 `${...}` 引用或空值会被持久化。
+如果你通过 `haro channel setup <id>` 交互式输入凭证，返回的配置会被完整写入 `config.yaml`（包括明文凭证）。**如果你希望凭证不落盘**，应在运行 setup 前预先在 `config.yaml` 中写入 `${...}` 环境变量引用，而不是在交互中直接粘贴真实值。
 
 ## 配置校验
 

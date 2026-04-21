@@ -223,13 +223,19 @@ haro gateway doctor
 
 ## 移除与回滚
 
-移除 Channel 不会删除历史数据，session 映射会归档到 `~/.haro/archive/channels/<id>-<timestamp>/`，需要时可通过文件系统手动恢复：
+`haro channel remove` 会**永久删除** `~/.haro/channels/<id>/` 目录，包括 `state.json` 和 `sessions.sqlite`。如需保留会话映射或历史数据，请在移除前手动备份：
 
 ```bash
+# 备份（可选）
+cp -r ~/.haro/channels/feishu ~/.haro/archive/channels/feishu-$(date +%Y%m%d-%H%M%S)
+
+# 移除
 haro channel remove feishu
 ```
 
-如需彻底清理 Channel 数据：
+如需仅禁用而不删除数据，使用 `haro channel disable feishu`。
+
+如需手动彻底清理已移除 Channel 的残留数据：
 
 ```bash
 rm -rf ~/.haro/channels/feishu
