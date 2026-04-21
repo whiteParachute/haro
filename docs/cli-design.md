@@ -143,6 +143,28 @@ haro channel setup feishu
 haro channel setup telegram
 ```
 
+### `haro gateway`
+
+Gateway / daemon 控制，统一启动所有 enabled 的外部消息渠道（Feishu / Telegram），使 Haro 成为持续运行的助手。
+
+```bash
+haro gateway start          # 前台运行，统一启动所有 enabled channels
+haro gateway start --daemon # 后台运行（写入 PID 文件，重定向日志）
+haro gateway stop           # 停止正在运行的 gateway 进程
+haro gateway status         # 查看 gateway 运行状态与各 channel 健康
+haro gateway doctor         # 诊断 gateway 进程与所有 enabled channels
+```
+
+**运行模式**：
+- 前台模式：直接阻塞终端，Ctrl+C 优雅停止所有 channels
+- 后台模式：通过 `spawn` 启动 detached 子进程，PID 写入 `~/.haro/gateway.pid`，日志写入 `~/.haro/logs/gateway.log`
+
+**数据路径**：
+- PID 文件：`~/.haro/gateway.pid`
+- Gateway 日志：`~/.haro/logs/gateway.log`
+- Channel 私有状态：`~/.haro/channels/<id>/state.json` + `sessions.sqlite`
+- 凭据：只来自环境变量 / config，不落盘到 state 文件
+
 ### `haro eat` / `haro shit`
 
 进化代谢。详见 [Evolution 代谢机制规范](../specs/evolution-metabolism.md)。

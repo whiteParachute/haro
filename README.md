@@ -150,6 +150,21 @@ pnpm haro channel doctor feishu
 pnpm haro channel setup telegram
 pnpm haro channel doctor telegram
 
+# 启动 gateway（前台运行所有 enabled channels）
+pnpm haro gateway start
+
+# 后台运行 gateway
+pnpm haro gateway start --daemon
+
+# 查看 gateway 状态
+pnpm haro gateway status
+
+# Gateway 诊断
+pnpm haro gateway doctor
+
+# 停止 gateway
+pnpm haro gateway stop
+
 # 手动知识吸收
 pnpm haro eat <url|path|text>
 
@@ -177,6 +192,7 @@ pnpm haro shit --scope skills --dry-run
 - `haro doctor`：配置与依赖诊断
 - `haro status`：查看运行状态
 - `haro channel ...`：管理消息渠道
+- `haro gateway ...`：Gateway / daemon 控制（启动/停止/状态/诊断背景 channels）
 - `haro skills ...`：管理 skill
 - `haro eat <input>`：手动吸收知识
 - `haro shit ...`：扫描、归档、回滚冗余能力

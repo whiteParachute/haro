@@ -99,6 +99,7 @@ export type RunCliAction =
   | 'skills'
   | 'eat'
   | 'shit'
+  | 'gateway'
   | 'config-error';
 
 export interface RunCliResult {
@@ -134,7 +135,7 @@ interface ExecutionOptions {
   continueLatestSession?: boolean;
 }
 
-interface AppContext {
+export interface AppContext {
   opts: RunCliOptions;
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
@@ -361,6 +362,7 @@ function buildProgram(app: AppContext): Command {
   registerChannelCommands(program, app);
   registerSkillsCommands(program, app);
   registerMetabolismCommands(program, app);
+  registerGatewayCommands(program, app);
 
   return program;
 }
@@ -585,6 +587,58 @@ function registerMetabolismCommands(program: Command, app: AppContext): void {
             item: options.item,
           });
           app.stdout.write(`${result.output}\n`);
+        });
+    },
+    program,
+  );
+}
+
+function registerGatewayCommands(program: Command, app: AppContext): void {
+  registerCommand(
+    'gateway',
+    (cmd) => {
+      cmd.description('Gateway / daemon control for background channels');
+
+      cmd
+        .command('start')
+        .option('-d, --daemon', 'run in background')
+        .action(async (options: { daemon?: boolean }) => {
+          const { gatewayStart } = await import('./gateway.js');
+          const result = await gatewayStart(app, { daemon: options.daemon });
+          app.stdout.write(result.output);
+          if (result.exitCode !== 0) {
+            throw new CommanderExit(result.exitCode, result.output.trim());
+          }
+        });
+
+      cmd
+        .command('stop')
+        .action(async () => {
+          const { gatewayStop } = await import('./gateway.js');
+          const result = gatewayStop({ root: app.paths.root });
+          app.stdout.write(result.output);
+          if (result.exitCode !== 0) {
+            throw new CommanderExit(result.exitCode, result.output.trim());
+          }
+        });
+
+      cmd
+        .command('status')
+        .action(async () => {
+          const { gatewayStatus } = await import('./gateway.js');
+          const result = await gatewayStatus(app);
+          app.stdout.write(result.output);
+        });
+
+      cmd
+        .command('doctor')
+        .action(async () => {
+          const { gatewayDoctor } = await import('./gateway.js');
+          const result = await gatewayDoctor(app);
+          app.stdout.write(result.output);
+          if (result.exitCode !== 0) {
+            throw new CommanderExit(result.exitCode, 'gateway doctor found issues');
+          }
         });
     },
     program,
@@ -1298,7 +1352,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway') {
     return first;
   }
   if (first === 'help' || first === '--help') {
@@ -1362,4 +1416,6 @@ export {
   type CliState,
   type InboundMessage,
   type MessageChannel,
+  handleExternalInbound,
+  readChannelConfig,
 };
