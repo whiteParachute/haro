@@ -14,7 +14,10 @@
     "lint": "eslint \"packages/*/src/**/*.ts\" \"scripts/**/*.ts\"",
     "format": "prettier --write \"packages/*/src/**/*.ts\" \"scripts/**/*.ts\"",
     "init-db": "tsx scripts/init-db.ts",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "haro": "node packages/cli/bin/haro.js",
+    "dev:cli": "node packages/cli/bin/haro.js",
+    "setup": "node packages/cli/bin/haro.js setup"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

@@ -49,6 +49,17 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
     }
   });
 
+  it('root pnpm script haro --version exits 0', () => {
+    const repoRoot = resolve(__dirname, '..', '..', '..');
+    const res = spawnSync('pnpm', ['haro', '--version'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    expect(res.status).toBe(0);
+    const lastLine = res.stdout.trim().split('\n').pop()?.trim();
+    expect(lastLine).toBe('0.0.0');
+  });
+
   it('shipped binary channel list includes optional adapters on a clean home', () => {
     const home = mkdtempSync(join(tmpdir(), 'haro-bin-channel-list-'));
     try {

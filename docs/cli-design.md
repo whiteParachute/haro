@@ -10,6 +10,19 @@ Haro CLI 采用三层组合：
 
 目标是：**REPL 可持续、命令面清晰、Channel 抽象一致**。
 
+## 开发态入口
+
+在源码仓库中，可直接使用顶层 pnpm 脚本调用 CLI，无需记忆深路径：
+
+```bash
+pnpm haro                  # 等同于 node packages/cli/bin/haro.js
+pnpm haro setup            # 首次引导
+pnpm haro doctor           # 诊断
+pnpm haro run "..."        # 单次任务
+```
+
+> 注：`pnpm setup` 与 pnpm 内置命令冲突，等价路径为 `pnpm run setup` 或 `pnpm haro setup`。
+
 ## 命令列表
 
 ### `haro`

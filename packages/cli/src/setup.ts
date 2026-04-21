@@ -79,9 +79,9 @@ export async function runSetup(input: {
   ];
 
   const nextSteps = [
-    `node packages/cli/bin/haro.js doctor`,
-    `node packages/cli/bin/haro.js run "列出当前目录下的 TypeScript 文件"`,
-    `node packages/cli/bin/haro.js channel setup feishu`,
+    `haro doctor`,
+    `haro run "列出当前目录下的 TypeScript 文件"`,
+    `haro channel setup feishu`,
   ];
 
   const lines = [

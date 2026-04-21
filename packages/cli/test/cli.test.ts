@@ -252,9 +252,9 @@ describe('runCli [FEAT-006]', () => {
     expect(config.providers?.codex?.defaultModel).toBe('codex-primary');
     const output = chunks.join('');
     expect(output).toContain('Haro setup / onboard');
-    expect(output).toContain('node packages/cli/bin/haro.js doctor');
-    expect(output).toContain('node packages/cli/bin/haro.js run "列出当前目录下的 TypeScript 文件"');
-    expect(output).toContain('node packages/cli/bin/haro.js channel setup feishu');
+    expect(output).toContain('haro doctor');
+    expect(output).toContain('haro run "列出当前目录下的 TypeScript 文件"');
+    expect(output).toContain('haro channel setup feishu');
   });
 
   it('FEAT-012 AC2: onboard aliases setup', async () => {
@@ -323,7 +323,7 @@ describe('runCli [FEAT-006]', () => {
     const output = chunks.join('');
     expect(output).toContain('未检测到 OPENAI_API_KEY');
     expect(output).toContain('export OPENAI_API_KEY=<your-key>');
-    expect(output).toContain('node packages/cli/bin/haro.js doctor');
+    expect(output).toContain('haro doctor');
     const configText = readFileSync(join(root, 'config.yaml'), 'utf8');
     expect(configText).not.toContain('apiKey');
     expect(configText).not.toContain('test-key');

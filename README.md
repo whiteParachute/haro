@@ -97,62 +97,64 @@ pnpm build
 export OPENAI_API_KEY=<your-key>
 
 # 4. 跑首次引导
-node packages/cli/bin/haro.js setup
+pnpm haro setup
 # 或
-node packages/cli/bin/haro.js onboard
+pnpm haro onboard
 
 # 5. 先做诊断
-node packages/cli/bin/haro.js doctor
+pnpm haro doctor
 
 # 6. 执行第一条任务
-node packages/cli/bin/haro.js run "列出当前目录下的 TypeScript 文件"
+pnpm haro run "列出当前目录下的 TypeScript 文件"
 
 # 7. 进入交互式 REPL
-node packages/cli/bin/haro.js
+pnpm haro
 ```
+
+> 注：`pnpm setup` 与 pnpm 内置命令冲突，等价路径为 `pnpm run setup` 或 `pnpm haro setup`。
 
 `setup/onboard` 会检查 Node / pnpm / `~/.haro/` / `OPENAI_API_KEY`，并把默认的非敏感配置写入 `~/.haro/config.yaml`。
 如果第 5 步里 `providers.codex.healthy` 仍然是 `false`，优先检查：
 
 - `OPENAI_API_KEY` 是否已导出到当前 shell
-- 当前 shell 是否和执行 `node packages/cli/bin/haro.js` 的 shell 是同一个会话
+- 当前 shell 是否和执行 `pnpm haro` 的 shell 是同一个会话
 - 网络是否可访问 Codex 所需接口
 
 ### 常用命令
 
 ```bash
 # 查看 CLI 帮助
-node packages/cli/bin/haro.js --help
+pnpm haro --help
 
 # 首次引导
-node packages/cli/bin/haro.js setup
-node packages/cli/bin/haro.js onboard
+pnpm haro setup
+pnpm haro onboard
 
 # 查看当前状态
-node packages/cli/bin/haro.js status
+pnpm haro status
 
 # 查看当前配置来源
-node packages/cli/bin/haro.js config
+pnpm haro config
 
 # 查看已安装 skills
-node packages/cli/bin/haro.js skills list
+pnpm haro skills list
 
 # 查看 channel 状态
-node packages/cli/bin/haro.js channel list
+pnpm haro channel list
 
 # 配置飞书 channel
-node packages/cli/bin/haro.js channel setup feishu
-node packages/cli/bin/haro.js channel doctor feishu
+pnpm haro channel setup feishu
+pnpm haro channel doctor feishu
 
 # 配置 Telegram channel
-node packages/cli/bin/haro.js channel setup telegram
-node packages/cli/bin/haro.js channel doctor telegram
+pnpm haro channel setup telegram
+pnpm haro channel doctor telegram
 
 # 手动知识吸收
-node packages/cli/bin/haro.js eat <url|path|text>
+pnpm haro eat <url|path|text>
 
 # 手动代谢清理（预览）
-node packages/cli/bin/haro.js shit --scope skills --dry-run
+pnpm haro shit --scope skills --dry-run
 ```
 
 ### 当前配置位置
