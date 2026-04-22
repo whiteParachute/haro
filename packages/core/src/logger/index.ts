@@ -1,3 +1,4 @@
+import { writeSync } from 'node:fs';
 import pino, { Logger } from 'pino';
 import { buildHaroPaths } from '../paths.js';
 
@@ -21,6 +22,8 @@ const SECRET_KEY_NAMES = [
   'private_key',
   'authorization',
 ];
+
+const nativeStdoutWrite = process.stdout.write;
 
 function buildRedactPaths(): string[] {
   const paths = new Set<string>();
@@ -141,7 +144,17 @@ function createSimpleLogger(
   const descriptors: LoggerStreamDescriptor[] = [];
 
   if (stdoutPath) {
-    streamEntries.push({ level, stream: process.stdout });
+    const stdoutStream = {
+      write(chunk: Buffer | string): boolean {
+        if (process.stdout.write !== nativeStdoutWrite) {
+          return process.stdout.write(chunk as never);
+        }
+        const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+        writeSync(1, buffer);
+        return true;
+      },
+    };
+    streamEntries.push({ level, stream: stdoutStream as unknown as NodeJS.WritableStream });
     descriptors.push({ level, destination: 'stdout' });
   }
   if (filePath) {

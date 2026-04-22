@@ -1,6 +1,27 @@
 #!/usr/bin/env node
 'use strict';
+const { writeSync } = require('node:fs');
 const { runCli } = require('../dist/index.js');
+
+patchSyncWrite(process.stdout, 1);
+patchSyncWrite(process.stderr, 2);
+
+function patchSyncWrite(stream, fd) {
+  const originalWrite = stream.write.bind(stream);
+  stream.write = function patchedWrite(chunk, encoding, callback) {
+    const done = typeof encoding === 'function' ? encoding : callback;
+    try {
+      const buffer = Buffer.isBuffer(chunk)
+        ? chunk
+        : Buffer.from(String(chunk), typeof encoding === 'string' ? encoding : 'utf8');
+      writeSync(fd, buffer);
+      if (typeof done === 'function') done();
+      return true;
+    } catch (error) {
+      return originalWrite(chunk, encoding, callback);
+    }
+  };
+}
 
 function flushStream(stream) {
   return new Promise((resolve) => {

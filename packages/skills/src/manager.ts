@@ -1,7 +1,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { buildHaroPaths, createMemoryFabric } from '@haro/core';
 import type { MemoryFabric } from '@haro/core';
 import { parseSkillFile } from './frontmatter.js';
@@ -162,7 +162,7 @@ export class SkillsManager {
       manifest.skills[entry.id] = {
         ...manifest.skills[entry.id]!,
         originalSource: gitUrl,
-        pinnedCommit: safeGitRev(tempDir) ?? 'git-head',
+        pinnedCommit: safeGitRev(tempDir) ?? safeGitRemoteHead(gitUrl) ?? 'git-head',
       };
       this.writeInstalledManifest(manifest);
       return manifest.skills[entry.id]!;
@@ -303,11 +303,17 @@ function looksLikeGitUrl(source: string): boolean {
 }
 
 function safeGitRev(directory: string): string | undefined {
-  try {
-    return execFileSync('git', ['-C', directory, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  } catch {
+  const result = spawnSync('git', ['-C', directory, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  return result.status === 0 ? result.stdout.trim() || undefined : undefined;
+}
+
+function safeGitRemoteHead(gitUrl: string): string | undefined {
+  const result = spawnSync('git', ['ls-remote', gitUrl, 'HEAD'], { encoding: 'utf8' });
+  if (result.status !== 0) {
     return undefined;
   }
+  const [sha] = result.stdout.trim().split(/\s+/);
+  return sha && sha.length > 0 ? sha : undefined;
 }
 
 function firstLine(value: string): string {
