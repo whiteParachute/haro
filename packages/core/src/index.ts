@@ -68,6 +68,38 @@ export type {
   MemorySource,
 } from './memory/index.js';
 export {
+  SceneClassifier,
+  RoutingMatrix,
+  ScenarioRouter,
+  CheckpointStore,
+} from './scenario-router.js';
+export type {
+  TaskType,
+  Complexity,
+  CollaborationNeed,
+  TimeSensitivity,
+  ValidationNeed,
+  ExecutionMode,
+  OrchestrationMode,
+  WorkflowNodeType,
+  ResumeStrategy,
+  SceneDescriptor,
+  RoutingDecision,
+  RawContextRef,
+  LeafSessionRef,
+  WorkflowCheckpointState,
+  WorkflowCheckpoint,
+  WorkflowCheckpointInput,
+  ResumeTarget,
+  WorkflowNode,
+  ScenarioWorkflow,
+  ScenarioPlan,
+  SceneClassifierOptions,
+  ScenarioRouterOptions,
+  CreateWorkflowOptions,
+  CheckpointStoreOptions,
+} from './scenario-router.js';
+export {
   AgentRunner,
   DEFAULT_SELECTION_RULES,
   loadSelectionRules,
