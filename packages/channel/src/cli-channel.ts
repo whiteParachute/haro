@@ -151,7 +151,7 @@ export class CliChannel implements MessageChannel {
       return;
     }
     const title = [
-      'Haro v0.0.0 — 自进化多 Agent 平台',
+      'Haro v0.1.0 — 自进化多 Agent 平台',
       `当前 Provider: ${input.provider} (${input.model})`,
       '输入 /help 查看可用命令',
     ].join('\n');

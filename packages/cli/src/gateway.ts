@@ -27,7 +27,7 @@ export async function gatewayStart(
   deps: GatewayDeps = {},
 ): Promise<GatewayCommandResult> {
   const pidFile = options.pidFile ?? join(app.paths.root, 'gateway.pid');
-  const logFile = options.logFile ?? join(app.paths.root, 'logs', 'gateway.log');
+  const logFile = options.logFile ?? resolveGatewayLogFile(app.paths.root);
 
   const existingPid = readPidFile(pidFile);
   if (existingPid && isProcessAlive(existingPid)) {
@@ -123,7 +123,7 @@ async function startForeground(app: AppContext, pidFile: string): Promise<Gatewa
   for (const check of healthChecks) {
     output += `  ${check.id}: ${check.healthy ? 'healthy' : 'unhealthy'}\n`;
   }
-  output += `Logs: ${app.paths.logFile}\n`;
+  output += `Logs: ${resolveGatewayLogFile(app.paths.root)}\n`;
   output += `Press Ctrl+C to stop.\n`;
 
   app.stdout.write(output);
@@ -210,7 +210,7 @@ export async function gatewayStatus(
 
   let output = `Gateway: ${running ? `running (PID ${pid})` : 'not running'}\n`;
   output += `Data directory: ${app.paths.root}\n`;
-  output += `Log file: ${app.paths.logFile}\n`;
+  output += `Log file: ${resolveGatewayLogFile(app.paths.root)}\n`;
   output += `Channel data: ${app.paths.dirs.channels}\n`;
   output += 'Channels:\n';
   if (enabled.length === 0) {
@@ -247,7 +247,7 @@ export async function gatewayDoctor(
     channels: channelChecks,
     paths: {
       root: app.paths.root,
-      logFile: app.paths.logFile,
+      logFile: resolveGatewayLogFile(app.paths.root),
       channelData: app.paths.dirs.channels,
     },
   };
@@ -260,6 +260,10 @@ function readPidFile(path: string): number | undefined {
   const text = readFileSync(path, 'utf8').trim();
   const n = Number.parseInt(text, 10);
   return Number.isNaN(n) ? undefined : n;
+}
+
+function resolveGatewayLogFile(root: string): string {
+  return join(root, 'logs', 'gateway.log');
 }
 
 function isProcessAlive(pid: number): boolean {

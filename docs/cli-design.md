@@ -81,23 +81,25 @@ haro run "..." --no-memory
 
 ### `haro model`
 
-查看和切换当前 Provider 和 Model。
+查看当前路由，或直接设置 CLI 默认 Provider / Model。
 
 ```bash
 haro model
-haro model --select
+haro model codex
 haro model codex <live-model-id>
 ```
 
+> Phase 0 未实现交互式 `--select` 选择器；当前仅支持通过位置参数直接写入默认 Provider / Model。
+
 ### `haro config`
 
-配置管理。详见 [Configuration](./configuration.md)。
+查看当前合并后的配置与来源。详见 [Configuration](./configuration.md)。
 
 ```bash
 haro config
-haro config set memory.path /path/to/aria-memory
-haro config get providers.codex.defaultModel
 ```
+
+> Phase 0 当前只提供只读配置查看；`config set/get` 子命令尚未实现。修改配置请直接编辑项目级 `.haro/config.yaml` 或全局 `~/.haro/config.yaml`。
 
 **配置层级**：
 1. 命令行参数
@@ -211,7 +213,7 @@ haro status
 | `/model` | 查看或切换当前 Provider/Model |
 | `/new` | 开始新的 session（清除当前上下文） |
 | `/retry` | **创建新 session** 重试上一次请求 |
-| `/compress` | 压缩当前上下文（仅当当前 Provider 支持 `contextCompaction`） |
+| `/compress` | 仅检查当前 Provider 是否支持上下文压缩，并提示 Phase 0 尚未接入压缩执行路径 |
 | `/skills` | 查看和管理当前 Agent 的技能 |
 | `/usage` | 查看当前 session 的 token / 事件用量 |
 | `/agent <id>` | 切换当前 Agent |

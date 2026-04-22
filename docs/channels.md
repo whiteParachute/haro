@@ -168,7 +168,7 @@ haro gateway status
 ```
 Gateway: running (PID 12345)
 Data directory: /home/user/.haro
-Log file: /home/user/.haro/logs/haro.log
+Log file: /home/user/.haro/logs/gateway.log
 Channel data: /home/user/.haro/channels
 Channels:
   feishu: healthy

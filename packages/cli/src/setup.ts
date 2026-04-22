@@ -4,6 +4,7 @@ import { access, constants } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { HaroConfig, LoadedConfig } from '@haro/core/config';
 import type { HaroPaths, ProviderRegistry } from '@haro/core';
+import { stringify as stringifyYaml } from 'yaml';
 
 export interface SetupRunDeps {
   nodeVersion?: string;
@@ -140,7 +141,7 @@ function persistSetupConfig(input: {
   }
 
   mkdirSync(dirname(input.paths.configFile), { recursive: true });
-  const text = `${JSON.stringify(input.config, null, 2)}\n`;
+  const text = stringifyYaml(input.config);
   writeFileSync(input.paths.configFile, text, 'utf8');
   return true;
 }

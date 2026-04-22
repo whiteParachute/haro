@@ -166,7 +166,7 @@ Haro 当前采用 **spec 驱动开发**。
 
 - 当前正式实现的 Provider 只有 Codex
 - 多 Provider 智能选择、Scenario Router、Team Orchestrator、Evolution Engine 仍属于后续 phase
-- 当前仓库版本是 `0.0.0`
+- 当前仓库版本是 `0.1.0`
 - 当前更适合 **源码运行和继续开发**，还不是对外发布的稳定产品版本
 
 ## 路线图

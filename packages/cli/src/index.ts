@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Command } from 'commander';
+import { stringify as stringifyYaml } from 'yaml';
 import {
   AgentRegistry,
   AgentRunner,
@@ -1339,7 +1340,7 @@ function removeChannelConfig(app: AppContext, id: string): void {
 }
 
 function persistLoadedConfig(app: AppContext): void {
-  writeFileSync(app.paths.configFile, `${JSON.stringify(app.loaded.config, null, 2)}\n`, 'utf8');
+  writeFileSync(app.paths.configFile, stringifyYaml(app.loaded.config), 'utf8');
   if (!app.loaded.sources.includes(app.paths.configFile)) {
     app.loaded.sources.push(app.paths.configFile);
   }

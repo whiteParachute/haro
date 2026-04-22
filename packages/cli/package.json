@@ -29,7 +29,8 @@
     "@haro/channel": "workspace:*",
     "@haro/channel-feishu": "workspace:*",
     "@haro/channel-telegram": "workspace:*",
-    "@haro/skills": "workspace:*"
+    "@haro/skills": "workspace:*",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

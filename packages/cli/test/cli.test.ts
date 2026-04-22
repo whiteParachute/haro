@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import { AgentRegistry, AgentRunner, ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
@@ -298,7 +299,7 @@ describe('runCli [FEAT-006]', () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.action).toBe('setup');
-    const config = JSON.parse(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
+    const config = parseYaml(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
       providers?: { codex?: { defaultModel?: string } };
     };
     expect(config.providers?.codex?.defaultModel).toBe('codex-primary');
@@ -337,7 +338,7 @@ describe('runCli [FEAT-006]', () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.action).toBe('setup');
-    const config = JSON.parse(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
+    const config = parseYaml(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
       providers?: { codex?: { defaultModel?: string } };
     };
     expect(config.providers?.codex?.defaultModel).toBe('codex-primary');
@@ -461,7 +462,7 @@ describe('runCli [FEAT-006]', () => {
 
     const result = await runPromise;
     expect(result.exitCode).toBe(0);
-    const config = JSON.parse(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
+    const config = parseYaml(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
       channels: { feishu: { enabled: boolean; appId: string; appSecret: string; sessionScope: string } };
     };
     expect(config.channels.feishu).toMatchObject({
@@ -574,7 +575,7 @@ describe('runCli [FEAT-006]', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    const config = JSON.parse(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
+    const config = parseYaml(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
       channels: { telegram: { enabled: boolean; botToken: string; transport: string; sessionScope: string } };
     };
     expect(config.channels.telegram).toMatchObject({
