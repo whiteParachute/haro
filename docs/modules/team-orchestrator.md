@@ -1,130 +1,139 @@
-# Team Orchestrator 设计
+# Team Orchestrator 模块
 
 ## 概述
 
-Team Orchestrator 负责多 Agent 协作编排。**本模块必须严格遵守 [多 Agent 设计约束规范](../../specs/multi-agent-design-constraints.md)**，尤其是约束②（推理链分叉再合并）和约束③（并行覆盖不是分工）。
+`packages/core/src/team-orchestrator.ts` 现在承接 FEAT-014：它消费 FEAT-013 的
+`RoutingDecision + ScenarioWorkflow + CheckpointStore`，把 team workflow 展开为可执行、可恢复、可合并的 fork-and-merge 运行时。
 
-## 核心约束（摘要）
+当前实现边界：
 
-- **Team 拆分维度**：信息属性 / 搜索空间，**禁止**按人类岗位/角色拆分
-- **协作拓扑**：hub-spoke，**禁止**串行交接链
-- **信息传递**：传原始数据，**禁止**传摘要
-- **验证 Agent**：对抗性否定者，不是接棒执行者
+- 只支持 Phase 1 的四种 mode：`parallel`、`debate`、`pipeline`、`hub-spoke`
+- leaf 执行统一通过 `AgentRunner.run()`，不直接碰 provider
+- checkpoint 继续落在 FEAT-013 的 `workflow_checkpoints`
+- merge 输出统一为 `MergeEnvelope`，但 body 仍按 mode 分化
+- `evolution-loop` 仍未进入 Phase 1 runtime
 
-## 编排模式
+## 核心导出
 
-### 模式一：Parallel（并行覆盖）
-
-多个 Agent 围绕同一全局任务并行探索不同方向，Orchestrator 合并结果。
-
-**适用场景**：搜索空间探索、方案比较、A/B 测试
-
-```
-                    ┌→ Agent A（探索方案 X）→┐
-Orchestrator(任务) →├→ Agent B（探索方案 Y）→┤→ Orchestrator(合并) → 结果
-                    └→ Agent C（探索方案 Z）→┘
-```
-
-**实现要求**：
-- 所有 Agent 都能访问同一份全局原始任务描述和核心上下文（不传摘要）
-- 不同 Agent 可以收到不同的探索方向 / 假设 / 搜索策略；这是 Parallel 的价值所在
-- Orchestrator 收集所有 Agent 的完整输出后才进行合并
-- 合并策略：投票、加权评分、对抗性评估等
-
-### 模式二：Debate（对抗性辩论）
-
-两个 Agent 持不同立场，Orchestrator 根据论点质量裁决。
-
-**适用场景**：决策评估、方案验证、风险识别
-
-```
-                    ┌→ Proposer Agent（提出方案）→┐
-Orchestrator(任务) →┤                             ├→ Orchestrator(裁决)
-                    └→ Critic Agent（对抗性批评）→┘
+```ts
+import {
+  TeamOrchestrator,
+  BRANCH_STATUS_VALUES,
+  type BranchLedgerEntry,
+  type TeamBranchState,
+  type MergeEnvelope,
+  type ParallelMergeBody,
+  type DebateMergeBody,
+  type PipelineMergeBody,
+  type HubSpokeMergeBody,
+  type CriticOutput,
+} from '@haro/core'
 ```
 
-**Critic Agent 设计要求（遵守约束④）**：
-- Critic 必须访问原始方案文本（非摘要）
-- Critic 的职责是寻找漏洞和问题，输出"否定清单"
-- Critic 不得顺手给出修复方案（那是实现 Agent 的职责）
+### Branch Ledger
 
-### 模式三：Pipeline（确定性工具链）
+`BranchLedgerEntry` 是 Team runtime 的最小 ledger 单元，核心字段包括：
 
-仅限无推理分支的确定性工具链，每步输入是上步的完整输出。
+- `branchId / nodeId / memberKey / workflowId`
+- `status`: `pending -> dispatched -> running -> completed|failed|cancelled|timed-out -> merge-consumed`
+- `attempt`: 显式 retry 才递增
+- `leafSessionRef`: 与 FEAT-013 的 leaf session 映射兼容
+- `outputRef / output / consumedByMerge / lastError`
 
-**适用场景**：数据清洗、格式转换、日志聚合
+`BRANCH_STATUS_VALUES` 暴露了运行时允许的状态全集，便于 schema/test 对齐。
 
-**⚠️ 使用限制**：任何涉及推理、判断、分析的场景**禁止**使用 Pipeline 模式。
+### TeamBranchState
 
-### 模式四：Hub-Spoke（主从编排）
+`TeamBranchState` 是 checkpoint 中 `branchState` 的 team 扩展，包含：
 
-Orchestrator Agent 动态分配子任务，子 Agent 完成后回报完整结果。
+- `teamStatus`
+- `activeNodeId`
+- `branches`
+- `merge.status / consumedBranches / envelopeRef`
+- `workflowDeadline`（整体 workflow 超时）
+- `leafTimeoutMs`（per-leaf 超时）
+- `fallbackExecutionMode / teamOrchestratorPending`（兼容早期 CLI fallback 状态）
 
-**适用场景**：复杂任务分解（按信息维度，非角色）
+这对应 FEAT-014 的双层超时模型：整体 deadline 控制整个 workflow，leaf timeout 防止单个 branch 卡死。
 
-```
-                    ┌→ Worker A（子任务 1 原始材料）→┐
-Orchestrator Agent ─┼→ Worker B（子任务 2 原始材料）→┼→ Orchestrator（合并）
-                    └→ Worker C（子任务 3 原始材料）→┘
-```
+## 四种编排模式
 
-**注意**：子任务分解必须按信息属性，不按角色；Hub-Spoke 和 Parallel 的区别不在于"谁看全局信息"，而在于：
-- Parallel：多个成员给出互相竞争或互相校验的候选答案
-- Hub-Spoke：多个成员完成互补的子任务切片，最后再综合
+### 1. parallel
 
-子任务分解必须按信息属性，不按角色：
-- 正确："Agent A 分析本地代码库，Agent B 搜索在线文档，Agent C 检查 CI 日志"
-- 错误："Agent A 是开发，Agent B 是测试，Agent C 是审查"
+- 模板：`parallel-research`
+- 拆分维度：信息来源（本地代码 / 文档 / 历史记忆）
+- merge body：`ParallelMergeBody`
+- 语义：竞争/交叉验证候选，最终做 structured union/select
 
-### 模式五：Evolution Loop（进化循环）
+### 2. debate
 
-专为 Evolution Engine 设计的三阶段循环编排。
+- 模板：`debate-design-review`、`debate-review`
+- 分支：`proposer` + `critic`
+- `critic` 输出必须满足 `CriticOutput`
+- 禁止字段：`fix`、`patch`、`implementationPlan`、`revisedProposal`、`delegateTo`
+- merge body：`DebateMergeBody`
 
-```
-评估 Agent（访问原始状态）→ 问题清单（原始数据）→ 规划 Agent → 实现方案 → 验证 Agent（否定者）
-        ↑                                                                              |
-        └──────────────────────────── Feedback（通过则退出）───────────────────────────┘
-```
+### 3. pipeline
 
-**信息流约束**：
-- 每个阶段必须能访问 `evolution-context/` 中的完整原始数据
-- 阶段间传递完整数据，不传"评估通过/失败"这种压缩结论
+- 模板：`pipeline-deterministic-tools`
+- 只允许 deterministic toolchain
+- 两层 enforcement：
+  1. 模板 metadata 静态声明 `deterministicToolStep: true`、`reasoningAllowed: false`
+  2. runtime guard 要求 `sceneDescriptor.taskType === 'deterministic-toolchain'`
+- 默认 strict fail-fast
+- merge body：`PipelineMergeBody`
 
-## Team 定义
+### 4. hub-spoke
 
-Team 本身也是一个 Agent（可递归组合），通过 YAML 配置。Phase 1 会使用独立的 TeamConfig schema；目录可以和普通 Agent 共存，但不复用 Phase 0 的 AgentConfig `.strict()` schema。
+- 模板：`hub-spoke-analysis`
+- 拆分维度：互补信息切片（代码 / 文档 / CI 日志）
+- merge body：`HubSpokeMergeBody`
+- 语义：不是候选投票，而是 complementary slice synthesis
 
-```yaml
-# ~/.haro/agents/review-team.yaml
-id: review-team
-name: 代码审查团队
-type: team
+## 执行流程
 
-# Team 成员（按信息维度拆分）
-members:
-  - agentId: local-code-analyzer    # 分析本地代码
-  - agentId: online-doc-searcher    # 搜索在线文档
-  - agentId: security-critic        # 安全对抗性审查
+`TeamOrchestrator.executeWorkflow()` 的主流程：
 
-# 编排模式
-orchestrationMode: parallel
+1. 校验 team decision / mode / template
+2. `expandBranches()` 展开 branch plan
+3. `writeCheckpoint('fork-dispatch')`
+4. `dispatchBranch()` 通过 `AgentRunner` 执行 leaf
+5. 每个 leaf terminal 后 `writeCheckpoint('leaf-terminal')`
+6. `runMerge()` 生成统一 `MergeEnvelope`
+7. `writeCheckpoint('merge')`
 
-# Parallel / Hub-Spoke 显式声明合并策略
-mergeStrategy: adversarial-eval
+其中 `runMerge()` 采用 **hybrid** 路径：
 
-# Critic（对抗性验证）
-critic:
-  agentId: security-critic
-  role: adversarial  # 必须设为 adversarial，强制遵守约束④
-```
+- envelope 公共字段由规则组装
+- mode body 通过 synthesizer 生成（默认 deterministic synthesizer，可注入自定义实现）
 
-## 违规检测
+## 恢复语义
 
-Team Orchestrator 在运行时检测以下违规行为：
+`resumeWorkflow(workflowId)` 复用 FEAT-013 的恢复优先级：
 
-| 违规行为 | 检测方式 | 处理 |
-|---------|---------|------|
-| Agent 只接收摘要（非原始数据） | 检查输入来源 | 警告 + 记录 |
-| 串行交接链（A→B→C） | 检查编排图结构 | 拒绝启动 |
-| Critic Agent 输出了实现方案 | 检查输出结构 | 警告 |
-| 按角色标签创建 Agent | 检查 Agent 配置 | 警告 |
+1. `workflow checkpoint`
+2. `continuationRef`
+3. `providerResponseId`
+4. `node restart`
+
+并额外满足：
+
+- 已 `merge-consumed` 的 branch 不会被重复执行
+- `merge.consumedBranches` 用作 partial-merge 去重来源
+- merge 已完成时，resume 不会再次消费相同 branch
+
+## 与 CLI / Router 的关系
+
+- `ScenarioRouter` 仍只负责“路由到哪条 workflow”
+- `TeamOrchestrator` 负责“这条 team workflow 怎么 fan-out / checkpoint / merge / resume”
+- `AgentRunner` 仍是唯一 leaf executor
+- CLI 现有 fallback 字段可被 Team runtime 继续读取，不需要另起状态体系
+
+## 测试覆盖
+
+`packages/core/test/team-orchestrator.test.ts` 当前覆盖：
+
+- schema：MergeEnvelope、CriticOutput、BranchStatus
+- mode conformance：parallel / debate / pipeline / hub-spoke
+- lifecycle：状态迁移、retry attempt、provider fallback 不新增 branch
+- checkpoint / resume：fork 恢复、partial-merge 去重、continuationRef 优先级

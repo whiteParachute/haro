@@ -739,7 +739,7 @@ export class CheckpointStore {
         `SELECT id, workflow_id, node_id, state, created_at
            FROM workflow_checkpoints
           WHERE workflow_id = ?
-       ORDER BY created_at DESC, id DESC
+       ORDER BY created_at DESC, rowid DESC
           LIMIT 1`,
       )
       .get(workflowId) as
@@ -755,7 +755,7 @@ export class CheckpointStore {
         `SELECT id, workflow_id, node_id, state, created_at
            FROM workflow_checkpoints
           WHERE workflow_id = ?
-       ORDER BY created_at ASC, id ASC`,
+       ORDER BY created_at ASC, rowid ASC`,
       )
       .all(workflowId) as Array<{
       id: string;
