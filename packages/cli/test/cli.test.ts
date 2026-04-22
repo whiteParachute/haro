@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -211,8 +211,60 @@ describe('runCli [FEAT-006]', () => {
     const report = JSON.parse(chunks.join('')) as Record<string, unknown>;
     expect(report).toHaveProperty('config');
     expect(report).toHaveProperty('providers');
+    expect(report).toHaveProperty('channels');
     expect(report).toHaveProperty('dataDir');
     expect(report).toHaveProperty('sqlite');
+  });
+
+  it('doctor reports enabled external channel healthCheck() status and ignores disabled channels', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-doctor-channels-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+    const feishuHealthCheck = vi.fn(async () => true);
+    const telegramHealthCheck = vi.fn(async () => false);
+    const disabledHealthCheck = vi.fn(async () => true);
+
+    const result = await runCli({
+      argv: ['doctor'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        createTestChannelRegistration({ id: 'feishu', enabled: true, healthCheck: feishuHealthCheck }),
+        createTestChannelRegistration({
+          id: 'telegram',
+          enabled: true,
+          healthCheck: telegramHealthCheck,
+        }),
+        createTestChannelRegistration({ id: 'disabled-channel', enabled: false, healthCheck: disabledHealthCheck }),
+      ],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(feishuHealthCheck).toHaveBeenCalledTimes(1);
+    expect(telegramHealthCheck).toHaveBeenCalledTimes(1);
+    expect(disabledHealthCheck).not.toHaveBeenCalled();
+
+    const report = JSON.parse(chunks.join('')) as {
+      channels: Array<{ id: string; healthy: boolean; source: string }>;
+    };
+    expect(report.channels).toHaveLength(2);
+    expect(report.channels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'feishu', healthy: true, source: 'package' }),
+        expect.objectContaining({ id: 'telegram', healthy: false, source: 'package' }),
+      ]),
+    );
   });
 
   it('FEAT-012 AC1/AC4: setup writes default model and prints next steps', async () => {
@@ -956,6 +1008,35 @@ describe('runCli [FEAT-006]', () => {
     expect(wrapup).not.toHaveBeenCalled();
   });
 
+  it('haro run wires the default memoryWrapupHook and writes an impression file on success', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-memory-wrapup-'));
+    roots.push(root);
+
+    const result = await runCli({
+      argv: ['run', '记录这次 CLI 执行'],
+      root,
+      stdout: new PassThrough(),
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: '本轮执行已完成', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
+    });
+
+    expect(result.exitCode).toBe(0);
+    const impressionsDir = join(root, 'memory', 'agents', 'haro-assistant', 'impressions');
+    const impressionFiles = readdirSync(impressionsDir).filter((file) => file.endsWith('.md'));
+    expect(impressionFiles).toHaveLength(1);
+    const impression = readFileSync(join(impressionsDir, impressionFiles[0]!), 'utf8');
+    expect(impression).toContain('记录这次 CLI 执行');
+    expect(impression).toContain('本轮执行已完成');
+  });
+
   it('config validation errors still exit non-zero and surface the offending path', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-config-error-'));
     roots.push(root);
@@ -1189,6 +1270,7 @@ function createTestChannelRegistration(input: {
   enabled: boolean;
   setup?: ManagedChannel['setup'];
   doctor?: ManagedChannel['doctor'];
+  healthCheck?: ManagedChannel['healthCheck'];
 }): ChannelRegistration {
   const channel: ManagedChannel = {
     id: input.id,
@@ -1210,9 +1292,7 @@ function createTestChannelRegistration(input: {
         requiresWebhook: false,
       } as const;
     },
-    async healthCheck() {
-      return true;
-    },
+    healthCheck: input.healthCheck ?? (async () => true),
     ...(input.setup ? { setup: input.setup } : {}),
     ...(input.doctor ? { doctor: input.doctor } : {}),
   };

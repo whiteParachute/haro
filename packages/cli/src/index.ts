@@ -9,6 +9,7 @@ import {
   DEFAULT_AGENT_ID,
   ProviderRegistry,
   buildHaroPaths,
+  createMemoryFabric,
   createLogger,
   db as haroDb,
   fs as haroFs,
@@ -37,6 +38,7 @@ const CLI_CHANNEL_STATE_FILE = 'state.json';
 const DEFAULT_TASK = '列出当前目录下的 TypeScript 文件';
 
 type CliLogger = Pick<HaroLogger, 'debug' | 'info' | 'warn' | 'error'>;
+type MemoryWrapupHook = NonNullable<ConstructorParameters<typeof AgentRunner>[0]['memoryWrapupHook']>;
 
 export interface RunCliOptions {
   argv?: readonly string[];
@@ -66,6 +68,7 @@ export interface RunCliOptions {
     root?: string;
     projectRoot?: string;
     createSessionId?: () => string;
+    memoryWrapupHook: MemoryWrapupHook;
   }) => AgentRunner;
   channelFactory?: (input: {
     stdout: NodeJS.WritableStream;
@@ -805,6 +808,9 @@ async function bootstrapApp(
 
   const dirResult = haroFs.ensureHaroDirectories(input.root);
   haroDb.initHaroDatabase({ root: input.root });
+  const skills = new SkillsManager({ root: paths.root });
+  skills.ensureInitialized();
+  const memoryWrapupHook = createCliMemoryWrapupHook(skills, logger);
 
   const providerRegistry = input.createProviderRegistry
     ? await input.createProviderRegistry({ config: loaded.config })
@@ -832,6 +838,7 @@ async function bootstrapApp(
         root: input.root,
         projectRoot: input.projectRoot,
         createSessionId: input.createSessionId,
+        memoryWrapupHook,
       })
     : new AgentRunner({
         agentRegistry,
@@ -840,6 +847,7 @@ async function bootstrapApp(
         projectRoot: input.projectRoot,
         createSessionId: input.createSessionId,
         logger,
+        memoryWrapupHook,
       });
 
   const app = {
@@ -860,12 +868,11 @@ async function bootstrapApp(
     providerRegistry,
     agentRegistry,
     runner,
-    skills: new SkillsManager({ root: paths.root }),
+    skills,
     createdDirs: dirResult.created,
     cliChannel: undefined as unknown as CliChannel,
     replState: undefined,
   } satisfies AppContext;
-  app.skills.ensureInitialized();
 
   app.cliChannel = (input.channelFactory ?? defaultChannelFactory)({
     stdout: input.stdout,
@@ -1382,6 +1389,29 @@ async function runDoctor(app: AppContext): Promise<Record<string, unknown>> {
       healthy: await provider.healthCheck(),
     })),
   );
+  const channelChecks = await Promise.all(
+    app.channelRegistry
+      .listEnabled()
+      .filter((entry) => entry.source === 'package')
+      .map(async (entry) => {
+        try {
+          return {
+            id: entry.id,
+            displayName: entry.displayName,
+            source: entry.source,
+            healthy: await entry.channel.healthCheck(),
+          };
+        } catch (err) {
+          return {
+            id: entry.id,
+            displayName: entry.displayName,
+            source: entry.source,
+            healthy: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }),
+  );
   const dirChecks = await Promise.all(
     Object.entries(app.paths.dirs).map(async ([name, path]) => ({
       name,
@@ -1401,6 +1431,7 @@ async function runDoctor(app: AppContext): Promise<Record<string, unknown>> {
 
   const ok =
     providerChecks.every((item) => item.healthy) &&
+    channelChecks.every((item) => item.healthy) &&
     dirChecks.every((item) => item.writable) &&
     sqliteOk;
 
@@ -1408,12 +1439,48 @@ async function runDoctor(app: AppContext): Promise<Record<string, unknown>> {
     ok,
     config: { ok: true, sources: app.loaded.sources },
     providers: providerChecks,
+    channels: channelChecks,
     dataDir: { root: app.paths.root, checks: dirChecks },
     sqlite: {
       ok: sqliteOk,
       ...(sqliteError ? { error: sqliteError } : {}),
     },
   };
+}
+
+function createCliMemoryWrapupHook(skills: SkillsManager, logger: CliLogger): MemoryWrapupHook {
+  const memoryFabric = createMemoryFabric({ root: skills.paths.dirs.memory });
+  return async ({ sessionId, agentId, task, result }) => {
+    const enabled = skills.list().some((entry) => entry.id === 'memory-wrapup' && entry.enabled);
+    if (!enabled) {
+      logger.debug?.({ sessionId, agentId }, 'memory-wrapup skill disabled; skipping CLI memory wrapup');
+      return;
+    }
+    try {
+      await memoryFabric.wrapupSession({
+        scope: 'agent',
+        agentId,
+        wrapupId: sessionId,
+        topic: previewText(task),
+        summary: previewText(result),
+        transcript: [`Task: ${task}`, '', `Result: ${result}`].join('\n'),
+        source: 'skill:memory-wrapup',
+      });
+    } catch (err) {
+      logger.warn?.(
+        { sessionId, agentId, err: err instanceof Error ? err.message : String(err) },
+        'CLI memory-wrapup hook failed',
+      );
+    }
+  };
+}
+
+function previewText(value: string, limit = 80): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, limit - 1))}…`;
 }
 
 function readStatus(root: string, dbFile: string): Record<string, unknown> {
