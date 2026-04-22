@@ -34,9 +34,9 @@ export async function runEat(input: EatCommandInput): Promise<{ output: string }
   const stdout = input.stdout ?? process.stdout;
   const detected = detectEatInput(input.input, input.as);
   const content = await loadEatContent(detected, input.deep === true);
-  const evaluation = evaluateEatContent(content);
+  const evaluation = evaluateEatContent(content, input.root);
   if (evaluation.rejected) {
-    return { output: `eat rejected: ${evaluation.reason}` };
+    return { output: renderEatDecisionResult('eat rejected', evaluation) };
   }
   const buckets = buildEatBuckets(content);
   const preview = renderEatPreview(detected.kind, buckets, evaluation);
@@ -203,16 +203,118 @@ async function loadEatContent(input: { kind: 'url' | 'path' | 'text'; value: str
   return /text\/html/.test(type) ? stripHtml(text) : text;
 }
 
-function evaluateEatContent(content: string): { rejected: boolean; reason?: string; checks: Array<{ name: string; pass: boolean }> } {
+function evaluateEatContent(content: string, root: string): {
+  rejected: boolean;
+  reason?: string;
+  qualityGate: Array<{ name: string; pass: boolean; reason: string }>;
+  verification: Array<{ name: string; pass: boolean; reason: string }>;
+} {
   const lowered = content.toLowerCase();
-  const checks = [
-    { name: 'not-generic-knowledge', pass: !(lowered.includes('python') && (lowered.includes('syntax') || lowered.includes('hello world') || lowered.includes('基础语法'))) },
-    { name: 'not-too-small', pass: content.trim().length >= 20 },
-    { name: 'has-failure-backed-detail', pass: /must|always|because|workflow|rule|principle/i.test(content) },
-    { name: 'has-triggerable-context', pass: /workflow|rule|principle|skill|步骤|场景/i.test(content) },
+  const trimmed = content.trim();
+  const policyStatements = extractPolicyStatements(content);
+  const existingPolicies = collectExistingPolicies(root);
+  const entertainmentHit = detectKeyword(lowered, ENTERTAINMENT_KEYWORDS);
+  const oneOffHit = detectKeyword(lowered, ONE_OFF_KEYWORDS);
+  const lowQualityHit = detectLowQualityContent(content);
+  const genericKnowledgeHit = detectGenericKnowledge(lowered);
+  const conflictHit = findMatchingPolicy(policyStatements, existingPolicies, 'conflict');
+  const equivalentHit = findMatchingPolicy(policyStatements, existingPolicies, 'equivalent');
+  const inferableHit = detectInferableFromCodebase(lowered, root);
+  const failureBacked = /because|otherwise|avoid|prevents?|so that|failure|bug|incident|risk|rollback|否则|避免|防止|失败|出错|风险|因为/i.test(content);
+  const toolEnforceable = /(eslint|prettier|format|formatter|lint|linter|ci check|typecheck|schema|compile|tsc|unit test|integration test|snapshot|eslint-disable|格式化|lint|类型检查|编译器|测试覆盖)/i.test(content);
+  const decisionEncoded = /must|always|never|should|because|prefer|avoid|rule|principle|policy|decision|必须|总是|不要|禁止|原则|规则|决策/i.test(content);
+  const triggerable = /workflow|rule|principle|policy|when|if|steps?:|场景|步骤|触发|规则|工作流|出现|遇到/i.test(content);
+
+  const qualityGate = [
+    {
+      name: 'not-entertainment',
+      pass: entertainmentHit === undefined,
+      reason: entertainmentHit ? `matched entertainment marker '${entertainmentHit}'` : 'no entertainment-only marker detected',
+    },
+    {
+      name: 'not-one-off',
+      pass: oneOffHit === undefined,
+      reason: oneOffHit ? `matched one-off marker '${oneOffHit}'` : 'no one-off marker detected',
+    },
+    {
+      name: 'not-generic-knowledge',
+      pass: genericKnowledgeHit === undefined,
+      reason: genericKnowledgeHit ?? 'does not look like already-known generic knowledge',
+    },
+    {
+      name: 'not-low-quality',
+      pass: lowQualityHit === undefined,
+      reason: lowQualityHit ?? 'content has enough signal for review',
+    },
+    {
+      name: 'not-too-small',
+      pass: trimmed.length >= 20,
+      reason: trimmed.length >= 20 ? `content length ${trimmed.length} >= 20` : `content length ${trimmed.length} < 20`,
+    },
+    {
+      name: 'not-conflicting-with-existing',
+      pass: conflictHit === undefined,
+      reason: conflictHit ? `conflicts with ${conflictHit.source}: ${conflictHit.text}` : 'no conflicting existing rule/skill detected',
+    },
+    {
+      name: 'not-equivalent-to-existing',
+      pass: equivalentHit === undefined,
+      reason: equivalentHit ? `duplicates ${equivalentHit.source}: ${equivalentHit.text}` : 'no equivalent existing rule/skill detected',
+    },
+    {
+      name: 'not-inferable-from-codebase',
+      pass: inferableHit === undefined,
+      reason: inferableHit ?? 'does not look directly inferable from repository structure/tooling',
+    },
   ];
-  const failed = checks.find((item) => !item.pass);
-  return failed ? { rejected: true, reason: failed.name, checks } : { rejected: false, checks };
+
+  const verification = [
+    {
+      name: 'Failure-backed?',
+      pass: failureBacked,
+      reason: failureBacked ? 'contains explicit failure/risk causality' : 'no concrete failure/risk consequence found',
+    },
+    {
+      name: 'Tool-enforceable?',
+      pass: !toolEnforceable,
+      reason: toolEnforceable ? 'looks enforceable by linter/CI/type system' : 'not obviously tool-enforceable',
+    },
+    {
+      name: 'Decision-encoding?',
+      pass: decisionEncoded,
+      reason: decisionEncoded ? 'encodes a non-trivial behavioral decision' : 'does not encode a clear decision beyond generic description',
+    },
+    {
+      name: 'Triggerable?',
+      pass: triggerable,
+      reason: triggerable ? 'contains an explicit trigger/workflow context' : 'no clear trigger/workflow context found',
+    },
+  ];
+
+  const failedGate = qualityGate.find((item) => !item.pass);
+  if (failedGate) {
+    return {
+      rejected: true,
+      reason: failedGate.name,
+      qualityGate,
+      verification,
+    };
+  }
+
+  if (verification.every((item) => !item.pass)) {
+    return {
+      rejected: true,
+      reason: 'four-questions-all-fail',
+      qualityGate,
+      verification,
+    };
+  }
+
+  return {
+    rejected: false,
+    qualityGate,
+    verification,
+  };
 }
 
 function buildEatBuckets(content: string) {
@@ -300,7 +402,22 @@ function renderEatPreview(kind: string, buckets: ReturnType<typeof buildEatBucke
     `eat preview (${kind})`,
     `memory: ${buckets.memoryTitle}`,
     `proposals: ${buckets.proposals.map((item) => `${item.type}:${item.path}`).join(', ') || 'none'}`,
-    `checks: ${evaluation.checks.map((item) => `${item.name}=${item.pass ? 'pass' : 'fail'}`).join(', ')}`,
+    'quality gate:',
+    ...evaluation.qualityGate.map((item) => `- ${item.name}: ${item.pass ? 'pass' : 'fail'} — ${item.reason}`),
+    'four questions:',
+    ...evaluation.verification.map((item) => `- ${item.name}: ${item.pass ? 'pass' : 'fail'} — ${item.reason}`),
+    `decision: ${evaluation.rejected ? `reject (${evaluation.reason})` : 'accept'}`,
+  ].join('\n');
+}
+
+function renderEatDecisionResult(prefix: string, evaluation: ReturnType<typeof evaluateEatContent>): string {
+  return [
+    `${prefix}: ${evaluation.reason ?? 'unknown'}`,
+    'quality gate:',
+    ...evaluation.qualityGate.map((item) => `- ${item.name}: ${item.pass ? 'pass' : 'fail'} — ${item.reason}`),
+    'four questions:',
+    ...evaluation.verification.map((item) => `- ${item.name}: ${item.pass ? 'pass' : 'fail'} — ${item.reason}`),
+    `decision: reject (${evaluation.reason ?? 'unknown'})`,
   ].join('\n');
 }
 
@@ -379,4 +496,130 @@ function firstMeaningfulLine(lines: string[]): string | undefined {
 
 function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'proposal';
+}
+
+const ENTERTAINMENT_KEYWORDS = ['joke', 'meme', 'funny', 'entertainment', '娱乐', '搞笑', '段子', '梗图', '八卦', '玩笑'] as const;
+const ONE_OFF_KEYWORDS = ['one-off', 'just this once', 'today only', 'temporary', 'for this ticket', '一次性', '临时', '仅这次', '只此一次', '今天先这样'] as const;
+const MODAL_PATTERNS: Array<{ label: 'positive' | 'negative'; regex: RegExp }> = [
+  { label: 'negative', regex: /\b(never|do not|don't|avoid|forbid|forbidden|禁止|不要|不可)\b/i },
+  { label: 'positive', regex: /\b(must|always|should|require|required|必须|总是|应当|需要)\b/i },
+];
+const STRIP_POLICY_WORDS = /\b(rule|workflow|principle|policy|decision|must|always|never|should|because|if|when|avoid|do not|don't|require|required)\b|规则|工作流|原则|策略|决策|必须|总是|不要|禁止|因为|如果|当|避免|需要/gi;
+
+function detectKeyword(content: string, keywords: readonly string[]): string | undefined {
+  return keywords.find((keyword) => content.includes(keyword));
+}
+
+function detectLowQualityContent(content: string): string | undefined {
+  const trimmed = content.trim();
+  if (trimmed.length < 20) return 'too short to assess durable value';
+  if (/lorem ipsum|todo|tbd|待补充|随便写写|差不多得了/i.test(content)) return 'contains placeholder / low-confidence wording';
+  const uncertaintyMatches = content.match(/\?\?+|maybe|probably|可能|也许|大概/gi) ?? [];
+  if (uncertaintyMatches.length >= 2) return 'contains repeated uncertainty without durable rule content';
+  return undefined;
+}
+
+function detectGenericKnowledge(content: string): string | undefined {
+  if (/(python|javascript|typescript|java|go|rust).*(syntax|hello world|variables?|loops?|conditions?|functions?|classes?|基础语法|hello world|变量|循环|条件|函数|类)/i.test(content)) {
+    return 'matches language basics / hello-world style generic knowledge';
+  }
+  if (/(design pattern|oop|面向对象|设计模式|基础概念)/i.test(content) && !/(because|workflow|incident|must|always|必须|规则)/i.test(content)) {
+    return 'matches generic concept without task-specific decision context';
+  }
+  return undefined;
+}
+
+function detectInferableFromCodebase(content: string, root: string): string | undefined {
+  const hints: string[] = [];
+  if (existsSync(join(root, 'package.json')) && /\b(node|javascript|typescript)\b/i.test(content)) hints.push('package.json');
+  if (existsSync(join(root, 'pnpm-workspace.yaml')) && /\b(pnpm|workspace|monorepo)\b/i.test(content)) hints.push('pnpm-workspace.yaml');
+  if (existsSync(join(root, 'packages')) && /(packages\/|目录结构|monorepo|workspace)/i.test(content)) hints.push('packages/');
+  if (existsSync(join(root, 'vitest.config.ts')) && /\bvitest\b/i.test(content)) hints.push('vitest.config.ts');
+  if ((existsSync(join(root, 'eslint.config.js')) || existsSync(join(root, '.eslintrc')) || existsSync(join(root, '.eslintrc.js'))) && /\b(eslint|lint|代码风格|linter)\b/i.test(content)) {
+    hints.push('eslint config');
+  }
+  return hints.length > 0 ? `repo-visible convention/tooling matched (${hints.join(', ')})` : undefined;
+}
+
+function extractPolicyStatements(content: string): Array<{ text: string; signature: string; polarity: 'positive' | 'negative' | 'neutral' }> {
+  return content
+    .split(/\r?\n|[。！？.!?]/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => /(must|always|never|should|because|avoid|rule|workflow|principle|policy|步骤|规则|工作流|原则|必须|不要|禁止)/i.test(line))
+    .map((line) => ({
+      text: line,
+      signature: normalizePolicy(line),
+      polarity: detectPolarity(line),
+    }))
+    .filter((line) => line.signature.length > 0);
+}
+
+function collectExistingPolicies(root: string): Array<{ source: string; text: string; signature: string; polarity: 'positive' | 'negative' | 'neutral' }> {
+  const policies: Array<{ source: string; text: string; signature: string; polarity: 'positive' | 'negative' | 'neutral' }> = [];
+  const rulesRoot = join(root, 'rules');
+  if (existsSync(rulesRoot)) {
+    for (const file of walk(rulesRoot)) {
+      const text = readFileSync(file, 'utf8');
+      for (const statement of extractPolicyStatements(text)) {
+        policies.push({ source: relative(root, file), ...statement });
+      }
+    }
+  }
+  const skillsRoot = join(root, 'skills');
+  if (existsSync(skillsRoot)) {
+    for (const file of walk(skillsRoot)) {
+      if (!file.endsWith('SKILL.md')) continue;
+      const text = readFileSync(file, 'utf8');
+      for (const statement of extractPolicyStatements(text)) {
+        policies.push({ source: relative(root, file), ...statement });
+      }
+    }
+  }
+  return policies;
+}
+
+function findMatchingPolicy(
+  candidates: Array<{ text: string; signature: string; polarity: 'positive' | 'negative' | 'neutral' }>,
+  existing: Array<{ source: string; text: string; signature: string; polarity: 'positive' | 'negative' | 'neutral' }>,
+  mode: 'conflict' | 'equivalent',
+): { source: string; text: string } | undefined {
+  for (const candidate of candidates) {
+    for (const known of existing) {
+      if (!samePolicySignature(candidate.signature, known.signature)) continue;
+      if (mode === 'equivalent' && candidate.polarity === known.polarity) {
+        return { source: known.source, text: known.text };
+      }
+      if (mode === 'conflict' && candidate.polarity !== 'neutral' && known.polarity !== 'neutral' && candidate.polarity !== known.polarity) {
+        return { source: known.source, text: known.text };
+      }
+    }
+  }
+  return undefined;
+}
+
+function detectPolarity(line: string): 'positive' | 'negative' | 'neutral' {
+  for (const pattern of MODAL_PATTERNS) {
+    if (pattern.regex.test(line)) return pattern.label;
+  }
+  return 'neutral';
+}
+
+function normalizePolicy(line: string): string {
+  return line
+    .toLowerCase()
+    .replace(STRIP_POLICY_WORDS, ' ')
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function samePolicySignature(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (left.length >= 12 && (left.includes(right) || right.includes(left))) return true;
+  const leftTokens = left.split(' ').filter(Boolean);
+  const rightTokens = right.split(' ').filter(Boolean);
+  if (leftTokens.length === 0 || rightTokens.length === 0) return false;
+  const overlap = leftTokens.filter((token) => rightTokens.includes(token)).length;
+  return overlap / Math.max(leftTokens.length, rightTokens.length) >= 0.7;
 }

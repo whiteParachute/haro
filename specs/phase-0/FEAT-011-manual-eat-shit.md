@@ -5,7 +5,7 @@ status: done
 phase: phase-0
 owner: whiteParachute
 created: 2026-04-18
-updated: 2026-04-20
+updated: 2026-04-22
 related:
   - ../evolution-metabolism.md
   - ./FEAT-010-skills-subsystem.md
@@ -151,3 +151,7 @@ else → 提示二义性，要求 --as url|path|text
   - `packages/skills/src/metabolism.ts` 落地 eat / shit / rollback 的 Phase 0 手动代谢流程：输入识别、最小文本抓取、质量门槛、memory 写入、proposal bundle、防膨胀检查、skills/memory/rules/mcp 扫描、归档与回滚
   - `packages/skills/src/manager.ts` 通过 `invokeCommandSkill('eat'|'shit', ...)` 暴露命令级技能入口；`packages/cli/src/index.ts` 新增 `haro eat` / `haro shit` / `haro shit rollback`，保持 CLI 只做参数桥接
   - `packages/skills/test/metabolism.test.ts` 与 `packages/cli/test/cli.test.ts` 补齐 reject / bundle / dry-run / archive / rollback / CLI bridge 覆盖，并复用 FEAT-010 的 usage 统计与预装白名单
+- 2026-04-22: whiteParachute — quality gate completed
+  - `packages/skills/src/metabolism.ts` 补齐剩余 4 条拒绝条件：纯娱乐/一次性/低质量、与现有规则冲突、已存在等价规则/skill、可从代码库直接推导
+  - 新增四问验证显式决策输出（Failure-backed / Tool-enforceable / Decision-encoding / Triggerable），在 preview / reject 结果中逐条给出理由
+  - `packages/skills/test/metabolism.test.ts` 增加对应回归：新增拒绝条件、四问验证可见性、防膨胀保持不回退；R3 质量门槛视为已完成

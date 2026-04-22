@@ -10,16 +10,53 @@ afterEach(() => {
 });
 
 describe('Metabolism commands [FEAT-011]', () => {
-  it('rejects generic knowledge and ambiguous short text', async () => {
+  it('rejects generic knowledge, entertainment/one-off, conflicts, duplicates, inferable repo facts, and ambiguous short text', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-eat-reject-'));
     roots.push(root);
     const manager = new SkillsManager({ root });
+
     const generic = await manager.invokeCommandSkill('eat', {
       input: 'Python 基础语法和 hello world 示例',
       as: 'text',
       yes: true,
     });
     expect(generic.output).toContain('rejected');
+    expect(generic.output).toContain('not-generic-knowledge');
+
+    const entertainment = await manager.invokeCommandSkill('eat', {
+      input: '这是个搞笑段子合集，只图一乐，今天先这样。',
+      as: 'text',
+      yes: true,
+    });
+    expect(entertainment.output).toContain('not-entertainment');
+
+    mkdirSync(join(root, 'rules'), { recursive: true });
+    writeFileSync(join(root, 'rules', 'deploy.md'), '# deploy\n\nRule: Never deploy on Friday.\n', 'utf8');
+    const conflict = await manager.invokeCommandSkill('eat', {
+      input: 'Rule: Always deploy on Friday because it feels lucky.',
+      as: 'text',
+      yes: true,
+    });
+    expect(conflict.output).toContain('not-conflicting-with-existing');
+
+    writeFileSync(join(root, 'rules', 'validation.md'), '# validation\n\nRule: Always validate inputs before side effects.\n', 'utf8');
+    const equivalent = await manager.invokeCommandSkill('eat', {
+      input: 'Rule: Always validate inputs before side effects.',
+      as: 'text',
+      yes: true,
+    });
+    expect(equivalent.output).toContain('not-equivalent-to-existing');
+
+    writeFileSync(join(root, 'package.json'), '{"name":"tmp"}\n', 'utf8');
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n', 'utf8');
+    mkdirSync(join(root, 'packages'), { recursive: true });
+    const inferable = await manager.invokeCommandSkill('eat', {
+      input: '这个仓库是 pnpm workspace monorepo，packages 目录里是 TypeScript 模块。',
+      as: 'text',
+      yes: true,
+    });
+    expect(inferable.output).toContain('not-inferable-from-codebase');
+
     await expect(
       manager.invokeCommandSkill('eat', {
         input: '短文本',
@@ -34,12 +71,13 @@ describe('Metabolism commands [FEAT-011]', () => {
     roots.push(root);
     const manager = new SkillsManager({ root });
     const inputFile = join(root, 'source.md');
+    let preview = '';
     writeFileSync(
       inputFile,
       [
         'Principle: Keep interfaces narrow',
-        'Rule: Always validate inputs before side effects.',
-        'Workflow: 1. Inspect 2. Validate 3. Apply',
+        'Rule: Always validate inputs before side effects because rollback is expensive.',
+        'Workflow: When external input appears, 1. Inspect 2. Validate 3. Apply',
       ].join('\n'),
       'utf8',
     );
@@ -47,8 +85,20 @@ describe('Metabolism commands [FEAT-011]', () => {
       input: inputFile,
       yes: true,
       as: 'path',
+      stdout: {
+        write(chunk: string | Uint8Array) {
+          preview += String(chunk);
+          return true;
+        },
+      } as NodeJS.WritableStream,
     });
     expect(result.output).toContain('proposal bundle');
+    expect(preview).toContain('quality gate:');
+    expect(preview).toContain('four questions:');
+    expect(preview).toContain('Failure-backed?: pass');
+    expect(preview).toContain('Decision-encoding?: pass');
+    expect(preview).toContain('Triggerable?: pass');
+    expect(preview).toContain('decision: accept');
     const archiveRoot = join(root, 'archive', 'eat-proposals');
     const bundle = readDirSingle(archiveRoot);
     expect(existsSync(join(bundle, 'memory-preview.md'))).toBe(true);
