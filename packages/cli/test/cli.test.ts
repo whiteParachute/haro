@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
-import { AgentRegistry, AgentRunner, ProviderRegistry } from '@haro/core';
+import { AgentRegistry, AgentRunner, ProviderRegistry, db as haroDb } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
 import type { ChannelRegistration, ManagedChannel } from '../src/channel.js';
@@ -103,6 +103,171 @@ describe('runCli [FEAT-006]', () => {
     expect(result.exitCode).toBe(0);
     expect(result.action).toBe('run');
     expect(chunks.join('')).toContain('src/index.ts');
+  });
+
+  it('FEAT-013: haro run routes through ScenarioRouter before reaching Runner', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-run-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    const runnerCalls: Array<Parameters<AgentRunner['run']>[0]> = [];
+    const ingressSessionIds: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['run', '列出当前目录下的 TypeScript 文件'],
+      root,
+      stdout,
+      createSessionId: createIdFactory(['workflow-run-1', 'leaf-run-1']),
+      createConversationId: createRecordingIdFactory(
+        ['cli-bootstrap-run-1', 'channel-run-1'],
+        ingressSessionIds,
+      ),
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'text', content: 'Scanning workspace…' };
+              yield {
+                type: 'result',
+                content: 'src/index.ts\nsrc/runtime/runner.ts',
+                responseId: 'resp-run-1',
+              };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createRunner: ({ agentRegistry, providerRegistry, logger, root: haroRoot, projectRoot, createSessionId }) => {
+        const runner = new AgentRunner({
+          agentRegistry,
+          providerRegistry,
+          logger,
+          root: haroRoot,
+          projectRoot,
+          createSessionId,
+        });
+        const originalRun = runner.run.bind(runner);
+        runner.run = async (input) => {
+          runnerCalls.push(input);
+          return originalRun(input);
+        };
+        return runner;
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(chunks.join('')).toContain('src/index.ts');
+    expect(runnerCalls).toHaveLength(1);
+
+    const db = openDatabase(root);
+    try {
+      const workflowCheckpoint = db
+        .prepare(
+          'SELECT workflow_id, node_id, state FROM workflow_checkpoints ORDER BY created_at ASC, id ASC LIMIT 1',
+        )
+        .get() as
+        | { workflow_id: string; node_id: string; state: string }
+        | undefined;
+      const session = db
+        .prepare('SELECT id FROM sessions ORDER BY started_at ASC LIMIT 1')
+        .get() as { id: string } | undefined;
+
+      expect(workflowCheckpoint).toBeDefined();
+      expect(session).toBeDefined();
+      expect(ingressSessionIds).toEqual(['cli-bootstrap-run-1', 'channel-run-1']);
+      expect(workflowCheckpoint?.workflow_id).toBe('workflow-run-1');
+      expect(workflowCheckpoint?.workflow_id).not.toBe(ingressSessionIds[1]);
+      expect(session?.id).toBe('leaf-run-1');
+
+      const state = JSON.parse(workflowCheckpoint!.state) as {
+        routingDecision: { executionMode: string };
+        rawContextRefs: Array<{ kind: string; ref: string }>;
+        leafSessionRefs: Array<{ nodeId: string; sessionId: string; providerResponseId?: string }>;
+      };
+      expect(state.routingDecision.executionMode).toBe('single-agent');
+      expect(state.rawContextRefs).toEqual([{ kind: 'input', ref: 'channel://cli/sessions/channel-run-1' }]);
+      expect(state.leafSessionRefs).toEqual([
+        {
+          nodeId: workflowCheckpoint!.node_id,
+          sessionId: 'leaf-run-1',
+          providerResponseId: 'resp-run-1',
+        },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('FEAT-013: team-mode requests warn and fall back to single-agent without throwing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-team-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const outputChunks: string[] = [];
+    const errorChunks: string[] = [];
+    stdout.on('data', (chunk) => outputChunks.push(String(chunk)));
+    stderr.on('data', (chunk) => errorChunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['run', '请分析这个复杂系统故障，跨文件定位根因并拆分信息维度'],
+      root,
+      stdout,
+      stderr,
+      createSessionId: createIdFactory(['workflow-team-1', 'leaf-team-1']),
+      createConversationId: createIdFactory(['cli-bootstrap-team-1', 'channel-team-1']),
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield {
+                type: 'result',
+                content: 'team fallback executed',
+                responseId: 'resp-team-1',
+              };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(outputChunks.join('')).toContain('team fallback executed');
+    expect(errorChunks.join('')).toContain('WARN [FEAT-014]');
+    expect(errorChunks.join('')).toContain('workflow-team-1');
+
+    const db = openDatabase(root);
+    try {
+      const workflowCheckpoint = db
+        .prepare(
+          'SELECT workflow_id, state FROM workflow_checkpoints ORDER BY created_at ASC, id ASC LIMIT 1',
+        )
+        .get() as { workflow_id: string; state: string } | undefined;
+      const session = db
+        .prepare('SELECT id FROM sessions ORDER BY started_at ASC LIMIT 1')
+        .get() as { id: string } | undefined;
+
+      expect(workflowCheckpoint?.workflow_id).toBe('workflow-team-1');
+      expect(session?.id).toBe('leaf-team-1');
+
+      const state = JSON.parse(workflowCheckpoint!.state) as {
+        routingDecision: { executionMode: string; orchestrationMode?: string };
+        branchState: { fallbackExecutionMode?: string; teamOrchestratorPending?: boolean };
+        leafSessionRefs: Array<{ sessionId: string; providerResponseId?: string }>;
+      };
+      expect(state.routingDecision.executionMode).toBe('team');
+      expect(state.routingDecision.orchestrationMode).toBe('hub-spoke');
+      expect(state.branchState).toEqual({
+        fallbackExecutionMode: 'single-agent',
+        teamOrchestratorPending: true,
+      });
+      expect(state.leafSessionRefs[0]).toEqual({
+        nodeId: 'leaf-1',
+        sessionId: 'leaf-team-1',
+        providerResponseId: 'resp-team-1',
+      });
+    } finally {
+      db.close();
+    }
   });
 
   it('AC2/AC6: repl /help lists slash commands and /compress reports unsupported for codex', async () => {
@@ -1304,4 +1469,44 @@ function createTestChannelRegistration(input: {
     source: 'package',
     displayName: input.id,
   };
+}
+
+function createIdFactory(ids: string[]): () => string {
+  let index = 0;
+  return () => {
+    const value = ids[index];
+    index += 1;
+    if (!value) {
+      throw new Error('ran out of deterministic ids');
+    }
+    return value;
+  };
+}
+
+function createRecordingIdFactory(ids: string[], bucket: string[]): () => string {
+  const next = createIdFactory(ids);
+  return () => {
+    const value = next();
+    bucket.push(value);
+    return value;
+  };
+}
+
+function openDatabase(root: string): {
+  prepare(sql: string): {
+    get(...args: unknown[]): unknown;
+    all(...args: unknown[]): unknown[];
+  };
+  close(): void;
+} {
+  const opened = haroDb.initHaroDatabase({ root, keepOpen: true }) as {
+    database: {
+      prepare(sql: string): {
+        get(...args: unknown[]): unknown;
+        all(...args: unknown[]): unknown[];
+      };
+      close(): void;
+    };
+  };
+  return opened.database;
 }

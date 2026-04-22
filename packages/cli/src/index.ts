@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -7,8 +8,10 @@ import { stringify as stringifyYaml } from 'yaml';
 import {
   AgentRegistry,
   AgentRunner,
+  CheckpointStore,
   DEFAULT_AGENT_ID,
   ProviderRegistry,
+  ScenarioRouter,
   buildHaroPaths,
   createMemoryFabric,
   createLogger,
@@ -140,6 +143,8 @@ interface ExecutionOptions {
   noMemory?: boolean;
   retryOfSessionId?: string;
   continueLatestSession?: boolean;
+  channelSessionId?: string;
+  channelId?: string;
 }
 
 export interface AppContext {
@@ -157,6 +162,9 @@ export interface AppContext {
   providerRegistry: ProviderRegistry;
   agentRegistry: AgentRegistry;
   runner: AgentRunner;
+  createRunner(createSessionId?: () => string): AgentRunner;
+  router: ScenarioRouter;
+  checkpointStore: CheckpointStore;
   createdDirs: string[];
   cliChannel: CliChannel;
   replState?: ReplState;
@@ -224,10 +232,12 @@ export async function runCli(opts: RunCliOptions = {}): Promise<RunCliResult> {
   try {
     await program.parseAsync(['node', 'haro', ...argv], { from: 'node' });
     await app.channelRegistry.stop();
+    app.checkpointStore.close();
     app.skills.close();
     return commandResult(app, inferAction(argv), 0);
   } catch (err) {
     await app.channelRegistry.stop();
+    app.checkpointStore.close();
     app.skills.close();
     if (err instanceof CommanderExit) {
       return commandResult(app, inferAction(argv), err.code, err);
@@ -831,25 +841,35 @@ async function bootstrapApp(
         })
       ).registry;
 
-  const runner = input.createRunner
-    ? input.createRunner({
-        agentRegistry,
-        providerRegistry,
-        logger,
-        root: input.root,
-        projectRoot: input.projectRoot,
-        createSessionId: input.createSessionId,
-        memoryWrapupHook,
-      })
-    : new AgentRunner({
-        agentRegistry,
-        providerRegistry,
-        root: input.root,
-        projectRoot: input.projectRoot,
-        createSessionId: input.createSessionId,
-        logger,
-        memoryWrapupHook,
-      });
+  const createRunner = (createSessionId = input.createSessionId): AgentRunner =>
+    input.createRunner
+      ? input.createRunner({
+          agentRegistry,
+          providerRegistry,
+          logger,
+          root: input.root,
+          projectRoot: input.projectRoot,
+          createSessionId,
+          memoryWrapupHook,
+        })
+      : new AgentRunner({
+          agentRegistry,
+          providerRegistry,
+          root: input.root,
+          projectRoot: input.projectRoot,
+          createSessionId,
+          logger,
+          memoryWrapupHook,
+        });
+  const runner = createRunner();
+  const router = new ScenarioRouter({
+    createId: input.createSessionId,
+    now,
+  });
+  const checkpointStore = new CheckpointStore({
+    root: input.root,
+    now,
+  });
 
   const app = {
     opts: input,
@@ -869,6 +889,9 @@ async function bootstrapApp(
     providerRegistry,
     agentRegistry,
     runner,
+    createRunner,
+    router,
+    checkpointStore,
     skills,
     createdDirs: dirResult.created,
     cliChannel: undefined as unknown as CliChannel,
@@ -957,6 +980,8 @@ async function handleCliInbound(app: AppContext, msg: InboundMessage): Promise<v
       provider: replState.providerOverride,
       model: replState.modelOverride,
       continueLatestSession: replState.continueLatestSession,
+      channelSessionId: msg.sessionId,
+      channelId: msg.channelId,
     },
     app.cliChannel,
   );
@@ -974,6 +999,8 @@ async function handleExternalInbound(app: AppContext, channel: MessageChannel, m
       agentId: app.cliState.defaultAgentId ?? app.loaded.config.defaultAgent ?? DEFAULT_AGENT_ID,
       provider: app.cliState.defaultProvider,
       model: app.cliState.defaultModel,
+      channelSessionId: msg.sessionId,
+      channelId: msg.channelId,
     },
     channel,
   );
@@ -986,6 +1013,8 @@ async function executeTask(
 ) {
   app.agentRegistry.get(input.agentId);
   const prepared = await app.skills.prepareTask(input.task, { agentId: input.agentId });
+  const effectiveTask = prepared.finalTask ?? input.task;
+  const channelSessionId = input.channelSessionId ?? resolveIngressSessionId(app);
   const outputChannel =
     channel ??
     (app.opts.channelFactory ?? defaultChannelFactory)({
@@ -994,7 +1023,7 @@ async function executeTask(
       stdin: app.stdin,
       startRepl: false,
       now: app.now,
-      createConversationId: app.opts.createConversationId,
+      createConversationId: () => channelSessionId,
     });
   if (!channel) {
     await outputChannel.start({
@@ -1033,8 +1062,29 @@ async function executeTask(
       }),
     );
   };
-  const result = await app.runner.run({
-    task: prepared.finalTask ?? input.task,
+  const scene = app.router.classify(effectiveTask);
+  const decision = app.router.route(scene);
+  const workflow = app.router.createWorkflow(decision, {
+    sceneDescriptor: scene,
+    channelSessionId,
+  });
+  const checkpointNodeId = workflow.leafSessionRefs[0]?.nodeId ?? 'leaf-1';
+  const leafSessionId =
+    workflow.leafSessionRefs[0]?.sessionId ??
+    (app.opts.createSessionId ? app.opts.createSessionId() : randomUUID());
+  const branchState =
+    decision.executionMode === 'team'
+      ? {
+          fallbackExecutionMode: 'single-agent',
+          teamOrchestratorPending: true,
+        }
+      : { fallbackExecutionMode: null };
+  if (decision.executionMode === 'team') {
+    logTeamFallback(app, workflow.workflowId, channelSessionId);
+  }
+  const runner = app.createRunner(() => leafSessionId);
+  const result = await runner.run({
+    task: effectiveTask,
     agentId: input.agentId,
     ...(input.provider ? { provider: input.provider } : {}),
     ...(input.model ? { model: input.model } : {}),
@@ -1044,6 +1094,34 @@ async function executeTask(
     onEvent: queueLiveEvent,
   });
   await liveDispatch;
+  app.checkpointStore.save({
+    workflowId: workflow.workflowId,
+    nodeId: checkpointNodeId,
+    state: {
+      workflowId: workflow.workflowId,
+      nodeId: checkpointNodeId,
+      nodeType: 'agent',
+      sceneDescriptor: scene,
+      routingDecision: decision,
+      rawContextRefs: [
+        {
+          kind: 'input',
+          ref: buildIngressContextRef(input.channelId ?? outputChannel.id, channelSessionId),
+        },
+      ],
+      branchState,
+      leafSessionRefs: [
+        {
+          nodeId: checkpointNodeId,
+          sessionId: result.sessionId,
+          ...(result.finalEvent.type === 'result' && result.finalEvent.responseId
+            ? { providerResponseId: result.finalEvent.responseId }
+            : {}),
+        },
+      ],
+      createdAt: workflow.createdAt,
+    },
+  });
 
   for (const event of result.events) {
     if (event.type === 'text') {
@@ -1069,6 +1147,30 @@ async function executeTask(
   }
 
   return result;
+}
+
+function resolveIngressSessionId(app: AppContext): string {
+  return app.opts.createConversationId ? app.opts.createConversationId() : randomUUID();
+}
+
+function buildIngressContextRef(channelId: string, channelSessionId: string): string {
+  return `channel://${channelId}/sessions/${channelSessionId}`;
+}
+
+function logTeamFallback(app: AppContext, workflowId: string, channelSessionId: string): void {
+  const message =
+    `WARN [FEAT-014] Team Orchestrator 尚未实现；workflow '${workflowId}' ` +
+    `暂回退到 single-agent 执行（channelSessionId=${channelSessionId}）。`;
+  app.logger.warn?.(
+    {
+      workflowId,
+      channelSessionId,
+      fallbackExecutionMode: 'single-agent',
+      requestedExecutionMode: 'team',
+    },
+    'Team orchestration not implemented; falling back to single-agent execution',
+  );
+  app.stderr.write(`${message}\n`);
 }
 
 async function handleSlashCommand(
