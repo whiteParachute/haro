@@ -54,7 +54,8 @@ import {
 - `leafTimeoutMs`（per-leaf 超时）
 - `fallbackExecutionMode / teamOrchestratorPending`（兼容早期 CLI fallback 状态）
 
-这对应 FEAT-014 的双层超时模型：整体 deadline 控制整个 workflow，leaf timeout 防止单个 branch 卡死。
+这对应 FEAT-014 的双层超时模型：整体 deadline 会裁剪 branch 的可运行时长；若先触发 workflow deadline，
+branch 记为 `cancelled` 且 teamStatus 记为 `timed-out`；否则保留 `timed-out` 给 per-leaf timeout。
 
 ## 四种编排模式
 
@@ -69,6 +70,7 @@ import {
 
 - 模板：`debate-design-review`、`debate-review`
 - 分支：`proposer` + `critic`
+- proposer 先执行；critic 由 orchestrator 注入 `reviewTargetOutputRef`，针对 proposer 输出做负向审查
 - `critic` 输出必须满足 `CriticOutput`
 - 禁止字段：`fix`、`patch`、`implementationPlan`、`revisedProposal`、`delegateTo`
 - merge body：`DebateMergeBody`
@@ -99,13 +101,14 @@ import {
 3. `writeCheckpoint('fork-dispatch')`
 4. `dispatchBranch()` 通过 `AgentRunner` 执行 leaf
 5. 每个 leaf terminal 后 `writeCheckpoint('leaf-terminal')`
-6. `runMerge()` 生成统一 `MergeEnvelope`
-7. `writeCheckpoint('merge')`
+6. `runMerge()` 生成统一 `MergeEnvelope`，先把 merge-ready envelope 持久化到 checkpoint
+7. commit merge consumption，写入最终 `writeCheckpoint('merge')`
 
 其中 `runMerge()` 采用 **hybrid** 路径：
 
 - envelope 公共字段由规则组装
 - mode body 通过 synthesizer 生成（默认 deterministic synthesizer，可注入自定义实现）
+- 即便使用自定义 synthesizer，返回的 envelope body 仍会经过 runtime schema guard
 
 ## 恢复语义
 
@@ -120,7 +123,9 @@ import {
 
 - 已 `merge-consumed` 的 branch 不会被重复执行
 - `merge.consumedBranches` 用作 partial-merge 去重来源
+- merge-ready checkpoint 若已持久化 envelope，resume 会直接 commit，不重跑 merge synthesizer
 - merge 已完成时，resume 不会再次消费相同 branch
+- `leafSessionRefs` 保留同一 node 的 retry 历史，最新 sessionRef 排在最前
 
 ## 与 CLI / Router 的关系
 
@@ -134,6 +139,6 @@ import {
 `packages/core/test/team-orchestrator.test.ts` 当前覆盖：
 
 - schema：MergeEnvelope、CriticOutput、BranchStatus
-- mode conformance：parallel / debate / pipeline / hub-spoke
-- lifecycle：状态迁移、retry attempt、provider fallback 不新增 branch
-- checkpoint / resume：fork 恢复、partial-merge 去重、continuationRef 优先级
+- mode conformance：parallel / debate / pipeline / hub-spoke（含 proposer→critic 引用传递）
+- lifecycle：状态迁移、retry attempt、provider fallback 不新增 branch、workflow deadline 抢占 leaf timeout
+- checkpoint / resume：fork 恢复、partial-merge 去重、merge-ready envelope commit、continuationRef 优先级、leafSessionRefs 历史保留

@@ -242,6 +242,15 @@ export interface TeamOrchestratorAgentRunner {
   run(input: RunAgentInput): Promise<RunAgentResult>;
 }
 
+interface DispatchBranchInput {
+  rawContextRefs?: RawContextRef[];
+  agentId?: string;
+  upstreamOutputRef?: string;
+  reviewTargetOutputRef?: string;
+  leafTimeoutMs?: number;
+  timeoutErrorFactory?: () => Error;
+}
+
 export interface MergeSynthesisInput {
   mode: TeamOrchestrationMode;
   branches: BranchLedgerEntry[];
@@ -562,6 +571,35 @@ export function validateMergeEnvelope(envelope: MergeEnvelope): void {
   if (envelope.body.kind !== envelope.orchestrationMode) {
     throw new Error('MergeEnvelope body kind must match orchestrationMode.');
   }
+  validateMergeBody(envelope.body);
+}
+
+function validateMergeBody(body: MergeEnvelopeBody): void {
+  switch (body.kind) {
+    case 'parallel':
+      assertMergeBodySections(body, 'Parallel');
+      return;
+    case 'debate':
+      assertMergeBodySections(body, 'Debate');
+      return;
+    case 'pipeline':
+      assertMergeBodySections(body, 'Pipeline');
+      return;
+    case 'hub-spoke':
+      assertMergeBodySections(body, 'Hub-spoke');
+      return;
+    default:
+      throw new Error('Unsupported merge body kind.');
+  }
+}
+
+function assertMergeBodySections(
+  body: { candidates: unknown; findings: unknown; decision: unknown },
+  label: string,
+): void {
+  if (!Array.isArray(body.candidates) || !Array.isArray(body.findings) || !isObject(body.decision)) {
+    throw new Error(`${label} merge body must contain candidates, findings, and decision.`);
+  }
 }
 
 function ensureTeamDecision(workflow: ScenarioWorkflow, decision: RoutingDecision): TeamOrchestrationMode {
@@ -626,9 +664,22 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorFactory: ()
   });
 }
 
-function upsertLeafSessionRefs(refs: LeafSessionRef[], ref: LeafSessionRef): LeafSessionRef[] {
-  const next = refs.filter((item) => item.nodeId !== ref.nodeId);
-  next.push({ ...ref });
+function recordLeafSessionRef(refs: LeafSessionRef[], ref: LeafSessionRef): LeafSessionRef[] {
+  const next: LeafSessionRef[] = [];
+  let matched = false;
+  for (const item of refs) {
+    if (item.nodeId === ref.nodeId && item.sessionId === ref.sessionId) {
+      if (!matched) {
+        next.push({ ...item, ...ref });
+        matched = true;
+      }
+      continue;
+    }
+    next.push({ ...item });
+  }
+  if (!matched) {
+    next.unshift({ ...ref });
+  }
   return next;
 }
 
@@ -744,6 +795,14 @@ function hasPendingMergeWork(state: TeamBranchState): boolean {
   return Object.values(state.branches).some((branch) => !branch.consumedByMerge && branch.status !== 'merge-consumed');
 }
 
+function isWorkflowDeadlineCancellation(branch: BranchLedgerEntry): boolean {
+  return (
+    branch.status === 'cancelled' &&
+    typeof branch.lastError === 'string' &&
+    branch.lastError.startsWith('workflow deadline reached')
+  );
+}
+
 function markOutstandingBranchesCancelled(state: TeamBranchState, now: string): void {
   for (const branch of Object.values(state.branches)) {
     if (isTerminalBranchStatus(branch.status)) continue;
@@ -793,6 +852,8 @@ export class TeamOrchestrator {
 
     if (mode === 'pipeline') {
       await this.executePipeline(workflow, decision, rawContextRefs, state);
+    } else if (mode === 'debate') {
+      await this.executeDebate(workflow, decision, rawContextRefs, state);
     } else {
       await Promise.all(
         Object.values(state.branches).map(async (branch) => {
@@ -838,12 +899,7 @@ export class TeamOrchestrator {
   async dispatchBranch(
     branch: BranchLedgerEntry,
     agentRunner: TeamOrchestratorAgentRunner,
-    input?: {
-      rawContextRefs?: RawContextRef[];
-      agentId?: string;
-      upstreamOutputRef?: string;
-      leafTimeoutMs?: number;
-    },
+    input?: DispatchBranchInput,
   ): Promise<BranchLedgerEntry> {
     const next = cloneBranch(branch);
     const startedAt = toTimestamp(this.now());
@@ -859,11 +915,16 @@ export class TeamOrchestrator {
       const result = await withTimeout(
         agentRunner.run({
           agentId: input?.agentId ?? this.defaultAgentId,
-          task: this.buildBranchTask(next, input?.rawContextRefs ?? [], input?.upstreamOutputRef),
+          task: this.buildBranchTask(
+            next,
+            input?.rawContextRefs ?? [],
+            input?.upstreamOutputRef,
+            input?.reviewTargetOutputRef,
+          ),
           continueLatestSession: next.attempt > 1,
         }),
         timeoutMs,
-        () => new Error(`Branch '${next.branchId}' timed out after ${timeoutMs}ms.`),
+        input?.timeoutErrorFactory ?? (() => new Error(`Branch '${next.branchId}' timed out after ${timeoutMs}ms.`)),
       );
 
       next.leafSessionRef = {
@@ -890,14 +951,21 @@ export class TeamOrchestrator {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       next.lastError = message;
-      next.status = message.includes('timed out') ? 'timed-out' : 'failed';
+      next.status = message.includes('workflow deadline reached')
+        ? 'cancelled'
+        : message.includes('timed out')
+          ? 'timed-out'
+          : 'failed';
     }
 
     next.finishedAt = toTimestamp(this.now());
     return next;
   }
 
-  async runMerge(branches: BranchLedgerEntry[]): Promise<MergeEnvelope> {
+  async runMerge(
+    branches: BranchLedgerEntry[],
+    options?: { alreadyConsumedBranchIds?: Iterable<string> },
+  ): Promise<MergeEnvelope> {
     if (branches.length === 0) {
       throw new Error('Cannot merge an empty branch set.');
     }
@@ -911,8 +979,14 @@ export class TeamOrchestrator {
     }
 
     const body = await this.mergeSynthesizer({ mode, branches: branches.map(cloneBranch) });
+    const alreadyConsumedBranchIds = new Set(options?.alreadyConsumedBranchIds ?? []);
     const consumedBranches = branches
-      .filter((branch) => isTerminalBranchStatus(branch.status) && !branch.consumedByMerge)
+      .filter(
+        (branch) =>
+          isTerminalBranchStatus(branch.status) &&
+          !branch.consumedByMerge &&
+          !alreadyConsumedBranchIds.has(branch.branchId),
+      )
       .map((branch) => branch.branchId);
     const evidenceRefs = new Set<string>();
     for (const branch of branches) {
@@ -955,11 +1029,12 @@ export class TeamOrchestrator {
           : state.branchState.activeNodeId;
     const nodeType: WorkflowCheckpointState['nodeType'] =
       phase === 'merge' ? 'merge' : phase === 'leaf-terminal' ? 'agent' : 'team';
-    const workflowSnapshot = cloneWorkflow(state.workflow);
-    workflowSnapshot.leafSessionRefs = Object.values(state.branchState.branches)
+    const workflowSnapshot = cloneWorkflow(state.branchState.workflow ?? state.workflow);
+    for (const ref of Object.values(state.branchState.branches)
       .map((branch) => branch.leafSessionRef)
-      .filter((ref): ref is LeafSessionRef => Boolean(ref))
-      .map((ref) => ({ ...ref }));
+      .filter((ref): ref is LeafSessionRef => Boolean(ref))) {
+      workflowSnapshot.leafSessionRefs = recordLeafSessionRef(workflowSnapshot.leafSessionRefs, ref);
+    }
 
     return this.checkpointStore.save({
       workflowId: state.workflow.workflowId,
@@ -1005,9 +1080,22 @@ export class TeamOrchestrator {
       state.merge = { status: 'pending', consumedBranches: [] };
     }
 
+    if (state.merge.status === 'ready' && state.merge.envelope) {
+      const envelope = this.commitPreparedMerge(workflow, decision, rawContextRefs, state, state.merge.envelope);
+      return {
+        workflow: cloneWorkflow(workflow),
+        state: cloneState(state),
+        envelope: cloneEnvelope(envelope),
+        resumeTarget,
+        checkpoint,
+      };
+    }
+
     if (state.merge.status !== 'completed' && hasPendingMergeWork(state)) {
       if (workflow.orchestrationMode === 'pipeline') {
         await this.executePipeline(workflow, decision, rawContextRefs, state);
+      } else if (workflow.orchestrationMode === 'debate') {
+        await this.executeDebate(workflow, decision, rawContextRefs, state);
       } else {
         for (const branch of Object.values(state.branches)) {
           if (!branchShouldRun(branch)) continue;
@@ -1096,9 +1184,16 @@ export class TeamOrchestrator {
         this.expandBranches(workflow).map((branch) => [branch.branchId, branch]),
       );
     }
+    const persistedConsumed = new Set(state.merge.consumedBranches);
     for (const branch of Object.values(state.branches)) {
-      if (branch.status === 'merge-consumed') {
+      if (branch.status === 'merge-consumed' || persistedConsumed.has(branch.branchId)) {
         branch.consumedByMerge = true;
+      }
+      if (
+        persistedConsumed.has(branch.branchId) &&
+        (state.merge.status === 'completed' || state.merge.status === 'blocked')
+      ) {
+        branch.status = 'merge-consumed';
       }
     }
     return state;
@@ -1124,11 +1219,41 @@ export class TeamOrchestrator {
         upstreamOutputRef = updated.outputRef;
       }
       if (template.pipeline?.strictFailFast && updated.status !== 'completed') {
-        state.teamStatus = updated.status === 'timed-out' ? 'timed-out' : 'failed';
+        state.teamStatus =
+          updated.status === 'timed-out' || isWorkflowDeadlineCancellation(updated) ? 'timed-out' : 'failed';
         markOutstandingBranchesCancelled(state, toTimestamp(this.now()));
         break;
       }
     }
+  }
+
+  private async executeDebate(
+    workflow: ScenarioWorkflow,
+    decision: RoutingDecision,
+    rawContextRefs: RawContextRef[],
+    state: TeamBranchState,
+  ): Promise<void> {
+    const branches = Object.values(state.branches);
+    const proposer = branches.find((branch) => branch.branchRole === 'proposer');
+    if (proposer) {
+      await this.executeBranch(workflow, decision, rawContextRefs, state, proposer.branchId);
+    }
+    const reviewTargetOutputRef = proposer ? state.branches[proposer.branchId]?.outputRef : undefined;
+    await Promise.all(
+      branches
+        .filter((branch) => branch.branchId !== proposer?.branchId)
+        .map(async (branch) => {
+          await this.executeBranch(
+            workflow,
+            decision,
+            rawContextRefs,
+            state,
+            branch.branchId,
+            undefined,
+            reviewTargetOutputRef,
+          );
+        }),
+    );
   }
 
   private async executeBranch(
@@ -1138,6 +1263,7 @@ export class TeamOrchestrator {
     state: TeamBranchState,
     branchId: string,
     upstreamOutputRef?: string,
+    reviewTargetOutputRef?: string,
   ): Promise<void> {
     const branch = state.branches[branchId];
     if (!branch || !branchShouldRun(branch)) {
@@ -1151,10 +1277,22 @@ export class TeamOrchestrator {
       return;
     }
 
+    const configuredLeafTimeoutMs = state.leafTimeoutMs?.[branchId] ?? this.leafTimeoutMs;
+    const workflowRemainingMs =
+      typeof state.workflowDeadline === 'string'
+        ? Math.max(1, Date.parse(state.workflowDeadline) - this.now().getTime())
+        : undefined;
+    const leafTimeoutMs =
+      workflowRemainingMs === undefined ? configuredLeafTimeoutMs : Math.min(configuredLeafTimeoutMs, workflowRemainingMs);
     const updated = await this.dispatchBranch(branch, this.agentRunner, {
       rawContextRefs,
       upstreamOutputRef,
-      leafTimeoutMs: state.leafTimeoutMs?.[branchId] ?? this.leafTimeoutMs,
+      reviewTargetOutputRef,
+      leafTimeoutMs,
+      timeoutErrorFactory:
+        workflowRemainingMs !== undefined && workflowRemainingMs < configuredLeafTimeoutMs
+          ? () => new Error(`workflow deadline reached before branch '${branch.branchId}' finished`)
+          : undefined,
     });
     state.branches[branchId] = updated;
     state.activeNodeId = updated.nodeId;
@@ -1162,12 +1300,12 @@ export class TeamOrchestrator {
       ? {
           ...state.workflow,
           leafSessionRefs: updated.leafSessionRef
-            ? upsertLeafSessionRefs(state.workflow.leafSessionRefs, updated.leafSessionRef)
+            ? recordLeafSessionRef(state.workflow.leafSessionRefs, updated.leafSessionRef)
             : state.workflow.leafSessionRefs,
         }
       : state.workflow;
 
-    if (updated.status === 'timed-out') {
+    if (updated.status === 'timed-out' || isWorkflowDeadlineCancellation(updated)) {
       state.teamStatus = 'timed-out';
     } else if (updated.status === 'failed') {
       state.teamStatus = workflow.orchestrationMode === 'pipeline' ? 'failed' : state.teamStatus;
@@ -1194,36 +1332,18 @@ export class TeamOrchestrator {
         : Object.values(state.branches).every((branch) => branch.status === 'cancelled')
           ? 'cancelled'
           : 'merge-ready';
-    state.merge = state.merge ?? { status: 'pending', consumedBranches: [] };
-    state.merge.status = 'ready';
-
-    const envelope = await this.runMerge(Object.values(state.branches));
-    state.merge.status = envelope.status === 'blocked' ? 'blocked' : 'completed';
-    state.merge.envelopeRef = envelope.checkpointRef;
-    state.merge.envelope = cloneEnvelope(envelope);
-    for (const branchId of envelope.consumedBranches) {
-      const branch = state.branches[branchId];
-      if (!branch) continue;
-      branch.consumedByMerge = true;
-      branch.status = 'merge-consumed';
-      branch.finishedAt = branch.finishedAt ?? toTimestamp(this.now());
-    }
-    state.merge.consumedBranches = [...new Set([...state.merge.consumedBranches, ...envelope.consumedBranches])];
-    state.teamStatus = envelope.status === 'blocked' ? state.teamStatus : 'merged';
-
-    this.writeCheckpoint('merge', {
-      workflow,
-      decision,
-      rawContextRefs,
-      branchState: state,
-    });
-    return envelope;
+    const envelope =
+      state.merge?.status === 'ready' && state.merge.envelope
+        ? cloneEnvelope(state.merge.envelope)
+        : await this.prepareMerge(workflow, decision, rawContextRefs, state);
+    return this.commitPreparedMerge(workflow, decision, rawContextRefs, state, envelope);
   }
 
   private buildBranchTask(
     branch: BranchLedgerEntry,
     rawContextRefs: RawContextRef[],
     upstreamOutputRef?: string,
+    reviewTargetOutputRef?: string,
   ): string {
     const lines = [
       `workflowId: ${branch.workflowId}`,
@@ -1239,7 +1359,63 @@ export class TeamOrchestrator {
     if (upstreamOutputRef) {
       lines.push(`upstreamOutputRef: ${upstreamOutputRef}`);
     }
+    if (reviewTargetOutputRef) {
+      lines.push(`reviewTargetOutputRef: ${reviewTargetOutputRef}`);
+    }
     return lines.join('\n');
+  }
+
+  private async prepareMerge(
+    workflow: ScenarioWorkflow,
+    decision: RoutingDecision,
+    rawContextRefs: RawContextRef[],
+    state: TeamBranchState,
+  ): Promise<MergeEnvelope> {
+    state.merge = state.merge ?? { status: 'pending', consumedBranches: [] };
+    state.merge.status = 'ready';
+    const envelope = await this.runMerge(Object.values(state.branches), {
+      alreadyConsumedBranchIds: state.merge.consumedBranches,
+    });
+    state.merge.envelopeRef = envelope.checkpointRef;
+    state.merge.envelope = cloneEnvelope(envelope);
+    state.merge.consumedBranches = [...new Set([...state.merge.consumedBranches, ...envelope.consumedBranches])];
+    this.writeCheckpoint('merge', {
+      workflow,
+      decision,
+      rawContextRefs,
+      branchState: state,
+    });
+    return envelope;
+  }
+
+  private commitPreparedMerge(
+    workflow: ScenarioWorkflow,
+    decision: RoutingDecision,
+    rawContextRefs: RawContextRef[],
+    state: TeamBranchState,
+    envelope: MergeEnvelope,
+  ): MergeEnvelope {
+    state.merge = state.merge ?? { status: 'pending', consumedBranches: [] };
+    const consumedBranches = new Set(state.merge.consumedBranches);
+    for (const branchId of consumedBranches) {
+      const branch = state.branches[branchId];
+      if (!branch) continue;
+      branch.consumedByMerge = true;
+      branch.status = 'merge-consumed';
+      branch.finishedAt = branch.finishedAt ?? toTimestamp(this.now());
+    }
+    state.merge.status = envelope.status === 'blocked' ? 'blocked' : 'completed';
+    state.merge.envelopeRef = envelope.checkpointRef;
+    state.merge.envelope = cloneEnvelope(envelope);
+    state.teamStatus = envelope.status === 'blocked' ? state.teamStatus : 'merged';
+
+    this.writeCheckpoint('merge', {
+      workflow,
+      decision,
+      rawContextRefs,
+      branchState: state,
+    });
+    return envelope;
   }
 
   private async defaultMergeSynthesis(input: MergeSynthesisInput): Promise<MergeEnvelopeBody> {

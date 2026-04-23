@@ -580,3 +580,4 @@ evidenceRefs` 的 mode body；不得仅输出自由文本摘要。（对应 R13-
   - 新增 `packages/core/src/team-orchestrator.ts`，实现 branch ledger、四种 merge body、checkpoint/resume 与 TeamOrchestrator 主入口。
   - 新增 `packages/core/test/team-orchestrator.test.ts`，覆盖 schema、mode conformance、lifecycle、checkpoint/resume。
   - 同步 `docs/modules/team-orchestrator.md`，状态更新为 done。
+- 2026-04-22: Codex — 实现完成，AC 测试全绿，PR 待合入

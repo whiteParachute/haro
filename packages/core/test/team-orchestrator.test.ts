@@ -19,6 +19,7 @@ interface RunnerReply {
   content?: string;
   responseId?: string;
   sessionId?: string;
+  delayMs?: number;
   errorCode?: string;
   errorMessage?: string;
 }
@@ -33,6 +34,10 @@ class FakeAgentRunner implements TeamOrchestratorAgentRunner {
     const memberKey = /memberKey: (.+)/.exec(input.task)?.[1] ?? 'unknown';
     const reply = this.nextReply(memberKey);
     const sessionId = reply.sessionId ?? `session-${memberKey}-${this.countCallsFor(memberKey)}`;
+
+    if (reply.delayMs && reply.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, reply.delayMs));
+    }
 
     if (reply.errorCode) {
       return {
@@ -263,6 +268,45 @@ describe('TeamOrchestrator [FEAT-014]', () => {
     await expect(orchestrator.runMerge([proposer, critic])).rejects.toThrow(/revisedProposal/);
   });
 
+  it('mode: debate executes proposer first and passes proposal output ref to critic', async () => {
+    const runner = new FakeAgentRunner({
+      'design-proposer': { content: 'full proposal' },
+      'design-critic': {
+        content: JSON.stringify({
+          issues: [{ summary: 'missing rollback plan', evidenceRefs: ['artifact://critic'] }],
+        }),
+      },
+    });
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: runner,
+      checkpointStore: new CheckpointStore({ root: freshRoot(tempRoots) }),
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-debate-sequenced',
+      orchestrationMode: 'debate',
+      workflowTemplateId: 'debate-design-review',
+      taskType: 'design',
+    });
+
+    const result = await orchestrator.executeWorkflow(
+      workflow,
+      {
+        executionMode: 'team',
+        orchestrationMode: 'debate',
+        workflowTemplateId: 'debate-design-review',
+      },
+      createRawContextRefs(),
+    );
+
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[0]?.task).toContain('memberKey: design-proposer');
+    expect(runner.calls[1]?.task).toContain('memberKey: design-critic');
+    expect(runner.calls[1]?.task).toContain(
+      'reviewTargetOutputRef: workflow://workflow-debate-sequenced/branches/workflow-debate-sequenced:design-proposer/attempt/1',
+    );
+    expect(result.envelope.body.kind).toBe('debate');
+  });
+
   it('mode: pipeline enforces deterministic-toolchain via static metadata and runtime guard', async () => {
     const runner = new FakeAgentRunner({
       'collect-inputs': { content: 'step-1' },
@@ -391,6 +435,37 @@ describe('TeamOrchestrator [FEAT-014]', () => {
     expect(state.branches[branch.branchId]?.leafSessionRef?.sessionId).toBe('session-local-code-source-1');
   });
 
+  it('lifecycle: workflow deadline caps branch execution before leaf timeout', async () => {
+    const runner = new FakeAgentRunner({
+      '*': { content: 'slow-success', delayMs: 40 },
+    });
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: runner,
+      checkpointStore: new CheckpointStore({ root: freshRoot(tempRoots) }),
+      workflowTimeoutMs: 10,
+      leafTimeoutMs: 100,
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-deadline',
+      orchestrationMode: 'parallel',
+      workflowTemplateId: 'parallel-research',
+      taskType: 'research',
+    });
+
+    const result = await orchestrator.executeWorkflow(
+      workflow,
+      {
+        executionMode: 'team',
+        orchestrationMode: 'parallel',
+        workflowTemplateId: 'parallel-research',
+      },
+      createRawContextRefs(),
+    );
+
+    expect(result.state.teamStatus).toBe('timed-out');
+    expect(result.envelope.sourceBranches.every((branch) => branch.status === 'cancelled')).toBe(true);
+  });
+
   it('checkpoint/resume: resumes from fork checkpoint without reclassification and merges once', async () => {
     const root = freshRoot(tempRoots);
     const runner = new FakeAgentRunner();
@@ -431,6 +506,76 @@ describe('TeamOrchestrator [FEAT-014]', () => {
     store.close();
   });
 
+  it('checkpoint/writeCheckpoint: preserves retry leafSessionRefs history for the same node', () => {
+    const root = freshRoot(tempRoots);
+    const store = new CheckpointStore({ root });
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: new FakeAgentRunner(),
+      checkpointStore: store,
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-session-history',
+      orchestrationMode: 'parallel',
+      workflowTemplateId: 'parallel-research',
+      taskType: 'research',
+    });
+    const [branch] = orchestrator.expandBranches(workflow);
+    const state = createTeamState(workflow, [branch]);
+
+    state.workflow = {
+      ...workflow,
+      leafSessionRefs: [
+        {
+          nodeId: branch.nodeId,
+          sessionId: 'leaf-session-2',
+          continuationRef: 'cont-2',
+        },
+        {
+          nodeId: branch.nodeId,
+          sessionId: 'leaf-session-1',
+          providerResponseId: 'resp-1',
+        },
+      ],
+    };
+    state.branches[branch.branchId] = {
+      ...branch,
+      attempt: 2,
+      status: 'completed',
+      leafSessionRef: {
+        nodeId: branch.nodeId,
+        sessionId: 'leaf-session-2',
+        continuationRef: 'cont-2',
+      },
+      outputRef: 'workflow://workflow-session-history/branches/1',
+      output: {
+        content: 'retry output',
+        evidenceRefs: ['artifact://retry'],
+      },
+    };
+
+    const checkpoint = orchestrator.writeCheckpoint('leaf-terminal', {
+      workflow,
+      decision: {
+        executionMode: 'team',
+        orchestrationMode: 'parallel',
+        workflowTemplateId: 'parallel-research',
+      },
+      rawContextRefs: createRawContextRefs(),
+      branchState: state,
+    });
+
+    expect(checkpoint.state.leafSessionRefs).toHaveLength(2);
+    expect(checkpoint.state.leafSessionRefs[0]).toMatchObject({
+      sessionId: 'leaf-session-2',
+      continuationRef: 'cont-2',
+    });
+    expect(checkpoint.state.leafSessionRefs[1]).toMatchObject({
+      sessionId: 'leaf-session-1',
+      providerResponseId: 'resp-1',
+    });
+    store.close();
+  });
+
   it('checkpoint/resume: partial-merge dedupe does not re-consume consumedBranches', async () => {
     const root = freshRoot(tempRoots);
     const runner = new FakeAgentRunner();
@@ -462,6 +607,106 @@ describe('TeamOrchestrator [FEAT-014]', () => {
     expect(resumed?.state.merge?.consumedBranches).toEqual(first.state.merge?.consumedBranches);
     expect(runner.calls.length).toBe(callCountAfterFirstRun);
     expect(resumed?.state.merge?.consumedBranches).toHaveLength(3);
+    store.close();
+  });
+
+  it('checkpoint/resume: commits a persisted merge-ready envelope without rerunning merge', async () => {
+    const root = freshRoot(tempRoots);
+    const runner = new FakeAgentRunner();
+    let synthesizeCalls = 0;
+    const store = new CheckpointStore({ root });
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: runner,
+      checkpointStore: store,
+      createId: createIdFactory(['merge-ref-ready']),
+      mergeSynthesizer: async () => {
+        synthesizeCalls += 1;
+        return {
+          kind: 'parallel',
+          candidates: [],
+          findings: [],
+          decision: {
+            mode: 'blocked',
+            selectedBranchIds: [],
+            rationale: 'should not rerun merge synthesis during resume',
+            evidenceRefs: [],
+          },
+        };
+      },
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-resume-merge-ready',
+      orchestrationMode: 'parallel',
+      workflowTemplateId: 'parallel-research',
+      taskType: 'research',
+    });
+    const branches = orchestrator.expandBranches(workflow).map((branch, index) => ({
+      ...branch,
+      status: 'completed' as const,
+      attempt: 1,
+      outputRef: `workflow://${workflow.workflowId}/branch/${index + 1}`,
+      output: {
+        content: `candidate-${index + 1}`,
+        evidenceRefs: [`artifact://${index + 1}`],
+      },
+    }));
+    const state = createTeamState(workflow, branches);
+    state.merge = {
+      status: 'ready',
+      consumedBranches: branches.map((branch) => branch.branchId),
+      envelopeRef: 'checkpoint://workflow-resume-merge-ready/merge-1/merge-ref-ready',
+      envelope: {
+        workflowId: workflow.workflowId,
+        mergeNodeId: 'merge-1',
+        orchestrationMode: 'parallel',
+        status: 'completed',
+        sourceBranches: branches.map((branch) => ({
+          branchId: branch.branchId,
+          nodeId: branch.nodeId,
+          status: 'completed' as const,
+          outputRef: branch.outputRef,
+        })),
+        consumedBranches: branches.map((branch) => branch.branchId),
+        checkpointRef: 'checkpoint://workflow-resume-merge-ready/merge-1/merge-ref-ready',
+        evidenceRefs: branches.flatMap((branch) => branch.output?.evidenceRefs ?? []),
+        body: {
+          kind: 'parallel',
+          candidates: branches.map((branch) => ({
+            branchId: branch.branchId,
+            outputRef: branch.outputRef!,
+            evidenceRefs: branch.output?.evidenceRefs ?? [],
+          })),
+          findings: [],
+          decision: {
+            mode: 'union',
+            selectedBranchIds: branches.map((branch) => branch.branchId),
+            rationale: 'resume should commit persisted envelope',
+            evidenceRefs: branches.flatMap((branch) => branch.output?.evidenceRefs ?? []),
+          },
+        },
+      },
+    };
+
+    orchestrator.writeCheckpoint('merge', {
+      workflow,
+      decision: {
+        executionMode: 'team',
+        orchestrationMode: 'parallel',
+        workflowTemplateId: 'parallel-research',
+      },
+      rawContextRefs: createRawContextRefs(),
+      branchState: state,
+    });
+
+    const resumed = await orchestrator.resumeWorkflow(workflow.workflowId);
+
+    expect(resumed?.state.teamStatus).toBe('merged');
+    expect(resumed?.state.merge?.status).toBe('completed');
+    expect(Object.values(resumed?.state.branches ?? {}).every((branch) => branch.status === 'merge-consumed')).toBe(
+      true,
+    );
+    expect(runner.calls).toHaveLength(0);
+    expect(synthesizeCalls).toBe(0);
     store.close();
   });
 
@@ -511,6 +756,42 @@ describe('TeamOrchestrator [FEAT-014]', () => {
       sessionId: 'leaf-session-1',
     });
     store.close();
+  });
+
+  it('schema: rejects invalid merge body returned by a custom synthesizer', async () => {
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: new FakeAgentRunner(),
+      checkpointStore: new CheckpointStore({ root: freshRoot(tempRoots) }),
+      mergeSynthesizer: async () =>
+        ({
+          kind: 'parallel',
+          findings: [],
+          decision: {
+            mode: 'union',
+            selectedBranchIds: [],
+            rationale: 'missing candidates should be rejected',
+            evidenceRefs: [],
+          },
+        }) as never,
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-invalid-envelope',
+      orchestrationMode: 'parallel',
+      workflowTemplateId: 'parallel-research',
+      taskType: 'research',
+    });
+    const branches = orchestrator.expandBranches(workflow).map((branch) => ({
+      ...branch,
+      status: 'completed' as const,
+      attempt: 1,
+      outputRef: `workflow://${workflow.workflowId}/${branch.memberKey}`,
+      output: {
+        content: branch.memberKey,
+        evidenceRefs: [`artifact://${branch.memberKey}`],
+      },
+    }));
+
+    await expect(orchestrator.runMerge(branches)).rejects.toThrow(/candidates/);
   });
 });
 
