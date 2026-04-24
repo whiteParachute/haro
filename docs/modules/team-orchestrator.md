@@ -52,7 +52,8 @@ import {
 - `merge.status / consumedBranches / envelopeRef`
 - `workflowDeadline`（整体 workflow 超时）
 - `leafTimeoutMs`（per-leaf 超时）
-- `fallbackExecutionMode / teamOrchestratorPending`（兼容早期 CLI fallback 状态）
+- `fallbackExecutionMode / teamOrchestratorPending`（当前 CLI release team 路径为 `null / false`；仅用于识别早期
+  checkpoint 或未来显式降级边界）
 
 这对应 FEAT-014 的双层超时模型：整体 deadline 会裁剪 branch 的可运行时长；若先触发 workflow deadline，
 branch 记为 `cancelled` 且 teamStatus 记为 `timed-out`；否则保留 `timed-out` 给 per-leaf timeout。
@@ -126,13 +127,17 @@ branch 记为 `cancelled` 且 teamStatus 记为 `timed-out`；否则保留 `time
 - merge-ready checkpoint 若已持久化 envelope，resume 会直接 commit，不重跑 merge synthesizer
 - merge 已完成时，resume 不会再次消费相同 branch
 - `leafSessionRefs` 保留同一 node 的 retry 历史，最新 sessionRef 排在最前
+- branch retry 不会设置 `continueLatestSession: true`，因此不会按 `agent_id + provider` 隐式续接全局 latest
+  session；如果存在当前 branch 的上一轮 `leafSessionRef.sessionId`，只作为精确 `retryOfSessionId` 传给 Runner
+  做审计关联，实际 attempt 默认隔离运行
 
 ## 与 CLI / Router 的关系
 
 - `ScenarioRouter` 仍只负责“路由到哪条 workflow”
 - `TeamOrchestrator` 负责“这条 team workflow 怎么 fan-out / checkpoint / merge / resume”
 - `AgentRunner` 仍是唯一 leaf executor
-- CLI 现有 fallback 字段可被 Team runtime 继续读取，不需要另起状态体系
+- CLI release 路径在 `executionMode = team` 且 workflow 合法时直接调用 `executeWorkflow()`，不再 warning 后回退到
+  single-agent；fallback 字段只作为旧 checkpoint 兼容或未来显式 unsupported 边界的状态槽位
 
 ## 测试覆盖
 
@@ -141,4 +146,5 @@ branch 记为 `cancelled` 且 teamStatus 记为 `timed-out`；否则保留 `time
 - schema：MergeEnvelope、CriticOutput、BranchStatus
 - mode conformance：parallel / debate / pipeline / hub-spoke（含 proposer→critic 引用传递）
 - lifecycle：状态迁移、retry attempt、provider fallback 不新增 branch、workflow deadline 抢占 leaf timeout
+- retry isolation：branch retry 不续接其他 branch 或普通 CLI latest session
 - checkpoint / resume：fork 恢复、partial-merge 去重、merge-ready envelope commit、continuationRef 优先级、leafSessionRefs 历史保留

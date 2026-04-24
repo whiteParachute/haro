@@ -198,7 +198,7 @@ describe('runCli [FEAT-006]', () => {
     }
   });
 
-  it('FEAT-013: team-mode requests warn and fall back to single-agent without throwing', async () => {
+  it('FEAT-014: team-mode requests execute through TeamOrchestrator and checkpoint branch/merge state', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-team-'));
     roots.push(root);
     const stdout = new PassThrough();
@@ -213,16 +213,21 @@ describe('runCli [FEAT-006]', () => {
       root,
       stdout,
       stderr,
-      createSessionId: createIdFactory(['workflow-team-1', 'leaf-team-1']),
+      createSessionId: createIdFactory([
+        'workflow-team-1',
+        'leaf-team-code',
+        'leaf-team-docs',
+        'leaf-team-ci',
+      ]),
       createConversationId: createIdFactory(['cli-bootstrap-team-1', 'channel-team-1']),
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
-            query: async function* () {
+            query: async function* (params) {
               yield {
                 type: 'result',
-                content: 'team fallback executed',
-                responseId: 'resp-team-1',
+                content: `team branch executed:${params.prompt}`,
+                responseId: `resp-${/memberKey: (.+)/.exec(params.prompt)?.[1] ?? 'unknown'}`,
               };
             },
           }),
@@ -231,40 +236,70 @@ describe('runCli [FEAT-006]', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(outputChunks.join('')).toContain('team fallback executed');
-    expect(errorChunks.join('')).toContain('WARN [FEAT-014]');
-    expect(errorChunks.join('')).toContain('workflow-team-1');
+    expect(outputChunks.join('')).toContain('"mergeEnvelope"');
+    expect(outputChunks.join('')).toContain('"branchLedger"');
+    expect(outputChunks.join('')).toContain('workflow-team-1');
+    expect(errorChunks.join('')).not.toContain('WARN [FEAT-014]');
 
     const db = openDatabase(root);
     try {
-      const workflowCheckpoint = db
+      const workflowCheckpoints = db
         .prepare(
-          'SELECT workflow_id, state FROM workflow_checkpoints ORDER BY created_at ASC, id ASC LIMIT 1',
+          'SELECT workflow_id, node_id, state FROM workflow_checkpoints ORDER BY rowid ASC',
         )
-        .get() as { workflow_id: string; state: string } | undefined;
-      const session = db
-        .prepare('SELECT id FROM sessions ORDER BY started_at ASC LIMIT 1')
-        .get() as { id: string } | undefined;
+        .all() as Array<{ workflow_id: string; node_id: string; state: string }>;
+      const sessions = db
+        .prepare('SELECT id FROM sessions ORDER BY id ASC')
+        .all() as Array<{ id: string }>;
 
-      expect(workflowCheckpoint?.workflow_id).toBe('workflow-team-1');
-      expect(session?.id).toBe('leaf-team-1');
+      expect(workflowCheckpoints).toHaveLength(6);
+      expect(workflowCheckpoints[0]?.node_id).toBe('dispatch-1');
+      expect(workflowCheckpoints.slice(1, 4).map((checkpoint) => checkpoint.node_id).sort()).toEqual([
+        'hub-spoke-branch-1',
+        'hub-spoke-branch-2',
+        'hub-spoke-branch-3',
+      ]);
+      expect(workflowCheckpoints.slice(4).map((checkpoint) => checkpoint.node_id)).toEqual(['merge-1', 'merge-1']);
+      expect(workflowCheckpoints.every((checkpoint) => checkpoint.workflow_id === 'workflow-team-1')).toBe(true);
+      expect(sessions.map((session) => session.id).sort()).toEqual([
+        'leaf-team-ci',
+        'leaf-team-code',
+        'leaf-team-docs',
+      ]);
 
-      const state = JSON.parse(workflowCheckpoint!.state) as {
+      const latest = workflowCheckpoints.at(-1);
+      const state = JSON.parse(latest!.state) as {
+        nodeType: string;
         routingDecision: { executionMode: string; orchestrationMode?: string };
-        branchState: { fallbackExecutionMode?: string; teamOrchestratorPending?: boolean };
+        branchState: {
+          teamStatus: string;
+          fallbackExecutionMode?: string | null;
+          teamOrchestratorPending?: boolean;
+          branches: Record<string, { status: string; attempt: number; leafSessionRef?: { sessionId: string } }>;
+          merge?: { status: string; envelope?: { status: string; consumedBranches: string[] } };
+        };
         leafSessionRefs: Array<{ sessionId: string; providerResponseId?: string }>;
       };
+      expect(latest?.node_id).toBe('merge-1');
+      expect(state.nodeType).toBe('merge');
       expect(state.routingDecision.executionMode).toBe('team');
       expect(state.routingDecision.orchestrationMode).toBe('hub-spoke');
-      expect(state.branchState).toEqual({
-        fallbackExecutionMode: 'single-agent',
-        teamOrchestratorPending: true,
-      });
-      expect(state.leafSessionRefs[0]).toEqual({
-        nodeId: 'leaf-1',
-        sessionId: 'leaf-team-1',
-        providerResponseId: 'resp-team-1',
-      });
+      expect(state.branchState.fallbackExecutionMode).toBeNull();
+      expect(state.branchState.teamOrchestratorPending).toBe(false);
+      expect(state.branchState.teamStatus).toBe('merged');
+      expect(Object.values(state.branchState.branches)).toHaveLength(3);
+      expect(Object.values(state.branchState.branches).every((branch) => branch.status === 'merge-consumed')).toBe(
+        true,
+      );
+      expect(Object.values(state.branchState.branches).every((branch) => branch.attempt === 1)).toBe(true);
+      expect(state.branchState.merge?.status).toBe('completed');
+      expect(state.branchState.merge?.envelope?.status).toBe('completed');
+      expect(state.branchState.merge?.envelope?.consumedBranches).toHaveLength(3);
+      expect(state.leafSessionRefs.map((ref) => ref.sessionId).sort()).toEqual([
+        'leaf-team-ci',
+        'leaf-team-code',
+        'leaf-team-docs',
+      ]);
     } finally {
       db.close();
     }

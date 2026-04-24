@@ -912,6 +912,8 @@ export class TeamOrchestrator {
 
     try {
       const timeoutMs = input?.leafTimeoutMs ?? this.leafTimeoutMs;
+      const retryOfSessionId =
+        next.attempt > 1 && next.leafSessionRef?.sessionId ? next.leafSessionRef.sessionId : undefined;
       const result = await withTimeout(
         agentRunner.run({
           agentId: input?.agentId ?? this.defaultAgentId,
@@ -921,7 +923,8 @@ export class TeamOrchestrator {
             input?.upstreamOutputRef,
             input?.reviewTargetOutputRef,
           ),
-          continueLatestSession: next.attempt > 1,
+          ...(retryOfSessionId ? { retryOfSessionId } : {}),
+          continueLatestSession: false,
         }),
         timeoutMs,
         input?.timeoutErrorFactory ?? (() => new Error(`Branch '${next.branchId}' timed out after ${timeoutMs}ms.`)),

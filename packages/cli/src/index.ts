@@ -12,6 +12,7 @@ import {
   DEFAULT_AGENT_ID,
   ProviderRegistry,
   ScenarioRouter,
+  TeamOrchestrator,
   buildHaroPaths,
   createMemoryFabric,
   createLogger,
@@ -21,6 +22,12 @@ import {
   resolveSelection,
   type HaroLogger,
   type HaroPaths,
+  type RawContextRef,
+  type RoutingDecision,
+  type RunAgentInput,
+  type RunAgentResult,
+  type ScenarioWorkflow,
+  type TeamWorkflowExecutionResult,
 } from '@haro/core';
 import { createCodexProvider } from '@haro/provider-codex';
 import { SkillsManager } from '@haro/skills';
@@ -1105,20 +1112,28 @@ async function executeTask(
     sceneDescriptor: scene,
     channelSessionId,
   });
+  const rawContextRefs = [
+    {
+      kind: 'input' as const,
+      ref: buildIngressContextRef(input.channelId ?? outputChannel.id, channelSessionId),
+    },
+  ];
+  if (decision.executionMode === 'team') {
+    const teamResult = await executeTeamWorkflow(app, input, workflow, decision, rawContextRefs);
+    await outputChannel.send(teamResult.sessionId, {
+      type: 'text',
+      content:
+        teamResult.finalEvent.type === 'result'
+          ? teamResult.finalEvent.content
+          : `ERROR [${teamResult.finalEvent.code}] ${teamResult.finalEvent.message}`,
+    });
+    return teamResult;
+  }
   const checkpointNodeId = workflow.leafSessionRefs[0]?.nodeId ?? 'leaf-1';
   const leafSessionId =
     workflow.leafSessionRefs[0]?.sessionId ??
     (app.opts.createSessionId ? app.opts.createSessionId() : randomUUID());
-  const branchState =
-    decision.executionMode === 'team'
-      ? {
-          fallbackExecutionMode: 'single-agent',
-          teamOrchestratorPending: true,
-        }
-      : { fallbackExecutionMode: null };
-  if (decision.executionMode === 'team') {
-    logTeamFallback(app, workflow.workflowId, channelSessionId);
-  }
+  const branchState = { fallbackExecutionMode: null };
   const runner = app.createRunner(() => leafSessionId);
   const result = await runner.run({
     task: effectiveTask,
@@ -1140,12 +1155,7 @@ async function executeTask(
       nodeType: 'agent',
       sceneDescriptor: scene,
       routingDecision: decision,
-      rawContextRefs: [
-        {
-          kind: 'input',
-          ref: buildIngressContextRef(input.channelId ?? outputChannel.id, channelSessionId),
-        },
-      ],
+      rawContextRefs,
       branchState,
       leafSessionRefs: [
         {
@@ -1186,28 +1196,105 @@ async function executeTask(
   return result;
 }
 
+async function executeTeamWorkflow(
+  app: AppContext,
+  input: ExecutionOptions,
+  workflow: ScenarioWorkflow,
+  decision: RoutingDecision,
+  rawContextRefs: RawContextRef[],
+): Promise<RunAgentResult> {
+  const runner = app.createRunner();
+  const teamAgentRunner = {
+    run: (branchInput: RunAgentInput) =>
+      runner.run({
+        ...branchInput,
+        ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.noMemory ? { noMemory: true } : {}),
+      }),
+  };
+  const orchestrator = new TeamOrchestrator({
+    agentRunner: teamAgentRunner,
+    checkpointStore: app.checkpointStore,
+    now: app.now,
+    defaultAgentId: input.agentId,
+  });
+
+  try {
+    const result = await orchestrator.executeWorkflow(workflow, decision, rawContextRefs);
+    const content = formatTeamWorkflowResult(result);
+    return {
+      sessionId: workflow.workflowId,
+      ruleId: decision.matchedRuleId ?? decision.workflowTemplateId,
+      provider: input.provider ?? 'team-orchestrator',
+      model: input.model ?? workflow.workflowTemplateId,
+      events: [
+        {
+          type: 'result',
+          content,
+          responseId: result.envelope.checkpointRef,
+        },
+      ],
+      finalEvent: {
+        type: 'result',
+        content,
+        responseId: result.envelope.checkpointRef,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    app.logger.error?.(
+      {
+        workflowId: workflow.workflowId,
+        workflowTemplateId: workflow.workflowTemplateId,
+        orchestrationMode: workflow.orchestrationMode,
+        err: message,
+      },
+      'Team workflow execution failed',
+    );
+    return {
+      sessionId: workflow.workflowId,
+      ruleId: decision.matchedRuleId ?? decision.workflowTemplateId,
+      provider: input.provider ?? 'team-orchestrator',
+      model: input.model ?? workflow.workflowTemplateId,
+      events: [
+        {
+          type: 'error',
+          code: 'team_workflow_failed',
+          message,
+          retryable: false,
+        },
+      ],
+      finalEvent: {
+        type: 'error',
+        code: 'team_workflow_failed',
+        message,
+        retryable: false,
+      },
+    };
+  }
+}
+
+function formatTeamWorkflowResult(result: TeamWorkflowExecutionResult): string {
+  return JSON.stringify(
+    {
+      workflowId: result.workflow.workflowId,
+      orchestrationMode: result.envelope.orchestrationMode,
+      teamStatus: result.state.teamStatus,
+      branchLedger: result.state.branches,
+      mergeEnvelope: result.envelope,
+    },
+    null,
+    2,
+  );
+}
+
 function resolveIngressSessionId(app: AppContext): string {
   return app.opts.createConversationId ? app.opts.createConversationId() : randomUUID();
 }
 
 function buildIngressContextRef(channelId: string, channelSessionId: string): string {
   return `channel://${channelId}/sessions/${channelSessionId}`;
-}
-
-function logTeamFallback(app: AppContext, workflowId: string, channelSessionId: string): void {
-  const message =
-    `WARN [FEAT-014] Team Orchestrator 尚未实现；workflow '${workflowId}' ` +
-    `暂回退到 single-agent 执行（channelSessionId=${channelSessionId}）。`;
-  app.logger.warn?.(
-    {
-      workflowId,
-      channelSessionId,
-      fallbackExecutionMode: 'single-agent',
-      requestedExecutionMode: 'team',
-    },
-    'Team orchestration not implemented; falling back to single-agent execution',
-  );
-  app.stderr.write(`${message}\n`);
 }
 
 async function handleSlashCommand(

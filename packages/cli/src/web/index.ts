@@ -1,4 +1,5 @@
-import { resolve, relative } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { extname, relative, resolve } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { compress } from 'hono/compress';
@@ -36,8 +37,16 @@ function createRequestLogger(logger: WebLogger): MiddlewareHandler<ApiKeyAuthEnv
   };
 }
 
+function shouldServeSpaFallback(method: string, path: string): boolean {
+  if (method !== 'GET') return false;
+  if (path === '/api' || path.startsWith('/api/')) return false;
+  if (path.startsWith('/assets/')) return false;
+  return extname(path) === '';
+}
+
 export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   const logger = options.logger ?? createWebLogger('cli.web');
+  const staticRoot = options.staticRoot ?? resolveWebDistRoot();
   const app = new Hono<ApiKeyAuthEnv>();
 
   warnIfApiKeyAuthDisabled(logger);
@@ -60,7 +69,15 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
       },
     }),
   );
-  app.use('/*', serveStatic({ root: options.staticRoot ?? resolveWebDistRoot() }));
+  app.use('/*', serveStatic({ root: staticRoot }));
+  app.get('*', async (c, next) => {
+    if (!shouldServeSpaFallback(c.req.method, c.req.path)) {
+      return next();
+    }
+
+    const indexHtml = await readFile(resolve(staticRoot, 'index.html'), 'utf8');
+    return c.html(indexHtml);
+  });
 
   return app;
 }

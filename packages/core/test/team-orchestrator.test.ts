@@ -410,6 +410,45 @@ describe('TeamOrchestrator [FEAT-014]', () => {
     expect(second.status).toBe('completed');
     expect(second.attempt).toBe(2);
     expect(second.output?.content).toBe('attempt-2');
+    expect(runner.calls[0]?.continueLatestSession).toBe(false);
+    expect(runner.calls[1]?.continueLatestSession).toBe(false);
+    expect(runner.calls[1]?.retryOfSessionId).toBe(first.leafSessionRef?.sessionId);
+  });
+
+  it('lifecycle: branch retry is isolated from other branch latest sessions', async () => {
+    const runner = new FakeAgentRunner({
+      'local-code-source': [{ content: 'branch-a-1' }, { content: 'branch-a-2' }],
+      'official-doc-source': [{ content: 'branch-b-1' }, { content: 'branch-b-2' }],
+    });
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: runner,
+      checkpointStore: new CheckpointStore({ root: freshRoot(tempRoots) }),
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-retry-isolation',
+      orchestrationMode: 'parallel',
+      workflowTemplateId: 'parallel-research',
+      taskType: 'research',
+    });
+    const branches = orchestrator.expandBranches(workflow);
+    const branchA = branches[0]!;
+    const branchB = branches[1]!;
+
+    const firstB = await orchestrator.dispatchBranch(branchB, runner, {
+      rawContextRefs: createRawContextRefs(),
+    });
+    const firstA = await orchestrator.dispatchBranch(branchA, runner, {
+      rawContextRefs: createRawContextRefs(),
+    });
+    const secondB = await orchestrator.dispatchBranch(firstB, runner, {
+      rawContextRefs: createRawContextRefs(),
+    });
+
+    expect(secondB.status).toBe('completed');
+    expect(secondB.attempt).toBe(2);
+    expect(runner.calls[2]?.retryOfSessionId).toBe(firstB.leafSessionRef?.sessionId);
+    expect(runner.calls[2]?.retryOfSessionId).not.toBe(firstA.leafSessionRef?.sessionId);
+    expect(runner.calls[2]?.continueLatestSession).toBe(false);
   });
 
   it('lifecycle: provider fallback inside runner does not create extra branch ledger entries', async () => {

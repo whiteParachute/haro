@@ -231,9 +231,9 @@ Dashboard 相关功能统一使用 `FEAT-015` 及后续编号：
 |------|------|------|
 | FEAT-015 | Foundation | 前端包 + Hono 后端骨架 + CLI 命令 |
 | FEAT-016 | Agent Interaction | Chat + Sessions + WebSocket |
-| FEAT-017 | System Management | Status + Settings + Channels |
+| FEAT-017 | System Management | Status + Settings（仅内嵌 Channel Health；不拥有独立 `/api/v1/channels*`） |
 | FEAT-018 | Orchestration & Observability | Dispatch + Knowledge + Skills + Logs + Monitor |
-| FEAT-019+ | 后续跟进 | 后端新增能力的可视化承接 |
+| FEAT-019+ | 后续跟进 | Channel/Gateway/Agent YAML 管理；FEAT-019 独占独立 `/api/v1/channels*` contract |
 
 ### 规划 checklist（后端 FEAT 起草时自检）
 

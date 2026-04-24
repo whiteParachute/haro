@@ -5,7 +5,7 @@ status: approved
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-23
-updated: 2026-04-23
+updated: 2026-04-24
 related:
   - ../design-principles.md
   - ../multi-agent-design-constraints.md
@@ -49,8 +49,8 @@ Agent 交互层需要解决的关键问题：
 - R3: Agent 执行流必须通过 WebSocket 实时推送；不允许前端轮询获取执行状态。
 - R4: WebSocket 连接断开后自动重连，重连间隔指数退避（1s → 2s → 4s ... 最大 30s）。
 - R5: REST API 覆盖 Agents 领域：
-  - `GET /api/v1/agents`：返回 Agent 摘要列表（`id`, `name`, `description`）。
-  - `GET /api/v1/agents/:id`：返回指定 Agent 的摘要信息（`id`, `name`, `description`, `defaultProvider`, `defaultModel`）。**完整 YAML 内容见 FEAT-019。**
+  - `GET /api/v1/agents`：返回 Agent 摘要列表（`id`, `name`, `summary`, `defaultProvider`, `defaultModel`）。`summary` 为只读 read-model 字段，由 `systemPrompt` 派生，不是 YAML/`AgentConfig` 字段。
+  - `GET /api/v1/agents/:id`：返回指定 Agent 的结构化详情（`id`, `name`, `summary`, `systemPrompt`, `tools`, `defaultProvider`, `defaultModel`）。**完整 YAML 原文与写入端点见 FEAT-019。**
   - `POST /api/v1/agents/:id/run`：触发一次新的 Agent 执行，返回 `sessionId`，后续事件通过 WebSocket 推送。
   - `POST /api/v1/agents/:id/chat`：基于已有 session 发送后续消息（非首次启动场景），返回 `sessionId`，事件仍通过 WebSocket 推送。
 - R6: REST API 覆盖 Sessions 领域：`GET /api/v1/sessions`（分页）、`GET /api/v1/sessions/:id`、`GET /api/v1/sessions/:id/events`、`DELETE /api/v1/sessions/:id`。
@@ -131,11 +131,36 @@ packages/web/src/
         └── StreamingText.tsx
 ```
 
+
 ### 5.4 Progressive Disclosure（P5 落地）
 
 - **Sessions 列表**：默认展示 `sessionId`、`agentId`、`status`、`createdAt` 四列，其余字段点击展开
 - **事件时间线**：连续的 text delta 事件默认折叠为一条消息；tool_call / tool_result 默认收起 JSON 参数，点击展开
 - **Chat 上下文**：加载时只拉取最近 20 条消息，历史消息通过滚动触发无限加载
+
+
+### 5.5 Agent REST read-model 合约（与 FEAT-004/019 对齐）
+
+FEAT-016 的 Agents REST 端点只服务 ChatPage 的 Agent 选择与运行入口，不负责 YAML CRUD。它暴露的是从 `AgentRegistry`/`AgentConfig` 投影出的**只读 read-model**：
+
+```typescript
+type AgentSummary = {
+  id: string;
+  name: string;
+  summary: string; // derived, readonly
+  defaultProvider?: string;
+  defaultModel?: string;
+};
+
+type AgentDetail = AgentSummary & {
+  systemPrompt: string;
+  tools?: readonly string[];
+};
+```
+
+`summary` 派生规则：取 `systemPrompt` 去首尾空白后的第一段非空文本，压缩连续空白，最多 160 字符；为空时回退为 `name`。该字段仅用于展示，不写回 YAML，不参与 `AgentConfig` Zod schema。API 不返回也不接受 `description` 或单 Agent `type` 字段，避免与 FEAT-004 `.strict()` schema 形成 Web-only 扩展。
+
+未知字段策略：FEAT-016 不提供 Agent 配置写入；任何运行/聊天 request body 的未知字段按该端点自己的 Zod request schema `.strict()` 拒绝。Agent YAML 的未知字段处理以 FEAT-004/FEAT-019 为准。
 
 ## 6. Acceptance Criteria / 验收标准
 
@@ -146,6 +171,7 @@ packages/web/src/
 - AC5: `POST /api/v1/agents/:id/run` 返回 sessionId，后续事件通过 WebSocket 推送。
 - AC6: `DELETE /api/v1/sessions/:id` 正确删除 session 及其事件。
 - AC7: 后端所有 REST 端点返回正确的 HTTP 状态码和 JSON 结构；认证失败返回 401。
+- AC8: `GET /api/v1/agents` 与 `GET /api/v1/agents/:id` 返回 `summary` read-model 字段，且不返回 `description`/单 Agent `type`；`summary` 与 `systemPrompt` 派生规则一致。
 
 ## 7. Test Plan / 测试计划
 
@@ -165,3 +191,6 @@ packages/web/src/
   - 从原 FEAT-015 大 spec 中拆分出 Agent Interaction 子 FEAT
   - 聚焦 Chat、Sessions、WebSocket 流式协议、Agent/Sessions REST API
 - 2026-04-23: review fix — 补充 `system.status` 消息类型；R5 明确 Agent API 返回摘要格式并澄清 `chat` 端点语义；Open Questions 清零（localStorage 持久化选是、JSON 格式化选是）
+
+- 2026-04-24: review fix — Breaking: 解决 B2，FEAT-016 Agents API 改为只读 `AgentSummary`/`AgentDetail` read-model；删除 `description`/单 Agent `type` 合约，新增 `summary` 派生规则与 unknown-field 边界，完整 YAML CRUD 交给 FEAT-019。按 `specs/README.md` 的 approved 合约变更规则，status 回退为 draft，待 owner 重新批准。
+- 2026-04-24: owner re-approved — whiteParachute 批准 B2 合约修订，status: draft → approved。

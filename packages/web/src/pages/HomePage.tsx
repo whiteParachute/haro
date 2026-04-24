@@ -16,9 +16,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { AUTH_API_KEY_STORAGE_KEY, useAuthStore } from '@/stores/auth';
 
 export function HomePage() {
   const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
+  const { apiKey, clearAuth, isAuthenticated, setApiKey } = useAuthStore();
+  const [apiKeyInput, setApiKeyInput] = useState(apiKey ?? '');
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+
+  function handleSaveApiKey() {
+    setApiKey(apiKeyInput);
+    setAuthMessage(
+      apiKeyInput.trim().length > 0
+        ? 'API key 已保存，后续 /api 请求会携带 x-api-key。'
+        : 'API key 为空，已切换为无认证配置。',
+    );
+  }
+
+  function handleClearApiKey() {
+    clearAuth();
+    setApiKeyInput('');
+    setAuthMessage('API key 已清除。');
+  }
 
   return (
     <>
@@ -64,10 +83,44 @@ export function HomePage() {
           <Card>
             <CardHeader>
               <CardTitle>Foundation APIs</CardTitle>
-              <CardDescription>i18n、fetch wrapper、auth store 骨架已创建。</CardDescription>
+              <CardDescription>i18n、fetch wrapper、auth store 与 API key 链路已创建。</CardDescription>
             </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              仅保留占位结构，不包含任何业务接口或实际认证流程。
+            <CardContent className="space-y-3 text-sm text-muted-foreground">
+              <p>
+                若后端配置了 <code>HARO_WEB_API_KEY</code>，请在此保存同一个 key；
+                API client 会自动注入 <code>x-api-key</code>。
+              </p>
+              <div className="space-y-2">
+                <label
+                  className="block text-xs font-medium uppercase tracking-wide text-foreground"
+                  htmlFor="dashboard-api-key"
+                >
+                  Dashboard API key
+                </label>
+                <input
+                  id="dashboard-api-key"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  placeholder={`localStorage: ${AUTH_API_KEY_STORAGE_KEY}`}
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={(event) => setApiKeyInput(event.currentTarget.value)}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={handleSaveApiKey}>
+                  保存 API key
+                </Button>
+                <Button size="sm" variant="secondary" onClick={handleClearApiKey}>
+                  清除
+                </Button>
+              </div>
+              <p className="text-xs">
+                当前状态：
+                <span className={isAuthenticated ? 'text-primary' : 'text-muted-foreground'}>
+                  {isAuthenticated ? ' 已配置 API key' : ' 未配置 API key'}
+                </span>
+              </p>
+              {authMessage ? <p className="text-xs text-foreground">{authMessage}</p> : null}
             </CardContent>
           </Card>
         </div>

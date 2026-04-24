@@ -74,3 +74,6 @@ tmp/
 temp/
 .tmp/
 .omx/
+
+# Local OMX/review launchers
+scripts/omx-*.sh

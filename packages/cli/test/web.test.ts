@@ -126,4 +126,53 @@ describe('web dashboard Hono app [FEAT-015]', () => {
     expect(response.status).toBe(200);
     expect(logger.warn).not.toHaveBeenCalled();
   });
+
+  it('rejects missing or invalid x-api-key when HARO_WEB_API_KEY is configured', async () => {
+    process.env.HARO_WEB_API_KEY = 'secret';
+    const logger = createMockLogger();
+    const app = createWebApp({ logger });
+
+    const missingKeyResponse = await app.request('/');
+    const invalidKeyResponse = await app.request('/', {
+      headers: {
+        'x-api-key': 'wrong-secret',
+      },
+    });
+
+    expect(missingKeyResponse.status).toBe(401);
+    expect(await missingKeyResponse.json()).toEqual({ error: 'Unauthorized' });
+    expect(invalidKeyResponse.status).toBe(401);
+    expect(await invalidKeyResponse.json()).toEqual({ error: 'Unauthorized' });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('falls back BrowserRouter deep links to the dashboard HTML', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    const logger = createMockLogger();
+    const app = createWebApp({ logger });
+
+    for (const path of ['/chat', '/sessions', '/status']) {
+      const response = await app.request(path);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/html');
+      expect(html).toContain('<div id="root"></div>');
+    }
+  });
+
+  it('does not fallback /api routes or missing static assets to index.html', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    const logger = createMockLogger();
+    const app = createWebApp({ logger });
+
+    const healthResponse = await app.request('/api/health');
+    const missingApiResponse = await app.request('/api/missing');
+    const missingAssetResponse = await app.request('/assets/missing-dashboard.js');
+
+    expect(healthResponse.status).toBe(200);
+    expect(healthResponse.headers.get('content-type')).toContain('application/json');
+    expect(missingApiResponse.status).toBe(404);
+    expect(missingAssetResponse.status).toBe(404);
+  });
 });

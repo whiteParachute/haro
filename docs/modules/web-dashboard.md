@@ -37,12 +37,18 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
 
 - `GET /` 返回 Dashboard HTML，占位首页挂载在 `<div id="root"></div>`
 - `GET /assets/*.js` 与 `GET /assets/*.css` 返回 Vite 构建产物
+- `GET /chat`、`GET /sessions`、`GET /status` 等 BrowserRouter 深链会 fallback 到
+  `index.html`，便于直接打开或刷新客户端路由
 - `GET /api/health` 返回基础健康检查 JSON
 
 ## 认证与日志
 
 - `HARO_WEB_API_KEY` 未配置时，Dashboard 允许本地无认证访问，并写入 WARN：`Dashboard running in unauthenticated mode — set HARO_WEB_API_KEY to enable auth`
 - 配置 `HARO_WEB_API_KEY` 后，请求需携带 `x-api-key`，否则返回 `401 {"error":"Unauthorized"}`
+- 前端首页的 Foundation APIs 卡片提供最小 API key 配置入口；key 持久化在
+  `localStorage["haro:web-api-key"]`，API client 会自动注入 `x-api-key`
+- 当前端收到 401，会提示 Dashboard API key 缺失或不匹配，并指向首页配置入口与
+  `haro:web-api-key` localStorage key，便于用户恢复
 - 所有 HTTP 请求通过 `createLogger()` 写入 `~/.haro/logs/haro.log`，日志为 pino JSON 格式，至少包含 `method`、`path`、`statusCode`、`durationMs`
 
 ## 与后续 FEAT 的边界
@@ -50,6 +56,6 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
 FEAT-015 只交付 Dashboard foundation，不包含业务页面或 WebSocket。后续 FEAT 在该基础上扩展：
 
 - FEAT-016：Agent Interaction（Chat、Sessions、WebSocket）
-- FEAT-017：System Management（Status、Settings、Channels）
+- FEAT-017：System Management（Status、Settings；仅通过 `/status`/`/doctor`/config sources 内嵌 Channel Health，只读消费，不拥有独立 `/api/v1/channels*`）
 - FEAT-018：Orchestration & Observability（Dispatch、Knowledge、Skills、Logs、Monitor）
-- FEAT-019：Channel & Agent Management（Channel、Gateway、Agent YAML 管理）
+- FEAT-019：Channel & Agent Management（独立 `/api/v1/channels*`、Channel 操作、Gateway、Agent YAML 管理）

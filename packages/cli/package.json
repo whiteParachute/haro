@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "test": "vitest run"
+    "test": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" vitest run"
   },
   "dependencies": {
     "@clack/prompts": "^0.10.1",
