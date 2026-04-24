@@ -1,7 +1,7 @@
 ---
 id: FEAT-015
 title: Web Dashboard — Foundation（基础框架）
-status: in-progress
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-23
@@ -20,7 +20,7 @@ related:
 
 Haro 当前为纯 CLI 工具，通过 REPL 和命令行接口与用户交互。随着 Phase 1 的 Scenario Router（FEAT-013）和 Team Orchestrator（FEAT-014）落地，系统能力已从单 Agent 执行扩展到多 Agent 协作编排，CLI 界面已难以直观展示实时状态、分支 ledger、checkpoint 恢复节点等信息。
 
-本 FEAT 是 Web Dashboard 系列的**第一个交付单元**，目标是搭建可运行的基础框架：前端包 + 嵌入式后端 API 服务器 + CLI 命令入口。后续 FEAT（016-018）将在此框架上逐层叠加具体业务页面。
+本 FEAT 是 Web Dashboard 系列的**第一个交付单元**，目标是搭建可运行的基础框架：前端包 + 嵌入式后端 API 服务器 + CLI 命令入口。后续 FEAT（016-019）将在此框架上逐层叠加具体业务页面。
 
 参考架构 **keyclaw**（`/home/heyucong.bebop/self-codes/keyclaw/web/`）采用 React 19 + Vite 8 + Tailwind 4 + shadcn/ui，已验证该栈的工程可行性。
 
@@ -188,3 +188,4 @@ registerCommand(
 - 2026-04-23: review fix — R8 增加未配置 API key 时的 WARN 日志；Open Questions 清零（主题选 slate、未配置时开放+WARN）
 - 2026-04-23: dep bump — `@vitejs/plugin-react@^4.3.0` → `^5.2.0`，消除与 `vite@^8.0.0` 的 peer dependency warning
 - 2026-04-24: implementation — Step 5 进入实现验证，补齐 `pnpm dev:web`、开发 `/api` proxy 验证入口与 Dashboard 模块文档
+- 2026-04-24: done — FEAT-015 foundation 实现与 review 修复完成，状态切为 done

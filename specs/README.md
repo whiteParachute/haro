@@ -211,6 +211,46 @@ git commit -m "spec(draft): FEAT-NNN <title>"
 git checkout -b feat/FEAT-NNN-<slug>
 ```
 
+## 前端与 Dashboard 开发规范
+
+Dashboard（Web 管理后台）作为 Haro 的**呈现层**，其需求规划遵循**后端先行、前端跟进**的分层模式。这一模式确保核心能力先在服务端沉淀，前端在此基础上做可视化适配，避免"前端等接口"或"后端适配 UI"的双向耦合。
+
+### 原则：后端先行，前端跟进
+
+| 场景 | 后端 FEAT | 前端跟进 |
+|------|-----------|----------|
+| **纯后端增强**（如优化 checkpoint 存储格式、重构 Provider 选择逻辑） | 独立后端 FEAT，不涉及前端 | Dashboard 系列无需同步规划 |
+| **需要前端呈现的新能力**（如新增 Memory 查询维度、新增 Skills 元数据字段） | 后端 FEAT 中写明 **"Dashboard 需新增 XX 页面/组件"** | 由后续 Dashboard FEAT（015~019 系列）承接实现 |
+| **交互型新功能**（如新的 Agent 交互模式、新的 team 编排模式） | 同一个 FEAT 中**同步定义**前后端端到端需求 | 实现可分先后：后端先行开发，前端在独立分支跟进 |
+
+### Dashboard FEAT 编号规则
+
+Dashboard 相关功能统一使用 `FEAT-015` 及后续编号：
+
+| 编号 | 范围 | 说明 |
+|------|------|------|
+| FEAT-015 | Foundation | 前端包 + Hono 后端骨架 + CLI 命令 |
+| FEAT-016 | Agent Interaction | Chat + Sessions + WebSocket |
+| FEAT-017 | System Management | Status + Settings + Channels |
+| FEAT-018 | Orchestration & Observability | Dispatch + Knowledge + Skills + Logs + Monitor |
+| FEAT-019+ | 后续跟进 | 后端新增能力的可视化承接 |
+
+### 规划 checklist（后端 FEAT 起草时自检）
+
+后端 FEAT 的作者在起草时必须回答：
+
+1. **是否有新的数据产出需要 Dashboard 展示？** → 在 FEAT 的 `Goals` 或 `Non-Goals` 中明确说明，并在 `related` 字段引用待创建的 Dashboard FEAT。
+2. **是否有新的配置项需要 Dashboard 编辑？** → 同上。
+3. **是否有新的 Agent 交互模式？** → 在同一个 FEAT 中同步定义前端交互流程（如新的 WS 消息类型、新的页面状态）。
+
+### 前端跟进 checklist（Dashboard FEAT 起草时自检）
+
+Dashboard FEAT 的作者在起草时必须回答：
+
+1. **本 FEAT 依赖哪些后端能力？** → 在 `related` 中引用已实现的后端 FEAT。
+2. **后端 API 是否已就绪？** → 若后端 API 尚未实现，必须在 `Open Questions` 中标注阻塞项。
+3. **是否有仅前端独立的改进？** → 如 UI 主题优化、布局重构，可作为独立 Dashboard FEAT。
+
 ## 参考
 
 - [Feature 模板](./_template-feature.md)

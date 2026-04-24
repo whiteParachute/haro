@@ -120,6 +120,8 @@ function createRawContextRefs(): Array<{ kind: 'input'; ref: string }> {
   return [{ kind: 'input', ref: 'channel://cli/sessions/1' }];
 }
 
+const NON_EXPIRING_TEST_WORKFLOW_DEADLINE = '2999-01-01T00:00:00.000Z';
+
 function createTeamState(workflow: ScenarioWorkflow, branches: BranchLedgerEntry[]): TeamBranchState {
   return {
     teamStatus: 'running',
@@ -129,7 +131,7 @@ function createTeamState(workflow: ScenarioWorkflow, branches: BranchLedgerEntry
       status: 'pending',
       consumedBranches: [],
     },
-    workflowDeadline: '2026-04-23T11:30:00.000Z',
+    workflowDeadline: NON_EXPIRING_TEST_WORKFLOW_DEADLINE,
     leafTimeoutMs: Object.fromEntries(branches.map((branch) => [branch.branchId, 5000])),
     fallbackExecutionMode: null,
     teamOrchestratorPending: false,
