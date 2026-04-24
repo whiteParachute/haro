@@ -433,6 +433,38 @@ describe('runCli [FEAT-006]', () => {
     );
   });
 
+  it('FEAT-015 R5: haro web --help exposes port and host options without starting the dashboard', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-web-help-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['web', '--help'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
+    });
+
+    const output = chunks.join('');
+    expect(result.exitCode).toBe(0);
+    expect(result.action).toBe('web');
+    expect(output).toContain('Usage: haro web [options]');
+    expect(output).toContain('--port <port>');
+    expect(output).toContain('--host <host>');
+    expect(output).not.toContain('Haro web dashboard listening');
+  });
+
   it('FEAT-012 AC1/AC4: setup writes default model and prints next steps', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-setup-'));
     roots.push(root);

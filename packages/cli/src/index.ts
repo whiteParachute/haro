@@ -109,6 +109,7 @@ export type RunCliAction =
   | 'eat'
   | 'shit'
   | 'gateway'
+  | 'web'
   | 'update'
   | 'config-error';
 
@@ -251,6 +252,10 @@ function buildProgram(app: AppContext): Command {
   program
     .name('haro')
     .description('Haro CLI runtime surface')
+    .configureOutput({
+      writeOut: (str: string) => app.stdout.write(str),
+      writeErr: (str: string) => app.stderr.write(str),
+    })
     .showHelpAfterError()
     .exitOverride((error: { exitCode: number; message: string }) => {
       throw new CommanderExit(error.exitCode, error.message);
@@ -393,6 +398,7 @@ function buildProgram(app: AppContext): Command {
   registerSkillsCommands(program, app);
   registerMetabolismCommands(program, app);
   registerGatewayCommands(program, app);
+  registerWebCommand(program, app);
   registerUpdateCommand(program, app);
 
   return program;
@@ -696,6 +702,37 @@ function registerUpdateCommand(program: Command, app: AppContext): void {
     },
     program,
   );
+}
+
+function registerWebCommand(program: Command, app: AppContext): void {
+  registerCommand(
+    'web',
+    (cmd) => {
+      cmd
+        .description('Start Haro web dashboard')
+        .option('--port <port>', 'HTTP port', '3456')
+        .option('--host <host>', 'bind address', '127.0.0.1')
+        .action(async (options: { port: string; host: string }) => {
+          const port = parseWebPort(options.port);
+          const [{ createWebApp }, { startWebServer }] = await Promise.all([
+            import('./web/index.js'),
+            import('./web/server.js'),
+          ]);
+          const handle = startWebServer(createWebApp(), { port, host: options.host });
+          await handle.ready;
+          app.stdout.write(`Haro web dashboard listening on ${handle.url}\n`);
+        });
+    },
+    program,
+  );
+}
+
+function parseWebPort(value: string): number {
+  const port = Number.parseInt(value, 10);
+  if (!Number.isInteger(port) || String(port) !== value || port < 1 || port > 65_535) {
+    throw new CommanderExit(1, `Invalid web port: ${value}`);
+  }
+  return port;
 }
 
 async function defaultFetchLatestNpmVersion(pkg: string): Promise<string> {
@@ -1647,7 +1684,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {
@@ -1703,6 +1740,18 @@ async function isWritable(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+if (require.main === module) {
+  void runCli()
+    .then((result) => {
+      process.exitCode = result.exitCode;
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`${message}\n`);
+      process.exitCode = 1;
+    });
 }
 
 export {

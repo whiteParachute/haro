@@ -14,6 +14,22 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
     expect(res.stdout.trim()).toBe('0.1.0');
   });
 
+  it('shipped binary exposes web command help', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-web-help-'));
+    try {
+      const res = spawnSync(process.execPath, [bin, 'web', '--help'], {
+        env: { ...process.env, HARO_HOME: home },
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      expect(res.stdout).toContain('Usage: haro web [options]');
+      expect(res.stdout).toContain('--port <port>');
+      expect(res.stdout).toContain('--host <host>');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('shipped binary reports config validation paths on startup errors', () => {
     const home = mkdtempSync(join(tmpdir(), 'haro-bin-bad-'));
     try {

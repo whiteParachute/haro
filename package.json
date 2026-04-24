@@ -17,7 +17,8 @@
     "smoke": "node --import tsx scripts/smoke.ts",
     "haro": "node packages/cli/bin/haro.js",
     "dev:cli": "node packages/cli/bin/haro.js",
-    "setup": "node packages/cli/bin/haro.js setup"
+    "setup": "node packages/cli/bin/haro.js setup",
+    "dev:web": "concurrently -k -n web,api \"pnpm -F @haro/web dev --host 127.0.0.1\" \"pnpm -F @haro/cli build && pnpm -F @haro/cli exec node ./bin/haro.js web --port 3456 --host 127.0.0.1\""
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -29,6 +30,7 @@
     "@types/node": "^22.18.0",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
+    "concurrently": "^9.2.1",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.31.0",
     "prettier": "^3.4.2",
