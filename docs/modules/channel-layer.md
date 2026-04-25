@@ -84,6 +84,19 @@ channels:
 | `per-user` | 每个外部用户对应一个 Haro session（跨群共享） | 个人助手 |
 | `per-thread` | 每个外部 thread 一个 session | 需隔离话题的群 |
 
+## 会话生命周期策略（Phase 2）
+
+OpenClaw 的 Gateway 模型验证了“渠道隔离 + 会话生命周期管理”的必要性。Haro 不照搬固定 Gateway 结构，但 Phase 2 Channel 层需要补充可配置 reset/retention 策略：
+
+| 策略 | 含义 | 适用场景 |
+|------|------|----------|
+| idle reset | 会话超过 N 分钟无消息后关闭或写入 wrapup | 私聊、临时任务 |
+| daily reset | 每日固定时间结束旧 session，下一条消息开启新 session | 工作助理、群机器人 |
+| retention | session/event/channel log 保留周期 | 合规、磁盘控制 |
+| shared context boundary | 团队共享上下文可见范围 | 多 Agent / 多 Channel 协作 |
+
+这些策略必须作用在 Channel session 层，不得把 `channel sessionId`、`workflowId` 和 leaf `sessionId` 混用。
+
 ## 流式消息处理
 
 | Channel | 流式支持 | 策略 |

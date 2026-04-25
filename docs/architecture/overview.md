@@ -61,21 +61,21 @@ Haro 在进化中坚持"留精华、不堆数量"：
 ```
 ┌─────────────────────────────────────────────┐
 │            Human Interface                   │
-│         (方向设定 / 审阅 / 裁决)               │
+│  方向设定 / 审阅 / 裁决 / checkpoint 介入 / 预算审批 │
 ├─────────────────────────────────────────────┤
 │            Evolution Engine                  │
 │   Self-Monitor │ Pattern Miner │ Auto-Refactorer  │
-│   OODA 循环 + eat/shit 代谢 + @model-dependent 标注 │
+│   OODA + eat/shit 代谢 + Evolution Asset Registry │
 │   evolution-context/ 共享目录(全局级，原始数据不压缩) │
 ├─────────────────────────────────────────────┤
 │            Scenario Router                   │
-│   场景感知 → 动态 Workflow 编排 → 有状态图+Checkpoint │
+│   场景感知 → 动态 Workflow 编排 → Checkpoint + Debug │
 ├─────────────────────────────────────────────┤
 │         Agent & Team Runtime                 │
 │   Agent Lifecycle │ Team Orchestrator │ Memory Fabric │
-│   Actor 模型      │ hub-spoke 拓扑    │ 独立记忆为主  │
-│   跨 session      │ 信息维度拆分      │ aria-memory 兼容│
-│   状态文件        │ 对抗性验证        │ 主备可选     │
+│   Actor 模型      │ hub-spoke 拓扑    │ 三级记忆 + FTS5 │
+│   跨 session      │ 信息维度拆分      │ Skill memory  │
+│   权限/预算护栏   │ 对抗性验证        │ aria-memory 兼容│
 ├─────────────────────────────────────────────┤
 │       Provider Abstraction Layer             │
 │   Claude │ Codex │ GPT │ Gemini │ Local │ ...   │
@@ -120,10 +120,12 @@ Haro 在进化中坚持"留精华、不堆数量"：
 
 | 层次 | 竞品 | 技术栈 | Haro 差异 |
 |------|------|--------|----------|
-| Agent 级自进化 | Hermes (NousResearch/hermes-agent, ~98.6k stars) — 技能自创建+自改进+记忆 | Python + aiosqlite + FTS5 | Haro 做平台级：多 Agent + 编排 + Prompt + 平台代码的全面自进化；当前 Phase 0 正式实现收敛为 Codex Provider，但 PAL 继续保留多 Provider 抽象 |
-| 统一 Agent 平台 | OpenClaw — 多 Provider + 多 Channel + 丰富工具 | TypeScript + pnpm + sqlite-vec + LanceDB | Haro 借鉴其 allow/deny 工具过滤、Dreaming 记忆 consolidation、Channel 抽象；但其"直调 Anthropic API"路径在 Haro 永远禁止 |
+| Agent 级自进化 | Hermes (NousResearch/hermes-agent, ~98.6k stars) — 技能自创建+自改进+三级记忆、SQLite/FTS5 | Python + aiosqlite + FTS5 | Haro 做平台级：多 Agent + 编排 + Prompt + 平台代码的全面自进化；Memory Fabric v1 借鉴其分层和 FTS5，但增加信息维度拆分与对抗性验证 |
+| 统一 Agent 平台 | OpenClaw — 多 Provider + 多 Channel + 丰富工具 | TypeScript + pnpm + sqlite-vec + LanceDB | Haro 借鉴其 Channel 隔离、Gateway 会话生命周期、团队共享上下文与权限模型；不照搬固定 Gateway 结构 |
+| 进化语法 / 资产化 | EvoMap — signal → gene → prompt → event 的声明式进化表达 | — | Haro 不直接引入 GEP runtime，但把 eat/shit 产物、prompt、skill、编排规则资产化，预留 GEP 兼容字段 |
+| 生产级 Agent Guard | Mercury Agent — 显式权限审批与 Token 预算 | — | Haro Phase 1 增加 operation class、approval policy 与 per-workflow Token budget，尤其约束多 Agent 并行成本 |
 | Agent 团队管理 | Multica (~15.7k stars) — 管理多个 Agent CLI | — | Haro 是 runtime 层，Multica 是管理层；Haro 可作为 Multica 的 Provider |
-| 编排框架 | CrewAI / AutoGen / LangGraph | — | Haro 融合三者优点 + 自进化（它们都是静态的） |
+| 编排框架 | CrewAI / AutoGen / LangGraph | — | Haro 借鉴 LangGraph 的状态图可视化、CrewAI 的任务流监控、AutoGen 的人机循环介入；但仍遵守 fork-and-merge 与 validator negative-only 约束 |
 | 事件流 | OpenHands | — | Haro 参考其事件流+沙箱，加入进化维度 |
 | 终端 Agent | Crush (OpenCode 继任) | — | 参考其 skill 生态思路 |
 | 自进化 Agent | Yoyo（SagaSu 出品） | Next.js 16 + Go + PostgreSQL | 核心灵感来源，Haro 从单 Agent 扩展到平台级 |
@@ -144,11 +146,11 @@ Haro 在进化中坚持"留精华、不堆数量"：
 | 核心语言 | TypeScript (Node.js 22) | — （Rust 等其他语言按需引入，不做强绑定） |
 | 运行时 | Actor 模型 + 消息驱动 | 参考 AutoGen 0.4 |
 | 工作流 | 有状态图 + 自动快照 | 参考 LangGraph Checkpointing |
-| 记忆 | 独立 Memory Fabric（基本照抄 aria-memory，含三层目录 + `.pending/` 多端合并） | 参考 aria-memory |
+| 记忆 | 独立 Memory Fabric（Markdown 兼容层 + SQLite FTS5 索引；Session / Persistent / Skill 三层；platform/shared/agent scope） | 参考 Hermes + aria-memory |
 | 工具 / 技能 | 兼容 Claude Code skill 格式 + MCP | 参考 Claude Code |
 | 配置 | Zod schema + 热重载 | 参考 lark-bridge |
-| 存储 | SQLite WAL + FTS5（Phase 0）→ sqlite-vec / LanceDB 向量（Phase 2+） | 参考 OpenClaw / Hermes |
+| 存储 | SQLite WAL + FTS5（Phase 1 Memory/Search/Asset read model）→ sqlite-vec / LanceDB 向量（Phase 2+） | 参考 Hermes / OpenClaw |
 | 代码 Lint | ESLint + `@typescript-eslint/recommended` + `import/no-cycle`（Phase 2 由 eat/shit 代谢评估迁移 [oxlint](https://oxc.rs/docs/guide/usage/linter)，OpenClaw 已用） | 参考 OpenClaw（oxlint） |
-| 进化 | 内置 Cron + eat/shit 代谢 + GitHub Actions；Phase 2+ 加入 OpenClaw 风格 Dreaming（短→长期晋升） | 参考 yoyo-evolve / OpenClaw |
+| 进化 | eat/shit 代谢 + Evolution Asset Registry；Phase 2+ 接入 OODA、Dreaming、Pattern Miner 与自动触发 | 参考 yoyo-evolve / EvoMap / OpenClaw |
 | Agent SDK | `@openai/codex-sdk`（Phase 0 当前正式实现） | 对齐现有 Codex Provider |
 | 消息渠道 | Channel 抽象层 + 飞书（复用 lark-bridge）+ Telegram | 参考 OpenClaw / KeyClaw |

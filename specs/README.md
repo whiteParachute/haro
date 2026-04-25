@@ -231,11 +231,30 @@ Dashboard 第一批功能使用 `FEAT-015`~`FEAT-019`。后续全局编号仍按
 |------|------|------|
 | FEAT-015 | Foundation | 前端包 + Hono 后端骨架 + CLI 命令 |
 | FEAT-016 | Agent Interaction | Chat + Sessions + WebSocket |
-| FEAT-017 | System Management | Status + Settings（仅内嵌 Channel Health；不拥有独立 `/api/v1/channels*`） |
-| FEAT-018 | Orchestration & Observability | Dispatch + Knowledge + Skills + Logs + Monitor |
+| FEAT-017 | System Management | Status + Settings（仅内嵌 Channel Health；不拥有独立 `/api/v1/channels*`）；2026-04-25 done，真实 provider 连通测试跳过 |
+| FEAT-018 | Orchestration Debugger | Dispatch + workflow graph + checkpoint timeline + stalled branch debug（从原大 spec 拆分） |
 | FEAT-019 | Channel & Agent Management | Channel/Gateway/Agent YAML 管理；FEAT-019 独占独立 `/api/v1/channels*` contract |
 
 FEAT-020 已作为非 Dashboard 插队任务登记：Codex runtime `shit` skill。
+
+2026-04-25 路线调整新增：
+
+| 编号 | 范围 | 说明 |
+|------|------|------|
+| FEAT-021 | Memory Fabric v1 | Hermes 风格三层记忆 + SQLite FTS5 + Haro scope/verification/assetRef |
+| FEAT-022 | Evolution Asset Registry | EvoMap 风格资产封装：skill/prompt/rule/memory/archive 的版本与审计 |
+| FEAT-023 | Permission & Token Budget Guard | Mercury 风格操作权限分级 + workflow/branch token 预算 |
+| FEAT-024 | Web Dashboard Knowledge & Skills | 从 FEAT-018 拆分：Memory 搜索/写入、Skills 生命周期、asset 追溯 |
+| FEAT-025 | Web Dashboard Runtime Logs & Provider Monitoring | 从 FEAT-018 拆分：Session events、provider fallback、provider/token 统计、Monitor |
+| FEAT-026 | Provider Onboarding Wizard | Hermes 风格 `haro provider` 引导配置、model 选择、secretRef 与 provider doctor |
+| FEAT-027 | Guided Setup & Doctor Remediation | OpenClaw/Hermes 风格 `haro setup` 从零引导、`haro doctor` 结构化修复建议 |
+| FEAT-028 | Web Dashboard Product Maturity | KeyClaw 风格本地多用户、统一服务端分页、中文本地化与角色化操作 |
+
+2026-04-25 后续路线重排原则：
+
+1. **先补首配闭环**：FEAT-026/027 优先于新增复杂能力，确保用户能从空环境配置 provider、全局命令、systemd/web 服务并跑通 smoke test。
+2. **再补智能底座**：FEAT-021/022/023 建立 Memory、资产审计、权限和预算，作为后续 Dashboard 与编排能力的后端基础。
+3. **最后补管理面成熟度**：FEAT-028 与 FEAT-024/025 共同把 Dashboard 从调试壳升级为可多人使用、可分页浏览、中文可读的控制面。
 
 ### 规划 checklist（后端 FEAT 起草时自检）
 

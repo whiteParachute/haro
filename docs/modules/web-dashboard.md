@@ -57,6 +57,16 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
   `haro:web-api-key` localStorage key，便于用户恢复
 - 所有 HTTP 请求通过 `createLogger()` 写入 `~/.haro/logs/haro.log`，日志为 pino JSON 格式，至少包含 `method`、`path`、`statusCode`、`durationMs`
 
+### Phase 1 产品成熟度补齐（FEAT-028）
+
+当前 API key 认证只适合单机单人调试。FEAT-028 将补齐 KeyClaw 风格管理面基础：
+
+- 本地多用户模型：`owner`、`admin`、`operator`、`viewer`，并提供 owner bootstrap。
+- User token/session token：兼容现有 `HARO_WEB_API_KEY`，但不再把单一 API key 作为长期唯一认证模型。
+- 统一服务端分页：Sessions、Logs、Knowledge、Skills、Users 等列表统一 `page/pageSize/sort/order/q` contract，避免前端一次性拉全量数据。
+- 中文本地化基线：默认 `zh-CN`，所有用户可见文案走 i18n resource，保留 `en-US` fallback。
+- 角色化操作与审计：删除、配置写入、禁用 channel、重置 token 等高风险操作必须经过权限检查并写 audit event。
+
 ## Agent Interaction（FEAT-016）
 
 FEAT-016 在 foundation 上补齐 Agent 交互层：
@@ -81,6 +91,12 @@ FEAT-017 在 Web Dashboard 中补齐系统管理页面：
 FEAT-015 交付 Dashboard foundation，FEAT-016 交付 Chat/Sessions/WebSocket。后续 FEAT 在该基础上扩展：
 
 - FEAT-016：Agent Interaction（Chat、Sessions、WebSocket）— 已完成。
-- FEAT-017：System Management（Status、Settings、Status/Doctor/Config REST）— 已实现；仅通过 `/status`/`/doctor`/config sources 内嵌 Channel Health，只读消费，不拥有独立 `/api/v1/channels*`。
-- FEAT-018：Orchestration & Observability（Dispatch、Knowledge、Skills、Logs、Monitor）
+- FEAT-017：System Management（Status、Settings、Status/Doctor/Config REST）— done；仅通过 `/status`/`/doctor`/config sources 内嵌 Channel Health，只读消费，不拥有独立 `/api/v1/channels*`；真实 provider 连通测试暂无 harness，已按 owner 指示跳过。
+- FEAT-018：Orchestration Debugger（Dispatch、workflow graph、checkpoint timeline、stalled branch debug）
 - FEAT-019：Channel & Agent Management（独立 `/api/v1/channels*`、Channel 操作、Gateway、Agent YAML 管理）
+- FEAT-023：Permission & Token Budget Guard（操作权限分级、Token/成本预算、并行 Agent 预算汇总；为 FEAT-028 的角色化操作提供后端约束）
+- FEAT-024：Knowledge & Skills（Memory 搜索/写入、Skills 生命周期、asset 追溯）
+- FEAT-025：Runtime Logs & Provider Monitoring（Session events、provider fallback、Provider/token 统计、Monitor）
+- FEAT-026：Provider Onboarding Wizard（由 CLI/PAL 拥有；Dashboard 只消费 provider status/config read model）
+- FEAT-027：Guided Setup & Doctor Remediation（由 CLI 拥有；Dashboard 只消费 doctor/setup JSON report）
+- FEAT-028：Web Dashboard Product Maturity（本地多用户、统一服务端分页、中文本地化、角色化操作）

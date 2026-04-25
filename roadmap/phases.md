@@ -5,10 +5,10 @@
 | 阶段 | 目标 | 核心交付 | 自治水平 |
 |------|------|---------|---------|
 | Phase 0: Foundation | 最小可用骨架 | PAL + Channel 层（CLI/飞书/Telegram）+ Agent Runtime + Memory Fabric 独立能力 + Skills 子系统（15 预装）+ CLI + 手动 eat/shit | 人类驱动 |
-| Phase 1: Intelligence | 场景理解+动态编排 | Scenario Router + Team Orchestrator (Parallel/Debate/Pipeline) + Memory Fabric v1（库级）+ Skill Marketplace 雏形 + 更多 Channel | Agent 驱动，人类审批 |
-| Phase 2: Evolution | 自我进化 | Evolution Engine (Self-Monitor + Pattern Miner + Auto-Refactorer L0-L1) + Dashboard + eat/shit 自动触发 + Provider 动态重评估 | Agent 自治，人类监督 |
-| Phase 3: Autonomy | Agent 自主维护平台 | Agent-as-Developer + 自主需求分析 + L2-L3 重构 + 全编排模式 + Agent 自写 skill | Agent 自治，人类引导 |
-| Phase 4: Ecosystem | 开放生态 | Agent Store + Provider 插件化 + 跨实例协作 | — |
+| Phase 1: Intelligence & Safety | 场景理解 + 动态编排 + 生产化护栏 | Scenario Router + Team Orchestrator + Web Dashboard 控制面 + Memory Fabric v1 + Evolution Asset Registry + 权限/Token 预算 MVP | Agent 驱动，人类审批 |
+| Phase 2: Evolution | 自我进化 | Evolution Engine (Self-Monitor + Pattern Miner + Auto-Refactorer L0-L1) + 自动 eat/shit + 编排调试增强 + 会话生命周期策略 + checkpoint 人机介入 | Agent 自治，人类监督 |
+| Phase 3: Autonomy | Agent 自主维护平台 | Agent-as-Developer + 自主需求分析 + L2-L3 重构 + 全编排模式 + Agent 自写 skill + 长周期预算治理 | Agent 自治，人类引导 |
+| Phase 4: Ecosystem | 开放生态 | Agent Store + Provider 插件化 + 跨实例协作 + 团队资产共享 | — |
 
 ---
 
@@ -148,19 +148,47 @@
 
 ---
 
-## Phase 1: Intelligence — 场景理解与动态编排
+<a id="phase-1-intelligence--场景理解与动态编排"></a>
 
-**目标**：引入 Scenario Router 和 Team Orchestrator，支持多 Agent 协作。
+## Phase 1: Intelligence & Safety — 场景理解、动态编排与生产化护栏
 
-**核心交付**：
-- Scenario Router（场景感知 + 有状态图 + Checkpointing）
-- Team Orchestrator（Parallel + Debate + Pipeline 三种模式）
-- Memory Fabric v1（从文件级升级为库级集成）
-- Actor 消息驱动运行时
-- MCP Tool Provider 适配器
-- 新增 Channel：Slack / Web chat / Email
-- Skill Marketplace 雏形 + Agent 级 skill 绑定
-- 跨运行时 `shit` skill（Codex / Claude Code），补齐外部 agent runtime 的手动代谢能力
+**目标**：把 Phase 0 的单 Agent 骨架升级为可从零配置、可观测、可恢复、可审计、成本可控的多 Agent 平台。
+
+**当前状态（2026-04-25）**：
+- 已完成：FEAT-013 Scenario Router、FEAT-014 Team Orchestrator、FEAT-015/016 Dashboard 基础与 Agent 交互、FEAT-020 Codex runtime `shit` skill。
+- 刚收尾：FEAT-017 Web Dashboard System Management（真实 provider 连通测试暂无 harness，按 owner 指示跳过）。
+- 待重排：FEAT-018 Orchestration Debugger、FEAT-019 Channel & Agent Management、FEAT-024 Knowledge & Skills、FEAT-025 Runtime Logs & Provider Monitoring。
+- 新增 P0 可用性缺口：Provider Onboarding Wizard（Hermes 风格 CLI 引导配置）、Guided Setup & Doctor Remediation（OpenClaw/Hermes 风格从零配置与修复）。
+- 新增 P0 智能基础：Memory Fabric v1（Hermes 分层 + FTS5）、Evolution Asset Registry（EvoMap 风格资产化）。
+- 新增 P1 护栏：权限分级 + Token 预算 MVP（Mercury 风格生产安全）。
+- 新增 P1 产品成熟度：Dashboard 多用户、成熟分页、中文本地化（KeyClaw 风格管理面）。
+
+### Phase 1 调整后的交付顺序
+
+| 顺序 | 优先级 | Spec | 交付项 | 来源借鉴 | 说明 |
+|------|--------|------|--------|----------|------|
+| 1 | P0 | FEAT-017 | Web Dashboard System Management | — | 已 done；真实 provider 连通测试跳过 |
+| 2 | P0 | FEAT-026 | Provider Onboarding Wizard | Hermes | `haro provider` 命令族、provider setup/doctor/models/select、secretRef 与 systemd env file 对齐 |
+| 3 | P0 | FEAT-027 | Guided Setup & Doctor Remediation | OpenClaw / Hermes | `haro setup` 从零引导、`haro doctor` 结构化 remediation、global/systemd profile 检查 |
+| 4 | P0 | FEAT-021 | Memory Fabric v1 | Hermes | 三级记忆、FTS5 搜索、Haro 信息维度拆分、对抗性验证 |
+| 5 | P0 | FEAT-022 | Evolution Asset Registry | EvoMap | eat/shit 产物、prompt、skill、编排规则统一资产化，带版本与审计 |
+| 6 | P1 | FEAT-023 | Permission & Token Budget Guard | Mercury Agent | 操作权限分级、Token/成本预算、并行 Agent 预算汇总 |
+| 7 | P1 | FEAT-018 | Orchestration Debugger | LangGraph / CrewAI | workflow 图、checkpoint 时间线、卡住分支诊断；已从原大 spec 拆出 |
+| 8 | P1 | FEAT-019 | Channel & Agent Management | OpenClaw | Channel/Gateway/Agent 管理；idle/daily reset 延后 Phase 2 |
+| 9 | P1 | FEAT-028 | Web Dashboard Product Maturity | KeyClaw | 本地多用户、统一服务端分页、完整中文本地化、角色化操作 |
+| 10 | P2 | FEAT-024 | Knowledge & Skills Dashboard | Hermes / EvoMap | Memory 搜索、Skill 生命周期、asset 追溯 |
+| 11 | P2 | FEAT-025 | Runtime Logs & Provider Monitoring | Mercury / OpenClaw | session events、provider fallback、token 趋势、活跃 session |
+| 12 | P2 | 后续 spec | Actor 运行时、MCP Tool Provider、Skill marketplace 深化 | AutoGen / OpenClaw | 不阻塞首配、Memory/资产/预算三条主线 |
+
+### Phase 1 明确不做
+
+- 不自动触发完整 Evolution Engine；自动 OODA、自动 eat/shit 仍属于 Phase 2。
+- 不引入向量数据库；Phase 1 搜索使用 SQLite FTS5，向量检索留到 Phase 2+。
+- 不做跨组织共享 Agent Store；Phase 1 只建立本地资产审计和同步基础。
+- 不让 Dashboard 执行高风险编排控制；FEAT-018 调试视图以只读为主，交互式重跑/暂停/策略调整留到 Phase 2。
+- 不把 OpenClaw 的固定 Gateway 结构照搬进核心；只借鉴会话生命周期和权限模型。
+- 不引入企业级 SSO / OIDC / LDAP；FEAT-028 只做单机本地用户与角色模型。
+- 不把 provider secret 明文写入普通 YAML；FEAT-026 只允许 secretRef 或受权限保护的 env file。
 
 ---
 
@@ -174,10 +202,13 @@
   - Pattern Miner（成功模式挖掘）
   - Auto-Refactorer L0（Prompt 优化）
   - Auto-Refactorer L1（编排模式调整）
-- Evolution Dashboard（可视化进化日志）
+- Evolution Dashboard（可视化进化日志，复用 Phase 1 的 workflow/debug 基础）
 - OODA 循环实现
 - **eat / shit 自动触发**（Evolution Engine 调度）
 - **Provider/Model 动态重评估**（Agent 自评估 + 用户反馈）
+- Memory Dreaming / consolidation（短期记忆晋升、长期记忆归档、低价值记忆进入 shit 候选）
+- Channel 会话生命周期策略（idle reset / daily reset / retention）
+- Checkpoint 人机介入点：在高风险、预算超限、策略分歧或架构演进前主动请求人类裁决
 
 ---
 
@@ -191,6 +222,7 @@
 - Auto-Refactorer L2-L3（结构重构 + 架构演进）
 - 全编排模式（Hub-Spoke + Evolution Loop）
 - **Agent 自主编写新 skill**（Agent-as-Maintainer 的延伸）
+- Permission & Budget Guard 升级为长期治理：按 agent / workspace / operation class 统计预算与审批趋势
 
 ---
 

@@ -9,6 +9,9 @@
 | 项目 | 类别 | Stars | 核心特点 | Haro 关联 |
 |------|------|-------|---------|-----------|
 | Hermes | Agent Harness/Runtime | ~97.6k | 技能自创建+自改进+记忆，SQLite+FTS5 | 核心竞品（Agent 级自进化），Haro 做平台级 |
+| EvoMap | 进化语法 / 资产化 | — | 声明式进化语法：signal → gene → prompt → event | Haro 参考其资产封装与审计思路，不直接引入完整 GEP runtime |
+| OpenClaw | 统一 Agent 平台 / Gateway | — | Channel/Gateway 隔离、团队工作空间、会话管理 | Haro 参考其会话生命周期和权限模型，Channel 层保持自有可插拔设计 |
+| Mercury Agent | 生产级 Agent Guard | — | 显式权限审批、Token/成本预算 | Haro Phase 1 引入操作分级和预算护栏 |
 | Multica | Agent 团队管理平台 | ~15.7k | 管理多 Agent CLI，managed agents | Haro 可作为 Multica 的 Provider |
 | CrewAI | 编排框架 | — | 角色式 Agent 编排，流水线 | 反面教材（角色化 Agent 违反约束③） |
 | AutoGen | 编排框架 | — | Actor 模型 + 消息驱动 | Haro 运行时参考 |
@@ -19,6 +22,19 @@
 | Mastra | TypeScript Agent 框架 | — | TypeScript 原生，工具系统 | 技术选型参考 |
 
 ## 深度分析
+
+### 2026-04-25 参考产品吸收结论
+
+本轮输入补充了六个成熟产品/框架的可借鉴点。Haro 的处理原则是：只吸收已被验证的产品机制，不复制与 Haro 多 Agent 约束冲突的架构。
+
+| 来源 | 可借鉴点 | Haro 落点 | Phase |
+|------|----------|-----------|-------|
+| Hermes | Session / Persistent / Skill memory + FTS5 | FEAT-021 Memory Fabric v1：三级记忆、全文搜索、信息维度拆分、对抗性验证 | Phase 1 P0 |
+| EvoMap | 协议化进化语法与资产审计 | FEAT-022 Evolution Asset Registry：eat/shit 产物、prompt、skill、编排规则统一资产化 | Phase 1 P0 |
+| Mercury Agent | 权限审批和 Token 预算 | FEAT-023 Permission & Token Budget Guard：operation class、approval policy、workflow budget | Phase 1 P1 |
+| LangGraph / CrewAI | 编排图可视化、任务流监控 | FEAT-018 调整版：workflow 图、checkpoint 时间线、stalled branch 调试 | Phase 1 P1 |
+| OpenClaw | Channel 隔离、团队共享上下文、会话 lifecycle | Channel/Gateway 后续 spec：idle reset、daily reset、retention、共享上下文边界 | Phase 2 |
+| AutoGen | 人可在循环中随时介入 | Evolution Engine checkpoint gate：预算超限、风险升级、策略分歧时请求人类裁决 | Phase 2 |
 
 ### Hermes（~97.6k stars）
 
