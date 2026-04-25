@@ -225,7 +225,7 @@ Dashboard（Web 管理后台）作为 Haro 的**呈现层**，其需求规划遵
 
 ### Dashboard FEAT 编号规则
 
-Dashboard 相关功能统一使用 `FEAT-015` 及后续编号：
+Dashboard 第一批功能使用 `FEAT-015`~`FEAT-019`。后续全局编号仍按整体优先级递增，可插入非 Dashboard 任务：
 
 | 编号 | 范围 | 说明 |
 |------|------|------|
@@ -233,7 +233,9 @@ Dashboard 相关功能统一使用 `FEAT-015` 及后续编号：
 | FEAT-016 | Agent Interaction | Chat + Sessions + WebSocket |
 | FEAT-017 | System Management | Status + Settings（仅内嵌 Channel Health；不拥有独立 `/api/v1/channels*`） |
 | FEAT-018 | Orchestration & Observability | Dispatch + Knowledge + Skills + Logs + Monitor |
-| FEAT-019+ | 后续跟进 | Channel/Gateway/Agent YAML 管理；FEAT-019 独占独立 `/api/v1/channels*` contract |
+| FEAT-019 | Channel & Agent Management | Channel/Gateway/Agent YAML 管理；FEAT-019 独占独立 `/api/v1/channels*` contract |
+
+FEAT-020 已作为非 Dashboard 插队任务登记：跨运行时 `shit` skill（Codex / Claude Code）。
 
 ### 规划 checklist（后端 FEAT 起草时自检）
 

@@ -160,6 +160,7 @@
 - MCP Tool Provider 适配器
 - 新增 Channel：Slack / Web chat / Email
 - Skill Marketplace 雏形 + Agent 级 skill 绑定
+- 跨运行时 `shit` skill（Codex / Claude Code），补齐外部 agent runtime 的手动代谢能力
 
 ---
 
