@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SkillsManager } from '../src/index.js';
+import { parseSkillFile, SkillsManager } from '../src/index.js';
 import { execFileSync } from 'node:child_process';
 
 const roots: string[] = [];
@@ -83,6 +83,107 @@ describe('SkillsManager [FEAT-010]', () => {
     expect(entry.originalSource).toBe(`file://${repo}`);
     const installed = JSON.parse(readFileSync(join(root, 'skills', 'installed.json'), 'utf8')) as { skills: Record<string, { pinnedCommit: string }> };
     expect(installed.skills['git-skill']?.pinnedCommit).toHaveLength(40);
+    manager.close();
+  });
+
+  it('FEAT-020 AC1: bundled shit skill has cross-runtime frontmatter', () => {
+    const content = readFileSync(join(__dirname, '..', 'resources', 'preinstalled', 'shit', 'SKILL.md'), 'utf8');
+    const descriptor = parseSkillFile(content, 'fallback');
+
+    expect(descriptor.id).toBe('shit');
+    expect(descriptor.description).toContain('Review');
+    expect(descriptor.description.length).toBeGreaterThan(0);
+  });
+
+  it('FEAT-020 AC1a/AC4: syncs eat and shit to temp Codex and Claude homes by default', () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runtime-sync-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-home-'));
+    const claudeHome = mkdtempSync(join(tmpdir(), 'haro-claude-home-'));
+    roots.push(root, codexHome, claudeHome);
+    const manager = new SkillsManager({ root });
+
+    const result = manager.syncRuntimeSkills({ homes: { codex: codexHome, claude: claudeHome } });
+
+    expect(result.hasConflicts).toBe(false);
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runtime: 'codex', skillId: 'eat', status: 'synced' }),
+        expect.objectContaining({ runtime: 'codex', skillId: 'shit', status: 'synced' }),
+        expect.objectContaining({ runtime: 'claude', skillId: 'eat', status: 'synced' }),
+        expect.objectContaining({ runtime: 'claude', skillId: 'shit', status: 'synced' }),
+      ]),
+    );
+    for (const home of [codexHome, claudeHome]) {
+      for (const skillId of ['eat', 'shit']) {
+        for (const file of ['SKILL.md', 'LICENSE', 'NOTICE']) {
+          const target = join(home, 'skills', skillId, file);
+          const canonical = join(__dirname, '..', 'resources', 'preinstalled', skillId, file);
+          expect(readFileSync(target, 'utf8')).toBe(readFileSync(canonical, 'utf8'));
+        }
+      }
+    }
+    manager.close();
+  });
+
+  it('FEAT-020 AC4: supports explicit runtime selection and CODEX_HOME/CLAUDE_HOME env homes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runtime-env-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-env-'));
+    const claudeHome = mkdtempSync(join(tmpdir(), 'haro-claude-env-'));
+    roots.push(root, codexHome, claudeHome);
+    const previousCodexHome = process.env.CODEX_HOME;
+    const previousClaudeHome = process.env.CLAUDE_HOME;
+    process.env.CODEX_HOME = codexHome;
+    process.env.CLAUDE_HOME = claudeHome;
+    try {
+      const manager = new SkillsManager({ root });
+      const result = manager.syncRuntimeSkills({ skill: 'shit', runtimes: ['claude'] });
+
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toMatchObject({ runtime: 'claude', skillId: 'shit', status: 'synced' });
+      expect(existsSync(join(claudeHome, 'skills', 'shit', 'SKILL.md'))).toBe(true);
+      expect(existsSync(join(codexHome, 'skills', 'shit', 'SKILL.md'))).toBe(false);
+      manager.close();
+    } finally {
+      if (previousCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = previousCodexHome;
+      }
+      if (previousClaudeHome === undefined) {
+        delete process.env.CLAUDE_HOME;
+      } else {
+        process.env.CLAUDE_HOME = previousClaudeHome;
+      }
+    }
+  });
+
+  it('FEAT-020 AC5: fails fast instead of silently overwriting a different runtime skill', () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runtime-conflict-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-conflict-'));
+    roots.push(root, codexHome);
+    const target = join(codexHome, 'skills', 'shit');
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, 'SKILL.md'), '---\nname: shit\ndescription: other\n---\n\nOther implementation\n', 'utf8');
+    const manager = new SkillsManager({ root, now: () => new Date('2026-04-25T00:00:00.000Z') });
+
+    const conflict = manager.syncRuntimeSkills({ skill: 'shit', runtimes: ['codex'], homes: { codex: codexHome } });
+
+    expect(conflict.hasConflicts).toBe(true);
+    expect(conflict.items).toEqual([
+      expect.objectContaining({
+        runtime: 'codex',
+        skillId: 'shit',
+        status: 'conflict',
+        targetPath: target,
+      }),
+    ]);
+    expect(readFileSync(join(target, 'SKILL.md'), 'utf8')).toContain('Other implementation');
+
+    const overwritten = manager.syncRuntimeSkills({ skill: 'shit', runtimes: ['codex'], homes: { codex: codexHome }, overwrite: true });
+    expect(overwritten.hasConflicts).toBe(false);
+    expect(overwritten.items[0]).toMatchObject({ status: 'synced', backupPath: `${target}.backup-2026-04-25T00-00-00-000Z` });
+    expect(readFileSync(join(target, 'SKILL.md'), 'utf8')).toBe(readFileSync(join(__dirname, '..', 'resources', 'preinstalled', 'shit', 'SKILL.md'), 'utf8'));
+    expect(readFileSync(join(`${target}.backup-2026-04-25T00-00-00-000Z`, 'SKILL.md'), 'utf8')).toContain('Other implementation');
     manager.close();
   });
 });

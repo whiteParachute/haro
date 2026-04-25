@@ -59,3 +59,28 @@ export interface SkillPrepareResult {
 export interface SkillCommandResult {
   output: string;
 }
+
+export type RuntimeSkillSyncRuntime = 'codex' | 'claude';
+export type RuntimeSkillSyncSkill = 'eat' | 'shit' | 'metabolism';
+export type RuntimeSkillSyncStatus = 'synced' | 'unchanged' | 'conflict';
+
+export interface RuntimeSkillSyncOptions {
+  skill?: RuntimeSkillSyncSkill;
+  runtimes?: RuntimeSkillSyncRuntime[];
+  homes?: Partial<Record<RuntimeSkillSyncRuntime, string>>;
+  overwrite?: boolean;
+}
+
+export interface RuntimeSkillSyncItem {
+  runtime: RuntimeSkillSyncRuntime;
+  skillId: 'eat' | 'shit';
+  status: RuntimeSkillSyncStatus;
+  targetPath: string;
+  backupPath?: string;
+  message?: string;
+}
+
+export interface RuntimeSkillSyncResult {
+  items: RuntimeSkillSyncItem[];
+  hasConflicts: boolean;
+}

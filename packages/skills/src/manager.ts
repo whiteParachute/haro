@@ -1,5 +1,5 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { buildHaroPaths, createMemoryFabric } from '@haro/core';
@@ -7,7 +7,18 @@ import type { MemoryFabric } from '@haro/core';
 import { parseSkillFile } from './frontmatter.js';
 import { rollbackShit, runEat, runShit, type EatCommandInput, type ShitCommandInput, type ShitRollbackInput } from './metabolism.js';
 import { SkillUsageTracker } from './usage-tracker.js';
-import type { InstalledSkillsManifest, SkillCommandResult, SkillDescriptor, SkillManifestEntry, SkillPrepareResult, SkillResolution } from './types.js';
+import type {
+  InstalledSkillsManifest,
+  RuntimeSkillSyncItem,
+  RuntimeSkillSyncOptions,
+  RuntimeSkillSyncResult,
+  RuntimeSkillSyncRuntime,
+  SkillCommandResult,
+  SkillDescriptor,
+  SkillManifestEntry,
+  SkillPrepareResult,
+  SkillResolution,
+} from './types.js';
 
 const RESOURCE_ROOT = resolve(__dirname, '..', 'resources');
 const PREINSTALLED_ROOT = join(RESOURCE_ROOT, 'preinstalled');
@@ -171,6 +182,27 @@ export class SkillsManager {
     }
   }
 
+  syncRuntimeSkills(options: RuntimeSkillSyncOptions = {}): RuntimeSkillSyncResult {
+    this.ensureInitialized();
+    const runtimes = options.runtimes ?? ['codex', 'claude'];
+    const skillIds = expandRuntimeSkillSelection(options.skill ?? 'metabolism');
+    const items: RuntimeSkillSyncItem[] = [];
+
+    for (const runtime of runtimes) {
+      const runtimeHome = options.homes?.[runtime] ?? defaultRuntimeHome(runtime);
+      for (const skillId of skillIds) {
+        const sourcePath = join(PREINSTALLED_ROOT, skillId);
+        if (!existsSync(sourcePath)) {
+          throw new Error(`Bundled preinstalled skill '${skillId}' not found`);
+        }
+        const targetPath = join(runtimeHome, 'skills', skillId);
+        items.push(syncRuntimeSkillDirectory({ runtime, skillId, sourcePath, targetPath, overwrite: options.overwrite ?? false, now: this.now }));
+      }
+    }
+
+    return { items, hasConflicts: items.some((item) => item.status === 'conflict') };
+  }
+
   resolveSkill(task: string): SkillResolution | undefined {
     this.ensureInitialized();
     const explicit = /^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/i.exec(task.trim());
@@ -296,6 +328,92 @@ export class SkillsManager {
 
 function basenameId(skillPath: string): string {
   return skillPath.split(/[\\/]/).filter(Boolean).at(-1) ?? 'skill';
+}
+
+function expandRuntimeSkillSelection(skill: RuntimeSkillSyncOptions['skill']): Array<'eat' | 'shit'> {
+  if (skill === 'shit') return ['shit'];
+  return ['eat', 'shit'];
+}
+
+function defaultRuntimeHome(runtime: RuntimeSkillSyncRuntime): string {
+  if (runtime === 'codex') return process.env.CODEX_HOME ?? join(homedir(), '.codex');
+  return process.env.CLAUDE_HOME ?? join(homedir(), '.claude');
+}
+
+function syncRuntimeSkillDirectory(input: {
+  runtime: RuntimeSkillSyncRuntime;
+  skillId: 'eat' | 'shit';
+  sourcePath: string;
+  targetPath: string;
+  overwrite: boolean;
+  now: () => Date;
+}): RuntimeSkillSyncItem {
+  const expectedFiles = listRelativeFiles(input.sourcePath);
+  const conflictingFiles = existsSync(input.targetPath)
+    ? expectedFiles.filter((file) => {
+        const sourceFile = join(input.sourcePath, file);
+        const targetFile = join(input.targetPath, file);
+        return existsSync(targetFile) && readFileSync(targetFile, 'utf8') !== readFileSync(sourceFile, 'utf8');
+      })
+    : [];
+
+  if (conflictingFiles.length > 0 && !input.overwrite) {
+    return {
+      runtime: input.runtime,
+      skillId: input.skillId,
+      status: 'conflict',
+      targetPath: input.targetPath,
+      message: `Target skill differs from canonical source: ${conflictingFiles.join(', ')}`,
+    };
+  }
+
+  let backupPath: string | undefined;
+  if (conflictingFiles.length > 0 && input.overwrite) {
+    backupPath = uniqueBackupPath(input.targetPath, input.now);
+    mkdirSync(dirname(backupPath), { recursive: true });
+    renameSync(input.targetPath, backupPath);
+  }
+
+  const unchanged =
+    existsSync(input.targetPath) &&
+    expectedFiles.every((file) => {
+      const targetFile = join(input.targetPath, file);
+      return existsSync(targetFile) && readFileSync(targetFile, 'utf8') === readFileSync(join(input.sourcePath, file), 'utf8');
+    });
+
+  if (unchanged) {
+    return { runtime: input.runtime, skillId: input.skillId, status: 'unchanged', targetPath: input.targetPath };
+  }
+
+  mkdirSync(dirname(input.targetPath), { recursive: true });
+  cpSync(input.sourcePath, input.targetPath, { recursive: true });
+  return { runtime: input.runtime, skillId: input.skillId, status: 'synced', targetPath: input.targetPath, ...(backupPath ? { backupPath } : {}) };
+}
+
+function listRelativeFiles(directory: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(directory)) {
+    const absolute = join(directory, entry);
+    if (statSync(absolute).isDirectory()) {
+      for (const nested of listRelativeFiles(absolute)) {
+        files.push(join(entry, nested));
+      }
+    } else {
+      files.push(entry);
+    }
+  }
+  return files.sort();
+}
+
+function uniqueBackupPath(targetPath: string, now: () => Date): string {
+  const stamp = now().toISOString().replace(/[:.]/g, '-');
+  let candidate = `${targetPath}.backup-${stamp}`;
+  let index = 1;
+  while (existsSync(candidate)) {
+    candidate = `${targetPath}.backup-${stamp}-${index}`;
+    index += 1;
+  }
+  return candidate;
 }
 
 function looksLikeGitUrl(source: string): boolean {
