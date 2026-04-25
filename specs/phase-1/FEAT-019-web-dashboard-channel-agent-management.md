@@ -1,11 +1,11 @@
 ---
 id: FEAT-019
 title: Web Dashboard — Channel & Agent Management（通道与Agent管理）
-status: approved
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-23
-updated: 2026-04-24
+updated: 2026-04-25
 related:
   - ../README.md#前端与-dashboard-开发规范
   - ./FEAT-015-web-dashboard-foundation.md
@@ -217,6 +217,7 @@ defaultModel: gpt-5
   - 补全 Dashboard 遗漏能力：Channel 管理、Gateway 控制、Agent 配置 CRUD
   - 明确 Agent CRUD 边界：Zod 校验、文件读写、Registry reload
 - 2026-04-23: review fix — 补充 R17 Gateway 日志端点；5.1 明确 agents.ts 是 FEAT-016 的扩展；YAML 编辑器明确首选 CodeMirror 6；Open Questions 清零（不触发 wrapupSession、日志轮询）
+- 2026-04-25: implementation done — status: approved → done。核心交付：新增 `/api/v1/channels*` 操作性 Channel API、`/api/v1/gateway*` 控制/Doctor/日志 API、Agent YAML CRUD/validate/delete defaultAgent guard，并补齐 ChannelPage、GatewayPage、AgentEditorPage 与导航入口。验证：`pnpm -F @haro/cli test`、`pnpm -F @haro/web test`、`pnpm test`、`pnpm lint`、`pnpm -F @haro/web lint`、`pnpm build`、`pnpm smoke`；浏览器 smoke 访问 `/channels`、`/gateway`、`/agents`，截图证据在 `.omx/state/team/feat-019-web-dashboard-channel/workers/worker-2/feat019-smoke/`。Implementation commit: `4528593`。
 
 - 2026-04-24: review fix — Breaking: 解决 B2/W1，Agent API 与 FEAT-016 对齐为 `summary` read-model，删除 `description`/单 Agent `type` 字段；YAML CRUD 统一使用 `{ yaml }` envelope + FEAT-004 strict schema，明确 unknown-field、id/path mismatch、`AgentYamlResponse`/`AgentValidationResponse` 策略；validate 端点统一 200 + `ok=false`，保存/创建端点使用 400/409；FEAT-019 独占 `/api/v1/channels*` contract，承接 FEAT-017 移出的操作性 ChannelPage/API、Gateway 控制与 Agent YAML CRUD；修正 channel protocol 相关链接。按 `specs/README.md` 的 approved 合约变更规则，status 回退为 draft，待 owner 重新批准。
 - 2026-04-24: owner re-approved — whiteParachute 批准 B2/W1 合约修订，status: draft → approved。
