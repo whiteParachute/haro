@@ -1,7 +1,7 @@
 ---
 id: FEAT-026
 title: Provider Onboarding Wizard（Provider 引导配置）
-status: in-progress
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-25
@@ -164,3 +164,4 @@ Provider doctor 输出结构化问题：
 - 2026-04-25: Codex — 初稿，补齐 Provider 引导配置、secret 处理、model 选择与 doctor 集成规划。
 - 2026-04-25: whiteParachute — 关闭 Open Questions 并批准进入实现：允许显式 opt-in 写入受保护 env file；models 使用 live `listModels()`；project scope 可显式继承全局 `secretRef`。
 - 2026-04-25: Codex — 开始实现，状态更新为 in-progress；PR 合入前不标记 done。
+- 2026-04-25: Codex — 完成实现与收尾验证：`pnpm -F @haro/cli test`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm smoke` 全部通过。
