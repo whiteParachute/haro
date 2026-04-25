@@ -67,7 +67,7 @@ FEAT-016 在 foundation 上补齐 Agent 交互层：
 
 FEAT-015 交付 Dashboard foundation，FEAT-016 交付 Chat/Sessions/WebSocket。后续 FEAT 在该基础上扩展：
 
-- FEAT-016：Agent Interaction（Chat、Sessions、WebSocket）— 已进入实现态，合入完成后关闭。
+- FEAT-016：Agent Interaction（Chat、Sessions、WebSocket）— 已完成。
 - FEAT-017：System Management（Status、Settings；仅通过 `/status`/`/doctor`/config sources 内嵌 Channel Health，只读消费，不拥有独立 `/api/v1/channels*`）
 - FEAT-018：Orchestration & Observability（Dispatch、Knowledge、Skills、Logs、Monitor）
 - FEAT-019：Channel & Agent Management（独立 `/api/v1/channels*`、Channel 操作、Gateway、Agent YAML 管理）

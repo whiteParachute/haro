@@ -60,7 +60,7 @@ export interface SkillCommandResult {
   output: string;
 }
 
-export type RuntimeSkillSyncRuntime = 'codex' | 'claude';
+export type RuntimeSkillSyncRuntime = 'codex';
 export type RuntimeSkillSyncSkill = 'eat' | 'shit' | 'metabolism';
 export type RuntimeSkillSyncStatus = 'synced' | 'unchanged' | 'conflict';
 

@@ -235,7 +235,7 @@ Dashboard 第一批功能使用 `FEAT-015`~`FEAT-019`。后续全局编号仍按
 | FEAT-018 | Orchestration & Observability | Dispatch + Knowledge + Skills + Logs + Monitor |
 | FEAT-019 | Channel & Agent Management | Channel/Gateway/Agent YAML 管理；FEAT-019 独占独立 `/api/v1/channels*` contract |
 
-FEAT-020 已作为非 Dashboard 插队任务登记：跨运行时 `shit` skill（Codex / Claude Code）。
+FEAT-020 已作为非 Dashboard 插队任务登记：Codex runtime `shit` skill。
 
 ### 规划 checklist（后端 FEAT 起草时自检）
 

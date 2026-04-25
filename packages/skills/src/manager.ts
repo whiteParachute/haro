@@ -184,12 +184,12 @@ export class SkillsManager {
 
   syncRuntimeSkills(options: RuntimeSkillSyncOptions = {}): RuntimeSkillSyncResult {
     this.ensureInitialized();
-    const runtimes = options.runtimes ?? ['codex', 'claude'];
+    const runtimes = options.runtimes ?? ['codex'];
     const skillIds = expandRuntimeSkillSelection(options.skill ?? 'metabolism');
     const items: RuntimeSkillSyncItem[] = [];
 
     for (const runtime of runtimes) {
-      const runtimeHome = options.homes?.[runtime] ?? defaultRuntimeHome(runtime);
+      const runtimeHome = options.homes?.[runtime] ?? defaultRuntimeHome();
       for (const skillId of skillIds) {
         const sourcePath = join(PREINSTALLED_ROOT, skillId);
         if (!existsSync(sourcePath)) {
@@ -335,9 +335,8 @@ function expandRuntimeSkillSelection(skill: RuntimeSkillSyncOptions['skill']): A
   return ['eat', 'shit'];
 }
 
-function defaultRuntimeHome(runtime: RuntimeSkillSyncRuntime): string {
-  if (runtime === 'codex') return process.env.CODEX_HOME ?? join(homedir(), '.codex');
-  return process.env.CLAUDE_HOME ?? join(homedir(), '.claude');
+function defaultRuntimeHome(): string {
+  return process.env.CODEX_HOME ?? join(homedir(), '.codex');
 }
 
 function syncRuntimeSkillDirectory(input: {

@@ -1,7 +1,7 @@
 ---
 id: FEAT-016
 title: Web Dashboard — Agent Interaction（Agent 交互）
-status: in-progress
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-23
@@ -195,3 +195,4 @@ type AgentDetail = AgentSummary & {
 - 2026-04-24: review fix — Breaking: 解决 B2，FEAT-016 Agents API 改为只读 `AgentSummary`/`AgentDetail` read-model；删除 `description`/单 Agent `type` 合约，新增 `summary` 派生规则与 unknown-field 边界，完整 YAML CRUD 交给 FEAT-019。按 `specs/README.md` 的 approved 合约变更规则，status 回退为 draft，待 owner 重新批准。
 - 2026-04-24: owner re-approved — whiteParachute 批准 B2 合约修订，status: draft → approved。
 - 2026-04-24: implementation — FEAT-016 进入实现态（status: approved → in-progress）。落地 Agents/Sessions REST read-model、WebSocket `/ws` 协议、Chat/Sessions 前端页面与 AC1-AC8 测试覆盖；保持 AgentRunner 核心语义不变，Dashboard 仅作为产品交互层。
+- 2026-04-25: done — owner 决定 FEAT-016 先不补额外测试，现有实现与文档按当前范围直接收口为 done。

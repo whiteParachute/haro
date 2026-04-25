@@ -76,4 +76,4 @@ manual review checklist:
 
 ## Boundary
 
-This skill is the cross-runtime wrapper for the FEAT-011 Haro `shit` command. It does not change Runner, Provider, AgentRunner, archive manifest, or rollback semantics.
+This skill is the Codex runtime wrapper for the FEAT-011 Haro `shit` command. It does not change Runner, Provider, AgentRunner, archive manifest, or rollback semantics.

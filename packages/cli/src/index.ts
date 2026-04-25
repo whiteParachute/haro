@@ -582,25 +582,22 @@ function registerSkillsCommands(program: Command, app: AppContext): void {
 
       cmd
         .command('sync-runtime')
-        .description('Sync canonical preinstalled skills to Codex / Claude Code runtime homes')
+        .description('Sync canonical preinstalled skills to the Codex runtime home')
         .option('--skill <skill>', 'shit|eat|metabolism', 'metabolism')
-        .option('--runtime <runtime>', 'codex|claude|codex,claude', 'codex,claude')
+        .option('--runtime <runtime>', 'codex', 'codex')
         .option('--codex-home <path>', 'override CODEX_HOME for this sync')
-        .option('--claude-home <path>', 'override CLAUDE_HOME for this sync')
         .option('--overwrite', 'overwrite conflicting runtime skills after preserving a backup')
         .action(
           async (options: {
             skill: string;
             runtime: string;
             codexHome?: string;
-            claudeHome?: string;
             overwrite?: boolean;
           }) => {
             const skill = parseRuntimeSyncSkill(options.skill);
             const runtimes = parseRuntimeSyncRuntimes(options.runtime);
             const homes = {
               ...(options.codexHome ? { codex: options.codexHome } : {}),
-              ...(options.claudeHome ? { claude: options.claudeHome } : {}),
             };
             const result = app.skills.syncRuntimeSkills({
               skill,
@@ -636,9 +633,9 @@ function parseRuntimeSyncRuntimes(value: string): RuntimeSkillSyncRuntime[] {
   if (runtimes.length === 0) {
     throw new CommanderExit(1, 'At least one runtime is required.');
   }
-  const invalid = runtimes.filter((runtime) => runtime !== 'codex' && runtime !== 'claude');
+  const invalid = runtimes.filter((runtime) => runtime !== 'codex');
   if (invalid.length > 0) {
-    throw new CommanderExit(1, `Invalid runtime '${invalid.join(',')}'. Expected codex, claude, or codex,claude.`);
+    throw new CommanderExit(1, `Invalid runtime '${invalid.join(',')}'. Expected codex.`);
   }
   return [...new Set(runtimes)] as RuntimeSkillSyncRuntime[];
 }

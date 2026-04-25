@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 const skillText = readFileSync(join(process.cwd(), 'resources', 'preinstalled', 'shit', 'SKILL.md'), 'utf8');
 
-describe('shit SKILL.md cross-runtime contract [FEAT-020]', () => {
-  it('has Codex/Claude-compatible frontmatter for the shit skill', () => {
+describe('shit SKILL.md Codex runtime contract [FEAT-020]', () => {
+  it('has Codex-compatible frontmatter for the shit skill', () => {
     expect(skillText).toMatch(/^---\nname: shit\n/m);
     expect(skillText).toMatch(/description: "Counterpart to eat: dry-run-first archival\/rollback workflow/);
   });

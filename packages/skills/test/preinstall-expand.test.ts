@@ -86,7 +86,7 @@ describe('SkillsManager [FEAT-010]', () => {
     manager.close();
   });
 
-  it('FEAT-020 AC1: bundled shit skill has cross-runtime frontmatter', () => {
+  it('FEAT-020 AC1: bundled shit skill has Codex runtime frontmatter', () => {
     const content = readFileSync(join(__dirname, '..', 'resources', 'preinstalled', 'shit', 'SKILL.md'), 'utf8');
     const descriptor = parseSkillFile(content, 'fallback');
 
@@ -96,64 +96,50 @@ describe('SkillsManager [FEAT-010]', () => {
     expect(descriptor.description.length).toBeGreaterThan(0);
   });
 
-  it('FEAT-020 AC1a/AC4: syncs eat and shit to temp Codex and Claude homes by default', () => {
+  it('FEAT-020 AC1a/AC4: syncs eat and shit to a temp Codex home by default', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-runtime-sync-'));
     const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-home-'));
-    const claudeHome = mkdtempSync(join(tmpdir(), 'haro-claude-home-'));
-    roots.push(root, codexHome, claudeHome);
+    roots.push(root, codexHome);
     const manager = new SkillsManager({ root });
 
-    const result = manager.syncRuntimeSkills({ homes: { codex: codexHome, claude: claudeHome } });
+    const result = manager.syncRuntimeSkills({ homes: { codex: codexHome } });
 
     expect(result.hasConflicts).toBe(false);
     expect(result.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ runtime: 'codex', skillId: 'eat', status: 'synced' }),
         expect.objectContaining({ runtime: 'codex', skillId: 'shit', status: 'synced' }),
-        expect.objectContaining({ runtime: 'claude', skillId: 'eat', status: 'synced' }),
-        expect.objectContaining({ runtime: 'claude', skillId: 'shit', status: 'synced' }),
       ]),
     );
-    for (const home of [codexHome, claudeHome]) {
-      for (const skillId of ['eat', 'shit']) {
-        for (const file of ['SKILL.md', 'LICENSE', 'NOTICE']) {
-          const target = join(home, 'skills', skillId, file);
-          const canonical = join(__dirname, '..', 'resources', 'preinstalled', skillId, file);
-          expect(readFileSync(target, 'utf8')).toBe(readFileSync(canonical, 'utf8'));
-        }
+    for (const skillId of ['eat', 'shit']) {
+      for (const file of ['SKILL.md', 'LICENSE', 'NOTICE']) {
+        const target = join(codexHome, 'skills', skillId, file);
+        const canonical = join(__dirname, '..', 'resources', 'preinstalled', skillId, file);
+        expect(readFileSync(target, 'utf8')).toBe(readFileSync(canonical, 'utf8'));
       }
     }
     manager.close();
   });
 
-  it('FEAT-020 AC4: supports explicit runtime selection and CODEX_HOME/CLAUDE_HOME env homes', () => {
+  it('FEAT-020 AC4: supports explicit runtime selection and CODEX_HOME env homes', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-runtime-env-'));
     const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-env-'));
-    const claudeHome = mkdtempSync(join(tmpdir(), 'haro-claude-env-'));
-    roots.push(root, codexHome, claudeHome);
+    roots.push(root, codexHome);
     const previousCodexHome = process.env.CODEX_HOME;
-    const previousClaudeHome = process.env.CLAUDE_HOME;
     process.env.CODEX_HOME = codexHome;
-    process.env.CLAUDE_HOME = claudeHome;
     try {
       const manager = new SkillsManager({ root });
-      const result = manager.syncRuntimeSkills({ skill: 'shit', runtimes: ['claude'] });
+      const result = manager.syncRuntimeSkills({ skill: 'shit', runtimes: ['codex'] });
 
       expect(result.items).toHaveLength(1);
-      expect(result.items[0]).toMatchObject({ runtime: 'claude', skillId: 'shit', status: 'synced' });
-      expect(existsSync(join(claudeHome, 'skills', 'shit', 'SKILL.md'))).toBe(true);
-      expect(existsSync(join(codexHome, 'skills', 'shit', 'SKILL.md'))).toBe(false);
+      expect(result.items[0]).toMatchObject({ runtime: 'codex', skillId: 'shit', status: 'synced' });
+      expect(existsSync(join(codexHome, 'skills', 'shit', 'SKILL.md'))).toBe(true);
       manager.close();
     } finally {
       if (previousCodexHome === undefined) {
         delete process.env.CODEX_HOME;
       } else {
         process.env.CODEX_HOME = previousCodexHome;
-      }
-      if (previousClaudeHome === undefined) {
-        delete process.env.CLAUDE_HOME;
-      } else {
-        process.env.CLAUDE_HOME = previousClaudeHome;
       }
     }
   });
