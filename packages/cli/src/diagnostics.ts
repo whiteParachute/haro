@@ -7,6 +7,8 @@ import { stringify as stringifyYaml } from 'yaml';
 import { db as haroDb, fs as haroFs, type HaroPaths, type ProviderRegistry } from '@haro/core';
 import type { HaroConfig, LoadedConfig } from '@haro/core/config';
 import type { ChannelRegistry } from './channel.js';
+import { DEFAULT_PROVIDER_CATALOG, type ProviderCatalogEntry } from './provider-catalog.js';
+import { runProviderDoctor } from './provider-onboarding.js';
 
 export type SetupStageId =
   | 'prerequisites'
@@ -77,6 +79,7 @@ export interface DiagnosticsInput {
   root?: string;
   loaded: LoadedConfig;
   providerRegistry: ProviderRegistry;
+  providerCatalog?: readonly ProviderCatalogEntry[];
   channelRegistry: ChannelRegistry;
   deps?: SetupRunDeps;
 }
@@ -309,41 +312,33 @@ async function checkConfiguration(ctx: { paths: HaroPaths; loaded: LoadedConfig;
   });
 }
 
-async function checkProvider(ctx: { providerRegistry: ProviderRegistry; deps: RequiredDeps }): Promise<SetupStageResult> {
-  const providers = ctx.providerRegistry.list();
-  const apiKeyPresent = typeof ctx.deps.env.OPENAI_API_KEY === 'string' && ctx.deps.env.OPENAI_API_KEY.trim().length > 0;
-  const checks = await Promise.all(
-    providers.map(async (provider) => {
-      try {
-        return { id: provider.id, healthy: await provider.healthCheck() };
-      } catch (err) {
-        return { id: provider.id, healthy: false, error: err instanceof Error ? err.message : String(err) };
-      }
+async function checkProvider(ctx: { providerRegistry: ProviderRegistry; providerCatalog?: readonly ProviderCatalogEntry[]; root?: string; deps: RequiredDeps }): Promise<SetupStageResult> {
+  const catalog = ctx.providerCatalog ?? DEFAULT_PROVIDER_CATALOG;
+  const entries = catalog.filter((entry) => ctx.providerRegistry.has(entry.id));
+  const reports = await Promise.all(
+    entries.map(async (entry) => {
+      const report = await runProviderDoctor({
+        entry,
+        providerRegistry: ctx.providerRegistry,
+        root: ctx.root,
+        env: ctx.deps.env,
+      });
+      return {
+        report,
+        check: {
+          id: entry.id,
+          healthy: report.ok,
+          secret: report.secret.currentProcess,
+          secretSource: report.secret.source,
+          envFile: report.secret.envFile,
+          error: report.issues.find((issue) => issue.severity === 'error')?.evidence,
+        },
+      };
     }),
   );
-  const issues: DoctorIssue[] = [];
-  if (!apiKeyPresent) {
-    issues.push({
-      code: 'PROVIDER_SECRET_MISSING',
-      severity: 'error',
-      component: 'provider',
-      evidence: '未检测到 OPENAI_API_KEY；OPENAI_API_KEY is not set in the current process or configured env file.',
-      remediation: 'Run haro provider setup codex, or export OPENAI_API_KEY=<your-key> in the environment used by haro.',
-      fixable: false,
-    });
-  } else {
-    for (const item of checks.filter((check) => !check.healthy)) {
-      issues.push({
-        code: 'PROVIDER_HEALTHCHECK_FAILED',
-        severity: 'error',
-        component: 'provider',
-        evidence: item.error ? `${item.id}: ${item.error}` : `${item.id}: healthCheck() returned false`,
-        remediation: `Run haro provider doctor ${item.id} or haro provider setup ${item.id}.`,
-        fixable: false,
-      });
-    }
-  }
-  if (providers.length === 0) {
+  const issues: DoctorIssue[] = reports.flatMap((item) => item.report.issues);
+  const checks = reports.map((item) => item.check);
+  if (ctx.providerRegistry.list().length === 0) {
     issues.push({
       code: 'PROVIDER_REGISTRY_EMPTY',
       severity: 'error',
@@ -353,7 +348,7 @@ async function checkProvider(ctx: { providerRegistry: ProviderRegistry; deps: Re
       fixable: false,
     });
   }
-  return stage('provider', issues, issues.length > 0 ? ['haro provider setup codex'] : [], { providers: checks, secret: apiKeyPresent ? 'present' : 'missing' });
+  return stage('provider', issues, issues.length > 0 ? ['haro provider setup codex'] : [], { providers: checks, secret: checks.some((check) => check.secret === 'present') ? 'present' : 'missing' });
 }
 
 function checkDatabase(ctx: { root?: string; paths: HaroPaths }): SetupStageResult {

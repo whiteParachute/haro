@@ -52,20 +52,25 @@ pnpm add -g @haro/cli@latest
 ### 最短可跑通路径
 
 ```bash
-# 1. 配置 Provider 凭证
+# 1. 配置 Provider 凭证（不会写入 YAML）
 export OPENAI_API_KEY=<your-key>
 
-# 2. 跑首次引导（会按 stage 检查并写入非敏感默认配置）
+# 2. 配置 Codex provider、发现 live models、选择默认模型
+haro provider setup codex --scope global --non-interactive
+haro provider models codex
+haro provider select codex <live-model-id>
+
+# 3. 跑首次引导（会按 stage 检查并写入/确认非敏感默认配置）
 haro setup --profile global
 
-# 3. 先做结构化诊断；如目录/SQLite 缺失，可执行安全修复
+# 4. 先做结构化诊断；如目录/SQLite 缺失，可执行安全修复
 haro doctor --json
 haro doctor --fix
 
-# 4. 执行第一条任务
+# 5. 执行第一条任务
 haro run "列出当前目录下的 TypeScript 文件"
 
-# 5. 进入交互式 REPL
+# 6. 进入交互式 REPL
 haro
 ```
 

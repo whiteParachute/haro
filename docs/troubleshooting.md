@@ -26,26 +26,35 @@ Invalid Haro config (/home/user/.haro/config.yaml):
 
 ### 2. Provider 健康检查
 
-如果 issue code 为 `PROVIDER_SECRET_MISSING` 或 `PROVIDER_HEALTHCHECK_FAILED`，先运行：
+如果 issue code 为 `PROVIDER_SECRET_MISSING`、`PROVIDER_ENV_FILE_UNREADABLE`、`PROVIDER_HEALTHCHECK_FAILED` 或 `PROVIDER_MODEL_LIST_FAILED`，先运行：
 
 ```bash
 haro doctor --component provider --json
+haro provider doctor codex --json
+haro provider env codex
 haro provider setup codex
 ```
 
-如果 `providers.codex.healthy` 为 `false`：
+常见分支：
 
-**症状 A**：`Codex Provider: OPENAI_API_KEY is not set`
+**症状 A**：`PROVIDER_SECRET_MISSING`
 
 - 检查 `OPENAI_API_KEY` 是否已导出：`echo $OPENAI_API_KEY`
 - 确认导出命令与运行 `haro` 的 shell 是同一个会话
-- 如需持久化，将 `export OPENAI_API_KEY=sk-xxx` 写入 `~/.bashrc` 或 `~/.zshrc` 后重新加载
+- 如果 `haro provider doctor codex --json` 显示 `secret.source=systemd-env-file`，说明 provider env file 可读且含 secret，但当前 shell 未加载；可 `source ~/.config/haro/providers.env`（按你的 shell 格式调整）或在当前 shell 重新 `export OPENAI_API_KEY=<your-key>`
+- 如需 user systemd 服务读取，确认 unit 中包含 `EnvironmentFile=-%h/.config/haro/providers.env`
 
-**症状 B**：网络超时或 API 返回错误
+**症状 B**：`PROVIDER_ENV_FILE_UNREADABLE`
+
+- 检查 `~/.config/haro/providers.env` 或 XDG 等价路径是否归当前用户所有
+- 推荐权限为 `0600`；可通过 `haro provider setup codex --write-env-file` 重新写入受保护 env file
+
+**症状 C**：`PROVIDER_HEALTHCHECK_FAILED` / `PROVIDER_MODEL_LIST_FAILED`
 
 - 检查当前网络是否可访问 OpenAI API
 - 如果使用了代理，确认代理环境变量（`HTTPS_PROXY` 等）已正确设置
-- 部分企业网络可能需要配置 `providers.codex.baseUrl` 指向内部网关
+- 部分企业网络可能需要配置 `providers.codex.baseUrl` 指向内部网关：`haro provider setup codex --base-url <url> --non-interactive`
+- 重新运行 `haro provider models codex` 验证 live model discovery
 
 ### 3. 数据目录、SQLite 与安全修复
 
@@ -107,15 +116,17 @@ haro channel doctor telegram
 ```bash
 haro setup
 # ...
-# FAIL OPENAI_API_KEY 已设置 — 缺失
+# PROVIDER_SECRET_MISSING: 未检测到 OPENAI_API_KEY
 ```
 
 **排查步骤**：
 
-1. 确认已导出：`echo $OPENAI_API_KEY`
-2. 确认值非空且非纯空格
-3. 如果使用 `sudo` 或 `su` 切换用户，环境变量会丢失；改用同一用户会话执行
-4. 在 Windows PowerShell 中使用 `$env:OPENAI_API_KEY = 'sk-xxx'` 而非 `export`
+1. 运行 `haro provider env codex` 查看当前进程、provider env file、systemd `EnvironmentFile` 来源摘要
+2. 确认已导出：`echo $OPENAI_API_KEY`
+3. 确认值非空且非纯空格
+4. 如果使用 `sudo` 或 `su` 切换用户，环境变量会丢失；改用同一用户会话执行
+5. 在 Windows PowerShell 中使用 `$env:OPENAI_API_KEY = '<your-key>'` 而非 `export`
+6. 需要写入长期 env file 时，先在当前进程设置 secret，再显式运行 `haro provider setup codex --write-env-file`；Haro 不会把 key 写入 YAML
 
 ### 症状：run 时报 auth 错误
 
@@ -130,7 +141,7 @@ haro run "..."
 - 环境变量只写入了 `.bashrc` 但未 `source ~/.bashrc`
 - IDE 的启动配置未继承当前 shell 的环境变量
 
-**建议**：在运行 Haro 的同一个终端中先执行 `export OPENAI_API_KEY=sk-xxx`，确认无误后再运行命令。
+**建议**：在运行 Haro 的同一个终端中先执行 `export OPENAI_API_KEY=<your-key>`，再运行 `haro provider doctor codex`。如是 systemd 服务，确认 provider env file 已被 unit 的 `EnvironmentFile` 引用。
 
 ### 症状：key 已设置但 doctor 仍报 unhealthy
 

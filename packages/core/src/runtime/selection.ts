@@ -292,7 +292,7 @@ async function resolveTarget(
   context: SelectionContext,
 ): Promise<ResolvedSelectionCandidate> {
   const provider = context.providerRegistry.get(target.provider);
-  const model = await resolveModel(target.provider, provider as ProviderWithModels, target);
+  const model = await resolveModel(target.provider, provider as ProviderWithModels, target, context);
   return {
     provider: target.provider,
     model,
@@ -304,16 +304,27 @@ async function resolveModel(
   providerId: string,
   provider: ProviderWithModels,
   target: SelectionTarget,
+  context: SelectionContext,
 ): Promise<string> {
   if (target.model) return target.model;
   const models = typeof provider.listModels === 'function' ? await provider.listModels() : [];
+  const strategy = target.modelSelection ?? 'provider-default';
+  const configuredDefault = readConfiguredDefaultModel(context, providerId);
+  if (strategy === 'provider-default' && configuredDefault) {
+    if (models.length > 0 && !models.some((model) => model.id === configuredDefault)) {
+      throw new SelectionResolutionError(
+        `Provider '${providerId}' configured defaultModel='${configuredDefault}' but listModels() did not return that model`,
+        providerId,
+      );
+    }
+    return configuredDefault;
+  }
   if (models.length === 0) {
     throw new SelectionResolutionError(
-      `Provider '${providerId}' could not resolve modelSelection='${target.modelSelection ?? 'provider-default'}' because listModels() returned no models`,
+      `Provider '${providerId}' could not resolve modelSelection='${strategy}' because listModels() returned no models`,
       providerId,
     );
   }
-  const strategy = target.modelSelection ?? 'provider-default';
   switch (strategy) {
     case 'largest-context':
       return [...models].sort(compareLargestContext)[0]?.id ?? models[0]!.id;
@@ -325,6 +336,14 @@ async function resolveModel(
     default:
       return models[0]!.id;
   }
+}
+
+function readConfiguredDefaultModel(context: SelectionContext, providerId: string): string | undefined {
+  const providers = context.config?.providers as Record<string, unknown> | undefined;
+  const providerConfig = providers?.[providerId];
+  if (!providerConfig || typeof providerConfig !== 'object' || Array.isArray(providerConfig)) return undefined;
+  const model = (providerConfig as Record<string, unknown>).defaultModel;
+  return typeof model === 'string' && model.trim().length > 0 ? model : undefined;
 }
 
 function compareLargestContext(a: ModelInfo, b: ModelInfo): number {

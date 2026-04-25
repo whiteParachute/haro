@@ -88,6 +88,18 @@ providers:
     baseUrl: "https://api.openai.com/v1"  # 可选企业端点覆盖
 ```
 
+### Phase 1 配置体验补齐（FEAT-026）
+
+当前认证配置仍偏底层：用户需要自己知道 `OPENAI_API_KEY`、配置文件位置、systemd env file 与默认模型设置。FEAT-026 将补齐 Hermes 风格 provider onboarding：
+
+- 新增 `haro provider setup codex` 交互式引导。
+- 新增 `haro provider doctor/models/select/env`，把 provider 健康检查、模型发现、默认模型切换和 env 模板集中到一个命令族。
+- 配置文件只保存 `baseUrl`、`defaultModel`、`enabled`、`secretRef` 等非敏感字段。
+- Secret 默认来自环境变量；如写入 env file，必须使用用户目录下受权限保护的文件，并在 stdout/log 中脱敏。
+- CLI 前台运行与 systemd/web 服务运行时必须能解释各自读取到的 provider 配置来源。
+
+FEAT-026 的实现不得把 codex 特例散落到 CLI 命令层；provider-specific 字段应来自 provider catalog/schema。
+
 ## Provider/Model 智能选择
 
 Provider 选择不由 Agent 硬绑定，而是由规则引擎动态决定：

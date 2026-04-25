@@ -90,13 +90,15 @@ haro model codex <live-model-id>
 
 > Phase 0 未实现交互式 `--select` 选择器；当前仅支持通过位置参数直接写入默认 Provider / Model。
 
-### `haro provider`（Phase 1 规划，FEAT-026）
+### `haro provider`（FEAT-026）
 
 Provider 配置与诊断命令族。`haro model` 保留为快速查看/切换默认模型，复杂 provider 首配、secretRef、model discovery 和 remediation 统一归入 `haro provider`。
 
 ```bash
 haro provider list
 haro provider setup codex
+haro provider setup codex --scope global --model <live-model-id>
+haro provider setup codex --scope project --base-url https://api.example/v1 --non-interactive
 haro provider doctor codex
 haro provider models codex
 haro provider select codex <live-model-id>
@@ -104,9 +106,9 @@ haro provider env codex
 ```
 
 **设计边界**：
-- YAML 只保存非敏感配置与 `secretRef`，不保存真实 API key
-- 默认通过环境变量读取 secret；如支持写入 env file，必须使用用户目录下受权限保护的文件并脱敏输出
-- `haro provider doctor` 输出 provider-specific issue code 和下一条可执行修复命令
+- YAML 只保存 `enabled`、`baseUrl`、`defaultModel`、`secretRef` 等非敏感配置，不保存真实 API key
+- 默认通过环境变量读取 secret；只有显式 `--write-env-file` 才会把当前进程 secret 写入受保护 env file（0600，输出脱敏）
+- `haro provider doctor` 输出 `PROVIDER_SECRET_MISSING`、`PROVIDER_HEALTHCHECK_FAILED`、`PROVIDER_MODEL_LIST_FAILED` 等 issue code 和下一条可执行修复命令
 - provider 配置元数据来自 provider catalog/schema，避免命令层散落 `providerId === 'codex'` 分支
 
 ### `haro config`

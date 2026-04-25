@@ -55,6 +55,26 @@ import {
   type SetupProfile,
   type SetupRunDeps,
 } from './diagnostics.js';
+import {
+  DEFAULT_PROVIDER_CATALOG,
+  type ProviderCatalogEntry,
+} from './provider-catalog.js';
+import {
+  assertProviderModelExists,
+  buildProviderPatch,
+  formatProviderDoctorHuman,
+  formatProviderEnvHuman,
+  formatProviderList,
+  getCatalogEntryOrThrow,
+  listProviderModels,
+  parseProviderScope,
+  runProviderDoctor,
+  writeProviderConfig,
+  writeProviderEnvFile,
+  type ProviderDoctorResult,
+  type ProviderEnvFileWriteResult,
+  type ProviderScope,
+} from './provider-onboarding.js';
 
 const VERSION = '0.1.0';
 const CLI_CHANNEL_STATE_FILE = 'state.json';
@@ -111,6 +131,7 @@ export interface RunCliOptions {
   }) => Promise<readonly ChannelRegistration[]>;
   setupDeps?: SetupRunDeps;
   doctorDeps?: SetupRunDeps;
+  providerCatalog?: readonly ProviderCatalogEntry[];
   fetchLatestNpmVersion?: (pkg: string) => Promise<string>;
 }
 
@@ -123,6 +144,7 @@ export type RunCliAction =
   | 'model'
   | 'config'
   | 'doctor'
+  | 'provider'
   | 'status'
   | 'channel'
   | 'skills'
@@ -180,6 +202,7 @@ export interface AppContext {
   cliState: CliState;
   writeCliState(next: CliState): void;
   loaded: LoadedConfig;
+  providerCatalog: readonly ProviderCatalogEntry[];
   providerRegistry: ProviderRegistry;
   agentRegistry: AgentRegistry;
   runner: AgentRunner;
@@ -345,6 +368,7 @@ function buildProgram(app: AppContext): Command {
             root: app.opts.root,
             loaded: app.loaded,
             providerRegistry: app.providerRegistry,
+            providerCatalog: app.providerCatalog,
             channelRegistry: app.channelRegistry,
             deps: app.opts.setupDeps,
           });
@@ -431,6 +455,7 @@ function buildProgram(app: AppContext): Command {
             root: app.opts.root,
             loaded: app.loaded,
             providerRegistry: app.providerRegistry,
+            providerCatalog: app.providerCatalog,
             channelRegistry: app.channelRegistry,
             deps: app.opts.doctorDeps ?? app.opts.setupDeps,
           });
@@ -456,6 +481,7 @@ function buildProgram(app: AppContext): Command {
   );
 
   registerChannelCommands(program, app);
+  registerProviderCommands(program, app);
   registerSkillsCommands(program, app);
   registerMetabolismCommands(program, app);
   registerGatewayCommands(program, app);
@@ -463,6 +489,229 @@ function buildProgram(app: AppContext): Command {
   registerUpdateCommand(program, app);
 
   return program;
+}
+
+function registerProviderCommands(program: Command, app: AppContext): void {
+  registerCommand(
+    'provider',
+    (cmd) => {
+      cmd.description('Manage agent providers, credentials, model discovery, and defaults');
+
+      cmd.command('list').option('--json', 'print machine-readable provider catalog').action((options: { json?: boolean }) => {
+        if (options.json) {
+          app.stdout.write(`${JSON.stringify({ providers: app.providerCatalog }, null, 2)}\n`);
+          return;
+        }
+        app.stdout.write(formatProviderList(app.providerCatalog));
+      });
+
+      cmd
+        .command('setup')
+        .argument('<id>', 'provider id')
+        .option('--scope <scope>', 'config scope: global or project', 'global')
+        .option('--model <id>', 'live model id to set as default')
+        .option('--base-url <url>', 'provider API base URL override')
+        .option('--secret-ref <ref>', 'secret reference, for example env:OPENAI_API_KEY')
+        .option('--non-interactive', 'do not prompt; use flags/current environment only')
+        .option('--write-env-file', 'explicitly write current process secret to the protected provider env file')
+        .option('--env-file <path>', 'override provider env file path for --write-env-file')
+        .option('--json', 'print machine-readable setup result')
+        .action(
+          async (
+            id: string,
+            options: {
+              scope: string;
+              model?: string;
+              baseUrl?: string;
+              secretRef?: string;
+              nonInteractive?: boolean;
+              writeEnvFile?: boolean;
+              envFile?: string;
+              json?: boolean;
+            },
+          ) => {
+            const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
+            const scope = parseProviderScope(options.scope);
+            if (options.model) {
+              await assertProviderModelExists(app.providerRegistry, id, options.model);
+            }
+            const configWrite = writeProviderConfig({
+              scope,
+              root: app.opts.root,
+              projectRoot: providerProjectRoot(app),
+              entry,
+              patch: buildProviderPatch({
+                entry,
+                model: options.model,
+                baseUrl: options.baseUrl,
+                secretRef: options.secretRef,
+              }),
+            });
+            reloadLoadedConfig(app, scope);
+
+            const env = providerCommandEnv(app);
+            const envWrite = options.writeEnvFile
+              ? writeProviderEnvFile({ entry, env, envFile: options.envFile })
+              : undefined;
+            if (options.model) {
+              app.writeCliState({ ...app.cliState, defaultProvider: id, defaultModel: options.model });
+            }
+            const doctor = await runProviderDoctor({
+              entry,
+              providerRegistry: app.providerRegistry,
+              root: app.opts.root,
+              projectRoot: providerProjectRoot(app),
+              env,
+              checkModels: false,
+            });
+            const payload = {
+              provider: id,
+              scope,
+              nonInteractive: options.nonInteractive === true,
+              configPath: configWrite.path,
+              ...(envWrite ? { envFile: envWrite } : {}),
+              doctor,
+            };
+            if (options.json) {
+              app.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+            } else {
+              app.stdout.write(formatProviderSetupHuman(payload));
+            }
+            if (!doctor.ok) {
+              throw new CommanderExit(1, `provider setup ${id} found blockers`);
+            }
+          },
+        );
+
+      cmd
+        .command('doctor')
+        .argument('<id>', 'provider id')
+        .option('--json', 'print machine-readable provider diagnostics')
+        .action(async (id: string, options: { json?: boolean }) => {
+          const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
+          const report = await runProviderDoctor({
+            entry,
+            providerRegistry: app.providerRegistry,
+            root: app.opts.root,
+            projectRoot: providerProjectRoot(app),
+            env: providerCommandEnv(app),
+            checkModels: true,
+          });
+          app.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatProviderDoctorHuman(report));
+          if (!report.ok) {
+            throw new CommanderExit(1, `provider doctor ${id} found issues`);
+          }
+        });
+
+      cmd
+        .command('models')
+        .argument('<id>', 'provider id')
+        .option('--json', 'print machine-readable model list')
+        .action(async (id: string, options: { json?: boolean }) => {
+          getCatalogEntryOrThrow(id, app.providerCatalog);
+          try {
+            const models = await listProviderModels(app.providerRegistry, id);
+            if (options.json) {
+              app.stdout.write(`${JSON.stringify({ provider: id, models }, null, 2)}\n`);
+            } else {
+              app.stdout.write(formatProviderModels(id, models));
+            }
+          } catch (error) {
+            const issue = {
+              code: 'PROVIDER_MODEL_LIST_FAILED',
+              severity: 'error',
+              component: 'provider',
+              evidence: error instanceof Error ? error.message : String(error),
+              remediation: `Run haro provider setup ${id}, then retry haro provider models ${id}.`,
+              fixable: false,
+            };
+            app.stdout.write(options.json ? `${JSON.stringify({ provider: id, ok: false, issues: [issue] }, null, 2)}\n` : `PROVIDER_MODEL_LIST_FAILED: ${issue.evidence}\nRemediation: ${issue.remediation}\n`);
+            throw new CommanderExit(1, `provider models ${id} failed`);
+          }
+        });
+
+      cmd
+        .command('select')
+        .argument('<id>', 'provider id')
+        .argument('<model>', 'live model id')
+        .option('--scope <scope>', 'config scope: global or project', 'global')
+        .action(async (id: string, model: string, options: { scope: string }) => {
+          const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
+          const scope = parseProviderScope(options.scope);
+          await assertProviderModelExists(app.providerRegistry, id, model);
+          const configWrite = writeProviderConfig({
+            scope,
+            root: app.opts.root,
+            projectRoot: providerProjectRoot(app),
+            entry,
+            patch: buildProviderPatch({ entry, model }),
+          });
+          reloadLoadedConfig(app, scope);
+          app.writeCliState({ ...app.cliState, defaultProvider: id, defaultModel: model });
+          app.stdout.write(`Provider default selected: ${id}/${model}\nConfig: ${configWrite.path}\n`);
+        });
+
+      cmd
+        .command('env')
+        .argument('<id>', 'provider id')
+        .option('--json', 'print machine-readable env source summary')
+        .action(async (id: string, options: { json?: boolean }) => {
+          const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
+          const report = await runProviderDoctor({
+            entry,
+            providerRegistry: app.providerRegistry,
+            root: app.opts.root,
+            projectRoot: providerProjectRoot(app),
+            env: providerCommandEnv(app),
+            checkHealth: false,
+            checkModels: false,
+          });
+          app.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatProviderEnvHuman(report));
+        });
+    },
+    program,
+  );
+}
+
+function providerCommandEnv(app: AppContext): NodeJS.ProcessEnv {
+  return app.opts.doctorDeps?.env ?? app.opts.setupDeps?.env ?? process.env;
+}
+
+function providerProjectRoot(app: AppContext): string {
+  return app.opts.projectRoot ?? process.cwd();
+}
+
+function reloadLoadedConfig(app: AppContext, scope: ProviderScope): void {
+  app.loaded = haroConfig.loadHaroConfig({
+    globalRoot: app.opts.root,
+    projectRoot: scope === 'project' ? providerProjectRoot(app) : app.opts.projectRoot,
+  });
+}
+
+function formatProviderSetupHuman(input: {
+  provider: string;
+  scope: ProviderScope;
+  nonInteractive: boolean;
+  configPath: string;
+  envFile?: ProviderEnvFileWriteResult;
+  doctor: ProviderDoctorResult;
+}): string {
+  const lines = [
+    `Provider setup: ${input.provider}`,
+    `Scope: ${input.scope}${input.nonInteractive ? ' (non-interactive)' : ''}`,
+    `Config: ${input.configPath}`,
+  ];
+  if (input.envFile) {
+    lines.push(`Env file: ${input.envFile.path} (mode ${input.envFile.mode}, values masked)`);
+  }
+  lines.push('', formatProviderDoctorHuman(input.doctor).trimEnd());
+  return `${lines.join('\n')}\n`;
+}
+
+function formatProviderModels(provider: string, models: readonly { id: string; maxContextTokens?: number }[]): string {
+  if (models.length === 0) return `Provider models: ${provider}\n<none>\n`;
+  const lines = [`Provider models: ${provider}`, ...models.map((model) => [model.id, model.maxContextTokens ? `context=${model.maxContextTokens}` : undefined].filter(Boolean).join('\t'))];
+  return `${lines.join('\n')}\n`;
 }
 
 function registerChannelCommands(program: Command, app: AppContext): void {
@@ -1065,6 +1314,7 @@ async function bootstrapApp(
       app.cliState = next;
     },
     loaded,
+    providerCatalog: input.providerCatalog ?? DEFAULT_PROVIDER_CATALOG,
     providerRegistry,
     agentRegistry,
     runner,
@@ -1840,7 +2090,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

@@ -42,13 +42,18 @@ haro setup --check --json
 # 2. 配置 Provider secret（Haro 不会把 key 写入 YAML）
 export OPENAI_API_KEY=<your-key>
 
-# 3. 全局 CLI profile：检查 haro 是否在 PATH，并写入非敏感默认配置
+# 3. 运行 provider wizard：写入 secretRef/baseUrl/defaultModel 等非敏感配置并诊断
+haro provider setup codex --scope global --non-interactive
+haro provider models codex
+haro provider select codex <live-model-id>
+
+# 4. 全局 CLI profile：检查 haro 是否在 PATH，并写入/确认非敏感默认配置
 haro setup --profile global
 
-# 4. 修复允许的本地问题：目录、默认配置、SQLite、user-level systemd unit
+# 5. 修复允许的本地问题：目录、默认配置、SQLite、user-level systemd unit
 haro doctor --fix
 
-# 5. 跑第一条任务
+# 6. 跑第一条任务
 haro run "列出当前目录下的 TypeScript 文件"
 ```
 

@@ -9,6 +9,8 @@ import { z } from 'zod';
  */
 const codexProviderConfigSchema = z
   .object({
+    enabled: z.boolean().optional(),
+    secretRef: z.string().optional(),
     baseUrl: z.string().url().optional(),
     defaultModel: z.string().optional(),
   })

@@ -12,6 +12,8 @@ import { z } from 'zod';
  */
 export const codexProviderOptionsSchema = z
   .object({
+    enabled: z.boolean().optional(),
+    secretRef: z.string().optional(),
     baseUrl: z.string().url().optional(),
     /**
      * Optional default model name. The provider does NOT ship a hardcoded

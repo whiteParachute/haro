@@ -116,22 +116,57 @@ channels:
 
 当前正式实现的 Provider 只有 **Codex**。其凭证注入遵循以下规则：
 
-1. **只读环境变量**：`OPENAI_API_KEY` 是 Codex Provider 唯一接受的凭证来源
+1. **只读环境变量**：`OPENAI_API_KEY` 是 Codex Provider 唯一接受的凭证值来源
 2. **配置文件中禁止写入 apiKey**：`config.yaml` 中若出现 `providers.codex.apiKey`，配置校验会显式报错并拒绝加载
-3. **Provider 构造时读取**：`@haro/provider-codex` 在实例化时从 `process.env.OPENAI_API_KEY` 读取凭证
+3. **YAML 只保存引用与非敏感字段**：`providers.codex.secretRef: env:OPENAI_API_KEY`、`enabled`、`baseUrl`、`defaultModel` 可写入配置
+4. **Provider 构造时读取**：`@haro/provider-codex` 在实例化时从 `process.env.OPENAI_API_KEY` 读取凭证
 
 示例：
 
 ```bash
 # 正确：通过环境变量注入
-export OPENAI_API_KEY=sk-xxx
+export OPENAI_API_KEY=<your-key>
 haro run "分析当前代码"
 
 # 错误：试图在 config.yaml 中写入 apiKey
 # providers:
 #   codex:
-#     apiKey: sk-xxx   # ← 会导致 HaroConfigValidationError
+#     apiKey: <your-key>   # ← 会导致 HaroConfigValidationError
 ```
+
+### Provider 引导配置（FEAT-026）
+
+`haro provider` 命令族用于解释 `OPENAI_API_KEY`、`config.yaml`、provider env file 与 systemd/user service 的关系，并提供可执行修复入口：
+
+```bash
+haro provider list
+haro provider setup codex
+haro provider setup codex --scope global --model <live-model-id>
+haro provider setup codex --scope project --base-url https://api.example/v1 --non-interactive
+haro provider doctor codex
+haro provider models codex
+haro provider select codex <live-model-id>
+haro provider env codex
+```
+
+配置示例：
+
+```yaml
+providers:
+  codex:
+    enabled: true
+    secretRef: env:OPENAI_API_KEY
+    baseUrl: https://api.openai.com/v1   # 可选
+    defaultModel: <live-model-id>
+```
+
+原则：
+
+- `config.yaml` 只写入 `defaultModel`、`baseUrl`、`enabled`、`secretRef` 等非敏感字段。
+- 默认不写 env file；只有显式 `--write-env-file` 才会把当前进程中的 secret 原子写入 `~/.config/haro/providers.env`（或 XDG 等价路径），并强制 0600 权限。
+- `haro provider env codex` 只展示模板、来源摘要和 masked 状态，不回显真实 key。
+- `haro doctor` 与 Web Dashboard 只展示脱敏后的 provider 配置状态和 remediation。
+- systemd 用户服务与 CLI 前台运行必须能解释各自读取到的 env 来源，避免“命令行可用但服务不可用”。
 
 ## 敏感数据不落盘原则
 
