@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Hono, type Context } from 'hono';
-import type { AgentConfig, RunAgentInput } from '@haro/core';
+import { AGENT_ID_MAX_LENGTH, AGENT_ID_PATTERN, buildHaroPaths, DEFAULT_AGENT_ID, loadAgentsFromDir, parseAgentConfig, type AgentConfig, type RunAgentInput } from '@haro/core';
+import { parse as parseYaml } from 'yaml';
 import type { ApiKeyAuthEnv } from '../types.js';
 import { getRunner, type WebRuntime } from '../runtime.js';
 import type { WebSocketManager } from '../websocket/manager.js';
@@ -19,11 +23,28 @@ export interface AgentDetailReadModel extends AgentSummaryReadModel {
   tools?: readonly string[];
 }
 
+export interface AgentYamlResponse {
+  id: string;
+  yaml: string;
+  updatedAt?: string;
+}
+
+export interface AgentValidationIssue {
+  path: string;
+  message: string;
+  code?: 'schema' | 'unknown-field' | 'id-mismatch' | 'yaml-parse' | 'conflict';
+}
+
+export type AgentValidationResponse =
+  | { ok: true; id: string; issues: [] }
+  | { ok: false; id?: string; issues: AgentValidationIssue[] };
+
 type StrictRecord = Record<string, unknown>;
 type RouteContext = Context<ApiKeyAuthEnv>;
 
 const RUN_KEYS = new Set(['task', 'provider', 'model', 'noMemory']);
 const CHAT_KEYS = new Set(['sessionId', 'content', 'provider', 'model', 'noMemory']);
+const YAML_KEYS = new Set(['yaml']);
 
 export function deriveAgentSummary(agent: Pick<AgentConfig, 'name' | 'systemPrompt'>): string {
   const firstParagraph = agent.systemPrompt
@@ -59,6 +80,83 @@ export function createAgentsRoute(runtime: WebRuntime, manager?: WebSocketManage
   const route = new Hono<ApiKeyAuthEnv>();
 
   route.get('/', (c) => c.json({ success: true, data: runtime.agentRegistry.list().map(toAgentSummary) }));
+
+  route.post('/', async (c) => {
+    const parsed = await parseStrictJson(c, YAML_KEYS, validateYamlEnvelope);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+    const validation = validateAgentYaml(parsed.value.yaml);
+    if (!validation.ok) {
+      return c.json({ error: 'Agent YAML validation failed', issues: validation.issues }, 400);
+    }
+
+    const file = getAgentYamlFile(runtime, validation.id);
+    if (existsSync(file)) {
+      return c.json({
+        error: `Agent '${validation.id}' already exists`,
+        issues: [createIssue('id', `Agent '${validation.id}' already exists`, 'conflict')],
+      }, 409);
+    }
+
+    await persistAgentYaml(runtime, validation.id, parsed.value.yaml);
+    await reloadAgentRegistry(runtime);
+    return c.json({ success: true, data: await readAgentYamlResponse(runtime, validation.id) }, 201);
+  });
+
+  route.get('/:id/yaml', async (c) => {
+    const id = c.req.param('id');
+    const idError = validateRouteAgentId(id);
+    if (idError) return c.json({ error: idError }, 400);
+
+    const file = getAgentYamlFile(runtime, id);
+    if (!existsSync(file)) return c.json({ error: 'Agent YAML not found' }, 404);
+    return c.json({ success: true, data: await readAgentYamlResponse(runtime, id) });
+  });
+
+  route.put('/:id/yaml', async (c) => {
+    const id = c.req.param('id');
+    const idError = validateRouteAgentId(id);
+    if (idError) return c.json({ error: idError }, 400);
+    const parsed = await parseStrictJson(c, YAML_KEYS, validateYamlEnvelope);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+    const validation = validateAgentYaml(parsed.value.yaml, id);
+    if (!validation.ok) {
+      return c.json({ error: 'Agent YAML validation failed', issues: validation.issues }, 400);
+    }
+
+    await persistAgentYaml(runtime, id, parsed.value.yaml);
+    await reloadAgentRegistry(runtime);
+    return c.json({ success: true, data: await readAgentYamlResponse(runtime, id) });
+  });
+
+  route.post('/:id/validate', async (c) => {
+    const id = c.req.param('id');
+    const idError = validateRouteAgentId(id);
+    if (idError) return c.json({ error: idError }, 400);
+    const parsed = await parseStrictJson(c, YAML_KEYS, validateYamlEnvelope);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    return c.json({ success: true, data: validateAgentYaml(parsed.value.yaml, id) });
+  });
+
+  route.delete('/:id', async (c) => {
+    const id = c.req.param('id');
+    const idError = validateRouteAgentId(id);
+    if (idError) return c.json({ error: idError }, 400);
+    const defaultAgent = runtime.loaded?.config.defaultAgent ?? DEFAULT_AGENT_ID;
+    if (id === defaultAgent) {
+      return c.json({
+        error: `Cannot delete defaultAgent '${id}'`,
+        issues: [createIssue('id', `Cannot delete defaultAgent '${id}'`, 'conflict')],
+      }, 400);
+    }
+
+    const file = getAgentYamlFile(runtime, id);
+    if (!existsSync(file)) return c.json({ error: 'Agent YAML not found' }, 404);
+    await rm(file);
+    await reloadAgentRegistry(runtime);
+    return c.json({ success: true, data: { id, deleted: true } });
+  });
 
   route.get('/:id', (c) => {
     const agent = runtime.agentRegistry.tryGet(c.req.param('id'));
@@ -162,6 +260,13 @@ function validateChatBody(body: StrictRecord) {
   return { ok: true as const, value: { sessionId: body.sessionId, content: body.content, ...common.value } };
 }
 
+function validateYamlEnvelope(body: StrictRecord) {
+  if (typeof body.yaml !== 'string' || body.yaml.trim().length === 0) {
+    return { ok: false as const, error: "Field 'yaml' must be a non-empty string" };
+  }
+  return { ok: true as const, value: { yaml: body.yaml } };
+}
+
 function validateOptionalRouting(body: StrictRecord) {
   const value: { provider?: string; model?: string; noMemory?: boolean } = {};
   if (body.provider !== undefined) {
@@ -187,4 +292,87 @@ function validateOptionalRouting(body: StrictRecord) {
 
 function isRecord(value: unknown): value is StrictRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validateRouteAgentId(id: string): string | undefined {
+  if (id.length === 0) return 'Agent id is required';
+  if (id.length > AGENT_ID_MAX_LENGTH) return `Agent id must be ≤ ${AGENT_ID_MAX_LENGTH} chars`;
+  if (!AGENT_ID_PATTERN.test(id)) return "Agent id must be kebab-case: ^[a-z0-9][a-z0-9-]*[a-z0-9]$";
+  return undefined;
+}
+
+function validateAgentYaml(yaml: string, expectedId?: string): AgentValidationResponse {
+  let data: unknown;
+  try {
+    data = parseYaml(yaml);
+  } catch (error) {
+    return {
+      ok: false,
+      issues: [createIssue('<root>', error instanceof Error ? error.message : String(error), 'yaml-parse')],
+    };
+  }
+
+  const parsed = parseAgentConfig(data);
+  if (!parsed.ok) {
+    const issues = parsed.error.issues.map((issue) =>
+      createIssue(
+        issue.path,
+        issue.message,
+        issue.message.startsWith('Unknown field ') ? 'unknown-field' : 'schema',
+      ),
+    );
+    return { ok: false, issues };
+  }
+
+  if (expectedId && parsed.config.id !== expectedId) {
+    return {
+      ok: false,
+      id: parsed.config.id,
+      issues: [createIssue('id', `YAML id '${parsed.config.id}' must match route id '${expectedId}'`, 'id-mismatch')],
+    };
+  }
+
+  return { ok: true, id: parsed.config.id, issues: [] };
+}
+
+function createIssue(path: string, message: string, code: NonNullable<AgentValidationIssue['code']>): AgentValidationIssue {
+  return { path, message, code };
+}
+
+function getAgentsDir(runtime: WebRuntime): string {
+  return buildHaroPaths(runtime.root).dirs.agents;
+}
+
+function getAgentYamlFile(runtime: WebRuntime, id: string): string {
+  return join(getAgentsDir(runtime), `${id}.yaml`);
+}
+
+async function readAgentYamlResponse(runtime: WebRuntime, id: string): Promise<AgentYamlResponse> {
+  const file = getAgentYamlFile(runtime, id);
+  const [yaml, info] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
+  return {
+    id,
+    yaml,
+    updatedAt: info.mtime.toISOString(),
+  };
+}
+
+async function persistAgentYaml(runtime: WebRuntime, id: string, yaml: string): Promise<void> {
+  const agentsDir = getAgentsDir(runtime);
+  await mkdir(agentsDir, { recursive: true });
+  await writeFile(getAgentYamlFile(runtime, id), yaml.endsWith('\n') ? yaml : `${yaml}\n`, 'utf8');
+}
+
+async function reloadAgentRegistry(runtime: WebRuntime): Promise<void> {
+  if (runtime.reloadAgentRegistry) {
+    runtime.agentRegistry = await runtime.reloadAgentRegistry();
+    return;
+  }
+  const report = await loadAgentsFromDir({
+    agentsDir: getAgentsDir(runtime),
+    ...(runtime.providerRegistry ? { providerRegistry: runtime.providerRegistry } : {}),
+    logger: runtime.logger,
+    bootstrap: false,
+  });
+  runtime.agentRegistry = report.registry;
 }

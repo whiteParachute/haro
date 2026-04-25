@@ -1,7 +1,10 @@
 import {
+  Bot,
   Home,
   MessageSquare,
+  RadioTower,
   Settings,
+  ServerCog,
   SquareActivity,
   Workflow,
   type LucideIcon,
@@ -45,6 +48,27 @@ export const navigationItems: NavigationItem[] = [
     title: 'Status',
     description: '系统健康、doctor 报告与 channel 只读摘要。',
     icon: SquareActivity,
+  },
+  {
+    to: '/channels',
+    label: 'Channels',
+    title: 'Channels',
+    description: 'Channel 启停、删除、Setup 与 Doctor。',
+    icon: RadioTower,
+  },
+  {
+    to: '/gateway',
+    label: 'Gateway',
+    title: 'Gateway',
+    description: 'Gateway 状态、Start/Stop、Doctor 与日志。',
+    icon: ServerCog,
+  },
+  {
+    to: '/agents',
+    label: 'Agents',
+    title: 'Agents',
+    description: 'Agent YAML 创建、编辑、校验与删除。',
+    icon: Bot,
   },
   {
     to: '/settings',

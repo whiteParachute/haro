@@ -110,12 +110,12 @@ describe('web dashboard system management REST [FEAT-017]', () => {
     expect(readFileSync(projectConfig, 'utf8')).toBe(before);
   });
 
-  it('does not define independent /api/v1/channels routes for FEAT-017', async () => {
+  it('keeps Status/Settings read-only while FEAT-019 owns independent /api/v1/channels routes', async () => {
     delete process.env.HARO_WEB_API_KEY;
     const root = tempRoot('haro-feat017-boundary-');
     const app = createWebApp({ logger: createMockLogger(), runtime: { root, projectRoot: root } });
 
-    expect((await app.request('/api/v1/channels')).status).toBe(404);
+    expect((await app.request('/api/v1/channels')).status).toBe(200);
     expect((await app.request('/api/v1/channels/cli/doctor')).status).toBe(404);
   });
 });

@@ -1099,6 +1099,24 @@ function registerWebCommand(program: Command, app: AppContext): void {
             createWebApp({
               runtime: {
                 agentRegistry: app.agentRegistry,
+                reloadAgentRegistry: async () => {
+                  const next = app.opts.loadAgentRegistry
+                    ? await app.opts.loadAgentRegistry({
+                        agentsDir: app.paths.dirs.agents,
+                        providerRegistry: app.providerRegistry,
+                        logger: app.logger,
+                      })
+                    : (
+                        await loadAgentsFromDir({
+                          agentsDir: app.paths.dirs.agents,
+                          providerRegistry: app.providerRegistry,
+                          logger: app.logger,
+                        })
+                      ).registry;
+                  app.agentRegistry = next;
+                  app.runner = app.createRunner();
+                  return next;
+                },
                 createRunner: app.createRunner,
                 root: app.opts.root,
                 projectRoot: app.opts.projectRoot ?? process.cwd(),
@@ -1268,11 +1286,12 @@ async function bootstrapApp(
           logger,
         })
       ).registry;
+  const liveApp: { current?: AppContext } = {};
 
   const createRunner = (createSessionId = input.createSessionId): AgentRunner =>
     input.createRunner
       ? input.createRunner({
-          agentRegistry,
+          agentRegistry: liveApp.current?.agentRegistry ?? agentRegistry,
           providerRegistry,
           logger,
           root: input.root,
@@ -1281,7 +1300,7 @@ async function bootstrapApp(
           memoryWrapupHook,
         })
       : new AgentRunner({
-          agentRegistry,
+          agentRegistry: liveApp.current?.agentRegistry ?? agentRegistry,
           providerRegistry,
           root: input.root,
           projectRoot: input.projectRoot,
@@ -1326,6 +1345,7 @@ async function bootstrapApp(
     cliChannel: undefined as unknown as CliChannel,
     replState: undefined,
   } satisfies AppContext;
+  liveApp.current = app;
 
   app.cliChannel = (input.channelFactory ?? defaultChannelFactory)({
     stdout: input.stdout,

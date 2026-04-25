@@ -10,8 +10,10 @@ import { apiKeyAuth, warnIfApiKeyAuthDisabled } from './auth.js';
 import { createWebLogger } from './logger.js';
 import type { ApiKeyAuthEnv, WebApp, WebLogger } from './types.js';
 import { createAgentsRoute } from './routes/agents.js';
+import { createChannelsRoute } from './routes/channels.js';
 import { createConfigRoute } from './routes/config.js';
 import { createDoctorRoute, createStatusRoute } from './routes/status.js';
+import { createGatewayRoute } from './routes/gateway.js';
 import { createSessionsRoute } from './routes/sessions.js';
 import type { WebRuntime } from './runtime.js';
 import { WebSocketManager } from './websocket/manager.js';
@@ -64,6 +66,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   const app = new Hono<ApiKeyAuthEnv>();
   const runtime: WebRuntime = {
     agentRegistry: options.runtime?.agentRegistry ?? new AgentRegistry(),
+    ...(options.runtime?.reloadAgentRegistry ? { reloadAgentRegistry: options.runtime.reloadAgentRegistry } : {}),
     ...(options.runtime?.runner ? { runner: options.runtime.runner } : {}),
     ...(options.runtime?.createRunner ? { createRunner: options.runtime.createRunner } : {}),
     ...(options.runtime?.root ? { root: options.runtime.root } : {}),
@@ -99,6 +102,8 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
     }),
   );
   app.route('/api/v1/agents', createAgentsRoute(runtime, websocketManager));
+  app.route('/api/v1/channels', createChannelsRoute(runtime));
+  app.route('/api/v1/gateway', createGatewayRoute(runtime));
   app.route('/api/v1/sessions', createSessionsRoute(runtime));
   app.route('/api/v1/status', createStatusRoute(runtime));
   app.route('/api/v1/doctor', createDoctorRoute(runtime));
