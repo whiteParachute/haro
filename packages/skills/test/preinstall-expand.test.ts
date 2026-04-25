@@ -91,7 +91,8 @@ describe('SkillsManager [FEAT-010]', () => {
     const descriptor = parseSkillFile(content, 'fallback');
 
     expect(descriptor.id).toBe('shit');
-    expect(descriptor.description).toContain('Review');
+    expect(descriptor.description).toContain('Counterpart to eat');
+    expect(descriptor.description).toContain('dry-run-first');
     expect(descriptor.description.length).toBeGreaterThan(0);
   });
 

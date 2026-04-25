@@ -936,42 +936,62 @@ describe('runCli [FEAT-006]', () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-home-'));
     const claudeHome = mkdtempSync(join(tmpdir(), 'haro-claude-home-'));
     roots.push(root, codexHome, claudeHome);
+    const previousCodexHome = process.env.CODEX_HOME;
+    const previousClaudeHome = process.env.CLAUDE_HOME;
     const stdout = new PassThrough();
     const chunks: string[] = [];
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
-    const result = await runCli({
-      argv: ['skills', 'sync-runtime', '--skill', 'eat', '--codex-home', codexHome, '--claude-home', claudeHome],
-      root,
-      stdout,
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-    });
+    process.env.CODEX_HOME = codexHome;
+    process.env.CLAUDE_HOME = claudeHome;
+    try {
+      const result = await runCli({
+        argv: ['skills', 'sync-runtime', '--skill', 'eat'],
+        root,
+        stdout,
+        createProviderRegistry: async () =>
+          createProviderRegistry(
+            new StubProvider({
+              query: async function* () {
+                yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+              },
+            }),
+          ),
+        loadAgentRegistry: async () => createAgentRegistry(),
+      });
 
-    expect(result.exitCode).toBe(0);
-    for (const runtimeHome of [codexHome, claudeHome]) {
-      for (const skillId of ['eat', 'shit']) {
-        expect(readFileSync(join(runtimeHome, 'skills', skillId, 'SKILL.md'), 'utf8')).toBe(
-          readFileSync(join(root, 'skills', 'preinstalled', skillId, 'SKILL.md'), 'utf8'),
-        );
-        expect(readFileSync(join(runtimeHome, 'skills', skillId, 'LICENSE'), 'utf8')).toBe(
-          readFileSync(join(root, 'skills', 'preinstalled', skillId, 'LICENSE'), 'utf8'),
-        );
-        expect(readFileSync(join(runtimeHome, 'skills', skillId, 'NOTICE'), 'utf8')).toBe(
-          readFileSync(join(root, 'skills', 'preinstalled', skillId, 'NOTICE'), 'utf8'),
-        );
+      expect(result.exitCode).toBe(0);
+      expect(root).toContain('haro-cli-runtime-sync-');
+      expect(process.env.CODEX_HOME).toBe(codexHome);
+      expect(process.env.CLAUDE_HOME).toBe(claudeHome);
+      for (const runtimeHome of [codexHome, claudeHome]) {
+        for (const skillId of ['eat', 'shit']) {
+          expect(readFileSync(join(runtimeHome, 'skills', skillId, 'SKILL.md'), 'utf8')).toBe(
+            readFileSync(join(root, 'skills', 'preinstalled', skillId, 'SKILL.md'), 'utf8'),
+          );
+          expect(readFileSync(join(runtimeHome, 'skills', skillId, 'LICENSE'), 'utf8')).toBe(
+            readFileSync(join(root, 'skills', 'preinstalled', skillId, 'LICENSE'), 'utf8'),
+          );
+          expect(readFileSync(join(runtimeHome, 'skills', skillId, 'NOTICE'), 'utf8')).toBe(
+            readFileSync(join(root, 'skills', 'preinstalled', skillId, 'NOTICE'), 'utf8'),
+          );
+        }
+      }
+      const output = chunks.join('');
+      expect(output).toContain(`runtime=codex\tskill=eat\tstatus=synced\ttargetPath=${join(codexHome, 'skills', 'eat')}`);
+      expect(output).toContain(`runtime=claude\tskill=shit\tstatus=synced\ttargetPath=${join(claudeHome, 'skills', 'shit')}`);
+    } finally {
+      if (previousCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = previousCodexHome;
+      }
+      if (previousClaudeHome === undefined) {
+        delete process.env.CLAUDE_HOME;
+      } else {
+        process.env.CLAUDE_HOME = previousClaudeHome;
       }
     }
-    const output = chunks.join('');
-    expect(output).toContain(`runtime=codex\tskill=eat\tstatus=synced\ttargetPath=${join(codexHome, 'skills', 'eat')}`);
-    expect(output).toContain(`runtime=claude\tskill=shit\tstatus=synced\ttargetPath=${join(claudeHome, 'skills', 'shit')}`);
   });
 
   it('FEAT-020 AC5: skills sync-runtime fails fast on conflicting runtime skill content', async () => {

@@ -9,9 +9,19 @@ Skills 子系统负责 Haro 的**能力扩展与代谢**：
 
 Skills 不是 Haro 的核心模块，而是最典型的可插拔外挂（遵守 [可插拔原则](../architecture/overview.md#设计原则)）。
 
-## 与 Claude Code Skill 的关系
+## 与 Codex / Claude Code Skill 的关系
 
-Haro 的 Skills 格式**直接兼容 Claude Code 的 skill 格式**（`SKILL.md` + frontmatter）。
+Haro 的 Skills 格式**直接兼容 Codex 与 Claude Code 的 skill 格式**（`SKILL.md` + frontmatter）。
+
+跨运行时发布使用同一份 canonical 预装 skill，避免 runtime 之间漂移：
+
+```bash
+haro skills sync-runtime --skill metabolism --runtime codex,claude
+```
+
+- 默认 `metabolism` 路径会成对同步 `eat / shit`，确保知识摄入和代谢清理能力同时进入 `$CODEX_HOME/skills` 与 `$CLAUDE_HOME/skills`。
+- 目标 runtime 中已有内容不同的 skill 时默认 fail-fast；只有显式 `--overwrite` 才会在保留备份后覆盖。
+- `shit` 的跨运行时文档是 FEAT-011 Haro `shit` 命令的安全包装层：先 dry-run、再显式确认，通过 Haro archive / rollback 路径变更状态，不直接执行文件清理。
 
 ## 预装 Skills（Phase 0）
 
