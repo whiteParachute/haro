@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { stringify as stringifyYaml } from 'yaml';
@@ -47,7 +46,15 @@ import {
   type InboundMessage,
   type MessageChannel,
 } from './channel.js';
-import { runSetup, type SetupRunDeps } from './setup.js';
+import {
+  formatDiagnosticsHuman,
+  parseDoctorComponent,
+  parseSetupProfile,
+  runDiagnostics,
+  type DoctorComponent,
+  type SetupProfile,
+  type SetupRunDeps,
+} from './diagnostics.js';
 
 const VERSION = '0.1.0';
 const CLI_CHANNEL_STATE_FILE = 'state.json';
@@ -103,6 +110,7 @@ export interface RunCliOptions {
     argv?: readonly string[];
   }) => Promise<readonly ChannelRegistration[]>;
   setupDeps?: SetupRunDeps;
+  doctorDeps?: SetupRunDeps;
   fetchLatestNpmVersion?: (pkg: string) => Promise<string>;
 }
 
@@ -315,18 +323,36 @@ function buildProgram(app: AppContext): Command {
   registerCommand(
     'setup',
     (cmd) => {
-      cmd.alias('onboard').action(async () => {
-        const report = await runSetup({
-          paths: app.paths,
-          loaded: app.loaded,
-          providerRegistry: app.providerRegistry,
-          deps: app.opts.setupDeps,
+      cmd
+        .alias('onboard')
+        .option('--profile <profile>', 'setup profile: dev, global, or systemd', 'global')
+        .option('--check', 'check only; do not apply safe fixes')
+        .option('--repair', 'apply safe setup repairs')
+        .option('--json', 'print machine-readable staged diagnostics')
+        .action(async (options: { profile: string; check?: boolean; repair?: boolean; json?: boolean }) => {
+          let profile: SetupProfile;
+          try {
+            profile = parseSetupProfile(options.profile);
+          } catch (err) {
+            throw new CommanderExit(1, err instanceof Error ? err.message : String(err));
+          }
+          const report = await runDiagnostics({
+            mode: 'setup',
+            profile,
+            checkOnly: options.check === true,
+            fix: options.repair === true || options.check !== true,
+            paths: app.paths,
+            root: app.opts.root,
+            loaded: app.loaded,
+            providerRegistry: app.providerRegistry,
+            channelRegistry: app.channelRegistry,
+            deps: app.opts.setupDeps,
+          });
+          app.stdout.write(options.json ? `${JSON.stringify({ command: 'setup', check: options.check === true, repair: options.repair === true, ...report }, null, 2)}\n` : formatDiagnosticsHuman(report));
+          if (!report.ok) {
+            throw new CommanderExit(1, 'setup found blockers');
+          }
         });
-        app.stdout.write(report.text);
-        if (!report.ok) {
-          throw new CommanderExit(1, 'setup found blockers');
-        }
-      });
     },
     program,
   );
@@ -384,13 +410,36 @@ function buildProgram(app: AppContext): Command {
   registerCommand(
     'doctor',
     (cmd) => {
-      cmd.action(async () => {
-        const report = await runDoctor(app);
-        app.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-        if (!report.ok) {
-          throw new CommanderExit(1, 'doctor found issues');
-        }
-      });
+      cmd
+        .option('--component <component>', 'component: provider, web, database, channel, config, cli, or systemd')
+        .option('--json', 'print machine-readable structured diagnostics')
+        .option('--fix', 'apply safe fixes')
+        .action(async (options: { component?: string; json?: boolean; fix?: boolean }) => {
+          let component: DoctorComponent | undefined;
+          try {
+            component = parseDoctorComponent(options.component);
+          } catch (err) {
+            throw new CommanderExit(1, err instanceof Error ? err.message : String(err));
+          }
+          const profile: SetupProfile = component === 'web' || component === 'systemd' ? 'systemd' : 'global';
+          const report = await runDiagnostics({
+            mode: 'doctor',
+            profile,
+            component,
+            fix: options.fix === true,
+            paths: app.paths,
+            root: app.opts.root,
+            loaded: app.loaded,
+            providerRegistry: app.providerRegistry,
+            channelRegistry: app.channelRegistry,
+            deps: app.opts.doctorDeps ?? app.opts.setupDeps,
+          });
+          const payload = { command: 'doctor', component, fix: options.fix === true, ...report };
+          app.stdout.write(options.json ? `${JSON.stringify(payload, null, 2)}\n` : formatDiagnosticsHuman(report));
+          if (!report.ok) {
+            throw new CommanderExit(1, 'doctor found issues');
+          }
+        });
     },
     program,
   );
@@ -1695,72 +1744,6 @@ async function createDefaultProviderRegistry(config: LoadedConfig['config']): Pr
   return registry;
 }
 
-async function runDoctor(app: AppContext): Promise<Record<string, unknown>> {
-  const providerChecks = await Promise.all(
-    app.providerRegistry.list().map(async (provider) => ({
-      id: provider.id,
-      healthy: await provider.healthCheck(),
-    })),
-  );
-  const channelChecks = await Promise.all(
-    app.channelRegistry
-      .listEnabled()
-      .filter((entry) => entry.source === 'package')
-      .map(async (entry) => {
-        try {
-          return {
-            id: entry.id,
-            displayName: entry.displayName,
-            source: entry.source,
-            healthy: await entry.channel.healthCheck(),
-          };
-        } catch (err) {
-          return {
-            id: entry.id,
-            displayName: entry.displayName,
-            source: entry.source,
-            healthy: false,
-            error: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }),
-  );
-  const dirChecks = await Promise.all(
-    Object.entries(app.paths.dirs).map(async ([name, path]) => ({
-      name,
-      path,
-      writable: await isWritable(path),
-    })),
-  );
-
-  let sqliteOk = true;
-  let sqliteError: string | undefined;
-  try {
-    haroDb.initHaroDatabase({ root: app.opts.root, dbFile: app.paths.dbFile });
-  } catch (err) {
-    sqliteOk = false;
-    sqliteError = err instanceof Error ? err.message : String(err);
-  }
-
-  const ok =
-    providerChecks.every((item) => item.healthy) &&
-    channelChecks.every((item) => item.healthy) &&
-    dirChecks.every((item) => item.writable) &&
-    sqliteOk;
-
-  return {
-    ok,
-    config: { ok: true, sources: app.loaded.sources },
-    providers: providerChecks,
-    channels: channelChecks,
-    dataDir: { root: app.paths.root, checks: dirChecks },
-    sqlite: {
-      ok: sqliteOk,
-      ...(sqliteError ? { error: sqliteError } : {}),
-    },
-  };
-}
-
 function createCliMemoryWrapupHook(skills: SkillsManager, logger: CliLogger): MemoryWrapupHook {
   const memoryFabric = createMemoryFabric({ root: skills.paths.dirs.memory });
   return async ({ sessionId, agentId, task, result }) => {
@@ -1904,15 +1887,6 @@ function defaultChannelFactory(input: {
     sessionIdFactory: input.createConversationId,
     onLocalCommand: input.onLocalCommand,
   });
-}
-
-async function isWritable(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 if (require.main === module) {

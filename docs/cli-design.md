@@ -54,13 +54,12 @@ haro setup
 haro onboard
 ```
 
-**Phase 0 最小职责**：
-- 检查 Node 版本（`>=22`）
-- 检查 `pnpm` 是否可用
-- 检查 `~/.haro/` 数据目录可写
-- 检查 `OPENAI_API_KEY`
-- 写入非敏感默认配置（例如 `providers.codex.defaultModel`）
-- 输出明确下一步：`haro doctor` / `haro run "..."` / `haro channel setup feishu`
+**FEAT-027 staged setup**：
+- 按 `prerequisites`、`global-command`、`data-directory`、`configuration`、`provider`、`database`、`web-service`、`channels`、`smoke-test` 分阶段检查。
+- 支持 `--profile dev|global|systemd`：`dev` 面向源码 `pnpm haro`，`global` 要求 `haro` 在 PATH，`systemd` 额外检查 user-level web service。
+- 支持 `--check` 只检查、`--repair` 执行安全修复、`--json` 输出机器可读 report。
+- setup 只写非敏感默认配置；不会写入 provider secret、修改 shell profile、安装 Node/pnpm、创建系统级 systemd unit 或调整防火墙。
+- provider 缺失时，provider/smoke stage 会提示 `haro provider setup codex`，并用 offline dry-run 证明 CLI/config/database 基础链路可用。
 
 ### `haro run`
 
@@ -91,6 +90,25 @@ haro model codex <live-model-id>
 
 > Phase 0 未实现交互式 `--select` 选择器；当前仅支持通过位置参数直接写入默认 Provider / Model。
 
+### `haro provider`（Phase 1 规划，FEAT-026）
+
+Provider 配置与诊断命令族。`haro model` 保留为快速查看/切换默认模型，复杂 provider 首配、secretRef、model discovery 和 remediation 统一归入 `haro provider`。
+
+```bash
+haro provider list
+haro provider setup codex
+haro provider doctor codex
+haro provider models codex
+haro provider select codex <live-model-id>
+haro provider env codex
+```
+
+**设计边界**：
+- YAML 只保存非敏感配置与 `secretRef`，不保存真实 API key
+- 默认通过环境变量读取 secret；如支持写入 env file，必须使用用户目录下受权限保护的文件并脱敏输出
+- `haro provider doctor` 输出 provider-specific issue code 和下一条可执行修复命令
+- provider 配置元数据来自 provider catalog/schema，避免命令层散落 `providerId === 'codex'` 分支
+
 ### `haro config`
 
 查看当前合并后的配置与来源。详见 [Configuration](./configuration.md)。
@@ -109,18 +127,21 @@ haro config
 
 ### `haro doctor`
 
-系统诊断，检查 Phase 0 核心组件的健康状态。排查指南见 [Troubleshooting](./troubleshooting.md)。
+系统诊断，检查 staged setup 使用的同一套实时探测结果。排查指南见 [Troubleshooting](./troubleshooting.md)。
 
 ```bash
 haro doctor
+haro doctor --json
+haro doctor --component provider|web|database|channel|config|cli|systemd
+haro doctor --fix
 ```
 
-**Phase 0 最小检查项**：
-- 配置文件合法性
-- Provider `healthCheck()`
-- `~/.haro/` 目录可读写
-- SQLite 可连接
-- 已启用 Channel 的基本健康状态
+**FEAT-027 结构化诊断**：
+- 输出结构化 issue：`code`、`severity`、`component`、`evidence`、`remediation`、`fixable`。
+- `--component` 可缩小到 provider、web/systemd、database、channel、config 或 cli。
+- `--fix` 只执行安全修复：创建 Haro 目录、写非敏感默认配置、初始化 SQLite、收紧用户拥有目录权限、创建/更新 user-level systemd unit。
+- web/systemd 检查覆盖监听地址、端口占用、user service active/enabled 状态、env file 可读性和 `HARO_WEB_API_KEY` 模式。
+- setup/doctor 每次实时探测，不创建也不依赖 `~/.haro/setup-state.json`。
 
 ### `haro skills`
 

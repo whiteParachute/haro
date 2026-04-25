@@ -55,11 +55,12 @@ pnpm add -g @haro/cli@latest
 # 1. 配置 Provider 凭证
 export OPENAI_API_KEY=<your-key>
 
-# 2. 跑首次引导
-haro setup
+# 2. 跑首次引导（会按 stage 检查并写入非敏感默认配置）
+haro setup --profile global
 
-# 3. 先做诊断
-haro doctor
+# 3. 先做结构化诊断；如目录/SQLite 缺失，可执行安全修复
+haro doctor --json
+haro doctor --fix
 
 # 4. 执行第一条任务
 haro run "列出当前目录下的 TypeScript 文件"
@@ -86,8 +87,8 @@ pnpm install
 pnpm build
 
 # 4. 使用仓库内 CLI
-pnpm haro setup
-pnpm haro doctor
+pnpm haro setup --profile dev
+pnpm haro doctor --json
 pnpm haro run "列出当前目录下的 TypeScript 文件"
 ```
 
@@ -165,7 +166,9 @@ Haro 当前采用 **spec 驱动开发**。
 为了避免 README 说得比代码多，当前边界明确写清楚：
 
 - 当前正式实现的 Provider 只有 Codex
-- 多 Provider 智能选择、Scenario Router、Team Orchestrator、Evolution Engine 仍属于后续 phase
+- Scenario Router、Team Orchestrator、Dashboard 基础和 Codex runtime `shit` skill 已进入 Phase 1 交付闭环
+- Memory Fabric v1、Evolution Asset Registry、权限/Token 预算和 Dashboard 编排调试仍属于 Phase 1 后续工作
+- Evolution Engine、自动 eat/shit、Provider 动态重评估仍属于 Phase 2+
 - 当前仓库版本是 `0.1.0`
 - 当前更适合 **源码运行和继续开发**，还不是对外发布的稳定产品版本
 
@@ -174,10 +177,10 @@ Haro 当前采用 **spec 驱动开发**。
 | 阶段 | 状态 | 目标 |
 | --- | --- | --- |
 | Phase 0 | 已完成基础闭环 | CLI + Codex Provider + 单 Agent Runtime + Memory + Channel + Skills + 手动 eat/shit |
-| Phase 1 | 规划中 | Scenario Router + Team Orchestrator + Memory Fabric v1 |
-| Phase 2 | 规划中 | Evolution Engine + 自动 eat/shit + Provider 动态重评估 |
-| Phase 3 | 规划中 | Agent-as-Developer + 平台自主维护 |
-| Phase 4 | 规划中 | 开放生态与跨实例协作 |
+| Phase 1 | 进行中 | Scenario Router + Team Orchestrator + Dashboard 控制面 + Memory Fabric v1 + Evolution Asset Registry + 权限/Token 预算 |
+| Phase 2 | 规划中 | Evolution Engine + 自动 eat/shit + 编排调试增强 + 会话生命周期 + checkpoint 人机介入 |
+| Phase 3 | 规划中 | Agent-as-Developer + 平台自主维护 + L2/L3 架构演进 |
+| Phase 4 | 规划中 | 开放生态、团队资产共享与跨实例协作 |
 
 ## 开发验证
 

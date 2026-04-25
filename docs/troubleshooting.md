@@ -2,7 +2,7 @@
 
 ## haro doctor 失败排查
 
-`haro doctor` 检查 Phase 0 核心组件的健康状态。如果输出中 `ok: false`，按以下顺序排查：
+`haro doctor` 使用 FEAT-027 staged diagnostics 实时检查 CLI、配置、Provider、数据目录、SQLite、Web/systemd 和 Channel。如果需要机器可读输出，使用 `haro doctor --json`；只看单个组件可用 `--component provider|web|database|channel|config|cli|systemd`；允许的本地修复可用 `haro doctor --fix`。如果输出中 `ok: false`，按以下顺序排查：
 
 ### 1. 配置文件合法性
 
@@ -26,6 +26,13 @@ Invalid Haro config (/home/user/.haro/config.yaml):
 
 ### 2. Provider 健康检查
 
+如果 issue code 为 `PROVIDER_SECRET_MISSING` 或 `PROVIDER_HEALTHCHECK_FAILED`，先运行：
+
+```bash
+haro doctor --component provider --json
+haro provider setup codex
+```
+
 如果 `providers.codex.healthy` 为 `false`：
 
 **症状 A**：`Codex Provider: OPENAI_API_KEY is not set`
@@ -40,7 +47,7 @@ Invalid Haro config (/home/user/.haro/config.yaml):
 - 如果使用了代理，确认代理环境变量（`HTTPS_PROXY` 等）已正确设置
 - 部分企业网络可能需要配置 `providers.codex.baseUrl` 指向内部网关
 
-### 3. 数据目录可读写
+### 3. 数据目录、SQLite 与安全修复
 
 如果报告 `数据目录不可写`：
 
@@ -54,19 +61,34 @@ chmod u+rwx ~/.haro
 # 或使用自定义目录
 export HARO_HOME=/path/to/writable/dir
 haro doctor
+
+# 允许 Haro 自动创建目录、写非敏感默认配置并初始化 SQLite
+haro doctor --fix
 ```
 
-### 4. SQLite 连接
+### 4. Web / systemd user service
+
+Web Dashboard 相关问题可单独诊断：
+
+```bash
+haro doctor --component web --json
+haro setup --profile systemd --repair
+```
+
+检查重点：`haro-web.service` 是否 active/enabled、是否按预期监听 `127.0.0.1:3456`、`~/.haro/web.env` 是否可读、是否设置 `HARO_WEB_API_KEY`。`--repair` / `--fix` 只会创建或更新 user-level systemd unit，不会创建系统级 unit 或修改防火墙。
+
+### 4.1 SQLite 连接
 
 如果 SQLite 初始化失败：
 
 - 检查 `~/.haro/haro.db` 是否被其他进程占用
 - 检查磁盘空间是否充足
-- 尝试删除 `haro.db` 让它重新初始化（会丢失本地 session 历史）
+- 运行 `haro doctor --fix` 重新初始化 schema
+- 谨慎删除 `haro.db` 让它重新初始化（会丢失本地 session 历史）
 
 ### 5. Channel 健康状态
 
-`haro doctor` 本身不输出 `channels` 健康块。要排查 Channel 问题，应直接使用 Channel 级诊断命令：
+`haro doctor --json` 会包含 Channel 摘要。要做 Channel 专项排查，应直接使用 Channel 级诊断命令：
 
 ```bash
 haro channel doctor feishu

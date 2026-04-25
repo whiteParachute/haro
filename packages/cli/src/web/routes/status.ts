@@ -1,10 +1,11 @@
 import { access, constants } from 'node:fs/promises';
 import { Hono } from 'hono';
 import { buildHaroPaths, db as haroDb, config as haroConfig } from '@haro/core';
-import type { ProviderRegistry } from '@haro/core';
-import type { ChannelRegistryEntry } from '../../channel.js';
+import { ProviderRegistry } from '@haro/core';
+import { ChannelRegistry, type ChannelRegistryEntry } from '../../channel.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
+import { runDiagnostics } from '../../diagnostics.js';
 
 interface SessionCountRow {
   status: string;
@@ -86,16 +87,28 @@ export function createDoctorRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     const sqlite = await readSqliteDoctor(runtime.root, runtime.dbFile ?? paths.dbFile);
     const providers = await readProviderStatus(runtime.providerRegistry);
     const channels = await readChannelSummaries(runtime);
-    const sources = loadConfig(runtime).sources;
+    const loaded = loadConfig(runtime);
+    const sources = loaded.sources;
     const ok =
       sqlite.ok &&
       dirChecks.every((item) => item.writable) &&
       providers.every((item) => item.healthy) &&
       channels.every((item) => item.health !== 'unhealthy');
 
+    const diagnostics = await runDiagnostics({
+      mode: 'doctor',
+      profile: 'global',
+      paths,
+      root: runtime.root,
+      loaded,
+      providerRegistry: runtime.providerRegistry ?? new ProviderRegistry(),
+      channelRegistry: runtime.channelRegistry ?? new ChannelRegistry(),
+    });
+
     return c.json({
       success: true,
       data: {
+        ...diagnostics,
         ok,
         config: { ok: true, sources },
         providers,

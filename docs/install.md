@@ -30,7 +30,37 @@ curl -fsSL https://raw.githubusercontent.com/haro-ai/haro/main/scripts/install.s
 4. 验证 `haro` 命令是否在 PATH 中
 5. 创建 `~/.haro/` 数据目录
 
-安装完成后，按提示配置 `OPENAI_API_KEY` 并运行 `haro setup`。
+安装完成后，先运行 `haro setup --check --json` 查看 staged 诊断；配置 `OPENAI_API_KEY` 后运行 `haro setup --profile global`。如果目录或 SQLite 缺失，可运行 `haro doctor --fix` 做安全修复。
+
+
+## 从空环境到可用
+
+```bash
+# 1. 预检：只读检查，不写 provider secret
+haro setup --check --json
+
+# 2. 配置 Provider secret（Haro 不会把 key 写入 YAML）
+export OPENAI_API_KEY=<your-key>
+
+# 3. 全局 CLI profile：检查 haro 是否在 PATH，并写入非敏感默认配置
+haro setup --profile global
+
+# 4. 修复允许的本地问题：目录、默认配置、SQLite、user-level systemd unit
+haro doctor --fix
+
+# 5. 跑第一条任务
+haro run "列出当前目录下的 TypeScript 文件"
+```
+
+Profile 差异：
+
+| profile | 适用场景 | 额外检查 |
+|---------|----------|----------|
+| `dev` | 源码仓库内使用 `pnpm haro` | 不要求全局 `haro` 在 PATH |
+| `global` | npm/pnpm 全局安装后日常使用 | 要求 `haro` 全局命令可执行 |
+| `systemd` | user-level Web Dashboard 服务 | 检查/可修复 `~/.config/systemd/user/haro-web.service`、监听端口、env file、`HARO_WEB_API_KEY` 模式 |
+
+安全边界：`--repair` / `--fix` 不会安装 Node/pnpm、不修改 shell profile、不写 provider secret、不创建系统级 systemd unit、不开放防火墙。
 
 ## Windows：PowerShell
 

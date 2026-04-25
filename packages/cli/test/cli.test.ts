@@ -392,7 +392,7 @@ describe('runCli [FEAT-006]', () => {
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
     const result = await runCli({
-      argv: ['doctor'],
+      argv: ['doctor', '--json'],
       root,
       stdout,
       createProviderRegistry: async () =>
@@ -428,7 +428,7 @@ describe('runCli [FEAT-006]', () => {
     const disabledHealthCheck = vi.fn(async () => true);
 
     const result = await runCli({
-      argv: ['doctor'],
+      argv: ['doctor', '--json'],
       root,
       stdout,
       createProviderRegistry: async () =>
