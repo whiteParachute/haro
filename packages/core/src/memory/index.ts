@@ -8,6 +8,9 @@ export type {
 } from './memory-fabric.js';
 export type {
   MemoryScope,
+  MemoryLayer,
+  MemoryEntryScope,
+  VerificationStatus,
   MemorySource,
   MemoryWriteInput,
   MemoryDepositInput,
@@ -22,4 +25,11 @@ export type {
   MemoryScopeStats,
   MemoryMaintenanceReport,
   MemoryMaintenanceStepReport,
+  MemoryEntry,
+  WriteMemoryEntryInput,
+  MemoryQuery,
+  MemorySearchResult,
+  MemoryContextQuery,
+  RebuildIndexOptions,
+  RebuildResult,
 } from './types.js';

@@ -71,7 +71,7 @@ export function initHaroDatabase(opts: InitDbOptions = {}): InitDbResult {
     const fts5Available = probeFts5(db);
     if (!fts5Available) {
       throw new Error(
-        'SQLite FTS5 extension is required (used by FEAT-007 memory search) but is not available in this better-sqlite3 build.',
+        'SQLite FTS5 extension is required (used by FEAT-021 Memory Fabric v1 search) but is not available in this better-sqlite3 build.',
       );
     }
 

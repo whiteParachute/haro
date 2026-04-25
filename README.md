@@ -172,7 +172,7 @@ Haro 当前采用 **spec 驱动开发**。
 
 - 当前正式实现的 Provider 只有 Codex
 - Scenario Router、Team Orchestrator、Dashboard 基础和 Codex runtime `shit` skill 已进入 Phase 1 交付闭环
-- Memory Fabric v1、Evolution Asset Registry、权限/Token 预算和 Dashboard 编排调试仍属于 Phase 1 后续工作
+- Memory Fabric v1 已完成：核心 API、SQLite FTS5 read model、三层记忆、scope/verification/assetRef 和 aria-memory rebuild 已在 core 包内落地；Evolution Asset Registry、权限/Token 预算和 Dashboard 编排调试仍属于 Phase 1 后续工作
 - Evolution Engine、自动 eat/shit、Provider 动态重评估仍属于 Phase 2+
 - 当前仓库版本是 `0.1.0`
 - 当前更适合 **源码运行和继续开发**，还不是对外发布的稳定产品版本

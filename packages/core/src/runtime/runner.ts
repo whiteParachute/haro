@@ -633,7 +633,9 @@ export class AgentRunner {
       '<memory-context>',
       ...context.items.map((item) => {
         const datePrefix = item.date ? `[${item.date}] ` : '';
-        return `- ${datePrefix}${item.summary} → ${item.sourceFile}`;
+        const status = item.verificationStatus ? ` status=${item.verificationStatus}` : '';
+        const uncertainty = item.uncertainty ? `；${item.uncertainty}` : '';
+        return `- ${datePrefix}${item.summary} (source=${item.source}${status}${uncertainty}) → ${item.sourceFile}`;
       }),
       '</memory-context>',
     ].join('\n');

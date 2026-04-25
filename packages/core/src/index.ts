@@ -55,6 +55,9 @@ export { MemoryFabric, createMemoryFabric } from './memory/index.js';
 export type {
   MemoryFabricOptions,
   MemoryScope,
+  MemoryLayer,
+  MemoryEntryScope,
+  VerificationStatus,
   MemoryWriteInput,
   MemoryDepositInput,
   MemoryQueryInput,
@@ -66,6 +69,13 @@ export type {
   MemoryStats,
   MemoryMaintenanceReport,
   MemorySource,
+  MemoryEntry,
+  WriteMemoryEntryInput,
+  MemoryQuery,
+  MemorySearchResult,
+  MemoryContextQuery,
+  RebuildIndexOptions,
+  RebuildResult,
 } from './memory/index.js';
 export {
   SceneClassifier,

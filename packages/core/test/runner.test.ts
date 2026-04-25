@@ -389,6 +389,8 @@ describe('AgentRunner [FEAT-005]', () => {
             sourceFile: '/memory/agents/haro-assistant/knowledge/preferences.md',
             date: '2026-04-20',
             tier: 'knowledge' as const,
+            verificationStatus: 'unverified' as const,
+            uncertainty: '未验证；来源：remember',
           },
         ],
       })),
@@ -425,6 +427,9 @@ describe('AgentRunner [FEAT-005]', () => {
     expect(seenSystemPrompts[0]).toContain('You are helpful.');
     expect(seenSystemPrompts[0]).toContain('<memory-context>');
     expect(seenSystemPrompts[0]).toContain('用户偏爱简洁回答');
+    expect(seenSystemPrompts[0]).toContain('source=remember');
+    expect(seenSystemPrompts[0]).toContain('status=unverified');
+    expect(seenSystemPrompts[0]).toContain('未验证');
   });
 
   it('FEAT-003/005: handles context_too_long save-and-clear by wrapping up memory and retrying without continuation', async () => {

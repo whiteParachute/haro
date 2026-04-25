@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildScopeLayout } from './paths.js';
+import { buildEntryScopeLayout, buildScopeLayout, legacyScopeToEntryScope, resolveEntryScopeRoot } from './paths.js';
 import {
   SerialWriter,
   atomicWriteFile,
@@ -14,6 +14,7 @@ import {
   tokenize,
   type IndexRecord,
 } from './index-store.js';
+import { MemoryReadModel } from './read-model.js';
 import {
   serializeFrontmatter,
   splitFrontmatter,
@@ -24,16 +25,25 @@ import type {
   MemoryContextItem,
   MemoryContextResult,
   MemoryDepositInput,
+  MemoryEntry,
+  MemoryEntryScope,
+  MemoryLayer,
   MemoryMaintenanceReport,
   MemoryMaintenanceStepReport,
+  MemoryQuery,
   MemoryQueryHit,
   MemoryQueryInput,
   MemoryQueryResult,
+  MemorySearchResult,
   MemoryScope,
   MemoryScopeStats,
   MemoryStats,
   MemoryWrapupInput,
   MemoryWriteInput,
+  RebuildIndexOptions,
+  RebuildResult,
+  VerificationStatus,
+  WriteMemoryEntryInput,
 } from './types.js';
 
 export interface MemoryFabricOptions {
@@ -41,6 +51,8 @@ export interface MemoryFabricOptions {
   root: string;
   /** Optional secondary root (R10 primary/backup). */
   backupRoot?: string;
+  /** SQLite read model path. Defaults to `../haro.db` for `.../memory`, otherwise `<root>/.memory-fabric.sqlite`. */
+  dbFile?: string;
   /** Clock injection for deterministic tests. */
   now?: () => Date;
   /** Optional debug logger. */
@@ -94,6 +106,7 @@ export class MemoryFabric {
   private readonly backupRoot: string | null;
   private readonly now: () => Date;
   private readonly onEvent: NonNullable<MemoryFabricOptions['onEvent']>;
+  private readonly readModel: MemoryReadModel;
   private readonly writer = new SerialWriter();
   private readonly index = new MemoryIndex();
   private readonly loadedScopes = new Set<string>();
@@ -109,6 +122,109 @@ export class MemoryFabric {
     this.now = options.now ?? (() => new Date());
     this.onEvent = options.onEvent ?? (() => undefined);
     ensureDir(this.root);
+    this.readModel = new MemoryReadModel(options.dbFile ?? defaultReadModelDbFile(this.root));
+  }
+
+  /* --------------------------- FEAT-021 v1 API --------------------------- */
+
+  async writeEntry(input: WriteMemoryEntryInput): Promise<MemoryEntry> {
+    const normalized = this.validateWriteEntry(input);
+    const existing = this.readModel.findByContentHash(normalized.layer, normalized.scope, normalized.contentHash);
+    if (existing) return existing;
+
+    const conflicts = this.readModel.findTopicConflicts({
+      layer: normalized.layer,
+      scope: normalized.scope,
+      topic: normalized.topic,
+      contentHash: normalized.contentHash,
+    });
+    const status: VerificationStatus =
+      conflicts.length > 0 && normalized.verificationStatus !== 'rejected'
+        ? 'conflicted'
+        : normalized.verificationStatus;
+    const timestamp = this.now().toISOString();
+    const id = deterministicEntryId(normalized.layer, normalized.scope, normalized.contentHash);
+    const contentPath =
+      normalized.layer === 'persistent'
+        ? await this.writePersistentCanonicalSource({ ...normalized, id, verificationStatus: status, timestamp })
+        : normalized.contentPath;
+    const entry: MemoryEntry = {
+      id,
+      layer: normalized.layer,
+      scope: normalized.scope,
+      agentId: normalized.agentId,
+      topic: normalized.topic,
+      summary: normalized.summary,
+      content: normalized.content,
+      contentPath,
+      contentHash: normalized.contentHash,
+      sourceRef: normalized.sourceRef,
+      assetRef: normalized.assetRef,
+      verificationStatus: status,
+      confidence: normalized.confidence,
+      tags: normalized.tags,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      verificationEvidenceRefs: [],
+    };
+
+    this.readModel.insert(entry);
+    if (conflicts.length > 0) {
+      const conflictIds = [entry.id, ...conflicts.map((item) => item.id)];
+      this.readModel.markConflicted(conflictIds, [`conflict:${entry.id}`], timestamp);
+      entry.verificationStatus = 'conflicted';
+      entry.verificationEvidenceRefs = [`conflict:${entry.id}`];
+    }
+    this.indexV1Entry(entry);
+    return entry;
+  }
+
+  queryEntries(query: MemoryQuery): MemorySearchResult[] {
+    return this.readModel.query(query);
+  }
+
+  async markVerification(id: string, status: VerificationStatus, evidenceRefs: readonly string[]): Promise<void> {
+    const entry = this.readModel.findById(id);
+    if (!entry) throw new Error(`MemoryFabric.markVerification: unknown entry id '${id}'`);
+    if (status === 'verified' && requiresDoubleGate(entry.scope) && !hasDoubleGateEvidence(evidenceRefs)) {
+      throw new Error(
+        'MemoryFabric.markVerification: platform/shared verified status requires reviewer/critic evidence and user/owner confirmation',
+      );
+    }
+    this.readModel.markVerification(id, status, evidenceRefs, this.now().toISOString());
+  }
+
+  async archiveEntry(id: string, reason: string): Promise<void> {
+    if (!reason || reason.trim().length === 0) {
+      throw new Error('MemoryFabric.archiveEntry: reason is required');
+    }
+    this.readModel.archive(id, reason, this.now().toISOString());
+  }
+
+  async rebuildIndex(options: RebuildIndexOptions = {}): Promise<RebuildResult> {
+    const dryRun = options.dryRun === true;
+    const errors: string[] = [];
+    let scanned = 0;
+    let indexed = 0;
+    let skipped = 0;
+    const layouts = this.layoutsForRebuild(options.scope);
+    for (const layout of layouts) {
+      for (const candidate of scanLegacyMarkdown(layout.scopeRoot)) {
+        scanned += 1;
+        try {
+          const entryInput = this.entryInputFromMarkdown(layout.scope, candidate);
+          if (!entryInput) {
+            skipped += 1;
+            continue;
+          }
+          if (!dryRun) await this.writeEntry(entryInput);
+          indexed += 1;
+        } catch (err) {
+          errors.push(`${candidate.file}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+    return { scanned, indexed, skipped, errors, dryRun };
   }
 
   /* --------------------------- R3 T1 synchronous --------------------------- */
@@ -149,6 +265,17 @@ export class MemoryFabric {
       this.index.upsert(record);
       this.persistIndex(scope, agentId);
       return { file, key };
+    });
+    await this.writeEntry({
+      layer: 'persistent',
+      scope: legacyScopeToEntryScope(scope, agentId),
+      agentId,
+      topic,
+      summary,
+      content,
+      contentPath: writeResult.file,
+      sourceRef: source,
+      tags,
     });
     if (this.backupRoot) this.mirrorToBackupAsync(scope, agentId, writeResult.file);
     this.onEvent({ kind: 'write', scope, agentId, file: writeResult.file });
@@ -207,6 +334,18 @@ export class MemoryFabric {
       this.persistIndex(scope, agentId);
       return { file, key: indexKey, hash };
     });
+    await this.writeEntry({
+      layer: 'session',
+      scope: legacyScopeToEntryScope(scope, agentId),
+      agentId,
+      topic: input.topic ?? topicFromPendingSummary(summary),
+      summary,
+      content,
+      contentPath: res.file,
+      contentHash: hash,
+      sourceRef: source,
+      tags,
+    });
     // Backup mirror runs outside the serial section so a slow backup path does
     // not stall primary writes (codex SHOULD-FIX). We read+write best-effort;
     // failures surface via onEvent but never block the primary commit.
@@ -261,6 +400,17 @@ export class MemoryFabric {
     });
     if (this.backupRoot) this.mirrorToBackupAsync(scope, agentId, res.file);
     this.onEvent({ kind: 'wrapup', scope, agentId, file: res.file });
+    await this.writeEntry({
+      layer: 'session',
+      scope: legacyScopeToEntryScope(scope, agentId),
+      agentId,
+      topic: input.topic,
+      summary,
+      content: input.transcript,
+      contentPath: res.file,
+      sourceRef: source,
+      tags,
+    });
 
     if (input.mergePending !== false) {
       await this.mergePendingForWrapup(scope, agentId, input.wrapupId);
@@ -331,6 +481,19 @@ export class MemoryFabric {
 
   contextFor(input: MemoryContextInput): MemoryContextResult {
     const limit = input.limit ?? 5;
+    const v1Results = this.queryEntries({
+      keyword: input.query,
+      agentId: input.agentId,
+      scopes: [`agent:${input.agentId}`, 'shared', 'platform'],
+      limit,
+    });
+    if (v1Results.length > 0) {
+      return {
+        generatedAt: this.now().toISOString(),
+        items: v1Results.map((result) => contextItemFromEntry(result.entry)),
+      };
+    }
+
     this.loadScope({ scope: 'agent', agentId: input.agentId });
     this.loadScope({ scope: 'platform' });
     const searchOpts = {
@@ -414,7 +577,7 @@ export class MemoryFabric {
       if (agentId) scopeStats.agentId = agentId;
       scopes.push(scopeStats);
     }
-    const result: MemoryStats = { root: this.root, scopes };
+    const result: MemoryStats = { root: this.root, scopes, ...this.readModel.stats() };
     if (this.lastMaintenanceAt !== undefined) {
       result.lastMaintenanceAt = this.lastMaintenanceAt;
     }
@@ -782,7 +945,191 @@ export class MemoryFabric {
     }
   }
 
+  private async writePersistentCanonicalSource(input: NormalizedWriteEntry & {
+    id: string;
+    verificationStatus: VerificationStatus;
+    timestamp: string;
+  }): Promise<string> {
+    const layout = buildEntryScopeLayout(this.root, input.scope);
+    const slug = `${slugify(input.topic)}-${input.contentHash.slice(0, 8)}`;
+    const file = input.contentPath ?? join(layout.knowledge, `${slug}.md`);
+    await this.writer.run(async () => {
+      ensureDir(layout.knowledge);
+      if (!input.contentPath || !existsSync(file)) {
+        const frontmatter: Frontmatter = {
+          topic: input.topic,
+          summary: input.summary,
+          tags: input.tags,
+          source_ref: input.sourceRef,
+          content_hash: input.contentHash,
+          layer: input.layer,
+          scope: input.scope,
+          verification_status: input.verificationStatus,
+          date: input.timestamp.slice(0, 10),
+        };
+        if (input.agentId) frontmatter.agent_id = input.agentId;
+        if (input.assetRef) frontmatter.asset_ref = input.assetRef;
+        if (input.confidence !== undefined) frontmatter.confidence = input.confidence;
+        atomicWriteFile(
+          file,
+          `${serializeFrontmatter(frontmatter)}# ${input.topic}\n\n## Source: ${input.sourceRef}\n\n${input.content}\n`,
+        );
+      }
+      this.upsertV1IndexRecord({
+        ...input,
+        id: input.id,
+        sourceFile: file,
+        tier: 'knowledge',
+        date: input.timestamp.slice(0, 10),
+      });
+      this.persistIndexForEntryScope(input.scope);
+    });
+    return file;
+  }
+
+  private indexV1Entry(entry: MemoryEntry): void {
+    if (entry.contentPath) {
+      const tier: IndexRecord['tier'] = entry.layer === 'session' ? 'session' : 'knowledge';
+      this.upsertV1IndexRecord({
+        id: entry.id,
+        layer: entry.layer,
+        scope: entry.scope,
+        agentId: entry.agentId,
+        topic: entry.topic,
+        summary: entry.summary,
+        content: entry.content,
+        sourceRef: entry.sourceRef,
+        sourceFile: entry.contentPath,
+        tags: entry.tags,
+        tier,
+        date: entry.createdAt.slice(0, 10),
+      });
+      this.persistIndexForEntryScope(entry.scope);
+    }
+  }
+
+  private upsertV1IndexRecord(input: {
+    id: string;
+    layer: MemoryLayer;
+    scope: MemoryEntryScope;
+    agentId?: string;
+    topic: string;
+    summary: string;
+    content: string;
+    sourceRef: string;
+    sourceFile: string;
+    tags: readonly string[];
+    tier: IndexRecord['tier'];
+    date?: string;
+  }): void {
+    const legacy = entryScopeToLegacy(input.scope);
+    if (!legacy) return;
+    const record: IndexRecord = {
+      key: `v1:${input.id}`,
+      scope: legacy.scope,
+      content: input.content,
+      summary: input.summary,
+      sourceFile: input.sourceFile,
+      source: input.sourceRef,
+      tier: input.tier,
+      tags: input.tags,
+      writtenAt: this.now().getTime(),
+    };
+    if (legacy.agentId !== undefined) record.agentId = legacy.agentId;
+    if (input.date !== undefined) record.date = input.date;
+    this.index.upsert(record);
+  }
+
+  private persistIndexForEntryScope(scope: MemoryEntryScope): void {
+    const legacy = entryScopeToLegacy(scope);
+    if (!legacy) return;
+    this.persistIndex(legacy.scope, legacy.agentId);
+  }
+
+  private layoutsForRebuild(scope?: MemoryEntryScope): Array<{ scope: MemoryEntryScope; scopeRoot: string }> {
+    if (scope) return [{ scope, scopeRoot: resolveEntryScopeRoot(this.root, scope) }];
+    const layouts: Array<{ scope: MemoryEntryScope; scopeRoot: string }> = [
+      { scope: 'platform', scopeRoot: resolveEntryScopeRoot(this.root, 'platform') },
+      { scope: 'shared', scopeRoot: resolveEntryScopeRoot(this.root, 'shared') },
+    ];
+    const directKnowledge = join(this.root, 'knowledge');
+    if (existsSync(directKnowledge)) layouts.push({ scope: 'platform', scopeRoot: this.root });
+    for (const name of safeList(join(this.root, 'agents'))) {
+      const scopeRoot = join(this.root, 'agents', name);
+      if (statSafe(scopeRoot)?.isDirectory()) layouts.push({ scope: `agent:${name}`, scopeRoot });
+    }
+    for (const name of safeList(join(this.root, 'projects'))) {
+      const scopeRoot = join(this.root, 'projects', name);
+      if (statSafe(scopeRoot)?.isDirectory()) layouts.push({ scope: `project:${name}`, scopeRoot });
+    }
+    return layouts;
+  }
+
+  private entryInputFromMarkdown(scope: MemoryEntryScope, candidate: MarkdownCandidate): WriteMemoryEntryInput | null {
+    const text = readFileIfExists(candidate.file);
+    if (!text) return null;
+    const { frontmatter, body } = splitFrontmatter(text);
+    const content = body.trim();
+    if (content.length === 0) return null;
+    const topic =
+      stringFrontmatter(frontmatter.topic) ??
+      firstMarkdownHeading(content) ??
+      candidate.file.replace(/\.md$/, '').split(/[\\/]/).at(-1) ??
+      'untitled';
+    const summary = stringFrontmatter(frontmatter.summary) ?? firstLine(content);
+    const sourceRef = stringFrontmatter(frontmatter.source_ref) ?? stringFrontmatter(frontmatter.source) ?? `file:${relative(this.root, candidate.file)}`;
+    const tags = arrayFrontmatter(frontmatter.tags);
+    const verificationStatus = verificationStatusFromFrontmatter(frontmatter.verification_status);
+    const agentId = scope.startsWith('agent:') ? scope.slice('agent:'.length) : stringFrontmatter(frontmatter.agent_id);
+    const result: WriteMemoryEntryInput = {
+      layer: candidate.layer,
+      scope,
+      agentId,
+      topic,
+      summary,
+      content,
+      contentPath: candidate.file,
+      contentHash: stringFrontmatter(frontmatter.content_hash) ?? hashContent(content),
+      sourceRef,
+      assetRef: stringFrontmatter(frontmatter.asset_ref),
+      verificationStatus,
+      confidence: numberFrontmatter(frontmatter.confidence),
+      tags,
+    };
+    return result;
+  }
+
   /* --------------------------- validation --------------------------- */
+
+  private validateWriteEntry(input: WriteMemoryEntryInput): NormalizedWriteEntry {
+    assertLayer(input.layer);
+    assertEntryScope(input.scope);
+    if (!input.topic || input.topic.trim().length === 0) throw new Error('MemoryFabric.writeEntry: topic is required');
+    if (!input.content || input.content.trim().length === 0) throw new Error('MemoryFabric.writeEntry: content is required');
+    if (!input.sourceRef || input.sourceRef.trim().length === 0) throw new Error('MemoryFabric.writeEntry: sourceRef is required');
+    const status = input.verificationStatus ?? 'unverified';
+    assertVerificationStatus(status);
+    const scopeAgentId = input.scope.startsWith('agent:') ? input.scope.slice('agent:'.length) : undefined;
+    if (scopeAgentId && input.agentId && input.agentId !== scopeAgentId) {
+      throw new Error('MemoryFabric.writeEntry: agentId must match agent:{id} scope');
+    }
+    const contentHash = input.contentHash ?? hashContent(input.content);
+    return {
+      layer: input.layer,
+      scope: input.scope,
+      agentId: scopeAgentId ?? input.agentId,
+      topic: input.topic.trim(),
+      summary: (input.summary ?? firstLine(input.content)).trim(),
+      content: input.content,
+      contentPath: input.contentPath,
+      contentHash,
+      sourceRef: input.sourceRef,
+      assetRef: input.assetRef,
+      verificationStatus: status,
+      confidence: input.confidence,
+      tags: input.tags ?? [],
+    };
+  }
 
   private validateWrite(input: MemoryWriteInput): Required<Pick<MemoryWriteInput, 'scope' | 'topic' | 'content'>> & { agentId?: string } {
     if (!input.content || input.content.length === 0) throw new Error('MemoryFabric.write: content is required');
@@ -820,6 +1167,150 @@ export class MemoryFabric {
 }
 
 /* ---------------------------- free helpers ---------------------------- */
+
+interface NormalizedWriteEntry {
+  layer: MemoryLayer;
+  scope: MemoryEntryScope;
+  agentId?: string;
+  topic: string;
+  summary: string;
+  content: string;
+  contentPath?: string;
+  contentHash: string;
+  sourceRef: string;
+  assetRef?: string;
+  verificationStatus: VerificationStatus;
+  confidence?: number;
+  tags: readonly string[];
+}
+
+interface MarkdownCandidate {
+  file: string;
+  layer: MemoryLayer;
+}
+
+function defaultReadModelDbFile(root: string): string {
+  return basename(root) === 'memory' ? join(dirname(root), 'haro.db') : join(root, '.memory-fabric.sqlite');
+}
+
+function deterministicEntryId(layer: MemoryLayer, scope: MemoryEntryScope, contentHash: string): string {
+  const digest = createHash('sha256').update(`${layer}:${scope}:${contentHash}`).digest('hex').slice(0, 24);
+  return `mem_${digest}`;
+}
+
+function entryScopeToLegacy(scope: MemoryEntryScope): { scope: MemoryScope; agentId?: string } | null {
+  if (scope === 'platform' || scope === 'shared') return { scope };
+  if (scope.startsWith('agent:')) return { scope: 'agent', agentId: scope.slice('agent:'.length) };
+  return null;
+}
+
+function contextItemFromEntry(entry: MemoryEntry): MemoryContextItem {
+  const uncertainty =
+    entry.verificationStatus === 'unverified'
+      ? `未验证；来源：${entry.sourceRef}`
+      : entry.verificationStatus === 'conflicted'
+        ? `存在冲突；来源：${entry.sourceRef}`
+        : undefined;
+  const item: MemoryContextItem = {
+    entryId: entry.id,
+    summary: entry.summary,
+    source: entry.sourceRef,
+    sourceFile: entry.contentPath ?? entry.sourceRef,
+    tier: entry.layer === 'session' ? 'session' : 'knowledge',
+    layer: entry.layer,
+    scope: entry.scope,
+    verificationStatus: entry.verificationStatus,
+  };
+  if (entry.createdAt) item.date = entry.createdAt.slice(0, 10);
+  if (uncertainty) item.uncertainty = uncertainty;
+  return item;
+}
+
+function requiresDoubleGate(scope: MemoryEntryScope): boolean {
+  return scope === 'platform' || scope === 'shared';
+}
+
+function hasDoubleGateEvidence(evidenceRefs: readonly string[]): boolean {
+  const hasReviewer = evidenceRefs.some((ref) => /(?:critic|reviewer|review)[:/]/i.test(ref));
+  const hasOwner = evidenceRefs.some((ref) => /(?:owner|user|whiteParachute)[:/]/i.test(ref));
+  return hasReviewer && hasOwner;
+}
+
+function scanLegacyMarkdown(scopeRoot: string): MarkdownCandidate[] {
+  const candidates: MarkdownCandidate[] = [];
+  collectMarkdown(join(scopeRoot, 'knowledge'), 'persistent', candidates);
+  collectMarkdown(join(scopeRoot, 'impressions'), 'session', candidates);
+  collectMarkdown(join(scopeRoot, 'impressions', 'archived'), 'session', candidates);
+  collectMarkdown(join(scopeRoot, 'knowledge', '.pending'), 'session', candidates);
+  return candidates;
+}
+
+function collectMarkdown(dir: string, layer: MemoryLayer, out: MarkdownCandidate[]): void {
+  for (const name of safeList(dir)) {
+    const file = join(dir, name);
+    const stat = statSafe(file);
+    if (!stat || !stat.isFile() || !name.endsWith('.md')) continue;
+    out.push({ file, layer });
+  }
+}
+
+function statSafe(file: string): ReturnType<typeof statSync> | null {
+  try {
+    return statSync(file);
+  } catch {
+    return null;
+  }
+}
+
+function stringFrontmatter(value: Frontmatter[string]): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function arrayFrontmatter(value: Frontmatter[string]): readonly string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function numberFrontmatter(value: Frontmatter[string]): number | undefined {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.length > 0 && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+function firstMarkdownHeading(content: string): string | undefined {
+  const heading = content.split(/\r?\n/).find((line) => /^#\s+/.test(line));
+  return heading?.replace(/^#\s+/, '').trim();
+}
+
+function verificationStatusFromFrontmatter(value: Frontmatter[string]): VerificationStatus {
+  if (
+    value === 'unverified' ||
+    value === 'verified' ||
+    value === 'conflicted' ||
+    value === 'rejected'
+  ) {
+    return value;
+  }
+  return 'unverified';
+}
+
+function assertLayer(layer: string): asserts layer is MemoryLayer {
+  if (layer !== 'session' && layer !== 'persistent' && layer !== 'skill') {
+    throw new Error(`MemoryFabric.writeEntry: unsupported layer '${layer}'`);
+  }
+}
+
+function assertVerificationStatus(status: string): asserts status is VerificationStatus {
+  if (status !== 'unverified' && status !== 'verified' && status !== 'conflicted' && status !== 'rejected') {
+    throw new Error(`MemoryFabric.writeEntry: unsupported verificationStatus '${status}'`);
+  }
+}
+
+function assertEntryScope(scope: string): asserts scope is MemoryEntryScope {
+  if (scope === 'platform' || scope === 'shared') return;
+  if (scope.startsWith('agent:') && scope.slice('agent:'.length).length > 0) return;
+  if (scope.startsWith('project:') && scope.slice('project:'.length).length > 0) return;
+  throw new Error(`MemoryFabric.writeEntry: unsupported scope '${scope}'`);
+}
 
 function firstLine(s: string): string {
   const line = s.split(/\r?\n/).find((l) => l.trim().length > 0) ?? '';

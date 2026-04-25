@@ -1,7 +1,7 @@
 ---
 id: FEAT-021
 title: Memory Fabric v1（三层记忆与 FTS5）
-status: approved
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-25
@@ -197,3 +197,5 @@ interface MemoryFabric {
 
 - 2026-04-25: Codex — 初稿，定义 Memory Fabric v1 三层记忆、FTS5 read model、验证状态与 Dashboard/API 边界。
 - 2026-04-25: whiteParachute — 关闭 Open Questions 并批准进入实现：session 不设独立 TTL；skill memory Phase 1 以 SQLite + assetRef 为准；platform/shared verified 采用双门控。
+- 2026-04-25: Codex — 实现开始，状态改为 in-progress；PR 合入前不标 done。
+- 2026-04-25: Codex — 实现完成并标记 done：落地 `MemoryFabric` v1 API、SQLite FTS5 read model、scope/layer/verification/assetRef、aria-memory rebuild、Runner 来源/不确定性注入和文档同步。验证通过：`pnpm -F @haro/core build`、`pnpm -F @haro/core test`、`pnpm -F @haro/cli test`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm smoke`。

@@ -6,6 +6,10 @@
 
 export type MemoryScope = 'platform' | 'agent' | 'shared';
 
+export type MemoryLayer = 'session' | 'persistent' | 'skill';
+export type MemoryEntryScope = 'platform' | 'shared' | `agent:${string}` | `project:${string}`;
+export type VerificationStatus = 'unverified' | 'verified' | 'conflicted' | 'rejected';
+
 export type MemorySource = string;
 
 export interface MemoryWriteInput {
@@ -89,10 +93,16 @@ export interface MemoryContextItem {
   sourceFile: string;
   date?: string;
   tier: MemoryQueryHit['tier'];
+  entryId?: string;
+  layer?: MemoryLayer;
+  scope?: MemoryEntryScope;
+  verificationStatus?: VerificationStatus;
+  uncertainty?: string;
 }
 
 export interface MemoryContextResult {
   items: readonly MemoryContextItem[];
+  generatedAt?: string;
 }
 
 export interface MemoryWrapupInput {
@@ -115,6 +125,11 @@ export interface MemoryStats {
   root: string;
   scopes: readonly MemoryScopeStats[];
   lastMaintenanceAt?: string;
+  totalEntries?: number;
+  archivedEntries?: number;
+  byLayer?: Readonly<Record<MemoryLayer, number>>;
+  byScope?: Readonly<Record<string, number>>;
+  byVerificationStatus?: Readonly<Record<VerificationStatus, number>>;
 }
 
 export interface MemoryScopeStats {
@@ -138,4 +153,84 @@ export interface MemoryMaintenanceReport {
   steps: readonly MemoryMaintenanceStepReport[];
   ranAt: string;
   changelogEntry: string;
+}
+
+export interface MemoryEntry {
+  id: string;
+  layer: MemoryLayer;
+  scope: MemoryEntryScope;
+  agentId?: string;
+  topic: string;
+  summary: string;
+  content: string;
+  contentPath?: string;
+  contentHash: string;
+  sourceRef: string;
+  assetRef?: string;
+  verificationStatus: VerificationStatus;
+  confidence?: number;
+  tags: readonly string[];
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string;
+  archivedReason?: string;
+  verificationEvidenceRefs: readonly string[];
+}
+
+export interface WriteMemoryEntryInput {
+  layer: MemoryLayer;
+  scope: MemoryEntryScope;
+  agentId?: string;
+  topic: string;
+  summary?: string;
+  content: string;
+  contentPath?: string;
+  contentHash?: string;
+  sourceRef: string;
+  assetRef?: string;
+  verificationStatus?: VerificationStatus;
+  confidence?: number;
+  tags?: readonly string[];
+}
+
+export interface MemoryQuery {
+  keyword?: string;
+  query?: string;
+  scope?: MemoryEntryScope;
+  scopes?: readonly MemoryEntryScope[];
+  agentId?: string;
+  layer?: MemoryLayer | readonly MemoryLayer[];
+  verificationStatus?: VerificationStatus | readonly VerificationStatus[];
+  assetRef?: string;
+  skillId?: string;
+  tags?: readonly string[];
+  since?: string;
+  includeArchived?: boolean;
+  limit?: number;
+}
+
+export interface MemorySearchResult {
+  entry: MemoryEntry;
+  score: number;
+  rank: number;
+  matchedBy: readonly string[];
+}
+
+export interface MemoryContextQuery extends MemoryQuery {
+  agentId: string;
+  includeUnverified?: boolean;
+  limit?: number;
+}
+
+export interface RebuildIndexOptions {
+  scope?: MemoryEntryScope;
+  dryRun?: boolean;
+}
+
+export interface RebuildResult {
+  scanned: number;
+  indexed: number;
+  skipped: number;
+  errors: readonly string[];
+  dryRun: boolean;
 }

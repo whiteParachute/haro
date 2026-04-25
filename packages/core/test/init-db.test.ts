@@ -1,4 +1,4 @@
-/** AC4 — SQLite init is idempotent; WAL + FTS5 enabled; 5 tables present. */
+/** AC4 — SQLite init is idempotent; WAL + FTS5 enabled; expected tables present. */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,8 @@ const EXPECTED_TABLE_NAMES = [
   'workflow_checkpoints',
   'provider_fallback_log',
   'component_usage',
+  'memory_entries',
+  'memory_entries_fts',
 ];
 
 function listUserTables(dbFile: string): string[] {
@@ -42,7 +44,7 @@ describe('initHaroDatabase [FEAT-001]', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('AC4 creates all five tables with WAL journaling', () => {
+  it('AC4 creates all expected tables with WAL journaling', () => {
     const result = initHaroDatabase({ dbFile });
     expect(result.journalMode.toLowerCase()).toBe('wal');
     expect(result.tables).toEqual(EXPECTED_TABLE_NAMES);
@@ -55,6 +57,23 @@ describe('initHaroDatabase [FEAT-001]', () => {
   it('R5 FTS5 extension is available (probe table succeeds)', () => {
     const result = initHaroDatabase({ dbFile });
     expect(result.fts5Available).toBe(true);
+  });
+
+  it('FEAT-021 creates memory_entries + memory_entries_fts for FTS read model', () => {
+    initHaroDatabase({ dbFile });
+    const db = new Database(dbFile, { readonly: true });
+    try {
+      const memoryTable = db
+        .prepare(`SELECT name FROM sqlite_master WHERE name = 'memory_entries'`)
+        .get() as { name: string } | undefined;
+      const ftsTable = db
+        .prepare(`SELECT name FROM sqlite_master WHERE name = 'memory_entries_fts'`)
+        .get() as { name: string } | undefined;
+      expect(memoryTable?.name).toBe('memory_entries');
+      expect(ftsTable?.name).toBe('memory_entries_fts');
+    } finally {
+      db.close();
+    }
   });
 
   it('AC4 second invocation is idempotent: no error and schema unchanged', () => {
