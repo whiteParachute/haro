@@ -1,4 +1,5 @@
 import { serve, type ServerType } from '@hono/node-server';
+import { getWebSocketManager } from './index.js';
 import type { WebApp, WebServerOptions } from './types.js';
 
 export interface WebServerHandle {
@@ -29,6 +30,13 @@ export function startWebServer(app: WebApp, options: WebServerOptions): WebServe
     resolveReady();
   });
   let stopped = false;
+
+  const websocketManager = getWebSocketManager(app);
+  if (websocketManager) {
+    server.on('upgrade', (request, socket, head) => {
+      websocketManager.handleUpgrade(request, socket, head);
+    });
+  }
 
   server.once('error', onStartupError);
 

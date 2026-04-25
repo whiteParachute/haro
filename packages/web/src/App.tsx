@@ -10,6 +10,9 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { HomePage } from '@/pages/HomePage';
+import { ChatPage } from '@/pages/ChatPage';
+import { SessionsPage } from '@/pages/SessionsPage';
+import { SessionDetailPage } from '@/pages/SessionDetailPage';
 
 function PlaceholderPage({
   title,
@@ -33,7 +36,7 @@ function PlaceholderPage({
   );
 }
 
-const placeholderRoutes = navigationItems.filter((item) => item.to !== '/');
+const placeholderRoutes = navigationItems.filter((item) => !['/', '/chat', '/sessions'].includes(item.to));
 
 export default function App() {
   return (
@@ -41,6 +44,9 @@ export default function App() {
       <Routes>
         <Route element={<RootLayout />}>
           <Route index element={<HomePage />} />
+          <Route path="chat" element={<ChatPage />} />
+          <Route path="sessions" element={<SessionsPage />} />
+          <Route path="sessions/:id" element={<SessionDetailPage />} />
           {placeholderRoutes.map((item) => (
             <Route
               key={item.to}

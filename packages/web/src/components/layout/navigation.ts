@@ -29,14 +29,14 @@ export const navigationItems: NavigationItem[] = [
     to: '/chat',
     label: 'Chat',
     title: 'Chat',
-    description: '多 Agent 对话页面占位。',
+    description: '与 Agent 对话并实时查看事件流。',
     icon: MessageSquare,
   },
   {
     to: '/sessions',
     label: 'Sessions',
     title: 'Sessions',
-    description: '会话与运行记录页面占位。',
+    description: '分页浏览 Agent sessions 与事件历史。',
     icon: Workflow,
   },
   {

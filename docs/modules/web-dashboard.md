@@ -8,8 +8,8 @@ Web Dashboard 是 Haro 的可视化呈现层。FEAT-015 交付的是基础框架
 
 | 层 | 路径 | 职责 |
 | --- | --- | --- |
-| 前端 | `packages/web/` | React 19 + Vite 8 + Tailwind 4 + shadcn/ui 风格组件，提供 Dashboard shell、占位首页、主题切换、API client/auth store 骨架。 |
-| 后端 | `packages/cli/src/web/` | Hono app factory、API key 认证中间件、HTTP server 启停、生产静态文件服务。 |
+| 前端 | `packages/web/` | React 19 + Vite 8 + Tailwind 4 + shadcn/ui 风格组件，提供 Dashboard shell、首页、Chat、Sessions、Session Detail、主题切换、API/WS client 与 auth/chat/session stores。 |
+| 后端 | `packages/cli/src/web/` | Hono app factory、API key 认证中间件、Agents/Sessions REST、`/ws` WebSocket 协议、HTTP server 启停、生产静态文件服务。 |
 | CLI | `packages/cli/src/index.ts` | 通过 `registerCommand()` 注册 `haro web`，支持 `--port` 与 `--host`。 |
 | 根脚本 | `package.json` | `pnpm dev:web` 同时启动 Vite dev server 与 Hono API server。 |
 
@@ -40,6 +40,9 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
 - `GET /chat`、`GET /sessions`、`GET /status` 等 BrowserRouter 深链会 fallback 到
   `index.html`，便于直接打开或刷新客户端路由
 - `GET /api/health` 返回基础健康检查 JSON
+- `GET /api/v1/agents` / `GET /api/v1/agents/:id` 返回 Agent 只读 read-model；列表仅暴露 `id`、`name`、`summary`、`defaultProvider`、`defaultModel`，详情额外暴露 `systemPrompt` 与 `tools`
+- `POST /api/v1/agents/:id/run` 与 `/chat` 使用严格请求体 schema，未知字段返回 400；执行事件通过 `/ws` 推送
+- `GET /api/v1/sessions`、`GET /api/v1/sessions/:id`、`GET /api/v1/sessions/:id/events`、`DELETE /api/v1/sessions/:id` 提供 session 浏览、详情与删除能力
 
 ## 认证与日志
 
@@ -51,11 +54,20 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
   `haro:web-api-key` localStorage key，便于用户恢复
 - 所有 HTTP 请求通过 `createLogger()` 写入 `~/.haro/logs/haro.log`，日志为 pino JSON 格式，至少包含 `method`、`path`、`statusCode`、`durationMs`
 
+## Agent Interaction（FEAT-016）
+
+FEAT-016 在 foundation 上补齐 Agent 交互层：
+
+- Chat 页面使用 WebSocket `authenticate`、`chat.start`、`chat.message`、`chat.cancel`、`subscribe` 协议接收实时事件；前端断线后按 1s、2s、4s 指数退避重连，最大 30s，并恢复未完成 session 观察。
+- 服务端推送 `authenticated`、`event.stream`、`event.result`、`event.error`、`session.update`、`system.status`，并通过 `AgentRunner.run({ onEvent })` 旁路推送事件；Dashboard 不修改 Runner 核心执行语义。
+- Sessions 列表默认仅展示 `sessionId`、`agentId`、`status`、`createdAt`，详情页将连续 text delta 折叠为消息，tool_call/tool_result 默认收起 JSON。
+- Chat 最近选择持久化到 `localStorage["haro:lastChatConfig"]`，包括 `agentId`、`providerId`、`modelId`。
+
 ## 与后续 FEAT 的边界
 
-FEAT-015 只交付 Dashboard foundation，不包含业务页面或 WebSocket。后续 FEAT 在该基础上扩展：
+FEAT-015 交付 Dashboard foundation，FEAT-016 交付 Chat/Sessions/WebSocket。后续 FEAT 在该基础上扩展：
 
-- FEAT-016：Agent Interaction（Chat、Sessions、WebSocket）
+- FEAT-016：Agent Interaction（Chat、Sessions、WebSocket）— 已进入实现态，合入完成后关闭。
 - FEAT-017：System Management（Status、Settings；仅通过 `/status`/`/doctor`/config sources 内嵌 Channel Health，只读消费，不拥有独立 `/api/v1/channels*`）
 - FEAT-018：Orchestration & Observability（Dispatch、Knowledge、Skills、Logs、Monitor）
 - FEAT-019：Channel & Agent Management（独立 `/api/v1/channels*`、Channel 操作、Gateway、Agent YAML 管理）

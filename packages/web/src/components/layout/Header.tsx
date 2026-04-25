@@ -5,7 +5,11 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle';
 
 export function Header() {
   const location = useLocation();
-  const header = navigationItems.find((item) => item.to === location.pathname) ?? fallbackPageMeta;
+  const header =
+    navigationItems.find((item) => item.to === location.pathname) ??
+    (location.pathname.startsWith('/sessions/')
+      ? { title: 'Session Detail', description: '查看完整事件时间线。' }
+      : fallbackPageMeta);
 
   return (
     <header className="sticky top-0 z-10 border-b border-border bg-background/80 px-6 py-4 backdrop-blur md:px-8">

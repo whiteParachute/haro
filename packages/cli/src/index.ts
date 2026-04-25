@@ -725,7 +725,17 @@ function registerWebCommand(program: Command, app: AppContext): void {
             import('./web/index.js'),
             import('./web/server.js'),
           ]);
-          const handle = startWebServer(createWebApp(), { port, host: options.host });
+          const handle = startWebServer(
+            createWebApp({
+              runtime: {
+                agentRegistry: app.agentRegistry,
+                createRunner: app.createRunner,
+                root: app.opts.root,
+                dbFile: app.paths.dbFile,
+              },
+            }),
+            { port, host: options.host },
+          );
           await handle.ready;
           app.stdout.write(`Haro web dashboard listening on ${handle.url}\n`);
         });

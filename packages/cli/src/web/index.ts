@@ -5,9 +5,14 @@ import { Hono } from 'hono';
 import { compress } from 'hono/compress';
 import { cors } from 'hono/cors';
 import type { MiddlewareHandler } from 'hono';
+import { AgentRegistry } from '@haro/core';
 import { apiKeyAuth, warnIfApiKeyAuthDisabled } from './auth.js';
 import { createWebLogger } from './logger.js';
 import type { ApiKeyAuthEnv, WebApp, WebLogger } from './types.js';
+import { createAgentsRoute } from './routes/agents.js';
+import { createSessionsRoute } from './routes/sessions.js';
+import type { WebRuntime } from './runtime.js';
+import { WebSocketManager } from './websocket/manager.js';
 
 const VITE_DEV_ORIGIN = 'http://localhost:5173';
 const ALLOWED_CORS_HEADERS = ['content-type', 'authorization', 'x-api-key'];
@@ -15,6 +20,13 @@ const ALLOWED_CORS_HEADERS = ['content-type', 'authorization', 'x-api-key'];
 export interface CreateWebAppOptions {
   logger?: WebLogger;
   staticRoot?: string;
+  runtime?: Omit<WebRuntime, 'logger' | 'startedAt'> & Partial<Pick<WebRuntime, 'logger' | 'startedAt'>>;
+}
+
+const websocketManagers = new WeakMap<WebApp, WebSocketManager>();
+
+export function getWebSocketManager(app: WebApp): WebSocketManager | undefined {
+  return websocketManagers.get(app);
 }
 
 export function resolveWebDistRoot(cwd = process.cwd()): string {
@@ -48,6 +60,17 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   const logger = options.logger ?? createWebLogger('cli.web');
   const staticRoot = options.staticRoot ?? resolveWebDistRoot();
   const app = new Hono<ApiKeyAuthEnv>();
+  const runtime: WebRuntime = {
+    agentRegistry: options.runtime?.agentRegistry ?? new AgentRegistry(),
+    ...(options.runtime?.runner ? { runner: options.runtime.runner } : {}),
+    ...(options.runtime?.createRunner ? { createRunner: options.runtime.createRunner } : {}),
+    ...(options.runtime?.root ? { root: options.runtime.root } : {}),
+    ...(options.runtime?.dbFile ? { dbFile: options.runtime.dbFile } : {}),
+    logger,
+    startedAt: options.runtime?.startedAt ?? Date.now(),
+  };
+  const websocketManager = new WebSocketManager(runtime);
+  websocketManagers.set(app, websocketManager);
 
   warnIfApiKeyAuthDisabled(logger);
   app.use('*', createRequestLogger(logger));
@@ -69,6 +92,8 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
       },
     }),
   );
+  app.route('/api/v1/agents', createAgentsRoute(runtime, websocketManager));
+  app.route('/api/v1/sessions', createSessionsRoute(runtime));
   app.use('/*', serveStatic({ root: staticRoot }));
   app.get('*', async (c, next) => {
     if (!shouldServeSpaFallback(c.req.method, c.req.path)) {
