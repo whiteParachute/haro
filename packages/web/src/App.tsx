@@ -11,6 +11,9 @@ import {
 } from '@/components/ui/Card';
 import { HomePage } from '@/pages/HomePage';
 import { ChatPage } from '@/pages/ChatPage';
+import { ChannelPage } from '@/pages/ChannelPage';
+import { GatewayPage } from '@/pages/GatewayPage';
+import { AgentEditorPage } from '@/pages/AgentEditorPage';
 import { SessionsPage } from '@/pages/SessionsPage';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { StatusPage } from '@/pages/StatusPage';
@@ -38,7 +41,8 @@ function PlaceholderPage({
   );
 }
 
-const placeholderRoutes = navigationItems.filter((item) => !['/', '/chat', '/sessions', '/status', '/settings'].includes(item.to));
+const concreteRoutes = ['/', '/chat', '/sessions', '/status', '/settings', '/channels', '/gateway', '/agents'];
+const placeholderRoutes = navigationItems.filter((item) => !concreteRoutes.includes(item.to));
 
 export default function App() {
   return (
@@ -50,6 +54,9 @@ export default function App() {
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="sessions/:id" element={<SessionDetailPage />} />
           <Route path="status" element={<StatusPage />} />
+          <Route path="channels" element={<ChannelPage />} />
+          <Route path="gateway" element={<GatewayPage />} />
+          <Route path="agents" element={<AgentEditorPage />} />
           <Route path="settings" element={<SettingsPage />} />
           {placeholderRoutes.map((item) => (
             <Route

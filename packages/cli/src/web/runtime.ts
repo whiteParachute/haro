@@ -5,6 +5,7 @@ import type { WebLogger } from './types.js';
 
 export interface WebRuntime {
   agentRegistry: AgentRegistry;
+  reloadAgentRegistry?: () => Promise<AgentRegistry>;
   runner?: AgentRunner;
   createRunner?: (createSessionId?: () => string) => AgentRunner;
   root?: string;
