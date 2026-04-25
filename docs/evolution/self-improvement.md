@@ -10,6 +10,7 @@ Haro 的自我改进机制将平台本身作为被改进的对象，实现从单
 
 - **eat**（摄入）：把外部知识 / 用户反馈 / 调研产出沉淀为 rules / skills / Agent 配置 / Memory Fabric 条目。带质量门槛（四问验证）和防膨胀检查。
 - **shit**（排出）：扫描现有外挂组件（rules / skills / MCP / memory），评估必要性，归档冗余项（可回滚）。
+- **Evolution Asset Registry**（资产注册表）：Phase 1 起记录 eat/shit 影响的 skill、prompt、routing rule、memory 与 archive，提供版本、来源和审计日志。
 
 两者与四层改进的关系：
 
@@ -19,6 +20,16 @@ Haro 的自我改进机制将平台本身作为被改进的对象，实现从单
 | L1 编排模式调整 | 新编排规则通过 eat 沉淀；未被触发的规则通过 shit 清除 |
 | L2 代码重构 | eat 不直接操作代码；shit 可淘汰被新实现取代的旧代码（提 PR） |
 | L3 架构演进 | 涉及 eat / shit 规则本身的演进 |
+
+Phase 1 只建立资产注册和审计，不自动执行 L0/L1 进化；自动应用仍从 Phase 2 开始。
+
+FEAT-022 的 Registry API 边界：
+
+- `EvolutionAssetRegistry` 是 core 可 import 模块，提供 `listAssets()`、`getAsset()`、`recordEvent()`、`resolveByContentHash()`、`exportManifest()`。
+- Registry 只维护资产 read model 和 append-only audit events；原始 skill、prompt、routing rule、memory、archive 文件仍是人类可读 source/canonical。
+- prompt asset 的 Phase 1 最小边界是完整 Agent `systemPrompt`；`@model-dependent` 块级治理留给 Phase 2+。
+- routing-rule asset 只覆盖用户/项目级覆盖规则；内建 RoutingMatrix 只能作为只读 baseline/sourceRef 注册或导出，不能在 Phase 1 被 Registry 当作可修改生命周期对象。
+- GEP metadata (`signalRef/geneRef/promptRef/eventRef`) 是可选追溯字段；缺失时不得阻断 eat/shit、Skills 或 Memory Fabric 流程。
 
 详细规范：[specs/evolution-metabolism.md](../../specs/evolution-metabolism.md)。
 
@@ -169,6 +180,8 @@ CI/CD 自动验证（测试 + Lint + 类型检查）
 ## Evolution Dashboard
 
 进化过程可视化（Phase 2 交付）：
+
+Phase 2 Dashboard 复用 Phase 1 的 Evolution Asset Registry、workflow checkpoint 和编排调试 API。也就是说，进化日志不是孤立页面，而是能追溯到具体 asset 版本、signal/source、执行事件和 rollback 记录。
 
 ```
 ┌─────────────────────────────────────────────┐

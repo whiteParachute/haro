@@ -147,7 +147,73 @@ export const MEMORY_READ_MODEL_TABLES: readonly TableDefinition[] = [
   },
 ];
 
+export const EVOLUTION_ASSET_TABLES: readonly TableDefinition[] = [
+  {
+    name: 'evolution_assets',
+    ddl: `CREATE TABLE IF NOT EXISTS evolution_assets (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL
+        CHECK (kind IN ('skill', 'prompt', 'routing-rule', 'memory', 'mcp', 'archive')),
+      name TEXT NOT NULL,
+      version INTEGER NOT NULL CHECK (version >= 1),
+      status TEXT NOT NULL
+        CHECK (status IN ('proposed', 'active', 'archived', 'rejected', 'superseded')),
+      source_ref TEXT NOT NULL,
+      content_ref TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      created_by TEXT NOT NULL
+        CHECK (created_by IN ('user', 'agent', 'eat', 'shit', 'migration')),
+      gep_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_evolution_assets_kind_status
+         ON evolution_assets(kind, status, updated_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_evolution_assets_content_hash
+         ON evolution_assets(content_hash)`,
+      `CREATE INDEX IF NOT EXISTS idx_evolution_assets_kind_name
+         ON evolution_assets(kind, name)`,
+      `CREATE INDEX IF NOT EXISTS idx_evolution_assets_source_ref
+         ON evolution_assets(source_ref)`,
+    ],
+  },
+  {
+    name: 'evolution_asset_events',
+    ddl: `CREATE TABLE IF NOT EXISTS evolution_asset_events (
+      id TEXT PRIMARY KEY,
+      asset_id TEXT NOT NULL,
+      type TEXT NOT NULL
+        CHECK (type IN (
+          'proposed',
+          'promoted',
+          'used',
+          'modified',
+          'enabled',
+          'disabled',
+          'archived',
+          'rollback',
+          'rejected',
+          'superseded',
+          'conflict'
+        )),
+      actor TEXT NOT NULL CHECK (actor IN ('user', 'agent', 'system')),
+      evidence_refs_json TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(asset_id) REFERENCES evolution_assets(id)
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_evolution_asset_events_asset_id
+         ON evolution_asset_events(asset_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_evolution_asset_events_type
+         ON evolution_asset_events(type, created_at)`,
+    ],
+  },
+];
+
 export const HARO_TABLES: readonly TableDefinition[] = [
   ...CORE_TABLES,
   ...MEMORY_READ_MODEL_TABLES,
+  ...EVOLUTION_ASSET_TABLES,
 ];

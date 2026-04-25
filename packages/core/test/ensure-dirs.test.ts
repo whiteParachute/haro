@@ -1,4 +1,4 @@
-/** AC5 — first run creates all 7 required subdirectories under the Haro root. */
+/** AC5 — first run creates all required subdirectories under the Haro root. */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,7 +21,7 @@ describe('ensureHaroDirectories [FEAT-001]', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('AC5 creates all 7 required subdirectories on first run', () => {
+  it('AC5 creates all required subdirectories on first run', () => {
     const result = ensureHaroDirectories(root);
     expect(result.created.length).toBe(REQUIRED_HARO_SUBDIRS.length);
     expect(result.existed).toEqual([]);
@@ -39,9 +39,9 @@ describe('ensureHaroDirectories [FEAT-001]', () => {
     expect(again.existed.length).toBe(REQUIRED_HARO_SUBDIRS.length);
   });
 
-  it('AC5 exposes exactly the 7 documented subdirectories', () => {
+  it('AC5 exposes exactly the documented subdirectories', () => {
     expect([...REQUIRED_HARO_SUBDIRS].sort()).toEqual(
-      ['agents', 'archive', 'channels', 'evolution-context', 'logs', 'memory', 'skills'].sort(),
+      ['agents', 'archive', 'assets', 'channels', 'evolution-context', 'logs', 'memory', 'skills'].sort(),
     );
   });
 });

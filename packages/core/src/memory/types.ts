@@ -26,6 +26,8 @@ export interface MemoryWriteInput {
   summary?: string;
   tags?: readonly string[];
   source?: MemorySource;
+  /** Optional Evolution Asset Registry id for reverse lookup. */
+  assetRef?: string;
 }
 
 export interface MemoryDepositInput {

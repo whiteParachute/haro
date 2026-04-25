@@ -40,6 +40,10 @@
       "types": "./dist/memory/index.d.ts",
       "default": "./dist/memory/index.js"
     },
+    "./evolution": {
+      "types": "./dist/evolution/index.d.ts",
+      "default": "./dist/evolution/index.js"
+    },
     "./agent": {
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"

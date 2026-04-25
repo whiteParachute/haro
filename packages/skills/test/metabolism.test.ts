@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createEvolutionAssetRegistry, createMemoryFabric } from '@haro/core';
 import { SkillsManager } from '../src/index.js';
 
 const roots: string[] = [];
@@ -105,6 +106,23 @@ describe('Metabolism commands [FEAT-011]', () => {
     expect(existsSync(join(bundle, 'rules'))).toBe(true);
     expect(existsSync(join(bundle, 'skills'))).toBe(true);
     expect(existsSync(join(root, 'memory', 'agents', 'haro-assistant', 'index.md'))).toBe(true);
+    const manifest = JSON.parse(readFileSync(join(bundle, 'manifest.json'), 'utf8')) as {
+      memoryWrites: Array<{ assetRef: string }>;
+      proposals: Array<{ type: string; assetId: string; eventType: string }>;
+    };
+    const registry = createEvolutionAssetRegistry({ root });
+    const skillProposal = manifest.proposals.find((item) => item.type === 'skills');
+    expect(skillProposal?.eventType).toBe('proposed');
+    const skillAsset = registry.getAsset(skillProposal!.assetId, { includeEvents: true });
+    expect(skillAsset?.status).toBe('proposed');
+    expect(skillAsset?.events.map((event) => event.type)).toContain('proposed');
+    const memoryHits = createMemoryFabric({ root: join(root, 'memory'), dbFile: join(root, 'haro.db') }).queryEntries({
+      assetRef: manifest.memoryWrites[0]!.assetRef,
+      keyword: 'Keep interfaces narrow',
+      limit: 5,
+    });
+    expect(memoryHits.length).toBeGreaterThanOrEqual(1);
+    registry.close();
 
     const largeInput = join(root, 'large.md');
     writeFileSync(
@@ -114,8 +132,8 @@ describe('Metabolism commands [FEAT-011]', () => {
     );
     await manager.invokeCommandSkill('eat', { input: largeInput, yes: true, as: 'path' });
     const secondBundle = newestDir(archiveRoot);
-    const manifest = JSON.parse(readFileSync(join(secondBundle, 'manifest.json'), 'utf8')) as { suggestions: Array<{ reason: string }> };
-    expect(manifest.suggestions.some((item) => item.reason.includes('too large'))).toBe(true);
+    const largeManifest = JSON.parse(readFileSync(join(secondBundle, 'manifest.json'), 'utf8')) as { suggestions: Array<{ reason: string }> };
+    expect(largeManifest.suggestions.some((item) => item.reason.includes('too large'))).toBe(true);
     expect(existsSync(join(secondBundle, 'rules', 'rule-huge-proposal.md'))).toBe(false);
     manager.close();
   });
@@ -137,9 +155,18 @@ describe('Metabolism commands [FEAT-011]', () => {
     expect(archived.output).toContain('archived to');
     expect(existsSync(join(root, 'skills', 'user', 'custom-skill'))).toBe(false);
     const archiveId = readDirSingle(join(root, 'archive')).split('/').pop()!;
+    const registry = createEvolutionAssetRegistry({ root });
+    const archivedAsset = registry.getAsset('skill:custom-skill', { includeEvents: true });
+    expect(archivedAsset?.status).toBe('archived');
+    expect(archivedAsset?.events.map((event) => event.type)).toEqual(expect.arrayContaining(['promoted', 'archived']));
+    expect(registry.getAsset(`archive:${archiveId}`)?.kind).toBe('archive');
     const rollback = await manager.invokeCommandSkill('shit', { archiveId });
     expect(rollback.output).toContain('restored');
     expect(existsSync(join(root, 'skills', 'user', 'custom-skill', 'SKILL.md'))).toBe(true);
+    const rolledBackAsset = registry.getAsset('skill:custom-skill', { includeEvents: true });
+    expect(rolledBackAsset?.status).toBe('active');
+    expect(rolledBackAsset?.events.map((event) => event.type)).toContain('rollback');
+    registry.close();
     manager.close();
   });
 });

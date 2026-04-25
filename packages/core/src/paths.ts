@@ -11,6 +11,7 @@ export interface HaroPaths {
     skills: string;
     channels: string;
     memory: string;
+    assets: string;
     logs: string;
     evolutionContext: string;
     archive: string;
@@ -22,6 +23,7 @@ const REQUIRED_SUBDIRS = [
   'skills',
   'channels',
   'memory',
+  'assets',
   'logs',
   'evolution-context',
   'archive',
@@ -46,6 +48,7 @@ export function buildHaroPaths(override?: string): HaroPaths {
       skills: join(root, 'skills'),
       channels: join(root, 'channels'),
       memory: join(root, 'memory'),
+      assets: join(root, 'assets'),
       logs: join(root, 'logs'),
       evolutionContext: join(root, 'evolution-context'),
       archive: join(root, 'archive'),

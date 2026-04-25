@@ -2,8 +2,8 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { buildHaroPaths, createMemoryFabric } from '@haro/core';
-import type { MemoryFabric } from '@haro/core';
+import { buildHaroPaths, createEvolutionAssetRegistry, createMemoryFabric, hashEvolutionAssetContent } from '@haro/core';
+import type { EvolutionAssetEventType, EvolutionAssetRegistry, EvolutionAssetStatus, MemoryFabric } from '@haro/core';
 import { parseSkillFile } from './frontmatter.js';
 import { rollbackShit, runEat, runShit, type EatCommandInput, type ShitCommandInput, type ShitRollbackInput } from './metabolism.js';
 import { SkillUsageTracker } from './usage-tracker.js';
@@ -27,6 +27,7 @@ const PREINSTALLED_MANIFEST = join(RESOURCE_ROOT, 'preinstalled-manifest.json');
 export interface SkillsManagerOptions {
   root: string;
   now?: () => Date;
+  registry?: EvolutionAssetRegistry;
 }
 
 export class SkillsManager {
@@ -41,6 +42,8 @@ export class SkillsManager {
   private readonly now: () => Date;
   private readonly usage: SkillUsageTracker;
   private readonly memoryFabric: MemoryFabric;
+  private readonly registry: EvolutionAssetRegistry;
+  private readonly ownsRegistry: boolean;
 
   constructor(options: SkillsManagerOptions) {
     this.root = options.root;
@@ -56,6 +59,8 @@ export class SkillsManager {
     mkdirSync(this.userRoot, { recursive: true });
     this.usage = new SkillUsageTracker(this.usageFile);
     this.memoryFabric = createMemoryFabric({ root: this.paths.dirs.memory });
+    this.registry = options.registry ?? createEvolutionAssetRegistry({ root: this.root, now: this.now });
+    this.ownsRegistry = options.registry === undefined;
   }
 
   ensureInitialized(): void {
@@ -100,6 +105,7 @@ export class SkillsManager {
     if (!entry) throw new Error(`Skill '${skillId}' not installed`);
     entry.enabled = true;
     this.writeInstalledManifest(manifest);
+    this.recordSkillLifecycle(entry, 'enabled', { action: 'enable', enabled: true }, [entry.path]);
     return entry;
   }
 
@@ -110,6 +116,7 @@ export class SkillsManager {
     if (!entry) throw new Error(`Skill '${skillId}' not installed`);
     entry.enabled = false;
     this.writeInstalledManifest(manifest);
+    this.recordSkillLifecycle(entry, 'disabled', { action: 'disable', enabled: false }, [entry.path]);
     return entry;
   }
 
@@ -121,9 +128,17 @@ export class SkillsManager {
     if (entry.isPreinstalled) {
       throw new Error('预装 skill 不可卸载');
     }
+    const contentHash = this.hashSkillEntry(entry);
     rmSync(entry.path, { recursive: true, force: true });
     delete manifest.skills[skillId];
     this.writeInstalledManifest(manifest);
+    this.recordSkillLifecycle(
+      entry,
+      'archived',
+      { action: 'uninstall', enabled: entry.enabled },
+      [entry.path],
+      { contentHash, status: 'archived' },
+    );
     return entry;
   }
 
@@ -138,7 +153,7 @@ export class SkillsManager {
     return this.installFromPath(source);
   }
 
-  installFromPath(sourcePath: string): SkillManifestEntry {
+  installFromPath(sourcePath: string, recordLifecycle = true): SkillManifestEntry {
     const originalPath = resolve(sourcePath);
     const realPath = realpathSync(originalPath);
     const descriptor = this.readDescriptor(realPath, basenameId(realPath));
@@ -161,6 +176,9 @@ export class SkillsManager {
     };
     manifest.skills[descriptor.id] = next;
     this.writeInstalledManifest(manifest);
+    if (recordLifecycle) {
+      this.recordSkillLifecycle(next, 'promoted', { action: 'install', source: 'path' }, [originalPath]);
+    }
     return next;
   }
 
@@ -168,7 +186,7 @@ export class SkillsManager {
     const tempDir = mkdtempSync(join(tmpdir(), 'haro-skill-git-'));
     try {
       execFileSync('git', ['clone', '--depth', '1', gitUrl, tempDir], { stdio: 'ignore' });
-      const entry = this.installFromPath(tempDir);
+      const entry = this.installFromPath(tempDir, false);
       const manifest = this.readInstalledManifest();
       manifest.skills[entry.id] = {
         ...manifest.skills[entry.id]!,
@@ -176,6 +194,7 @@ export class SkillsManager {
         pinnedCommit: safeGitRev(tempDir) ?? safeGitRemoteHead(gitUrl) ?? 'git-head',
       };
       this.writeInstalledManifest(manifest);
+      this.recordSkillLifecycle(manifest.skills[entry.id]!, 'promoted', { action: 'install', source: 'git' }, [gitUrl]);
       return manifest.skills[entry.id]!;
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -234,6 +253,7 @@ export class SkillsManager {
     }
     const entry = this.requireEntry(resolved.skillId);
     this.usage.record(entry, this.now().toISOString());
+    this.recordSkillLifecycle(entry, 'used', { trigger: resolved.trigger }, [entry.path]);
     const descriptor = this.readDescriptor(entry.path, entry.id);
     const skillArgs = resolved.args.trim();
     switch (entry.handler) {
@@ -283,6 +303,7 @@ export class SkillsManager {
     this.ensureInitialized();
     const entry = this.requireEntry(skillId);
     this.usage.record(entry, this.now().toISOString());
+    this.recordSkillLifecycle(entry, 'used', { trigger: 'command' }, [entry.path]);
     if (skillId === 'eat') {
       return runEat({ ...(input as Omit<EatCommandInput, 'root'>), root: this.root });
     }
@@ -294,6 +315,52 @@ export class SkillsManager {
 
   close(): void {
     this.usage.close();
+    if (this.ownsRegistry) this.registry.close();
+  }
+
+  private recordSkillLifecycle(
+    entry: SkillManifestEntry,
+    type: EvolutionAssetEventType,
+    metadata: Record<string, unknown>,
+    evidenceRefs: readonly string[] = [],
+    overrides: { contentHash?: string; contentRef?: string; status?: EvolutionAssetStatus } = {},
+  ): void {
+    const contentHash = overrides.contentHash ?? this.hashSkillEntry(entry);
+    const contentRef = overrides.contentRef ?? entry.path;
+    this.registry.recordEvent({
+      assetId: skillAssetId(entry.id),
+      asset: {
+        id: skillAssetId(entry.id),
+        kind: 'skill',
+        name: entry.id,
+        status: overrides.status ?? 'active',
+        sourceRef: entry.originalSource,
+        contentRef,
+        contentHash,
+        createdBy: entry.source === 'preinstalled' ? 'migration' : 'user',
+      },
+      type,
+      actor: type === 'used' ? 'agent' : 'user',
+      evidenceRefs,
+      metadata: {
+        ...metadata,
+        skillId: entry.id,
+        installSource: entry.source,
+        isPreinstalled: entry.isPreinstalled,
+        pinnedCommit: entry.pinnedCommit,
+      },
+      ...(overrides.status ? { status: overrides.status } : {}),
+      contentRef,
+      contentHash,
+    });
+  }
+
+  private hashSkillEntry(entry: SkillManifestEntry): string {
+    const skillFile = join(entry.path, 'SKILL.md');
+    if (existsSync(skillFile)) {
+      return hashEvolutionAssetContent(readFileSync(skillFile, 'utf8'));
+    }
+    return hashEvolutionAssetContent(JSON.stringify({ id: entry.id, originalSource: entry.originalSource, path: entry.path }));
   }
 
   private requireEntry(skillId: string): SkillManifestEntry {
@@ -324,6 +391,10 @@ export class SkillsManager {
   private readBundledPreinstalledManifest(): InstalledSkillsManifest {
     return JSON.parse(readFileSync(PREINSTALLED_MANIFEST, 'utf8')) as InstalledSkillsManifest;
   }
+}
+
+function skillAssetId(skillId: string): string {
+  return `skill:${skillId}`;
 }
 
 function basenameId(skillPath: string): string {

@@ -15,6 +15,8 @@ const EXPECTED_TABLE_NAMES = [
   'component_usage',
   'memory_entries',
   'memory_entries_fts',
+  'evolution_assets',
+  'evolution_asset_events',
 ];
 
 function listUserTables(dbFile: string): string[] {
@@ -71,6 +73,27 @@ describe('initHaroDatabase [FEAT-001]', () => {
         .get() as { name: string } | undefined;
       expect(memoryTable?.name).toBe('memory_entries');
       expect(ftsTable?.name).toBe('memory_entries_fts');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('FEAT-022 creates evolution asset registry tables and event indexes', () => {
+    initHaroDatabase({ dbFile });
+    const db = new Database(dbFile, { readonly: true });
+    try {
+      const assetTable = db
+        .prepare(`SELECT name FROM sqlite_master WHERE name = 'evolution_assets'`)
+        .get() as { name: string } | undefined;
+      const eventTable = db
+        .prepare(`SELECT name FROM sqlite_master WHERE name = 'evolution_asset_events'`)
+        .get() as { name: string } | undefined;
+      const eventIndex = db
+        .prepare(`SELECT name FROM sqlite_master WHERE name = 'idx_evolution_asset_events_asset_id'`)
+        .get() as { name: string } | undefined;
+      expect(assetTable?.name).toBe('evolution_assets');
+      expect(eventTable?.name).toBe('evolution_asset_events');
+      expect(eventIndex?.name).toBe('idx_evolution_asset_events_asset_id');
     } finally {
       db.close();
     }

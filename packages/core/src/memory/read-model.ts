@@ -153,6 +153,19 @@ export class MemoryReadModel {
     return entry;
   }
 
+  attachAssetRef(id: string, assetRef: string, updatedAt: string): void {
+    const result = this.db
+      .prepare(
+        `UPDATE memory_entries
+            SET asset_ref = ?,
+                updated_at = ?
+          WHERE id = ?`,
+      )
+      .run(assetRef, updatedAt, id);
+    if (result.changes === 0) throw new Error(`MemoryFabric.writeEntry: unknown entry id '${id}'`);
+    this.refreshFts(id);
+  }
+
   markConflicted(ids: readonly string[], evidenceRefs: readonly string[], updatedAt: string): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(', ');

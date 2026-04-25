@@ -1,6 +1,7 @@
 export * as config from './config/index.js';
 export * as fs from './fs/index.js';
 export * as db from './db/index.js';
+export * as evolution from './evolution/index.js';
 export { buildHaroPaths, resolveHaroRoot, REQUIRED_HARO_SUBDIRS } from './paths.js';
 export type { HaroPaths } from './paths.js';
 export { createLogger, getDefaultLogger } from './logger/index.js';
@@ -77,6 +78,29 @@ export type {
   RebuildIndexOptions,
   RebuildResult,
 } from './memory/index.js';
+export {
+  EvolutionAssetRegistry,
+  createEvolutionAssetRegistry,
+  hashEvolutionAssetContent,
+} from './evolution/index.js';
+export type {
+  ExportEvolutionAssetManifestOptions,
+  EvolutionAsset,
+  EvolutionAssetCreatedBy,
+  EvolutionAssetDraft,
+  EvolutionAssetEvent,
+  EvolutionAssetEventActor,
+  EvolutionAssetEventType,
+  EvolutionAssetGepMetadata,
+  EvolutionAssetKind,
+  EvolutionAssetManifest,
+  EvolutionAssetRegistryOptions,
+  EvolutionAssetStatus,
+  EvolutionAssetWithEvents,
+  ListEvolutionAssetsQuery,
+  RecordEvolutionAssetEventInput,
+  ResolveEvolutionAssetByHashOptions,
+} from './evolution/index.js';
 export {
   SceneClassifier,
   RoutingMatrix,

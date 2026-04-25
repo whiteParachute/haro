@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createEvolutionAssetRegistry } from '@haro/core';
 import { parseSkillFile, SkillsManager } from '../src/index.js';
 import { execFileSync } from 'node:child_process';
 
@@ -63,6 +64,30 @@ describe('SkillsManager [FEAT-010]', () => {
     expect(existsSync(join(root, 'skills', 'user', 'local-skill', 'SKILL.md'))).toBe(true);
     manager.close();
     rmSync(linkPath, { force: true, recursive: true });
+  });
+
+  it('FEAT-022 maps installed skills to assets and records enable/disable/uninstall events', () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-skills-asset-map-'));
+    roots.push(root);
+    const sourceRoot = mkdtempSync(join(tmpdir(), 'skill-asset-source-'));
+    roots.push(sourceRoot);
+    writeFileSync(join(sourceRoot, 'SKILL.md'), '---\nname: asset-skill\ndescription: "Asset mapped"\n---\n\nBody\n', 'utf8');
+
+    const manager = new SkillsManager({ root });
+    manager.install(sourceRoot);
+    manager.disable('asset-skill');
+    manager.enable('asset-skill');
+    manager.uninstall('asset-skill');
+
+    const registry = createEvolutionAssetRegistry({ root });
+    const asset = registry.getAsset('skill:asset-skill', { includeEvents: true });
+    expect(asset?.status).toBe('archived');
+    expect(asset?.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(['promoted', 'disabled', 'enabled', 'archived']),
+    );
+    expect(asset?.events.find((event) => event.type === 'archived')?.metadata?.action).toBe('uninstall');
+    registry.close();
+    manager.close();
   });
 
   it('installs from git urls into user skills and updates installed.json', () => {

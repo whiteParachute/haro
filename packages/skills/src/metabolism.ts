@@ -1,10 +1,23 @@
 import { createInterface } from 'node:readline/promises';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { buildHaroPaths, createMemoryFabric } from '@haro/core';
+import { buildHaroPaths, createEvolutionAssetRegistry, createMemoryFabric, hashEvolutionAssetContent } from '@haro/core';
+import type { EvolutionAssetDraft, EvolutionAssetKind } from '@haro/core';
 import type { InstalledSkillsManifest } from './types.js';
 
 const EMPTY_INSTALLED: InstalledSkillsManifest = { version: 1, skills: {} };
+
+interface ArchivedItem {
+  scope: 'skills' | 'memory' | 'rules' | 'mcp';
+  path: string;
+  archivedPath: string;
+  risk: 'low' | 'medium' | 'high';
+  reason: string;
+  rollbackStep: string;
+  assetId: string;
+  assetDraft: EvolutionAssetDraft;
+  skillEntry?: Record<string, unknown>;
+}
 
 export interface EatCommandInput {
   input: string;
@@ -49,45 +62,97 @@ export async function runEat(input: EatCommandInput): Promise<{ output: string }
   }
   const paths = buildHaroPaths(input.root);
   const memoryFabric = createMemoryFabric({ root: paths.dirs.memory });
+  const registry = createEvolutionAssetRegistry({ root: input.root });
   const bundleId = new Date().toISOString().replace(/[:.]/g, '-');
   const bundleRoot = join(paths.dirs.archive, 'eat-proposals', bundleId);
-  mkdirSync(bundleRoot, { recursive: true });
-  writeFileSync(join(bundleRoot, 'memory-preview.md'), buckets.memoryPreview, 'utf8');
-  const manifest: Record<string, unknown> = {
-    sourceKind: detected.kind,
-    createdAt: new Date().toISOString(),
-    evaluation,
-    memoryWrites: [],
-    proposals: [],
-    suggestions: [],
-  };
-  const memoryWrite = await memoryFabric.write({
-    scope: 'agent',
-    agentId: 'haro-assistant',
-    topic: buckets.memoryTitle,
-    content: buckets.memoryContent,
-    source: 'skill:eat',
-  });
-  (manifest.memoryWrites as Array<unknown>).push(memoryWrite);
+  try {
+    mkdirSync(bundleRoot, { recursive: true });
+    const memoryPreviewFile = join(bundleRoot, 'memory-preview.md');
+    writeFileSync(memoryPreviewFile, buckets.memoryPreview, 'utf8');
+    const manifestFile = join(bundleRoot, 'manifest.json');
+    const manifest: Record<string, unknown> = {
+      sourceKind: detected.kind,
+      createdAt: new Date().toISOString(),
+      evaluation,
+      memoryWrites: [],
+      proposals: [],
+      suggestions: [],
+    };
+    const memoryAsset = registry.recordEvent({
+      type: 'promoted',
+      actor: 'agent',
+      asset: {
+        kind: 'memory',
+        name: buckets.memoryTitle,
+        status: 'active',
+        sourceRef: `eat:${detected.kind}`,
+        contentRef: `memory:agent:haro-assistant:${slug(buckets.memoryTitle)}`,
+        contentHash: hashEvolutionAssetContent(buckets.memoryContent),
+        createdBy: 'eat',
+      },
+      evidenceRefs: [memoryPreviewFile],
+      metadata: {
+        action: 'eat-memory-write',
+        bundleId,
+        sourceKind: detected.kind,
+      },
+    });
+    const memoryWrite = await memoryFabric.write({
+      scope: 'agent',
+      agentId: 'haro-assistant',
+      topic: buckets.memoryTitle,
+      content: buckets.memoryContent,
+      source: 'skill:eat',
+      assetRef: memoryAsset.assetId,
+    });
+    (manifest.memoryWrites as Array<unknown>).push({ ...memoryWrite, assetRef: memoryAsset.assetId, eventId: memoryAsset.id });
 
-  for (const proposal of buckets.proposals) {
-    const limit = proposal.type === 'claude' ? 200 : proposal.type === 'rules' ? 99 : 499;
-    if (proposal.lines > limit) {
-      (manifest.suggestions as Array<unknown>).push({
-        type: proposal.type,
-        reason: `proposal too large (${proposal.lines} lines > ${limit})`,
-        suggestion: `split ${proposal.type} proposal into smaller files`,
+    for (const proposal of buckets.proposals) {
+      const limit = proposal.type === 'claude' ? 200 : proposal.type === 'rules' ? 99 : 499;
+      if (proposal.lines > limit) {
+        (manifest.suggestions as Array<unknown>).push({
+          type: proposal.type,
+          reason: `proposal too large (${proposal.lines} lines > ${limit})`,
+          suggestion: `split ${proposal.type} proposal into smaller files`,
+        });
+        continue;
+      }
+      const proposalFile = join(bundleRoot, proposal.type, proposal.path);
+      mkdirSync(dirname(proposalFile), { recursive: true });
+      writeFileSync(proposalFile, proposal.content, 'utf8');
+      const event = registry.recordEvent({
+        type: 'proposed',
+        actor: 'agent',
+        asset: {
+          kind: proposalAssetKind(proposal.type),
+          name: proposalAssetName(proposal.path),
+          sourceRef: `eat-proposal:${bundleId}`,
+          contentRef: relative(paths.root, proposalFile),
+          contentHash: hashEvolutionAssetContent(proposal.content),
+          createdBy: 'eat',
+        },
+        evidenceRefs: [proposalFile, manifestFile],
+        metadata: {
+          action: 'eat-proposal',
+          proposalType: proposal.type,
+          bundleId,
+          evaluation,
+        },
       });
-      continue;
+      (manifest.proposals as Array<unknown>).push({
+        type: proposal.type,
+        path: relative(bundleRoot, proposalFile),
+        assetId: event.assetId,
+        eventId: event.id,
+        eventType: event.type,
+      });
     }
-    const proposalFile = join(bundleRoot, proposal.type, proposal.path);
-    mkdirSync(dirname(proposalFile), { recursive: true });
-    writeFileSync(proposalFile, proposal.content, 'utf8');
-    (manifest.proposals as Array<unknown>).push({ type: proposal.type, path: relative(bundleRoot, proposalFile) });
-  }
 
-  writeFileSync(join(bundleRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-  return { output: `eat completed: memory updated, proposal bundle at ${bundleRoot}` };
+    writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    return { output: `eat completed: memory updated, proposal bundle at ${bundleRoot}` };
+  } finally {
+    registry.close();
+  }
 }
 
 export function runShit(input: ShitCommandInput): { output: string } {
@@ -107,13 +172,15 @@ export function runShit(input: ShitCommandInput): { output: string } {
   const archiveId = `shit-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   const archiveRoot = join(paths.dirs.archive, archiveId);
   mkdirSync(archiveRoot, { recursive: true });
-  const moved: Array<Record<string, unknown>> = [];
+  const moved: ArchivedItem[] = [];
   const installedFile = join(paths.dirs.skills, 'installed.json');
   const installed = existsSync(installedFile)
     ? (JSON.parse(readFileSync(installedFile, 'utf8')) as InstalledSkillsManifest)
     : { ...EMPTY_INSTALLED };
+  const registry = createEvolutionAssetRegistry({ root: input.root });
   try {
     for (const candidate of filtered) {
+      const assetDraft = candidateAssetDraft(candidate, paths.root);
       const target = join(archiveRoot, candidate.scope, relative(paths.root, candidate.path));
       mkdirSync(dirname(target), { recursive: true });
       renameSync(candidate.path, target);
@@ -127,23 +194,64 @@ export function runShit(input: ShitCommandInput): { output: string } {
         risk: candidate.risk,
         reason: candidate.reason,
         rollbackStep: `restore ${target} -> ${candidate.path}`,
+        assetId: assetDraft.id!,
+        assetDraft,
         ...(candidate.skillEntry ? { skillEntry: candidate.skillEntry } : {}),
       });
     }
     writeFileSync(installedFile, `${JSON.stringify(installed, null, 2)}\n`, 'utf8');
-    writeFileSync(join(archiveRoot, 'manifest.json'), `${JSON.stringify({ items: moved }, null, 2)}\n`, 'utf8');
+    const manifestFile = join(archiveRoot, 'manifest.json');
+    writeFileSync(manifestFile, `${JSON.stringify({ items: moved }, null, 2)}\n`, 'utf8');
+    const archiveAsset = registry.recordEvent({
+      assetId: `archive:${archiveId}`,
+      type: 'archived',
+      actor: 'system',
+      status: 'active',
+      asset: {
+        id: `archive:${archiveId}`,
+        kind: 'archive',
+        name: archiveId,
+        status: 'active',
+        sourceRef: `shit:${scope}`,
+        contentRef: archiveRoot,
+        contentHash: hashEvolutionAssetContent(JSON.stringify({ items: moved })),
+        createdBy: 'shit',
+      },
+      evidenceRefs: [manifestFile],
+      metadata: { action: 'archive-created', archiveId, itemCount: moved.length },
+    });
+    for (const item of moved) {
+      registry.recordEvent({
+        assetId: item.assetId,
+        asset: item.assetDraft,
+        type: 'archived',
+        actor: 'system',
+        contentRef: item.archivedPath,
+        evidenceRefs: [manifestFile, item.archivedPath],
+        metadata: {
+          action: 'shit-archive',
+          archiveId,
+          archiveAssetId: archiveAsset.assetId,
+          risk: item.risk,
+          reason: item.reason,
+          rollbackStep: item.rollbackStep,
+        },
+      });
+    }
     return { output: renderShitPreview(filtered, false) + `\narchived to ${archiveRoot}` };
   } catch (error) {
     for (const item of moved.reverse()) {
-      mkdirSync(dirname(item.path as string), { recursive: true });
-      renameSync(item.archivedPath as string, item.path as string);
-      if ((item as { skillEntry?: unknown }).skillEntry) {
-        const entry = (item as { skillEntry: Record<string, unknown> }).skillEntry;
+      mkdirSync(dirname(item.path), { recursive: true });
+      renameSync(item.archivedPath, item.path);
+      if (item.skillEntry) {
+        const entry = item.skillEntry;
         installed.skills[String(entry.id)] = entry as never;
       }
     }
     writeFileSync(installedFile, `${JSON.stringify(installed, null, 2)}\n`, 'utf8');
     throw error;
+  } finally {
+    registry.close();
   }
 }
 
@@ -154,18 +262,37 @@ export function rollbackShit(input: ShitRollbackInput): { output: string } {
   if (!existsSync(manifestFile)) {
     throw new Error(`Archive '${input.archiveId}' not found`);
   }
-  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8')) as { items: Array<{ path: string; archivedPath: string; skillEntry?: Record<string, unknown> }> };
+  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8')) as { items: Array<ArchivedItem> };
   const installedFile = join(paths.dirs.skills, 'installed.json');
   const installed = existsSync(installedFile)
     ? (JSON.parse(readFileSync(installedFile, 'utf8')) as InstalledSkillsManifest)
     : { ...EMPTY_INSTALLED };
   const items = input.item ? manifest.items.filter((item) => item.path === resolve(input.item!)) : manifest.items;
-  for (const item of items) {
-    mkdirSync(dirname(item.path), { recursive: true });
-    renameSync(item.archivedPath, item.path);
-    if (item.skillEntry) {
-      installed.skills[String(item.skillEntry.id)] = item.skillEntry as never;
+  const registry = createEvolutionAssetRegistry({ root: input.root });
+  try {
+    for (const item of items) {
+      mkdirSync(dirname(item.path), { recursive: true });
+      renameSync(item.archivedPath, item.path);
+      if (item.skillEntry) {
+        installed.skills[String(item.skillEntry.id)] = item.skillEntry as never;
+      }
+      registry.recordEvent({
+        assetId: item.assetId,
+        asset: item.assetDraft,
+        type: 'rollback',
+        actor: 'user',
+        contentRef: item.path,
+        evidenceRefs: [manifestFile, item.path],
+        metadata: {
+          action: 'shit-rollback',
+          archiveId: input.archiveId,
+          restoredPath: item.path,
+          archivedPath: item.archivedPath,
+        },
+      });
     }
+  } finally {
+    registry.close();
   }
   writeFileSync(installedFile, `${JSON.stringify(installed, null, 2)}\n`, 'utf8');
   return { output: `rollback restored ${items.length} item(s) from ${input.archiveId}` };
@@ -342,6 +469,21 @@ function buildEatBuckets(content: string) {
   };
 }
 
+function proposalAssetKind(type: 'claude' | 'rules' | 'skills'): EvolutionAssetKind {
+  if (type === 'skills') return 'skill';
+  if (type === 'rules') return 'routing-rule';
+  return 'prompt';
+}
+
+function proposalAssetName(path: string): string {
+  return path
+    .replace(/[\\/]SKILL\.md$/, '')
+    .replace(/\.md$/, '')
+    .split(/[\\/]/)
+    .filter(Boolean)
+    .join(':') || 'proposal';
+}
+
 function collectShitCandidates(root: string, scope: ShitCommandInput['scope'], days: number, now: number) {
   const scopes = scope === 'all' ? ['skills', 'memory', 'rules', 'mcp'] : [scope ?? 'all'];
   const threshold = now - days * 24 * 60 * 60 * 1000;
@@ -395,6 +537,53 @@ function collectShitCandidates(root: string, scope: ShitCommandInput['scope'], d
     }
   }
   return candidates;
+}
+
+function candidateAssetDraft(
+  candidate: ReturnType<typeof collectShitCandidates>[number],
+  root: string,
+): EvolutionAssetDraft {
+  const kind = candidateScopeToAssetKind(candidate.scope);
+  const relativePath = relative(root, candidate.path);
+  const name = candidate.skillId ?? relativePath;
+  return {
+    id: candidate.skillId ? `skill:${candidate.skillId}` : `${kind}:${stablePathId(relativePath)}`,
+    kind,
+    name,
+    status: 'active',
+    sourceRef: `shit-scan:${candidate.scope}`,
+    contentRef: candidate.path,
+    contentHash: hashFileOrPath(candidate.path),
+    createdBy: 'migration',
+  };
+}
+
+function candidateScopeToAssetKind(scope: 'skills' | 'memory' | 'rules' | 'mcp'): EvolutionAssetKind {
+  switch (scope) {
+    case 'skills':
+      return 'skill';
+    case 'memory':
+      return 'memory';
+    case 'rules':
+      return 'routing-rule';
+    case 'mcp':
+      return 'mcp';
+  }
+}
+
+function hashFileOrPath(path: string): string {
+  if (!existsSync(path)) return hashEvolutionAssetContent(path);
+  const stat = statSync(path);
+  if (stat.isDirectory()) {
+    const skillFile = join(path, 'SKILL.md');
+    return hashEvolutionAssetContent(existsSync(skillFile) ? readFileSync(skillFile) : path);
+  }
+  return hashEvolutionAssetContent(readFileSync(path));
+}
+
+function stablePathId(path: string): string {
+  const safe = path.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'asset';
+  return safe;
 }
 
 function renderEatPreview(kind: string, buckets: ReturnType<typeof buildEatBuckets>, evaluation: ReturnType<typeof evaluateEatContent>): string {

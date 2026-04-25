@@ -130,7 +130,14 @@ export class MemoryFabric {
   async writeEntry(input: WriteMemoryEntryInput): Promise<MemoryEntry> {
     const normalized = this.validateWriteEntry(input);
     const existing = this.readModel.findByContentHash(normalized.layer, normalized.scope, normalized.contentHash);
-    if (existing) return existing;
+    if (existing) {
+      if (normalized.assetRef && existing.assetRef !== normalized.assetRef) {
+        const updatedAt = this.now().toISOString();
+        this.readModel.attachAssetRef(existing.id, normalized.assetRef, updatedAt);
+        return { ...existing, assetRef: normalized.assetRef, updatedAt };
+      }
+      return existing;
+    }
 
     const conflicts = this.readModel.findTopicConflicts({
       layer: normalized.layer,
@@ -275,6 +282,7 @@ export class MemoryFabric {
       content,
       contentPath: writeResult.file,
       sourceRef: source,
+      assetRef: input.assetRef,
       tags,
     });
     if (this.backupRoot) this.mirrorToBackupAsync(scope, agentId, writeResult.file);
