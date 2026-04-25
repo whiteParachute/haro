@@ -1,11 +1,11 @@
 ---
 id: FEAT-017
 title: Web Dashboard — System Management（系统管理）
-status: approved
+status: in-progress
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-23
-updated: 2026-04-24
+updated: 2026-04-25
 related:
   - ../design-principles.md
   - ./FEAT-015-web-dashboard-foundation.md
@@ -132,7 +132,7 @@ packages/web/src/
 
 ## 8. Open Questions / 待定问题
 
-- ~~Q1: SettingsPage 是否提供 YAML 原始文本编辑模式（Monaco/CodeMirror）作为高级选项？~~ **决策：是。** 提供"高级模式"切换按钮，使用 CodeMirror 6 轻量版展示原始 YAML，保存前走同样的 Zod 校验流程。FEAT-019 的 AgentEditorPage 也复用同一 CodeMirror 组件。
+- ~~Q1: SettingsPage 是否提供 YAML 原始文本编辑模式（Monaco/CodeMirror）作为高级选项？~~ **决策：是。** 提供"高级模式"切换按钮展示原始 YAML，保存前走同样的 Zod 校验流程。实现阶段未引入 CodeMirror 新依赖，按 hard constraint 使用现有 textarea 原语；FEAT-019 如需复用代码编辑器可另行决策。
 - ~~Q2: doctor 报告的 fix suggestion 是否应该在 Dashboard 中提供"复制修复命令"按钮？~~ **决策：是。** 每个 fix suggestion 旁提供"复制命令"按钮（纯展示，不自动执行），方便用户粘贴到终端或 Agent Chat 中执行。
 
 ## 9. Changelog / 变更记录
@@ -144,3 +144,4 @@ packages/web/src/
 
 - 2026-04-24: review fix — Breaking: 解决 W1，FEAT-017 Channel 范围收窄为 Status/Settings 的只读摘要与 `/status`/`/doctor` 内嵌健康分组；删除独立 `/api/v1/channels*` 与 enable/disable/setup/remove 合约，操作性 ChannelPage/Gateway 管理和 Channel 专属 API 统一交给 FEAT-019。按 `specs/README.md` 的 approved 合约变更规则，status 回退为 draft，待 owner 重新批准。
 - 2026-04-24: owner re-approved — whiteParachute 批准 W1 边界修订，status: draft → approved。
+- 2026-04-25: implementation start — status: approved → in-progress。实现按 W1 边界执行：Status/Doctor/Config API 内嵌 Channel 只读摘要，不新增 `/api/v1/channels*`；高级 YAML 模式不引入 CodeMirror 新依赖，使用现有 textarea 原语。

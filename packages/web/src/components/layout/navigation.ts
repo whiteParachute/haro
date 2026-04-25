@@ -43,14 +43,14 @@ export const navigationItems: NavigationItem[] = [
     to: '/status',
     label: 'Status',
     title: 'Status',
-    description: '系统状态与指标面板占位。',
+    description: '系统健康、doctor 报告与 channel 只读摘要。',
     icon: SquareActivity,
   },
   {
     to: '/settings',
     label: 'Settings',
     title: 'Settings',
-    description: '配置管理页面占位。',
+    description: '项目级配置查看、校验与保存。',
     icon: Settings,
   },
 ];

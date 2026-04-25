@@ -10,6 +10,8 @@ import { apiKeyAuth, warnIfApiKeyAuthDisabled } from './auth.js';
 import { createWebLogger } from './logger.js';
 import type { ApiKeyAuthEnv, WebApp, WebLogger } from './types.js';
 import { createAgentsRoute } from './routes/agents.js';
+import { createConfigRoute } from './routes/config.js';
+import { createDoctorRoute, createStatusRoute } from './routes/status.js';
 import { createSessionsRoute } from './routes/sessions.js';
 import type { WebRuntime } from './runtime.js';
 import { WebSocketManager } from './websocket/manager.js';
@@ -65,7 +67,11 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
     ...(options.runtime?.runner ? { runner: options.runtime.runner } : {}),
     ...(options.runtime?.createRunner ? { createRunner: options.runtime.createRunner } : {}),
     ...(options.runtime?.root ? { root: options.runtime.root } : {}),
+    ...(options.runtime?.projectRoot ? { projectRoot: options.runtime.projectRoot } : {}),
     ...(options.runtime?.dbFile ? { dbFile: options.runtime.dbFile } : {}),
+    ...(options.runtime?.providerRegistry ? { providerRegistry: options.runtime.providerRegistry } : {}),
+    ...(options.runtime?.channelRegistry ? { channelRegistry: options.runtime.channelRegistry } : {}),
+    ...(options.runtime?.loaded ? { loaded: options.runtime.loaded } : {}),
     logger,
     startedAt: options.runtime?.startedAt ?? Date.now(),
   };
@@ -94,6 +100,9 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   );
   app.route('/api/v1/agents', createAgentsRoute(runtime, websocketManager));
   app.route('/api/v1/sessions', createSessionsRoute(runtime));
+  app.route('/api/v1/status', createStatusRoute(runtime));
+  app.route('/api/v1/doctor', createDoctorRoute(runtime));
+  app.route('/api/v1/config', createConfigRoute(runtime));
   app.use('/*', serveStatic({ root: staticRoot }));
   app.get('*', async (c, next) => {
     if (!shouldServeSpaFallback(c.req.method, c.req.path)) {

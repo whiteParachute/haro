@@ -43,6 +43,9 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
 - `GET /api/v1/agents` / `GET /api/v1/agents/:id` 返回 Agent 只读 read-model；列表仅暴露 `id`、`name`、`summary`、`defaultProvider`、`defaultModel`，详情额外暴露 `systemPrompt` 与 `tools`
 - `POST /api/v1/agents/:id/run` 与 `/chat` 使用严格请求体 schema，未知字段返回 400；执行事件通过 `/ws` 推送
 - `GET /api/v1/sessions`、`GET /api/v1/sessions/:id`、`GET /api/v1/sessions/:id/events`、`DELETE /api/v1/sessions/:id` 提供 session 浏览、详情与删除能力
+- `GET /api/v1/status` 返回系统概览：SQLite/FTS5、session 统计、provider health、Channel 只读健康摘要（`id/enabled/health/lastCheckedAt/config`）
+- `GET /api/v1/doctor` 返回按 filesystem/database/config/providers/channels 分组的 doctor 报告；Channel 分组仅诊断展示，不提供 lifecycle 操作
+- `GET /api/v1/config`、`PUT /api/v1/config`、`GET /api/v1/config/sources` 提供合并配置、项目级 `.haro/config.yaml` 写入、字段来源展示；PUT 写入前通过现有 config schema/loading path 校验，失败返回字段级 issues
 
 ## 认证与日志
 
@@ -63,11 +66,21 @@ FEAT-016 在 foundation 上补齐 Agent 交互层：
 - Sessions 列表默认仅展示 `sessionId`、`agentId`、`status`、`createdAt`，详情页将连续 text delta 折叠为消息，tool_call/tool_result 默认收起 JSON。
 - Chat 最近选择持久化到 `localStorage["haro:lastChatConfig"]`，包括 `agentId`、`providerId`、`modelId`。
 
+## System Management（FEAT-017）
+
+FEAT-017 在 Web Dashboard 中补齐系统管理页面：
+
+- Status 页面展示健康卡片网格（数据库、目录可写性、providers、channels、sessions）以及 grouped doctor report。
+- Settings 页面展示常用配置表单（`logging.level`、`defaultAgent`、`runtime.taskTimeoutMs`）、配置来源层级、字段生效来源以及 Channel 配置摘要。
+- 高级 YAML 模式使用现有 `<textarea>` 原语实现，未引入 CodeMirror/Monaco 等新依赖；保存仍走同一后端 schema/loading 校验。
+- Config API 只写项目级 `.haro/config.yaml`，不修改全局配置、默认配置或 CLI overrides。
+- Channel 在 FEAT-017 中仅作为 Status/Doctor/Config response 内嵌的只读摘要出现；独立 `/api/v1/channels*` contract、enable/disable/setup/remove、Gateway 控制与 Channel 专属页面仍由 FEAT-019 拥有。
+
 ## 与后续 FEAT 的边界
 
 FEAT-015 交付 Dashboard foundation，FEAT-016 交付 Chat/Sessions/WebSocket。后续 FEAT 在该基础上扩展：
 
 - FEAT-016：Agent Interaction（Chat、Sessions、WebSocket）— 已完成。
-- FEAT-017：System Management（Status、Settings；仅通过 `/status`/`/doctor`/config sources 内嵌 Channel Health，只读消费，不拥有独立 `/api/v1/channels*`）
+- FEAT-017：System Management（Status、Settings、Status/Doctor/Config REST）— 已实现；仅通过 `/status`/`/doctor`/config sources 内嵌 Channel Health，只读消费，不拥有独立 `/api/v1/channels*`。
 - FEAT-018：Orchestration & Observability（Dispatch、Knowledge、Skills、Logs、Monitor）
 - FEAT-019：Channel & Agent Management（独立 `/api/v1/channels*`、Channel 操作、Gateway、Agent YAML 管理）

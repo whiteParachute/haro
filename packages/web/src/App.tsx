@@ -13,6 +13,8 @@ import { HomePage } from '@/pages/HomePage';
 import { ChatPage } from '@/pages/ChatPage';
 import { SessionsPage } from '@/pages/SessionsPage';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
+import { StatusPage } from '@/pages/StatusPage';
+import { SettingsPage } from '@/pages/SettingsPage';
 
 function PlaceholderPage({
   title,
@@ -36,7 +38,7 @@ function PlaceholderPage({
   );
 }
 
-const placeholderRoutes = navigationItems.filter((item) => !['/', '/chat', '/sessions'].includes(item.to));
+const placeholderRoutes = navigationItems.filter((item) => !['/', '/chat', '/sessions', '/status', '/settings'].includes(item.to));
 
 export default function App() {
   return (
@@ -47,6 +49,8 @@ export default function App() {
           <Route path="chat" element={<ChatPage />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="sessions/:id" element={<SessionDetailPage />} />
+          <Route path="status" element={<StatusPage />} />
+          <Route path="settings" element={<SettingsPage />} />
           {placeholderRoutes.map((item) => (
             <Route
               key={item.to}

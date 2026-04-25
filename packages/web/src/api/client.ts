@@ -5,6 +5,12 @@ import {
 } from '@/stores/auth';
 import type { ApiResponse } from '@/types';
 
+interface ErrorPayload {
+  error?: string;
+  message?: string;
+  issues?: unknown[];
+}
+
 const DEFAULT_API_BASE_URL = '/api';
 
 function normalizePath(path: string) {
@@ -23,10 +29,10 @@ function resolveApiKey(): string | null {
   return storeApiKey && storeApiKey.length > 0 ? storeApiKey : readPersistedApiKey();
 }
 
-async function readPayload<T>(response: Response): Promise<ApiResponse<T> | { error?: string; message?: string }> {
+async function readPayload<T>(response: Response): Promise<ApiResponse<T> | ErrorPayload> {
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
-    return (await response.json()) as ApiResponse<T> | { error?: string; message?: string };
+    return (await response.json()) as ApiResponse<T> | ErrorPayload;
   }
   return {
     success: response.ok,
@@ -37,17 +43,20 @@ async function readPayload<T>(response: Response): Promise<ApiResponse<T> | { er
 
 function createRequestError(
   response: Response,
-  payload: ApiResponse<unknown> | { error?: string; message?: string },
+  payload: ApiResponse<unknown> | ErrorPayload,
 ): Error {
   const message = payload.message ?? ('error' in payload ? payload.error : undefined);
-  if (response.status === 401) {
-    return new Error(
+  const error = response.status === 401
+    ? new Error(
       `${message ?? 'Unauthorized'}: Dashboard API key is missing or invalid. ` +
         `Set the key in the Dashboard auth card or localStorage key "${AUTH_API_KEY_STORAGE_KEY}" ` +
         'to match HARO_WEB_API_KEY.',
-    );
+    )
+    : new Error(message ?? `Request failed with status ${response.status}`);
+  if ('issues' in payload && Array.isArray(payload.issues)) {
+    Object.assign(error, { issues: payload.issues });
   }
-  return new Error(message ?? `Request failed with status ${response.status}`);
+  return error;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<ApiResponse<T>> {
@@ -86,6 +95,14 @@ export function post<T>(path: string, body?: unknown, init?: RequestInit) {
   return request<T>(path, {
     ...init,
     method: 'POST',
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+export function put<T>(path: string, body?: unknown, init?: RequestInit) {
+  return request<T>(path, {
+    ...init,
+    method: 'PUT',
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
