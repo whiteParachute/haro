@@ -1,7 +1,7 @@
 ---
 id: FEAT-022
 title: Evolution Asset Registry（进化资产注册表）
-status: in-progress
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-25
@@ -201,3 +201,4 @@ eat proposal
 - 2026-04-25: Codex — 初稿，定义 Evolution Asset Registry、asset/event 数据模型、eat/shit 生命周期和 GEP 兼容字段。
 - 2026-04-25: whiteParachute — 关闭 Open Questions 并批准进入实现：asset id 使用稳定生命周期 id，contentHash 用于去重；prompt asset 以整个 Agent `systemPrompt` 为 Phase 1 边界；routing-rule asset 只覆盖用户/项目级覆盖规则。
 - 2026-04-25: Codex — 实现开始，状态改为 in-progress；完整验证、提交并推送前不标 done。
+- 2026-04-25: Codex — 实现完成并标记 done：落地 core Evolution Asset Registry API、SQLite asset/event audit tables、eat/shit/Skills/Memory Fabric assetRef 接入、文档同步和 AC1-AC8 测试覆盖。验证通过：`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm smoke`。实现提交并推送：`fbcc43d`。
