@@ -27,6 +27,7 @@ interface ChatState {
   connect: (client?: DashboardWebSocketClient) => void;
   disconnect: () => void;
   sendMessage: (input: { agentId: string; providerId?: string; modelId?: string; content: string }) => void;
+  cancelCurrent: () => void;
   retryLast: () => void;
   newChat: () => void;
   applySlashCommand: (command: string) => boolean;
@@ -95,6 +96,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       content,
     });
   },
+  cancelCurrent: () => {
+    const { sessionId, ws } = get();
+    if (!sessionId) return;
+    ws?.send({ type: 'chat.cancel', sessionId });
+    set({ status: 'cancelled' });
+  },
   retryLast: () => {
     const lastUser = [...get().messages].reverse().find((message) => message.role === 'user');
     const { agentId, providerId, modelId } = get().config;
@@ -137,23 +144,35 @@ function handleServerMessage(
 ): void {
   switch (message.type) {
     case 'session.update':
+      if (
+        get().status === 'cancelled' &&
+        get().sessionId === message.sessionId &&
+        message.status !== 'cancelled'
+      ) {
+        return;
+      }
       set({ sessionId: message.sessionId, status: message.status });
-      if (message.status !== 'completed' && message.status !== 'failed') {
+      if (!isTerminalSessionStatus(message.status)) {
         get().ws?.send({ type: 'subscribe', channel: 'sessions', sessionId: message.sessionId });
       }
       return;
     case 'event.stream':
+      if (get().status === 'cancelled') return;
       set((state) => ({ messages: appendAgentEvent(state.messages, message.event) }));
       return;
     case 'event.result':
-      set({ status: 'completed' });
+      if (get().status !== 'cancelled') set({ status: 'completed' });
       return;
     case 'event.error':
-      set({ status: 'failed', error: message.error });
+      if (get().status !== 'cancelled') set({ status: 'failed', error: message.error });
       return;
     default:
       return;
   }
+}
+
+function isTerminalSessionStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 function appendAgentEvent(messages: ChatMessage[], event: AgentEvent): ChatMessage[] {

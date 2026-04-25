@@ -98,7 +98,7 @@ export class DashboardWebSocketClient {
   private handleMessage(event: MessageEvent): void {
     try {
       const message = JSON.parse(String(event.data)) as ServerMessage;
-      if (message.type === 'session.update' && message.status !== 'completed' && message.status !== 'failed') {
+      if (message.type === 'session.update' && !isTerminalSessionStatus(message.status)) {
         this.observedSessions.add(message.sessionId);
       }
       for (const listener of this.listeners) listener(message);
@@ -117,6 +117,10 @@ export class DashboardWebSocketClient {
   private sendNow(message: ClientMessage): void {
     this.socket?.send(JSON.stringify(message));
   }
+}
+
+function isTerminalSessionStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 function resolveApiKey(): string | null {

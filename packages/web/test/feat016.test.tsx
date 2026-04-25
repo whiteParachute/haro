@@ -81,6 +81,15 @@ describe('FEAT-016 web client and stores', () => {
 
     expect(useChatStore.getState().sessionId).toBe('s1');
     expect(useChatStore.getState().messages.at(-1)?.content).toBe('hi done');
+    useChatStore.getState().cancelCurrent();
+    expect(JSON.parse(FakeWebSocket.instances[0]!.sent.at(-1)!)).toEqual({ type: 'chat.cancel', sessionId: 's1' });
+    expect(useChatStore.getState().status).toBe('cancelled');
+    FakeWebSocket.instances[0]!.message({
+      type: 'event.result',
+      sessionId: 's1',
+      result: { finalEvent: { type: 'result', content: 'late done' } },
+    });
+    expect(useChatStore.getState().status).toBe('cancelled');
     expect(useChatStore.getState().applySlashCommand('/agent empty')).toBe(true);
     expect(useChatStore.getState().config.agentId).toBe('empty');
   });

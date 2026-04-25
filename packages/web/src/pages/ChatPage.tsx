@@ -15,7 +15,7 @@ interface AgentSummary {
 }
 
 export function ChatPage() {
-  const { messages, status, error, config, connect, disconnect, sendMessage, applySlashCommand, newChat, retryLast } = useChatStore();
+  const { messages, status, error, config, connect, disconnect, sendMessage, applySlashCommand, newChat, retryLast, cancelCurrent } = useChatStore();
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentId, setAgentId] = useState(config.agentId ?? '');
   const [providerId, setProviderId] = useState(config.providerId ?? '');
@@ -88,7 +88,7 @@ export function ChatPage() {
           {error ? <span className="text-destructive">{error}</span> : null}
         </div>
         <ChatContainer messages={messages} />
-        <ChatInput onSubmit={submit} />
+        <ChatInput onSubmit={submit} onCancel={cancelCurrent} running={status === 'running'} />
       </div>
     </div>
   );

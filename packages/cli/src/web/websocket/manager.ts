@@ -12,6 +12,7 @@ interface ClientState extends WebSocketLike {
   authenticated: boolean;
   channels: Set<string>;
   sessionIds: Set<string>;
+  cancelledSessionIds: Set<string>;
   sendMessage(message: ServerMessage): void;
 }
 
@@ -84,6 +85,7 @@ export class WebSocketManager {
     const message: ServerMessage = { type: 'session.update', sessionId, status };
     this.broadcastToSession(sessionId, message);
     for (const client of this.clients) {
+      if (client.cancelledSessionIds.has(sessionId)) continue;
       if (client.authenticated && client.channels.has('sessions')) client.sendMessage(message);
     }
   }
@@ -103,6 +105,7 @@ export class WebSocketManager {
       authenticated: false,
       channels: new Set(),
       sessionIds: new Set(),
+      cancelledSessionIds: new Set(),
       send: (data) => socket.write(encodeFrame(data)),
       close: (code = 1000, reason = '') => {
         socket.write(encodeFrame(Buffer.concat([writeCloseCode(code), Buffer.from(reason)]), 0x8));
@@ -166,7 +169,7 @@ export class WebSocketManager {
         await this.handleChatMessage(client, message.value.sessionId, message.value.content);
         return;
       case 'chat.cancel':
-        this.publishSessionUpdate(message.value.sessionId, 'cancelled');
+        this.handleChatCancel(client, message.value.sessionId);
         return;
     }
   }
@@ -223,6 +226,16 @@ export class WebSocketManager {
     }
   }
 
+  private handleChatCancel(client: ClientState, sessionId: string): void {
+    if (this.pendingChatSessions.delete(sessionId)) {
+      client.cancelledSessionIds.add(sessionId);
+      client.sendMessage({ type: 'session.update', sessionId, status: 'cancelled' });
+      return;
+    }
+    client.cancelledSessionIds.add(sessionId);
+    client.sendMessage({ type: 'session.update', sessionId, status: 'cancelled' });
+  }
+
   private subscribeSession(client: ClientState, sessionId: string): void {
     client.sessionIds.add(sessionId);
     let clients = this.sessionClients.get(sessionId);
@@ -238,6 +251,7 @@ export class WebSocketManager {
     const clients = this.sessionClients.get(sessionId);
     if (!clients) return;
     for (const client of clients) {
+      if (client.cancelledSessionIds.has(sessionId)) continue;
       if (client.authenticated) client.sendMessage(message);
     }
     this.logger.info?.({ eventType: message.type, sessionId, clientCount: clients.size }, 'websocket message broadcast');

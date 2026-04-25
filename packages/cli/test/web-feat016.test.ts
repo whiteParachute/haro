@@ -165,6 +165,75 @@ describe('web dashboard WebSocket protocol [FEAT-016]', () => {
     ws.close();
     await handle.stop();
   });
+
+  it('chat.cancel only suppresses the cancelling client while other observers keep receiving the run', async () => {
+    process.env.HARO_WEB_API_KEY = 'secret';
+    let createdSessionId = '';
+    let finishRun: (() => void) | undefined;
+    const app = createWebApp({
+      logger: createMockLogger(),
+      runtime: {
+        agentRegistry: createRegistry(),
+        createRunner: (createSessionId?: () => string) => {
+          createdSessionId = createSessionId?.() ?? 'ws-cancel-session';
+          return {
+            run: async (input: RunAgentInput): Promise<RunAgentResult> =>
+              new Promise((resolve) => {
+                finishRun = () => {
+                  const events: AgentEvent[] = [
+                    { type: 'text', content: 'late text', delta: true },
+                    { type: 'result', content: 'done after cancel', responseId: 'resp-after-cancel' },
+                  ];
+                  for (const event of events) input.onEvent?.(event, createdSessionId);
+                  resolve({
+                    sessionId: createdSessionId,
+                    ruleId: 'test',
+                    provider: input.provider ?? 'codex',
+                    model: input.model ?? 'gpt-test',
+                    events,
+                    finalEvent: events[1] as Extract<AgentEvent, { type: 'result' }>,
+                  });
+                };
+              }),
+          };
+        },
+      },
+    });
+    const handle = startWebServer(app, { port: 0, host: '127.0.0.1' });
+    await handle.ready;
+    const address = handle.server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const observer = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const messages: unknown[] = [];
+    const observerMessages: unknown[] = [];
+    ws.addEventListener('message', (event) => messages.push(JSON.parse(String(event.data))));
+    observer.addEventListener('message', (event) => observerMessages.push(JSON.parse(String(event.data))));
+    await once(ws, 'open');
+    await once(observer, 'open');
+
+    ws.send(JSON.stringify({ type: 'authenticate', token: 'secret' }));
+    observer.send(JSON.stringify({ type: 'authenticate', token: 'secret' }));
+    await waitFor(messages, (item) => item.type === 'authenticated' && item.ok === true);
+    await waitFor(observerMessages, (item) => item.type === 'authenticated' && item.ok === true);
+    ws.send(JSON.stringify({ type: 'chat.start', agentId: 'assistant', content: 'slow' }));
+    await waitFor(messages, (item) => item.type === 'session.update' && item.status === 'running');
+    observer.send(JSON.stringify({ type: 'subscribe', channel: 'sessions', sessionId: createdSessionId }));
+    ws.send(JSON.stringify({ type: 'chat.cancel', sessionId: createdSessionId }));
+
+    await waitFor(messages, (item) => item.type === 'session.update' && item.status === 'cancelled');
+    finishRun?.();
+    await waitFor(observerMessages, (item) => item.type === 'event.result');
+    await waitFor(observerMessages, (item) => item.type === 'session.update' && item.status === 'completed');
+    await waitFor(messages, (item) => item.type === 'session.update' && item.status === 'cancelled');
+    await waitFor(messages, (item) => item.type === 'system.status');
+    expect(messages.some((item: any) => item.type === 'event.result')).toBe(false);
+    expect(messages.some((item: any) => item.type === 'session.update' && item.status === 'completed')).toBe(false);
+
+    ws.close();
+    observer.close();
+    await handle.stop();
+  });
 });
 
 function once(target: WebSocket, event: 'open'): Promise<void> {

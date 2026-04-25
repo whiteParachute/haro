@@ -1,7 +1,15 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 
-export function ChatInput({ onSubmit }: { onSubmit: (content: string) => void }) {
+export function ChatInput({
+  onSubmit,
+  onCancel,
+  running = false,
+}: {
+  onSubmit: (content: string) => void;
+  onCancel?: () => void;
+  running?: boolean;
+}) {
   const [value, setValue] = useState('');
   return (
     <form
@@ -20,7 +28,10 @@ export function ChatInput({ onSubmit }: { onSubmit: (content: string) => void })
         value={value}
         onChange={(event) => setValue(event.target.value)}
       />
-      <Button type="submit">发送</Button>
+      {running ? (
+        <Button type="button" variant="outline" onClick={onCancel}>取消</Button>
+      ) : null}
+      <Button type="submit" disabled={running}>发送</Button>
     </form>
   );
 }
