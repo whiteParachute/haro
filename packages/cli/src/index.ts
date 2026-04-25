@@ -30,7 +30,12 @@ import {
   type TeamWorkflowExecutionResult,
 } from '@haro/core';
 import { createCodexProvider } from '@haro/provider-codex';
-import { SkillsManager } from '@haro/skills';
+import {
+  SkillsManager,
+  type RuntimeSkillSyncItem,
+  type RuntimeSkillSyncRuntime,
+  type RuntimeSkillSyncSkill,
+} from '@haro/skills';
 import * as haroConfig from '@haro/core/config';
 import type { HaroConfig, LoadedConfig } from '@haro/core/config';
 import type { AgentEvent, AgentProvider } from '@haro/core/provider';
@@ -574,9 +579,79 @@ function registerSkillsCommands(program: Command, app: AppContext): void {
         }
         app.stdout.write(`Disabled skill '${entry.id}'\n`);
       });
+
+      cmd
+        .command('sync-runtime')
+        .description('Sync canonical preinstalled skills to Codex / Claude Code runtime homes')
+        .option('--skill <skill>', 'shit|eat|metabolism', 'metabolism')
+        .option('--runtime <runtime>', 'codex|claude|codex,claude', 'codex,claude')
+        .option('--codex-home <path>', 'override CODEX_HOME for this sync')
+        .option('--claude-home <path>', 'override CLAUDE_HOME for this sync')
+        .option('--overwrite', 'overwrite conflicting runtime skills after preserving a backup')
+        .action(
+          async (options: {
+            skill: string;
+            runtime: string;
+            codexHome?: string;
+            claudeHome?: string;
+            overwrite?: boolean;
+          }) => {
+            const skill = parseRuntimeSyncSkill(options.skill);
+            const runtimes = parseRuntimeSyncRuntimes(options.runtime);
+            const homes = {
+              ...(options.codexHome ? { codex: options.codexHome } : {}),
+              ...(options.claudeHome ? { claude: options.claudeHome } : {}),
+            };
+            const result = app.skills.syncRuntimeSkills({
+              skill,
+              runtimes,
+              homes,
+              overwrite: options.overwrite,
+            });
+            for (const item of result.items) {
+              app.stdout.write(formatRuntimeSyncItem(item));
+            }
+            if (result.hasConflicts) {
+              throw new CommanderExit(1, 'Runtime skill sync has conflicts; rerun with --overwrite after reviewing the target paths.');
+            }
+          },
+        );
     },
     program,
   );
+}
+
+function parseRuntimeSyncSkill(value: string): RuntimeSkillSyncSkill {
+  if (value === 'shit' || value === 'eat' || value === 'metabolism') {
+    return value;
+  }
+  throw new CommanderExit(1, `Invalid runtime skill '${value}'. Expected one of: shit, eat, metabolism.`);
+}
+
+function parseRuntimeSyncRuntimes(value: string): RuntimeSkillSyncRuntime[] {
+  const runtimes = value
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (runtimes.length === 0) {
+    throw new CommanderExit(1, 'At least one runtime is required.');
+  }
+  const invalid = runtimes.filter((runtime) => runtime !== 'codex' && runtime !== 'claude');
+  if (invalid.length > 0) {
+    throw new CommanderExit(1, `Invalid runtime '${invalid.join(',')}'. Expected codex, claude, or codex,claude.`);
+  }
+  return [...new Set(runtimes)] as RuntimeSkillSyncRuntime[];
+}
+
+function formatRuntimeSyncItem(item: RuntimeSkillSyncItem): string {
+  const columns = [`runtime=${item.runtime}`, `skill=${item.skillId}`, `status=${item.status}`, `targetPath=${item.targetPath}`];
+  if (item.backupPath) {
+    columns.push(`backupPath=${item.backupPath}`);
+  }
+  if (item.message) {
+    columns.push(`message=${item.message}`);
+  }
+  return `${columns.join('\t')}\n`;
 }
 
 function registerMetabolismCommands(program: Command, app: AppContext): void {

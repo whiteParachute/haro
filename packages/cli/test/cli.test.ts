@@ -931,6 +931,82 @@ describe('runCli [FEAT-006]', () => {
     expect(uninstall.exitCode).toBe(1);
   });
 
+  it('FEAT-020 AC1a/AC4: skills sync-runtime syncs paired metabolism skills to runtime homes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-runtime-sync-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-home-'));
+    const claudeHome = mkdtempSync(join(tmpdir(), 'haro-claude-home-'));
+    roots.push(root, codexHome, claudeHome);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['skills', 'sync-runtime', '--skill', 'eat', '--codex-home', codexHome, '--claude-home', claudeHome],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    for (const runtimeHome of [codexHome, claudeHome]) {
+      for (const skillId of ['eat', 'shit']) {
+        expect(readFileSync(join(runtimeHome, 'skills', skillId, 'SKILL.md'), 'utf8')).toBe(
+          readFileSync(join(root, 'skills', 'preinstalled', skillId, 'SKILL.md'), 'utf8'),
+        );
+        expect(readFileSync(join(runtimeHome, 'skills', skillId, 'LICENSE'), 'utf8')).toBe(
+          readFileSync(join(root, 'skills', 'preinstalled', skillId, 'LICENSE'), 'utf8'),
+        );
+        expect(readFileSync(join(runtimeHome, 'skills', skillId, 'NOTICE'), 'utf8')).toBe(
+          readFileSync(join(root, 'skills', 'preinstalled', skillId, 'NOTICE'), 'utf8'),
+        );
+      }
+    }
+    const output = chunks.join('');
+    expect(output).toContain(`runtime=codex\tskill=eat\tstatus=synced\ttargetPath=${join(codexHome, 'skills', 'eat')}`);
+    expect(output).toContain(`runtime=claude\tskill=shit\tstatus=synced\ttargetPath=${join(claudeHome, 'skills', 'shit')}`);
+  });
+
+  it('FEAT-020 AC5: skills sync-runtime fails fast on conflicting runtime skill content', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-runtime-conflict-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-conflict-'));
+    roots.push(root, codexHome);
+    const target = join(codexHome, 'skills', 'shit');
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, 'SKILL.md'), 'different local skill\n', 'utf8');
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['skills', 'sync-runtime', '--skill', 'shit', '--runtime', 'codex', '--codex-home', codexHome],
+      root,
+      stdout,
+      stderr: new PassThrough(),
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(1);
+    const output = chunks.join('');
+    expect(output).toContain(`runtime=codex\tskill=shit\tstatus=conflict\ttargetPath=${target}`);
+    expect(output).toContain('Target skill differs from canonical source: SKILL.md');
+  });
+
   it('FEAT-010 AC4: explicit /memory triggers the skill and writes usage', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-memory-skill-'));
     roots.push(root);
