@@ -1,11 +1,39 @@
 import { Hono } from 'hono';
-import { CheckpointStore, PermissionBudgetStore } from '@haro/core';
+import { CheckpointStore, PermissionBudgetStore, db as haroDb } from '@haro/core';
 import type { WorkflowCheckpoint, WorkflowPermissionBudgetSummary } from '@haro/core';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
 export function createWorkflowsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
+
+  route.get('/', (c) => {
+    const limit = readLimit(c.req.query('limit'));
+    const workflowIds = listWorkflowIds(runtime, limit);
+    const checkpointStore = openCheckpointStore(runtime);
+    const guardStore = openGuardStore(runtime);
+    try {
+      const items = workflowIds
+        .map((workflowId) => {
+          const checkpoint = checkpointStore.loadLatest(workflowId);
+          return checkpoint
+            ? toWorkflowSummary(checkpoint, guardStore.readWorkflowPermissionBudgetSummary(workflowId))
+            : null;
+        })
+        .filter((item): item is ReturnType<typeof toWorkflowSummary> => item !== null);
+      return c.json({
+        success: true,
+        data: {
+          items,
+          limit,
+          count: items.length,
+        },
+      });
+    } finally {
+      checkpointStore.close();
+      guardStore.close();
+    }
+  });
 
   route.get('/:id/checkpoints', (c) => {
     const store = openCheckpointStore(runtime);
@@ -36,7 +64,7 @@ export function createWorkflowsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
         success: true,
         data: {
           workflowId: c.req.param('id'),
-          items: checkpoints.map(toCheckpointMetadata),
+          items: checkpoints.map((checkpoint) => toCheckpointMetadata(checkpoint)),
           count: checkpoints.length,
         },
       });
@@ -60,9 +88,10 @@ export function createWorkflowsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
           404,
         );
       }
+      const checkpoints = checkpointStore.loadAll(workflowId);
       return c.json({
         success: true,
-        data: toWorkflowDetail(checkpoint, guardStore.readWorkflowPermissionBudgetSummary(workflowId)),
+        data: toWorkflowDetail(checkpoint, guardStore.readWorkflowPermissionBudgetSummary(workflowId), checkpoints),
       });
     } finally {
       checkpointStore.close();
@@ -87,11 +116,42 @@ function openGuardStore(runtime: WebRuntime): PermissionBudgetStore {
   });
 }
 
-function toCheckpointMetadata(checkpoint: WorkflowCheckpoint) {
+function listWorkflowIds(runtime: WebRuntime, limit: number): string[] {
+  const opened = haroDb.initHaroDatabase({
+    root: runtime.root,
+    dbFile: runtime.dbFile,
+    keepOpen: true,
+  });
+  const database = opened.database!;
+  try {
+    const rows = database
+      .prepare(
+        `SELECT workflow_id
+           FROM workflow_checkpoints
+       GROUP BY workflow_id
+       ORDER BY MAX(created_at) DESC
+          LIMIT ?`,
+      )
+      .all(limit) as Array<{ workflow_id: string }>;
+    return rows.map((row) => row.workflow_id);
+  } finally {
+    database.close();
+  }
+}
+
+function readLimit(value: string | undefined): number {
+  if (!value) return 20;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return 20;
+  return Math.max(1, Math.min(100, parsed));
+}
+
+function toCheckpointMetadata(checkpoint: WorkflowCheckpoint, options: { includeNodeType?: boolean } = {}) {
   return {
     checkpointId: checkpoint.id,
     workflowId: checkpoint.workflowId,
     nodeId: checkpoint.nodeId,
+    ...(options.includeNodeType ? { nodeType: checkpoint.state.nodeType } : {}),
     status: readCheckpointStatus(checkpoint),
     createdAt: checkpoint.createdAt,
   };
@@ -117,7 +177,7 @@ function readCheckpointStatus(checkpoint: WorkflowCheckpoint): string | null {
   return null;
 }
 
-function toWorkflowDetail(checkpoint: WorkflowCheckpoint, guardSummary: WorkflowPermissionBudgetSummary) {
+function toWorkflowSummary(checkpoint: WorkflowCheckpoint, guardSummary: WorkflowPermissionBudgetSummary) {
   const branchState = checkpoint.state.branchState;
   const branchLedger = readBranchLedger(branchState);
   return {
@@ -136,9 +196,29 @@ function toWorkflowDetail(checkpoint: WorkflowCheckpoint, guardSummary: Workflow
     leafSessionRefs: checkpoint.state.leafSessionRefs,
     rawContextRefs: checkpoint.state.rawContextRefs,
     latestCheckpointRef: checkpoint.id,
+    recentCheckpointRef: checkpoint.id,
     stalledBranches: branchLedger.filter(isStalledBranch),
     ...(guardSummary.budget ? { budgetState: toBudgetState(guardSummary) } : {}),
     ...(hasPermissionEvents(guardSummary) ? { permissionState: toPermissionState(guardSummary) } : {}),
+  };
+}
+
+function toWorkflowDetail(
+  checkpoint: WorkflowCheckpoint,
+  guardSummary: WorkflowPermissionBudgetSummary,
+  checkpoints: WorkflowCheckpoint[],
+) {
+  const summary = toWorkflowSummary(checkpoint, guardSummary);
+  return {
+    ...summary,
+    checkpoints: checkpoints.map((candidate) => toCheckpointMetadata(candidate, { includeNodeType: true })),
+    budgetPermissionSummary: {
+      ...(summary.budgetState ? { budget: summary.budgetState } : {}),
+      permissions: {
+        denied: guardSummary.permissions.denied,
+        needsApproval: guardSummary.permissions.needsApproval,
+      },
+    },
   };
 }
 
@@ -166,6 +246,7 @@ function readBlockedReason(
   guardSummary: WorkflowPermissionBudgetSummary,
 ): string | undefined {
   if (typeof guardSummary.blockedReason === 'string') return guardSummary.blockedReason;
+  if (guardSummary.budget && guardSummary.budget.state !== 'ok') return 'budget';
   if (guardSummary.budgetExceeded) return 'budget';
   if (hasPermissionEvents(guardSummary)) return 'permission';
   if (typeof branchState.blockedReason === 'string') return branchState.blockedReason;
@@ -194,9 +275,10 @@ function toBudgetState(summary: WorkflowPermissionBudgetSummary) {
 }
 
 function toPermissionState(summary: WorkflowPermissionBudgetSummary) {
-  if (summary.permissions.denied > 0) return { state: 'denied' };
-  if (summary.permissions.needsApproval > 0) return { state: 'needs-approval' };
-  return { state: 'allowed' };
+  const requiredClass = summary.permissions.events.find((event) => event.operationClass)?.operationClass;
+  if (summary.permissions.denied > 0) return { ...(requiredClass ? { requiredClass } : {}), state: 'denied' };
+  if (summary.permissions.needsApproval > 0) return { ...(requiredClass ? { requiredClass } : {}), state: 'needs-approval' };
+  return { ...(requiredClass ? { requiredClass } : {}), state: 'allowed' };
 }
 
 function hasPermissionEvents(summary: WorkflowPermissionBudgetSummary): boolean {

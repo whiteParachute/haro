@@ -40,15 +40,8 @@ export const navigationItems: NavigationItem[] = [
   {
     to: '/dispatch',
     label: 'Dispatch',
-    title: 'Dispatch',
-    description: 'Team workflow 编排调试与 checkpoint 只读观测。',
-    icon: GitBranch,
-  },
-  {
-    to: '/dispatch',
-    label: 'Dispatch',
-    title: 'Dispatch',
-    description: 'Team workflow 编排调试与 checkpoint 只读观测。',
+    title: 'Dispatch / Orchestration Debugger',
+    description: '查看 workflow 拓扑、checkpoint timeline 与 stalled branch。',
     icon: GitBranch,
   },
   {
@@ -56,13 +49,6 @@ export const navigationItems: NavigationItem[] = [
     label: 'Sessions',
     title: 'Sessions',
     description: '分页浏览 Agent sessions 与事件历史。',
-    icon: Workflow,
-  },
-  {
-    to: '/dispatch',
-    label: 'Dispatch',
-    title: 'Dispatch / Orchestration Debugger',
-    description: '查看 workflow 拓扑、checkpoint timeline 与 stalled branch。',
     icon: Workflow,
   },
   {

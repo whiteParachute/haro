@@ -122,12 +122,17 @@ function encodePathSegment(value: string) {
   return encodeURIComponent(value);
 }
 
-export function getWorkflows<T>(init?: RequestInit) {
-  return get<T>('/v1/workflows', init);
+export function listWorkflows(filters: { limit?: number } = {}, init?: RequestInit) {
+  const searchParams = new URLSearchParams();
+  if (filters.limit !== undefined) {
+    searchParams.set('limit', String(filters.limit));
+  }
+  const query = searchParams.toString();
+  return get<WorkflowListResponse>(`/v1/workflows${query ? `?${query}` : ''}`, init);
 }
 
-export function getWorkflow<T>(workflowId: string, init?: RequestInit) {
-  return get<T>(`/v1/workflows/${encodePathSegment(workflowId)}`, init);
+export function getWorkflow(workflowId: string, init?: RequestInit) {
+  return get<WorkflowDebugDetail>(`/v1/workflows/${encodePathSegment(workflowId)}`, init);
 }
 
 export function getWorkflowCheckpoints<T>(

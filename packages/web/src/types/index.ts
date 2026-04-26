@@ -78,6 +78,8 @@ export interface WorkflowBranchLedgerEntry {
   consumedByMerge?: boolean;
 }
 
+export type WorkflowBranchReadModel = WorkflowBranchLedgerEntry;
+
 export interface WorkflowMergeEnvelope {
   workflowId?: string;
   nodeId?: string;
@@ -103,6 +105,12 @@ export interface WorkflowSummary {
   permissionState?: WorkflowPermissionState;
 }
 
+export interface WorkflowDebugSummary extends WorkflowSummary {
+  latestCheckpointRef?: string;
+  recentCheckpointRef?: string;
+  stalledBranches?: WorkflowBranchReadModel[];
+}
+
 export interface WorkflowDetail extends WorkflowSummary {
   branchLedger: WorkflowBranchLedgerEntry[];
   mergeEnvelope?: WorkflowMergeEnvelope | null;
@@ -112,10 +120,30 @@ export interface WorkflowDetail extends WorkflowSummary {
   stalledBranches: WorkflowBranchLedgerEntry[];
 }
 
+export interface WorkflowDebugDetail extends WorkflowDebugSummary {
+  branchLedger: WorkflowBranchReadModel[];
+  stalledBranches: WorkflowBranchReadModel[];
+  mergeEnvelope?: WorkflowMergeEnvelope | JsonValue | null;
+  mergeState?: JsonValue;
+  leafSessionRefs: WorkflowLeafSessionRef[];
+  rawContextRefs: JsonValue[];
+  latestCheckpointRef?: string;
+  recentCheckpointRef?: string;
+  checkpoints: WorkflowCheckpointMetadata[];
+  budgetPermissionSummary?: JsonValue;
+}
+
+export interface WorkflowListResponse {
+  items: WorkflowDebugSummary[];
+  count?: number;
+  limit?: number;
+}
+
 export interface WorkflowCheckpointMetadata {
   checkpointId: string;
-  workflowId: string;
+  workflowId?: string;
   nodeId?: string | null;
+  nodeType?: string | null;
   status?: WorkflowStatus | string | null;
   createdAt?: string;
   updatedAt?: string;

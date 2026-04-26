@@ -30,48 +30,6 @@ function PlaceholderPage({ title, description }: { title: string; description: s
   );
 }
 
-function DispatchDebuggerPage() {
-  return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Dispatch / Orchestration Debugger</CardTitle>
-          <CardDescription>
-            FEAT-018 只读编排调试入口，用于查看 workflow 拓扑、checkpoint 与 stalled branch。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 text-sm text-muted-foreground md:grid-cols-2">
-          <div className="rounded-lg border border-border bg-muted/30 p-4">
-            <h2 className="mb-2 font-medium text-foreground">Workflow read model</h2>
-            <p>
-              读取 <code>/api/v1/workflows*</code> 展示 workflow list/detail/checkpoints， 并突出
-              blocked、needs-human-intervention 与 stalled 状态。
-            </p>
-          </div>
-          <div className="rounded-lg border border-border bg-muted/30 p-4">
-            <h2 className="mb-2 font-medium text-foreground">Fork-and-merge graph</h2>
-            <p>branch 必须平行排列并统一汇入 merge，页面不得暗示 branch-to-branch 串行 handoff。</p>
-          </div>
-          <div className="rounded-lg border border-border bg-muted/30 p-4">
-            <h2 className="mb-2 font-medium text-foreground">Checkpoint debug drawer</h2>
-            <p>
-              点击 checkpoint 后只读展示 rawContextRefs、branchState、merge envelope、
-              leafSessionRefs 与完整结构化 JSON。
-            </p>
-          </div>
-          <div className="rounded-lg border border-border bg-muted/30 p-4">
-            <h2 className="mb-2 font-medium text-foreground">Guard summaries</h2>
-            <p>
-              预算/权限摘要只消费 FEAT-023 guard read model，不在前端重复实现策略引擎， 也不提供
-              approve / continue / stop 写操作。
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
 const concreteRoutes = [
   '/',
   '/chat',
@@ -100,7 +58,6 @@ export default function App() {
           <Route path="gateway" element={<GatewayPage />} />
           <Route path="agents" element={<AgentEditorPage />} />
           <Route path="settings" element={<SettingsPage />} />
-          <Route path="dispatch" element={<DispatchDebuggerPage />} />
           {placeholderRoutes.map((item) => (
             <Route
               key={item.to}
