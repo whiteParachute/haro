@@ -3,7 +3,11 @@ import {
   readPersistedApiKey,
   useAuthStore,
 } from '@/stores/auth';
-import type { ApiResponse } from '@/types';
+import type {
+  ApiResponse,
+  WorkflowDebugDetail,
+  WorkflowListResponse,
+} from '@/types';
 
 interface ErrorPayload {
   error?: string;
@@ -112,4 +116,15 @@ export function del<T>(path: string, init?: RequestInit) {
     ...init,
     method: 'DELETE',
   });
+}
+
+export function listWorkflows(filters: { limit?: number } = {}) {
+  const params = new URLSearchParams();
+  if (filters.limit) params.set('limit', String(filters.limit));
+  const suffix = params.size > 0 ? `?${params}` : '';
+  return get<WorkflowListResponse>(`/v1/workflows${suffix}`);
+}
+
+export function getWorkflow(workflowId: string) {
+  return get<WorkflowDebugDetail>(`/v1/workflows/${encodeURIComponent(workflowId)}`);
 }

@@ -1,90 +1,80 @@
 import { create } from 'zustand';
-import { get } from '@/api/client';
+import { getWorkflow, listWorkflows } from '@/api/client';
+import type {
+  WorkflowBranchReadModel,
+  WorkflowDebugDetail,
+  WorkflowDebugSummary,
+} from '@/types';
 
-export interface WorkflowSummary {
-  workflowId: string;
-  executionMode: string;
-  orchestrationMode?: string;
-  templateId: string;
-  workflowTemplateId?: string;
-  status: 'running' | 'merge-ready' | 'merged' | 'failed' | 'cancelled' | 'timed-out' | 'blocked';
-  createdAt: string;
-  updatedAt: string;
-  currentNodeId: string;
-  latestCheckpointRef?: string;
-  blockedReason?: 'permission' | 'budget' | 'validator' | 'tool-failure' | 'timeout' | 'unknown';
-  budgetState?: { budgetId: string; usedTokens: number; limitTokens: number; state: string };
-  permissionState?: { requiredClass?: string; state: 'allowed' | 'needs-approval' | 'denied' };
-}
-
-export interface BranchLedgerEntry {
-  branchId: string;
-  memberKey: string;
-  status: string;
-  attempt: number;
-  startedAt?: string;
-  lastEventAt?: string;
-  lastError?: string;
-  leafSessionRef?: unknown;
-  outputRef?: string;
-  consumedByMerge: boolean;
-}
-
-export interface WorkflowCheckpointDebug {
-  checkpointId: string;
-  workflowId: string;
-  nodeId: string;
-  nodeType?: string;
-  createdAt: string;
-  state: Record<string, unknown>;
-}
-
-export interface WorkflowDetail extends WorkflowSummary {
-  latestCheckpoint?: WorkflowCheckpointDebug;
-  branchLedger: BranchLedgerEntry[];
-  stalledBranches: BranchLedgerEntry[];
-  mergeEnvelope?: unknown;
-  leafSessionRefs: unknown[];
-  rawContextRefs: unknown[];
-  branchState: Record<string, unknown>;
-  checkpointTimeline: WorkflowCheckpointDebug[];
-  permissionBudget?: unknown;
-}
-
-interface WorkflowState {
-  items: WorkflowSummary[];
-  total: number;
+interface WorkflowsState {
+  items: WorkflowDebugSummary[];
   selectedWorkflowId: string | null;
-  detail: WorkflowDetail | null;
+  detail: WorkflowDebugDetail | null;
   loading: boolean;
   error: string | null;
-  loadWorkflows: () => Promise<void>;
+  loadWorkflows: (filters?: { limit?: number }) => Promise<void>;
   selectWorkflow: (workflowId: string) => Promise<void>;
+  refreshSelected: () => Promise<void>;
+  clearSelection: () => void;
 }
 
-export const useWorkflowStore = create<WorkflowState>((set) => ({
+export const useWorkflowsStore = create<WorkflowsState>((set, getState) => ({
   items: [],
-  total: 0,
   selectedWorkflowId: null,
   detail: null,
   loading: false,
   error: null,
-  loadWorkflows: async () => {
+  loadWorkflows: async (filters = {}) => {
     set({ loading: true, error: null });
     try {
-      const response = await get<{ items: WorkflowSummary[]; total: number }>('/v1/workflows');
-      set({ items: response.data.items, total: response.data.total, loading: false });
+      const response = await listWorkflows(filters);
+      const selectedWorkflowId = getState().selectedWorkflowId ?? response.data.items[0]?.workflowId ?? null;
+      set({
+        items: response.data.items,
+        selectedWorkflowId,
+        loading: false,
+      });
+      if (selectedWorkflowId && !getState().detail) {
+        await getState().selectWorkflow(selectedWorkflowId);
+      }
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error), loading: false });
     }
   },
   selectWorkflow: async (workflowId) => {
-    set({ loading: true, error: null, selectedWorkflowId: workflowId });
+    set({ selectedWorkflowId: workflowId, loading: true, error: null });
     try {
-      const response = await get<WorkflowDetail>(`/v1/workflows/${workflowId}`);
+      const response = await getWorkflow(workflowId);
       set({ detail: response.data, loading: false });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error), loading: false });
     }
   },
+  refreshSelected: async () => {
+    const workflowId = getState().selectedWorkflowId;
+    if (!workflowId) {
+      await getState().loadWorkflows();
+      return;
+    }
+    await Promise.all([getState().loadWorkflows(), getState().selectWorkflow(workflowId)]);
+  },
+  clearSelection: () => set({ selectedWorkflowId: null, detail: null, error: null }),
 }));
+
+export function isWorkflowBlocked(workflow: Pick<WorkflowDebugSummary, 'status' | 'blockedReason'>): boolean {
+  return (
+    workflow.status === 'blocked' ||
+    workflow.status === 'needs-human-intervention' ||
+    Boolean(workflow.blockedReason)
+  );
+}
+
+export function isBranchStalled(branch: Pick<WorkflowBranchReadModel, 'status' | 'lastError'>): boolean {
+  return (
+    branch.status === 'failed' ||
+    branch.status === 'timed-out' ||
+    branch.status === 'cancelled' ||
+    branch.status === 'blocked' ||
+    Boolean(branch.lastError)
+  );
+}
