@@ -59,6 +59,13 @@ export const navigationItems: NavigationItem[] = [
     icon: Workflow,
   },
   {
+    to: '/dispatch',
+    label: 'Dispatch',
+    title: 'Dispatch / Orchestration Debugger',
+    description: '查看 workflow 拓扑、checkpoint timeline 与 stalled branch。',
+    icon: Workflow,
+  },
+  {
     to: '/status',
     label: 'Status',
     title: 'Status',
