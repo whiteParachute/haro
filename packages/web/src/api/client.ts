@@ -118,13 +118,28 @@ export function del<T>(path: string, init?: RequestInit) {
   });
 }
 
-export function listWorkflows(filters: { limit?: number } = {}) {
-  const params = new URLSearchParams();
-  if (filters.limit) params.set('limit', String(filters.limit));
-  const suffix = params.size > 0 ? `?${params}` : '';
-  return get<WorkflowListResponse>(`/v1/workflows${suffix}`);
+function encodePathSegment(value: string) {
+  return encodeURIComponent(value);
 }
 
-export function getWorkflow(workflowId: string) {
-  return get<WorkflowDebugDetail>(`/v1/workflows/${encodeURIComponent(workflowId)}`);
+export function getWorkflows<T>(init?: RequestInit) {
+  return get<T>('/v1/workflows', init);
+}
+
+export function getWorkflow<T>(workflowId: string, init?: RequestInit) {
+  return get<T>(`/v1/workflows/${encodePathSegment(workflowId)}`, init);
+}
+
+export function getWorkflowCheckpoints<T>(
+  workflowId: string,
+  options: { checkpointId?: string } = {},
+  init?: RequestInit,
+) {
+  const searchParams = new URLSearchParams();
+  if (options.checkpointId) {
+    searchParams.set('checkpointId', options.checkpointId);
+  }
+  const query = searchParams.toString();
+  const path = `/v1/workflows/${encodePathSegment(workflowId)}/checkpoints${query ? `?${query}` : ''}`;
+  return get<T>(path, init);
 }
