@@ -1,7 +1,7 @@
 ---
 id: FEAT-018
 title: Web Dashboard — Orchestration Debugger（编排调试）
-status: approved
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-23
@@ -166,3 +166,9 @@ Debug drawer 展示原始 checkpoint JSON，至少分区：
 - 2026-04-25: roadmap adjustment — 参考 LangGraph / CrewAI 增加 orchestration debugger、stalled branch、checkpoint debug drawer、budget/permission 摘要；因新增 Requirement，status 从 approved 回退为 draft。
 - 2026-04-25: owner split — 按 owner 指示拆分 FEAT-018；本 spec 收窄为 Orchestration Debugger，Knowledge/Skills 拆到 FEAT-024，Logs/Provider/Monitor 拆到 FEAT-025。
 - 2026-04-26: owner approved — whiteParachute 确认 Open Questions 已解决，status: draft → approved；下一步可按当前 Orchestration Debugger 范围进入实现。
+
+- 2026-04-26: implementation done — Orchestration Debugger 已交付。
+  - 核心交付：新增 `/api/v1/workflows*` 只读 REST read model；DispatchPage 展示 fork-and-merge 图、branch ledger、merge envelope、checkpoint timeline/debug drawer，并对预算/权限阻断仅展示“需要人类介入”说明。
+  - 验证命令：`pnpm -r --filter "./packages/*" run build`、`pnpm test`、`pnpm smoke`。
+  - 浏览器 smoke：截图 `.omx/state/team/feat-018-web-dashboard-orchest/artifacts/worker-1-feat018-dispatch.png`；REST envelope `.omx/state/team/feat-018-web-dashboard-orchest/artifacts/worker-1-feat018-rest.json`。
+  - Commit: `c914dce`。
