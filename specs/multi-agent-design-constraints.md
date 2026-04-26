@@ -51,6 +51,11 @@ Agent A → Agent B → Agent C → Agent D（流水线）
 
 **Scenario Router 要求**：图模型必须确保所有分支结果回流到同一编排节点后再进行下一步。
 
+**Dashboard / Read Model 要求**：任何可视化或只读 API（例如 FEAT-018 DispatchPage、`/api/v1/workflows*`）也必须保留 fork-and-merge 语义：
+- branch 应平行展示，并统一汇入 merge 节点
+- 不得为了 UI 简化把 branch 渲染成 branch-to-branch chain
+- checkpoint / branch ledger / merge envelope 必须保留原始结构化引用，不能压缩成单行摘要后再传给调试视图
+
 ### 约束③：并行覆盖不是分工（Parallel Coverage, Not Role Division）
 
 **规则**：多 Agent 的价值在于扩大搜索空间（并行探索多个可能性），而不是模拟人类组织分工。
