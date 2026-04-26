@@ -151,6 +151,10 @@ describe('Metabolism commands [FEAT-011]', () => {
     expect(dryRun.output).toContain('custom-skill');
     expect(dryRun.output).not.toContain('memory-wrapup');
 
+    const blocked = await manager.invokeCommandSkill('shit', { scope: 'skills', days: 0 });
+    expect(blocked.output).toContain('high risk candidates require --confirm-high');
+    expect(existsSync(join(root, 'skills', 'user', 'custom-skill', 'SKILL.md'))).toBe(true);
+
     const archived = await manager.invokeCommandSkill('shit', { scope: 'skills', days: 0, confirmHigh: true });
     expect(archived.output).toContain('archived to');
     expect(existsSync(join(root, 'skills', 'user', 'custom-skill'))).toBe(false);

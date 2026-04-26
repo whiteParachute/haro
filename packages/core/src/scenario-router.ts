@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { initHaroDatabase } from './db/init.js';
+import { createWorkflowBudgetEstimate, type WorkflowBudgetEstimate } from './permission-budget.js';
 
 export type TaskType =
   | 'quick'
@@ -59,6 +60,7 @@ export interface WorkflowCheckpointState {
   nodeType: WorkflowNodeType;
   sceneDescriptor: SceneDescriptor;
   routingDecision: RoutingDecision;
+  budget?: WorkflowBudgetEstimate;
   rawContextRefs: RawContextRef[];
   branchState: Record<string, unknown>;
   leafSessionRefs: LeafSessionRef[];
@@ -104,6 +106,7 @@ export interface ScenarioWorkflow {
   orchestrationMode?: OrchestrationMode;
   workflowTemplateId: string;
   sceneDescriptor?: SceneDescriptor;
+  budget?: WorkflowBudgetEstimate;
   nodes: WorkflowNode[];
   leafSessionRefs: LeafSessionRef[];
   createdAt: string;
@@ -611,6 +614,11 @@ export class ScenarioRouter {
     disallowedIds.add(workflowId);
     const createdAt = this.timestamp();
     const nodes = this.createNodes(decision);
+    const budget = createWorkflowBudgetEstimate({
+      workflowId,
+      decision,
+      sceneDescriptor: options.sceneDescriptor,
+    });
     const leafSessionRefs =
       decision.executionMode === 'single-agent'
         ? [
@@ -628,6 +636,7 @@ export class ScenarioRouter {
       orchestrationMode: decision.orchestrationMode,
       workflowTemplateId: decision.workflowTemplateId,
       sceneDescriptor: options.sceneDescriptor,
+      budget,
       nodes,
       leafSessionRefs,
       createdAt,
@@ -860,6 +869,7 @@ export class CheckpointStore {
             }
           : undefined,
       },
+      budget: state.budget ? { ...state.budget } : undefined,
       rawContextRefs: state.rawContextRefs.map((ref) => ({
         kind: ref.kind,
         ref: ref.ref,

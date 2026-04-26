@@ -49,6 +49,83 @@ export const CORE_TABLES: readonly TableDefinition[] = [
     ],
   },
   {
+    name: 'operation_audit_log',
+    ddl: `CREATE TABLE IF NOT EXISTS operation_audit_log (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT,
+      branch_id TEXT,
+      agent_id TEXT,
+      event_type TEXT NOT NULL,
+      operation_class TEXT,
+      policy TEXT,
+      outcome TEXT NOT NULL,
+      target_scope TEXT,
+      target_ref TEXT,
+      reason TEXT,
+      approval_ref TEXT,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_operation_audit_log_workflow_id
+         ON operation_audit_log(workflow_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_operation_audit_log_event_type
+         ON operation_audit_log(event_type, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_operation_audit_log_outcome
+         ON operation_audit_log(outcome, created_at)`,
+    ],
+  },
+  {
+    name: 'workflow_budgets',
+    ddl: `CREATE TABLE IF NOT EXISTS workflow_budgets (
+      budget_id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL UNIQUE,
+      limit_tokens INTEGER NOT NULL,
+      soft_limit_ratio REAL NOT NULL,
+      estimated_branches INTEGER NOT NULL DEFAULT 0,
+      estimated_tokens INTEGER NOT NULL DEFAULT 0,
+      used_input_tokens INTEGER NOT NULL DEFAULT 0,
+      used_output_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_cost REAL,
+      state TEXT NOT NULL DEFAULT 'ok'
+        CHECK (state IN ('ok', 'near-limit', 'exceeded')),
+      blocked_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_workflow_budgets_workflow_id
+         ON workflow_budgets(workflow_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_workflow_budgets_state
+         ON workflow_budgets(state, updated_at)`,
+    ],
+  },
+  {
+    name: 'token_budget_ledger',
+    ddl: `CREATE TABLE IF NOT EXISTS token_budget_ledger (
+      id TEXT PRIMARY KEY,
+      budget_id TEXT NOT NULL,
+      workflow_id TEXT NOT NULL,
+      branch_id TEXT,
+      agent_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_cost REAL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(budget_id) REFERENCES workflow_budgets(budget_id)
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_token_budget_ledger_workflow_id
+         ON token_budget_ledger(workflow_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_token_budget_ledger_branch_id
+         ON token_budget_ledger(branch_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_token_budget_ledger_agent_id
+         ON token_budget_ledger(agent_id, created_at)`,
+    ],
+  },
+  {
     name: 'provider_fallback_log',
     ddl: `CREATE TABLE IF NOT EXISTS provider_fallback_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

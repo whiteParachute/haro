@@ -1,11 +1,11 @@
 ---
 id: FEAT-023
 title: Permission & Token Budget Guard（权限与预算护栏）
-status: draft
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-25
-updated: 2026-04-25
+updated: 2026-04-26
 related:
   - ../phase-1/FEAT-013-scenario-router.md
   - ../phase-1/FEAT-014-team-orchestrator.md
@@ -152,6 +152,12 @@ operation request
   -> write audit log for non-allow decisions
 ```
 
+### 5.4 Closed design decisions
+
+- D1: Phase 1 默认 hard limit 采用固定 token 数配置；provider/model 成本估算只作为可选展示字段，不作为阻断依据。
+- D2: `write-local` 必须区分 workspace 内写入和 `~/.haro/` 状态写入。两者在默认本地开发策略下可为 `allow`，但 audit/classification 中必须保留目标范围，workspace 外写入不得被泛化为普通 workspace 写入。
+- D3: approval 的 Phase 1 最小形式为显式 CLI/config 确认加 audit log；完整 Web human checkpoint / 审批队列留给 FEAT-028 或后续独立 spec。
+
 ## 6. Acceptance Criteria / 验收标准
 
 - AC1: 给定每种 operation class，当调用 policy resolver 时，应返回默认 policy，且 delete/credential 为 deny。（对应 R1-R3）
@@ -173,10 +179,22 @@ operation request
 
 ## 8. Open Questions / 待定问题
 
-- Q1: Phase 1 默认 hard limit 应按 token 数固定值配置，还是按 provider/model 估算成本配置？
-- Q2: `write-local` 是否需要区分 workspace 内写入和 `~/.haro/` 状态写入？
-- Q3: approval 记录的最小形式是 CLI prompt、config flag，还是只写 audit log 等待 Phase 2 human checkpoint？
+全部已关闭：
+
+- ~~Q1: Phase 1 默认 hard limit 应按 token 数固定值配置，还是按 provider/model 估算成本配置？~~ **决策：固定 token hard limit。** provider/model 成本估算只作为可选展示字段，不作为 Phase 1 阻断依据。
+- ~~Q2: `write-local` 是否需要区分 workspace 内写入和 `~/.haro/` 状态写入？~~ **决策：需要区分。** workspace 内写入与 `~/.haro/` 状态写入在 classification/audit 中保留不同目标范围，workspace 外写入不得被静默当作普通 workspace 写入。
+- ~~Q3: approval 记录的最小形式是 CLI prompt、config flag，还是只写 audit log 等待 Phase 2 human checkpoint？~~ **决策：显式 CLI/config 确认 + audit log。** Web human checkpoint / 审批队列后续再做。
 
 ## 9. Changelog / 变更记录
 
 - 2026-04-25: Codex — 初稿，定义操作权限分级、Token budget ledger、audit log 和 Team Orchestrator 集成边界。
+- 2026-04-26: whiteParachute — approved
+  - Q1 → Phase 1 使用固定 token hard limit；成本估算只做展示，不作为阻断。
+  - Q2 → `write-local` 区分 workspace 写入和 `~/.haro/` 状态写入，并在 audit/classification 中保留目标范围。
+  - Q3 → approval 最小形式为显式 CLI/config 确认 + audit log；Web 审批流留给 FEAT-028 或后续 spec。
+- 2026-04-26: Codex — done
+  - 核心交付：新增 PermissionBudgetStore / operation classifier / policy resolver；SQLite 增加 `operation_audit_log`、`workflow_budgets`、`token_budget_ledger`；Router 产出 budget estimate；Team Orchestrator 在 branch/retry/merge 处执行 soft/hard token guard；CLI 外部 channel 写操作与 `shit` archive 接入 Permission Guard；Web 暴露只读 `/api/v1/guard/workflows` read model。
+  - 验证命令：`pnpm -F @haro/core test`、`pnpm -F @haro/cli test`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm smoke` 全部通过。
+  - 独立 review：native verifier 复核 PASS；早期 review 提出的 runtime Permission Guard wiring 与多目标 `write-local` scope 问题已修复。
+  - Commit: ca0b39f63ffbe4dfecc4780d18e3e89632a088a1
+  - Not-tested: 未连接真实 Feishu/Telegram 外部发送审批链路，只通过 fake channel harness 验证未批准时 audit + no-send；真实 provider billing/cost 不是 Phase 1 阻断依据。

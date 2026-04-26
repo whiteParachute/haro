@@ -39,6 +39,7 @@ import {
 - `attempt`: 显式 retry 才递增
 - `leafSessionRef`: 与 FEAT-013 的 leaf session 映射兼容
 - `outputRef / output / consumedByMerge / lastError`
+- `usage`: leaf terminal 后记录 provider/model 与 input/output tokens，用于 FEAT-023 budget ledger
 
 `BRANCH_STATUS_VALUES` 暴露了运行时允许的状态全集，便于 schema/test 对齐。
 
@@ -54,6 +55,8 @@ import {
 - `leafTimeoutMs`（per-leaf 超时）
 - `fallbackExecutionMode / teamOrchestratorPending`（当前 CLI release team 路径为 `null / false`；仅用于识别早期
   checkpoint 或未来显式降级边界）
+- `budget`（可选）：当前 workflow 的 FEAT-023 budget read model snapshot；`near-limit` 时可配合
+  `teamOrchestratorPending = true` 表达需要人工介入
 
 这对应 FEAT-014 的双层超时模型：整体 deadline 会裁剪 branch 的可运行时长；若先触发 workflow deadline，
 branch 记为 `cancelled` 且 teamStatus 记为 `timed-out`；否则保留 `timed-out` 给 per-leaf timeout。
@@ -104,6 +107,17 @@ branch 记为 `cancelled` 且 teamStatus 记为 `timed-out`；否则保留 `time
 5. 每个 leaf terminal 后 `writeCheckpoint('leaf-terminal')`
 6. `runMerge()` 生成统一 `MergeEnvelope`，先把 merge-ready envelope 持久化到 checkpoint
 7. commit merge consumption，写入最终 `writeCheckpoint('merge')`
+
+FEAT-023 增加预算护栏：
+
+- `createInitialState()` 会把 Router 的 `budget` estimate 落到 `workflow_budgets`，并把 `budgetId` /
+  `allocatedTokens` 标注到 branch metadata。
+- `executeBranch()` 在 branch attempt / retry 前调用 budget check；soft limit 写 audit 并标记 near-limit，
+  hard limit 直接取消新增 attempt。
+- leaf terminal 后从 `RunAgentResult.finalEvent.usage`（或 events 中最后一个 result usage）写入
+  `token_budget_ledger`。
+- `prepareMerge()` 在 merge 前再次检查预算；若已 exceeded，会生成 `status=blocked` 的 merge envelope，
+  让 CLI/Web summary 看到 `budgetExceeded` 与 `blockedReason`。
 
 其中 `runMerge()` 采用 **hybrid** 路径：
 

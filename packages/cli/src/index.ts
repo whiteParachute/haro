@@ -9,18 +9,25 @@ import {
   AgentRunner,
   CheckpointStore,
   DEFAULT_AGENT_ID,
+  PermissionBudgetStore,
   ProviderRegistry,
   ScenarioRouter,
   TeamOrchestrator,
   buildHaroPaths,
+  classifyOperation,
   createMemoryFabric,
+  extractTokenUsage,
   createLogger,
   db as haroDb,
   fs as haroFs,
   loadAgentsFromDir,
+  resolveOperationPolicy,
+  resolveStrictestPermissionDecision,
   resolveSelection,
   type HaroLogger,
   type HaroPaths,
+  type OperationClass,
+  type OperationPolicy,
   type RawContextRef,
   type RoutingDecision,
   type RunAgentInput,
@@ -45,6 +52,7 @@ import {
   type ChannelSetupContext,
   type InboundMessage,
   type MessageChannel,
+  type OutboundMessage,
 } from './channel.js';
 import {
   formatDiagnosticsHuman,
@@ -982,6 +990,25 @@ function registerMetabolismCommands(program: Command, app: AppContext): void {
         .option('--dry-run', 'preview candidates only')
         .option('--confirm-high', 'allow high-risk items')
         .action(async (options: { scope?: 'rules' | 'skills' | 'mcp' | 'memory' | 'all'; days?: number; dryRun?: boolean; confirmHigh?: boolean }) => {
+          if (options.dryRun !== true) {
+            const decision = recordCliPermissionDecision(app, {
+              operationClass: 'archive',
+              intent: 'haro shit archive',
+              targetPath: app.paths.dirs.archive,
+              approvalRef: options.confirmHigh === true ? 'cli:--confirm-high' : undefined,
+              minimumPolicy: options.confirmHigh === true ? 'allow' : 'needs-approval',
+              metadata: {
+                command: 'shit',
+                scope: options.scope,
+                days: options.days,
+                confirmHigh: options.confirmHigh === true,
+              },
+            });
+            if (decision.policy !== 'allow') {
+              app.stdout.write('shit blocked: archive requires explicit CLI confirmation (--confirm-high)\n');
+              return;
+            }
+          }
           const result = await app.skills.invokeCommandSkill('shit', {
             scope: options.scope,
             days: options.days,
@@ -996,6 +1023,18 @@ function registerMetabolismCommands(program: Command, app: AppContext): void {
         .argument('<archiveId>', 'archive id')
         .option('--item <path>', 'restore a single archived item')
         .action(async (archiveId: string, options: { item?: string }) => {
+          recordCliPermissionDecision(app, {
+            operationClass: 'archive',
+            intent: 'haro shit rollback',
+            targetPath: join(app.paths.dirs.archive, archiveId),
+            approvalRef: 'cli:shit-rollback',
+            minimumPolicy: 'allow',
+            metadata: {
+              command: 'shit rollback',
+              archiveId,
+              item: options.item,
+            },
+          });
           const result = await app.skills.invokeCommandSkill('shit', {
             archiveId,
             item: options.item,
@@ -1481,36 +1520,6 @@ async function executeTask(
       onInbound: async () => undefined,
     });
   }
-  if (prepared.directOutput) {
-    await outputChannel.send(input.retryOfSessionId ?? 'skill-direct', {
-      type: 'text',
-      content: prepared.directOutput,
-    });
-    return {
-      sessionId: input.retryOfSessionId ?? 'skill-direct',
-      ruleId: 'skill-direct',
-      provider: input.provider ?? 'skill-runtime',
-      model: input.model ?? 'skill-runtime',
-      events: [],
-      finalEvent: {
-        type: 'result' as const,
-        content: prepared.directOutput,
-      },
-    };
-  }
-
-  let liveDispatch = Promise.resolve();
-  const queueLiveEvent = (event: AgentEvent, sessionId: string): void => {
-    if (event.type !== 'text' || event.delta !== true) return;
-    if (!outputChannel.capabilities().streaming) return;
-    liveDispatch = liveDispatch.then(() =>
-      outputChannel.send(sessionId, {
-        type: 'text',
-        content: event.content,
-        delta: true,
-      }),
-    );
-  };
   const scene = app.router.classify(effectiveTask);
   const decision = app.router.route(scene);
   const workflow = app.router.createWorkflow(decision, {
@@ -1523,82 +1532,173 @@ async function executeTask(
       ref: buildIngressContextRef(input.channelId ?? outputChannel.id, channelSessionId),
     },
   ];
-  if (decision.executionMode === 'team') {
-    const teamResult = await executeTeamWorkflow(app, input, workflow, decision, rawContextRefs);
-    await outputChannel.send(teamResult.sessionId, {
-      type: 'text',
-      content:
-        teamResult.finalEvent.type === 'result'
-          ? teamResult.finalEvent.content
-          : `ERROR [${teamResult.finalEvent.code}] ${teamResult.finalEvent.message}`,
-    });
-    return teamResult;
-  }
-  const checkpointNodeId = workflow.leafSessionRefs[0]?.nodeId ?? 'leaf-1';
-  const leafSessionId =
-    workflow.leafSessionRefs[0]?.sessionId ??
-    (app.opts.createSessionId ? app.opts.createSessionId() : randomUUID());
-  const branchState = { fallbackExecutionMode: null };
-  const runner = app.createRunner(() => leafSessionId);
-  const result = await runner.run({
-    task: effectiveTask,
-    agentId: input.agentId,
-    ...(input.provider ? { provider: input.provider } : {}),
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.noMemory ? { noMemory: true } : {}),
-    ...(input.retryOfSessionId ? { retryOfSessionId: input.retryOfSessionId } : {}),
-    ...(input.continueLatestSession === false ? { continueLatestSession: false } : {}),
-    onEvent: queueLiveEvent,
+  const budgetStore = new PermissionBudgetStore({
+    root: app.opts.root,
+    dbFile: app.paths.dbFile,
+    now: app.now,
   });
-  await liveDispatch;
-  app.checkpointStore.save({
+  budgetStore.ensureWorkflowBudget({
     workflowId: workflow.workflowId,
-    nodeId: checkpointNodeId,
-    state: {
-      workflowId: workflow.workflowId,
-      nodeId: checkpointNodeId,
-      nodeType: 'agent',
-      sceneDescriptor: scene,
-      routingDecision: decision,
-      rawContextRefs,
-      branchState,
-      leafSessionRefs: [
-        {
-          nodeId: checkpointNodeId,
-          sessionId: result.sessionId,
-          ...(result.finalEvent.type === 'result' && result.finalEvent.responseId
-            ? { providerResponseId: result.finalEvent.responseId }
-            : {}),
-        },
-      ],
-      createdAt: workflow.createdAt,
-    },
+    ...(workflow.budget ? { estimate: workflow.budget } : {}),
   });
-
-  for (const event of result.events) {
-    if (event.type === 'text') {
-      if (event.delta === true && outputChannel.capabilities().streaming) {
-        continue;
-      }
-      await outputChannel.send(result.sessionId, {
-        type: 'text',
-        content: event.content,
-        delta: event.delta,
+  if (prepared.directOutput) {
+    const sessionId = input.retryOfSessionId ?? 'skill-direct';
+    try {
+      await sendWithPermissionGuard(app, budgetStore, {
+        workflowId: workflow.workflowId,
+        agentId: input.agentId,
+        channel: outputChannel,
+        sessionId,
+        message: {
+          type: 'text',
+          content: prepared.directOutput,
+        },
       });
-    } else if (event.type === 'result') {
-      await outputChannel.send(result.sessionId, {
-        type: 'text',
-        content: event.content,
-      });
-    } else if (event.type === 'error') {
-      await outputChannel.send(result.sessionId, {
-        type: 'text',
-        content: `ERROR [${event.code}] ${event.message}`,
-      });
+      return {
+        sessionId,
+        ruleId: 'skill-direct',
+        provider: input.provider ?? 'skill-runtime',
+        model: input.model ?? 'skill-runtime',
+        events: [],
+        finalEvent: {
+          type: 'result' as const,
+          content: prepared.directOutput,
+        },
+      };
+    } finally {
+      budgetStore.close();
     }
   }
 
-  return result;
+  let liveDispatch = Promise.resolve();
+  const queueLiveEvent = (event: AgentEvent, sessionId: string): void => {
+    if (event.type !== 'text' || event.delta !== true) return;
+    if (!outputChannel.capabilities().streaming) return;
+    if (outputChannel.id !== 'cli') return;
+    liveDispatch = liveDispatch.then(() =>
+      outputChannel.send(sessionId, {
+        type: 'text',
+        content: event.content,
+        delta: true,
+      }),
+    );
+  };
+  try {
+    if (decision.executionMode === 'team') {
+      const teamResult = await executeTeamWorkflow(app, input, workflow, decision, rawContextRefs, budgetStore);
+      await sendWithPermissionGuard(app, budgetStore, {
+        workflowId: workflow.workflowId,
+        agentId: input.agentId,
+        channel: outputChannel,
+        sessionId: teamResult.sessionId,
+        message: {
+          type: 'text',
+          content:
+            teamResult.finalEvent.type === 'result'
+              ? teamResult.finalEvent.content
+              : `ERROR [${teamResult.finalEvent.code}] ${teamResult.finalEvent.message}`,
+        },
+      });
+      return teamResult;
+    }
+    const checkpointNodeId = workflow.leafSessionRefs[0]?.nodeId ?? 'leaf-1';
+    const leafSessionId =
+      workflow.leafSessionRefs[0]?.sessionId ??
+      (app.opts.createSessionId ? app.opts.createSessionId() : randomUUID());
+    const branchState = { fallbackExecutionMode: null };
+    const runner = app.createRunner(() => leafSessionId);
+    const result = await runner.run({
+      task: effectiveTask,
+      agentId: input.agentId,
+      ...(input.provider ? { provider: input.provider } : {}),
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.noMemory ? { noMemory: true } : {}),
+      ...(input.retryOfSessionId ? { retryOfSessionId: input.retryOfSessionId } : {}),
+      ...(input.continueLatestSession === false ? { continueLatestSession: false } : {}),
+      onEvent: queueLiveEvent,
+    });
+    const usage = extractTokenUsage({ finalEvent: result.finalEvent, events: result.events });
+    budgetStore.recordTokenUsage({
+      budgetId: workflow.budget?.budgetId,
+      workflowId: workflow.workflowId,
+      branchId: checkpointNodeId,
+      agentId: input.agentId,
+      provider: result.provider,
+      model: result.model,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
+    await liveDispatch;
+    app.checkpointStore.save({
+      workflowId: workflow.workflowId,
+      nodeId: checkpointNodeId,
+      state: {
+        workflowId: workflow.workflowId,
+        nodeId: checkpointNodeId,
+        nodeType: 'agent',
+        sceneDescriptor: scene,
+        routingDecision: decision,
+        budget: workflow.budget,
+        rawContextRefs,
+        branchState,
+        leafSessionRefs: [
+          {
+            nodeId: checkpointNodeId,
+            sessionId: result.sessionId,
+            ...(result.finalEvent.type === 'result' && result.finalEvent.responseId
+              ? { providerResponseId: result.finalEvent.responseId }
+              : {}),
+          },
+        ],
+        createdAt: workflow.createdAt,
+      },
+    });
+
+    for (const event of result.events) {
+      if (event.type === 'text') {
+        if (event.delta === true && outputChannel.capabilities().streaming) {
+          continue;
+        }
+        await sendWithPermissionGuard(app, budgetStore, {
+          workflowId: workflow.workflowId,
+          agentId: input.agentId,
+          channel: outputChannel,
+          sessionId: result.sessionId,
+          message: {
+            type: 'text',
+            content: event.content,
+            delta: event.delta,
+          },
+        });
+      } else if (event.type === 'result') {
+        await sendWithPermissionGuard(app, budgetStore, {
+          workflowId: workflow.workflowId,
+          agentId: input.agentId,
+          channel: outputChannel,
+          sessionId: result.sessionId,
+          message: {
+            type: 'text',
+            content: event.content,
+          },
+        });
+      } else if (event.type === 'error') {
+        await sendWithPermissionGuard(app, budgetStore, {
+          workflowId: workflow.workflowId,
+          agentId: input.agentId,
+          channel: outputChannel,
+          sessionId: result.sessionId,
+          message: {
+            type: 'text',
+            content: `ERROR [${event.code}] ${event.message}`,
+          },
+        });
+      }
+    }
+
+    return result;
+  } finally {
+    budgetStore.close();
+  }
 }
 
 async function executeTeamWorkflow(
@@ -1607,6 +1707,7 @@ async function executeTeamWorkflow(
   workflow: ScenarioWorkflow,
   decision: RoutingDecision,
   rawContextRefs: RawContextRef[],
+  budgetStore: PermissionBudgetStore,
 ): Promise<RunAgentResult> {
   const runner = app.createRunner();
   const teamAgentRunner = {
@@ -1621,6 +1722,8 @@ async function executeTeamWorkflow(
   const orchestrator = new TeamOrchestrator({
     agentRunner: teamAgentRunner,
     checkpointStore: app.checkpointStore,
+    budgetStore,
+    budgetEstimate: workflow.budget,
     now: app.now,
     defaultAgentId: input.agentId,
   });
@@ -1680,12 +1783,130 @@ async function executeTeamWorkflow(
   }
 }
 
+async function sendWithPermissionGuard(
+  app: AppContext,
+  store: PermissionBudgetStore,
+  input: {
+    workflowId: string;
+    agentId: string;
+    channel: MessageChannel;
+    sessionId: string;
+    message: OutboundMessage;
+  },
+): Promise<boolean> {
+  if (input.channel.id === 'cli') {
+    await input.channel.send(input.sessionId, input.message);
+    return true;
+  }
+
+  const approvalRef = resolveExternalServiceApprovalRef(app, input.channel.id);
+  const classification = classifyOperation({
+    externalService: input.channel.id,
+    intent: `send ${input.message.type} response`,
+  });
+  const decision = resolveOperationPolicy({
+    classification,
+    ...(approvalRef ? { approvalRef } : {}),
+  });
+  store.recordPermissionDecision({
+    workflowId: input.workflowId,
+    agentId: input.agentId,
+    decision,
+    targetRef: classification.targetRef,
+    auditAllow: decision.policy === 'allow',
+    metadata: {
+      action: 'channel-send',
+      channelId: input.channel.id,
+      sessionId: input.sessionId,
+      messageType: input.message.type,
+    },
+  });
+  if (decision.policy !== 'allow') {
+    app.logger.warn?.(
+      {
+        workflowId: input.workflowId,
+        channelId: input.channel.id,
+        policy: decision.policy,
+      },
+      'External-service channel send blocked by Permission Guard',
+    );
+    return false;
+  }
+
+  await input.channel.send(input.sessionId, input.message);
+  return true;
+}
+
+function resolveExternalServiceApprovalRef(app: AppContext, channelId: string): string | undefined {
+  const rawPermissions = (app.loaded.config as Record<string, unknown>).permissions;
+  if (!isRecord(rawPermissions)) return undefined;
+  const rawApprovals = rawPermissions.approvals;
+  if (!isRecord(rawApprovals)) return undefined;
+  if (rawApprovals.externalServiceWrite === true) {
+    return 'config:permissions.approvals.externalServiceWrite';
+  }
+  const perChannel = rawApprovals.externalServiceChannels;
+  if (Array.isArray(perChannel) && perChannel.includes(channelId)) {
+    return `config:permissions.approvals.externalServiceChannels:${channelId}`;
+  }
+  return undefined;
+}
+
+function recordCliPermissionDecision(
+  app: AppContext,
+  input: {
+    operationClass: OperationClass;
+    intent: string;
+    targetPath?: string;
+    approvalRef?: string;
+    minimumPolicy?: OperationPolicy;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const classification = classifyOperation({
+    operationClass: input.operationClass,
+    intent: input.intent,
+    targetPath: input.targetPath,
+    workspaceRoot: app.opts.projectRoot ?? process.cwd(),
+    haroRoot: app.paths.root,
+  });
+  const decision = resolveStrictestPermissionDecision(
+    resolveOperationPolicy({
+      classification,
+      ...(input.approvalRef ? { approvalRef: input.approvalRef } : {}),
+    }),
+    input.minimumPolicy ?? 'allow',
+  );
+  const store = new PermissionBudgetStore({
+    root: app.opts.root,
+    dbFile: app.paths.dbFile,
+    now: app.now,
+  });
+  try {
+    store.recordPermissionDecision({
+      decision,
+      targetRef: classification.targetRef,
+      auditAllow: decision.policy === 'allow',
+      metadata: {
+        action: 'cli-command',
+        ...input.metadata,
+      },
+    });
+  } finally {
+    store.close();
+  }
+  return decision;
+}
+
 function formatTeamWorkflowResult(result: TeamWorkflowExecutionResult): string {
   return JSON.stringify(
     {
       workflowId: result.workflow.workflowId,
       orchestrationMode: result.envelope.orchestrationMode,
       teamStatus: result.state.teamStatus,
+      budget: result.state.budget,
+      budgetExceeded: result.state.budget?.state === 'exceeded',
+      blockedReason: result.state.budget?.blockedReason,
       branchLedger: result.state.branches,
       mergeEnvelope: result.envelope,
     },
@@ -2049,9 +2270,14 @@ function previewText(value: string, limit = 80): string {
   return `${normalized.slice(0, Math.max(0, limit - 1))}…`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function readStatus(root: string, dbFile: string): Record<string, unknown> {
   const opened = haroDb.initHaroDatabase({ root, dbFile, keepOpen: true });
   const db = opened.database!;
+  const budgetStore = new PermissionBudgetStore({ db });
   try {
     const sessions = db
       .prepare(
@@ -2063,7 +2289,7 @@ function readStatus(root: string, dbFile: string): Record<string, unknown> {
         'SELECT id, agent_id, provider, model, status, started_at, ended_at FROM sessions ORDER BY started_at DESC LIMIT 5',
       )
       .all();
-    return { sessions, recent };
+    return { sessions, recent, permissionBudget: budgetStore.listWorkflowPermissionBudgetSummaries(5) };
   } finally {
     db.close();
   }
@@ -2072,6 +2298,7 @@ function readStatus(root: string, dbFile: string): Record<string, unknown> {
 function readUsage(root: string, dbFile: string, sessionId?: string): Record<string, unknown> {
   const opened = haroDb.initHaroDatabase({ root, dbFile, keepOpen: true });
   const db = opened.database!;
+  const budgetStore = new PermissionBudgetStore({ db });
   try {
     const totalSessions = db.prepare('SELECT COUNT(*) AS count FROM sessions').get() as {
       count: number;
@@ -2089,6 +2316,7 @@ function readUsage(root: string, dbFile: string, sessionId?: string): Record<str
     return {
       totalSessions: totalSessions.count,
       totalEvents: totalEvents.count,
+      permissionBudget: budgetStore.listWorkflowPermissionBudgetSummaries(5),
       ...(sessionId ? { sessionId, currentSessionEvents } : {}),
     };
   } finally {

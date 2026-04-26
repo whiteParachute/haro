@@ -112,6 +112,23 @@ describe('ScenarioRouter [FEAT-013]', () => {
     expect(decision.orchestrationMode).not.toBe('pipeline');
   });
 
+  it('FEAT-023 AC2 attaches a budget estimate to team workflows', () => {
+    const router = new ScenarioRouter({
+      createId: createIdFactory(['workflow-budgeted-team']),
+    });
+
+    const plan = router.plan('请分析这个复杂系统故障，跨文件定位根因并拆分信息维度');
+
+    expect(plan.workflow.executionMode).toBe('team');
+    expect(plan.workflow.budget).toMatchObject({
+      budgetId: 'budget:workflow-budgeted-team',
+      estimatedBranches: 3,
+      limitTokens: 200_000,
+      softLimitRatio: 0.8,
+    });
+    expect(plan.workflow.budget?.estimatedTokens).toBeGreaterThan(0);
+  });
+
   it('AC4 keeps single-agent workflows at 1 workflowId -> 1 leaf sessionId', () => {
     const router = new ScenarioRouter({
       createId: createIdFactory(['workflow-1', 'leaf-session-1']),

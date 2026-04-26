@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_AGENT_ID } from './agent/index.js';
+import {
+  PermissionBudgetStore,
+  createWorkflowBudgetEstimate,
+  extractTokenUsage,
+  type WorkflowBudget,
+  type WorkflowBudgetEstimate,
+} from './permission-budget.js';
 import type { RunAgentInput, RunAgentResult } from './runtime/index.js';
 import {
   CheckpointStore,
@@ -28,6 +35,7 @@ export type BranchStatus = (typeof BRANCH_STATUS_VALUES)[number];
 export type TeamStatus =
   | 'planned'
   | 'running'
+  | 'needs-human-intervention'
   | 'merge-ready'
   | 'merged'
   | 'failed'
@@ -69,6 +77,14 @@ export interface BranchExecutionOutput {
   structured?: unknown;
 }
 
+export interface BranchTokenUsage {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost?: number;
+}
+
 export interface BranchLedgerEntry {
   workflowId: string;
   branchId: string;
@@ -81,6 +97,7 @@ export interface BranchLedgerEntry {
   leafSessionRef?: LeafSessionRef;
   outputRef?: string;
   output?: BranchExecutionOutput;
+  usage?: BranchTokenUsage;
   consumedByMerge: boolean;
   startedAt?: string;
   finishedAt?: string;
@@ -213,6 +230,7 @@ export interface TeamBranchState {
   fallbackExecutionMode?: 'single-agent' | null;
   teamOrchestratorPending?: boolean;
   workflow?: ScenarioWorkflow;
+  budget?: WorkflowBudget;
 }
 
 export interface TeamBranchBlueprint {
@@ -264,6 +282,8 @@ export interface TeamOrchestratorOptions {
   defaultAgentId?: string;
   workflowTimeoutMs?: number;
   leafTimeoutMs?: number;
+  budgetStore?: PermissionBudgetStore;
+  budgetEstimate?: WorkflowBudgetEstimate;
   mergeSynthesizer?: (input: MergeSynthesisInput) => Promise<MergeEnvelopeBody> | MergeEnvelopeBody;
 }
 
@@ -471,11 +491,16 @@ function cloneBranchOutput(output: BranchExecutionOutput | undefined): BranchExe
     : undefined;
 }
 
+function cloneBranchUsage(usage: BranchTokenUsage | undefined): BranchTokenUsage | undefined {
+  return usage ? { ...usage } : undefined;
+}
+
 function cloneBranch(entry: BranchLedgerEntry): BranchLedgerEntry {
   return {
     ...entry,
     leafSessionRef: cloneLeafSessionRef(entry.leafSessionRef),
     output: cloneBranchOutput(entry.output),
+    usage: cloneBranchUsage(entry.usage),
     metadata: entry.metadata ? { ...entry.metadata } : undefined,
   };
 }
@@ -483,6 +508,7 @@ function cloneBranch(entry: BranchLedgerEntry): BranchLedgerEntry {
 function cloneWorkflow(workflow: ScenarioWorkflow): ScenarioWorkflow {
   return {
     ...workflow,
+    budget: workflow.budget ? { ...workflow.budget } : undefined,
     nodes: workflow.nodes.map((node) => ({ ...node })),
     leafSessionRefs: workflow.leafSessionRefs.map((ref) => ({ ...ref })),
   };
@@ -503,6 +529,7 @@ function cloneState(state: TeamBranchState): TeamBranchState {
       : undefined,
     leafTimeoutMs: state.leafTimeoutMs ? { ...state.leafTimeoutMs } : undefined,
     workflow: state.workflow ? cloneWorkflow(state.workflow) : undefined,
+    budget: state.budget ? { ...state.budget } : undefined,
   };
 }
 
@@ -641,6 +668,24 @@ function ensureValidPipelineTemplate(workflow: ScenarioWorkflow, template: TeamT
   }
 }
 
+function workflowBudgetEstimate(
+  workflow: ScenarioWorkflow,
+  fallback?: WorkflowBudgetEstimate,
+): WorkflowBudgetEstimate {
+  return workflow.budget ?? fallback ?? createWorkflowBudgetEstimate({
+    workflowId: workflow.workflowId,
+    decision: {
+      executionMode: workflow.executionMode,
+      workflowTemplateId: workflow.workflowTemplateId,
+    },
+    sceneDescriptor: workflow.sceneDescriptor,
+  });
+}
+
+function branchAllocatedTokens(estimate: WorkflowBudgetEstimate): number {
+  return Math.max(1, Math.ceil(estimate.limitTokens / Math.max(1, estimate.estimatedBranches)));
+}
+
 function toTimestamp(date: Date): string {
   return date.toISOString();
 }
@@ -733,6 +778,117 @@ function buildOutputRef(branch: BranchLedgerEntry): string {
   return `workflow://${branch.workflowId}/branches/${branch.branchId}/attempt/${branch.attempt}`;
 }
 
+function buildBudgetBlockedBody(
+  mode: TeamOrchestrationMode,
+  branches: BranchLedgerEntry[],
+  reason: string,
+): MergeEnvelopeBody {
+  const evidenceRefs = branches.flatMap((branch) => toEvidenceRefs(branch));
+  switch (mode) {
+    case 'parallel':
+      return {
+        kind: 'parallel',
+        candidates: [],
+        findings: [
+          {
+            id: 'budget-exceeded',
+            summary: reason,
+            type: 'gap',
+            sourceBranchIds: branches.map((branch) => branch.branchId),
+            evidenceRefs,
+          },
+        ],
+        decision: {
+          mode: 'blocked',
+          selectedBranchIds: [],
+          rationale: reason,
+          evidenceRefs,
+        },
+      };
+    case 'debate':
+      return {
+        kind: 'debate',
+        candidates: [],
+        findings: branches.map((branch) => ({
+          branchId: branch.branchId,
+          role: 'critic',
+          summary: reason,
+          severity: 'high',
+          evidenceRefs: toEvidenceRefs(branch),
+        })),
+        decision: {
+          outcome: 'blocked',
+          rationale: reason,
+          evidenceRefs,
+        },
+      };
+    case 'pipeline':
+      return {
+        kind: 'pipeline',
+        candidates: [],
+        findings: branches.map((branch) => ({
+          stepId: branch.branchId,
+          summary: reason,
+          type: 'failure',
+          evidenceRefs: toEvidenceRefs(branch),
+        })),
+        decision: {
+          outcome: 'blocked',
+          rationale: reason,
+          evidenceRefs,
+        },
+      };
+    case 'hub-spoke':
+      return {
+        kind: 'hub-spoke',
+        candidates: [],
+        findings: [
+          {
+            summary: reason,
+            type: 'gap',
+            sourceBranchIds: branches.map((branch) => branch.branchId),
+            evidenceRefs,
+          },
+        ],
+        decision: {
+          outcome: 'blocked',
+          rationale: reason,
+          evidenceRefs,
+        },
+      };
+    default:
+      throw new Error(`Unsupported merge mode '${mode satisfies never}'.`);
+  }
+}
+
+function buildBudgetBlockedEnvelope(
+  workflow: ScenarioWorkflow,
+  mode: TeamOrchestrationMode,
+  branches: BranchLedgerEntry[],
+  checkpointRef: string,
+  reason: string,
+): MergeEnvelope {
+  const evidenceRefs = [...new Set(branches.flatMap((branch) => toEvidenceRefs(branch)))];
+  const envelope: MergeEnvelope = {
+    workflowId: workflow.workflowId,
+    mergeNodeId: MERGE_NODE_ID,
+    orchestrationMode: mode,
+    status: 'blocked',
+    sourceBranches: branches.map((branch) => ({
+      branchId: branch.branchId,
+      nodeId: branch.nodeId,
+      status: normalizeSourceStatus(branch.status),
+      ...(branch.outputRef ? { outputRef: branch.outputRef } : {}),
+    })),
+    consumedBranches: [],
+    checkpointRef,
+    evidenceRefs,
+    body: buildBudgetBlockedBody(mode, branches, reason),
+  };
+  validateMergeEnvelope(envelope);
+  return envelope;
+}
+
 function parseCriticPayload(branch: BranchLedgerEntry): CriticOutput {
   const structured = branch.output?.structured;
   if (structured !== undefined) {
@@ -820,6 +976,8 @@ export class TeamOrchestrator {
   private readonly defaultAgentId: string;
   private readonly workflowTimeoutMs: number;
   private readonly leafTimeoutMs: number;
+  private readonly budgetStore?: PermissionBudgetStore;
+  private readonly budgetEstimate?: WorkflowBudgetEstimate;
   private readonly mergeSynthesizer: (input: MergeSynthesisInput) => Promise<MergeEnvelopeBody>;
 
   constructor(options: TeamOrchestratorOptions) {
@@ -830,6 +988,8 @@ export class TeamOrchestrator {
     this.defaultAgentId = options.defaultAgentId ?? DEFAULT_AGENT_ID;
     this.workflowTimeoutMs = options.workflowTimeoutMs ?? DEFAULT_WORKFLOW_TIMEOUT_MS;
     this.leafTimeoutMs = options.leafTimeoutMs ?? DEFAULT_LEAF_TIMEOUT_MS;
+    this.budgetStore = options.budgetStore;
+    this.budgetEstimate = options.budgetEstimate;
     this.mergeSynthesizer = async (input) =>
       (await options.mergeSynthesizer?.(input)) ?? this.defaultMergeSynthesis(input);
   }
@@ -929,6 +1089,13 @@ export class TeamOrchestrator {
         timeoutMs,
         input?.timeoutErrorFactory ?? (() => new Error(`Branch '${next.branchId}' timed out after ${timeoutMs}ms.`)),
       );
+      const usage = extractTokenUsage({ finalEvent: result.finalEvent, events: result.events });
+      next.usage = {
+        provider: result.provider,
+        model: result.model,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      };
 
       next.leafSessionRef = {
         nodeId: next.nodeId,
@@ -1056,6 +1223,7 @@ export class TeamOrchestrator {
           ...state.decision,
           orchestrationMode: state.workflow.orchestrationMode,
         },
+        budget: workflowSnapshot.budget ?? workflowBudgetEstimate(state.workflow, this.budgetEstimate),
         rawContextRefs: state.rawContextRefs.map((ref) => ({ ...ref })),
         branchState: {
           ...cloneState(state.branchState),
@@ -1127,10 +1295,28 @@ export class TeamOrchestrator {
   ): TeamBranchState {
     const template = resolveTemplate(workflow, workflow.orchestrationMode as TeamOrchestrationMode);
     const now = this.now();
+    const estimate = workflowBudgetEstimate(workflow, this.budgetEstimate);
+    const budget = this.budgetStore?.ensureWorkflowBudget({
+      workflowId: workflow.workflowId,
+      estimate,
+    });
+    const allocatedTokens = branchAllocatedTokens(estimate);
     return {
       teamStatus: 'running',
       activeNodeId: DISPATCH_NODE_ID,
-      branches: Object.fromEntries(branches.map((branch) => [branch.branchId, cloneBranch(branch)])),
+      branches: Object.fromEntries(
+        branches.map((branch) => [
+          branch.branchId,
+          {
+            ...cloneBranch(branch),
+            metadata: {
+              ...(branch.metadata ?? {}),
+              budgetId: estimate.budgetId,
+              allocatedTokens,
+            },
+          },
+        ]),
+      ),
       merge: {
         status: 'pending',
         consumedBranches: [],
@@ -1145,6 +1331,7 @@ export class TeamOrchestrator {
       fallbackExecutionMode: null,
       teamOrchestratorPending: false,
       workflow: cloneWorkflow(workflow),
+      ...(budget ? { budget } : {}),
     };
   }
 
@@ -1159,6 +1346,7 @@ export class TeamOrchestrator {
       orchestrationMode: state.routingDecision.orchestrationMode as TeamOrchestrationMode,
       workflowTemplateId: state.routingDecision.workflowTemplateId,
       sceneDescriptor: state.sceneDescriptor,
+      budget: state.budget,
       nodes: [
         { id: DISPATCH_NODE_ID, type: 'team' },
         { id: MERGE_NODE_ID, type: 'merge' },
@@ -1176,6 +1364,13 @@ export class TeamOrchestrator {
 
     const state = cloneState(existing);
     state.workflow = cloneWorkflow(workflow);
+    state.budget =
+      this.budgetStore?.readWorkflowBudget(workflow.workflowId) ??
+      this.budgetStore?.ensureWorkflowBudget({
+        workflowId: workflow.workflowId,
+        estimate: workflowBudgetEstimate(workflow, this.budgetEstimate),
+      }) ??
+      state.budget;
     if (!state.workflowDeadline) {
       state.workflowDeadline = computeDeadline(this.now(), this.workflowTimeoutMs);
     }
@@ -1279,6 +1474,36 @@ export class TeamOrchestrator {
       state.teamStatus = 'timed-out';
       return;
     }
+    const budgetEstimate = workflowBudgetEstimate(workflow, this.budgetEstimate);
+    const budgetCheck = this.budgetStore?.checkBeforeBudgetedAction({
+      workflowId: workflow.workflowId,
+      budgetId: budgetEstimate.budgetId,
+      branchId,
+      agentId: this.defaultAgentId,
+      action: branch.attempt > 0 ? 'retry' : 'branch-attempt',
+    });
+    if (budgetCheck) {
+      state.budget = budgetCheck.budget;
+      if (budgetCheck.state === 'near-limit') {
+        state.teamStatus = 'needs-human-intervention';
+        state.teamOrchestratorPending = true;
+      }
+      if (!budgetCheck.allowed) {
+        const now = toTimestamp(this.now());
+        branch.status = 'cancelled';
+        branch.startedAt = now;
+        branch.finishedAt = now;
+        branch.lastError = budgetCheck.reason ?? 'token budget exceeded';
+        state.teamStatus = 'failed';
+        this.writeCheckpoint('leaf-terminal', {
+          workflow,
+          decision,
+          rawContextRefs,
+          branchState: state,
+        });
+        return;
+      }
+    }
 
     const configuredLeafTimeoutMs = state.leafTimeoutMs?.[branchId] ?? this.leafTimeoutMs;
     const workflowRemainingMs =
@@ -1298,6 +1523,24 @@ export class TeamOrchestrator {
           : undefined,
     });
     state.branches[branchId] = updated;
+    if (updated.usage) {
+      this.budgetStore?.recordTokenUsage({
+        budgetId: budgetEstimate.budgetId,
+        workflowId: workflow.workflowId,
+        branchId,
+        agentId: this.defaultAgentId,
+        provider: updated.usage.provider,
+        model: updated.usage.model,
+        inputTokens: updated.usage.inputTokens,
+        outputTokens: updated.usage.outputTokens,
+        estimatedCost: updated.usage.estimatedCost,
+      });
+      state.budget = this.budgetStore?.readWorkflowBudget(workflow.workflowId) ?? state.budget;
+      if (state.budget?.state === 'near-limit') {
+        state.teamStatus = 'needs-human-intervention';
+        state.teamOrchestratorPending = true;
+      }
+    }
     state.activeNodeId = updated.nodeId;
     state.workflow = state.workflow
       ? {
@@ -1376,6 +1619,39 @@ export class TeamOrchestrator {
   ): Promise<MergeEnvelope> {
     state.merge = state.merge ?? { status: 'pending', consumedBranches: [] };
     state.merge.status = 'ready';
+    const budgetCheck = this.budgetStore?.checkBeforeBudgetedAction({
+      workflowId: workflow.workflowId,
+      budgetId: workflowBudgetEstimate(workflow, this.budgetEstimate).budgetId,
+      agentId: this.defaultAgentId,
+      action: 'merge',
+    });
+    if (budgetCheck) {
+      state.budget = budgetCheck.budget;
+      if (budgetCheck.state === 'near-limit') {
+        state.teamStatus = 'needs-human-intervention';
+        state.teamOrchestratorPending = true;
+      }
+      if (!budgetCheck.allowed) {
+        const mode = workflow.orchestrationMode as TeamOrchestrationMode;
+        state.teamStatus = 'failed';
+        const envelope = buildBudgetBlockedEnvelope(
+          workflow,
+          mode,
+          Object.values(state.branches),
+          `checkpoint://${workflow.workflowId}/${MERGE_NODE_ID}/${this.createId()}`,
+          budgetCheck.reason ?? 'token budget exceeded before merge',
+        );
+        state.merge.envelopeRef = envelope.checkpointRef;
+        state.merge.envelope = cloneEnvelope(envelope);
+        this.writeCheckpoint('merge', {
+          workflow,
+          decision,
+          rawContextRefs,
+          branchState: state,
+        });
+        return envelope;
+      }
+    }
     const envelope = await this.runMerge(Object.values(state.branches), {
       alreadyConsumedBranchIds: state.merge.consumedBranches,
     });

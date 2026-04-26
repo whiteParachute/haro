@@ -1,6 +1,8 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PermissionBudgetStore } from '@haro/core';
 import { createWebApp, resolveWebDistRoot } from '../src/web/index.js';
 import { UNAUTHENTICATED_DASHBOARD_WARNING } from '../src/web/auth.js';
 import type { WebLogger } from '../src/web/types.js';
@@ -23,10 +25,14 @@ function firstBuiltAsset(): string {
 
 describe('web dashboard Hono app [FEAT-015]', () => {
   const originalApiKey = process.env.HARO_WEB_API_KEY;
+  const tempRoots: string[] = [];
 
   afterEach(() => {
     process.env.HARO_WEB_API_KEY = originalApiKey;
     vi.restoreAllMocks();
+    while (tempRoots.length > 0) {
+      rmSync(tempRoots.pop()!, { recursive: true, force: true });
+    }
   });
 
   it('createWebApp() initializes without throwing and resolves packages/web/dist', () => {
@@ -110,6 +116,53 @@ describe('web dashboard Hono app [FEAT-015]', () => {
         statusCode: 200,
       }),
     );
+  });
+
+  it('FEAT-023 exposes a read-only permission/budget summary API', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    const root = mkdtempSync(join(tmpdir(), 'haro-web-guard-'));
+    tempRoots.push(root);
+    const store = new PermissionBudgetStore({ root, createId: () => 'ledger-web-1' });
+    store.ensureWorkflowBudget({
+      workflowId: 'workflow-web-guard',
+      budgetId: 'budget:workflow-web-guard',
+      limitTokens: 100,
+      softLimitRatio: 0.8,
+    });
+    store.recordTokenUsage({
+      workflowId: 'workflow-web-guard',
+      budgetId: 'budget:workflow-web-guard',
+      branchId: 'branch-web',
+      agentId: 'agent-web',
+      provider: 'codex',
+      model: 'gpt-test',
+      inputTokens: 10,
+      outputTokens: 5,
+    });
+    store.close();
+    const app = createWebApp({
+      logger: createMockLogger(),
+      runtime: { root },
+    });
+
+    const response = await app.request('/api/v1/guard/workflows/workflow-web-guard');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      success: true,
+      data: {
+        workflowId: 'workflow-web-guard',
+        budget: {
+          budgetId: 'budget:workflow-web-guard',
+          state: 'ok',
+          usedTotalTokens: 15,
+        },
+        ledger: {
+          totalTokens: 15,
+        },
+      },
+    });
   });
 
   it('allows matching x-api-key when HARO_WEB_API_KEY is configured', async () => {

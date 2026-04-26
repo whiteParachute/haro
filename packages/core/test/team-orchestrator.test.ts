@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   BRANCH_STATUS_VALUES,
   CheckpointStore,
+  PermissionBudgetStore,
   TeamOrchestrator,
+  createWorkflowBudgetEstimate,
   assertValidCriticOutput,
   type BranchLedgerEntry,
   type RunAgentInput,
@@ -22,6 +24,7 @@ interface RunnerReply {
   delayMs?: number;
   errorCode?: string;
   errorMessage?: string;
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 class FakeAgentRunner implements TeamOrchestratorAgentRunner {
@@ -65,6 +68,7 @@ class FakeAgentRunner implements TeamOrchestratorAgentRunner {
         type: 'result',
         content: reply.content ?? `ok:${memberKey}`,
         ...(reply.responseId ? { responseId: reply.responseId } : {}),
+        ...(reply.usage ? { usage: reply.usage } : {}),
       },
     };
   }
@@ -98,6 +102,11 @@ function createTeamWorkflow(input: {
     executionMode: 'team',
     orchestrationMode: input.orchestrationMode,
     workflowTemplateId: input.workflowTemplateId,
+    budget: createWorkflowBudgetEstimate({
+      workflowId: input.workflowId,
+      decision: { executionMode: 'team', workflowTemplateId: input.workflowTemplateId },
+      sceneDescriptor: { complexity: 'complex' },
+    }),
     sceneDescriptor: {
       taskType: input.taskType ?? 'research',
       complexity: 'complex',
@@ -833,6 +842,144 @@ describe('TeamOrchestrator [FEAT-014]', () => {
     }));
 
     await expect(orchestrator.runMerge(branches)).rejects.toThrow(/candidates/);
+  });
+
+  it('FEAT-023 AC3 records token usage for every completed branch', async () => {
+    const root = freshRoot(tempRoots);
+    const store = new PermissionBudgetStore({ root });
+    const runner = new FakeAgentRunner({
+      'local-code-source': { usage: { inputTokens: 10, outputTokens: 5 } },
+      'official-doc-source': { usage: { inputTokens: 20, outputTokens: 10 } },
+      'historical-memory-source': { usage: { inputTokens: 30, outputTokens: 15 } },
+    });
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: runner,
+      checkpointStore: new CheckpointStore({ root }),
+      budgetStore: store,
+      createId: createIdFactory(['merge-ref-budget-ledger']),
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-budget-ledger',
+      orchestrationMode: 'parallel',
+      workflowTemplateId: 'parallel-research',
+      taskType: 'research',
+    });
+
+    const result = await orchestrator.executeWorkflow(
+      workflow,
+      {
+        executionMode: 'team',
+        orchestrationMode: 'parallel',
+        workflowTemplateId: 'parallel-research',
+      },
+      createRawContextRefs(),
+    );
+    const summary = store.readWorkflowPermissionBudgetSummary(workflow.workflowId);
+
+    expect(summary.ledger.entries).toHaveLength(3);
+    expect(summary.ledger.totalInputTokens).toBe(60);
+    expect(summary.ledger.totalOutputTokens).toBe(30);
+    expect(Object.values(result.state.branches).every((branch) => branch.metadata?.budgetId === workflow.budget?.budgetId)).toBe(
+      true,
+    );
+    expect(summary.ledger.entries.map((entry) => entry.branchId).sort()).toEqual([
+      'workflow-budget-ledger:historical-memory-source',
+      'workflow-budget-ledger:local-code-source',
+      'workflow-budget-ledger:official-doc-source',
+    ]);
+    store.close();
+  });
+
+  it('FEAT-023 AC4 marks near-limit and writes audit before merge', async () => {
+    const root = freshRoot(tempRoots);
+    const store = new PermissionBudgetStore({ root });
+    const runner = new FakeAgentRunner({
+      'collect-inputs': { content: 'step-1', usage: { inputTokens: 60, outputTokens: 0 } },
+      'normalize-output': { content: 'step-2', usage: { inputTokens: 0, outputTokens: 0 } },
+      'publish-artifact': { content: 'step-3', usage: { inputTokens: 0, outputTokens: 0 } },
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-budget-near',
+      orchestrationMode: 'pipeline',
+      workflowTemplateId: 'pipeline-deterministic-tools',
+      taskType: 'deterministic-toolchain',
+    });
+    workflow.budget = {
+      ...workflow.budget!,
+      limitTokens: 100,
+      softLimitRatio: 0.5,
+    };
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: runner,
+      checkpointStore: new CheckpointStore({ root }),
+      budgetStore: store,
+      createId: createIdFactory(['merge-ref-near']),
+    });
+
+    const result = await orchestrator.executeWorkflow(
+      workflow,
+      {
+        executionMode: 'team',
+        orchestrationMode: 'pipeline',
+        workflowTemplateId: 'pipeline-deterministic-tools',
+      },
+      createRawContextRefs(),
+    );
+    const summary = store.readWorkflowPermissionBudgetSummary(workflow.workflowId);
+
+    expect(result.envelope.status).toBe('completed');
+    expect(summary.budget?.state).toBe('near-limit');
+    expect(summary.audit.events.some((event) => event.eventType === 'budget-near-limit')).toBe(true);
+    store.close();
+  });
+
+  it('FEAT-023 AC5 blocks new branch attempts and merge when hard limit is exceeded', async () => {
+    const root = freshRoot(tempRoots);
+    const store = new PermissionBudgetStore({ root });
+    const runner = new FakeAgentRunner({
+      'collect-inputs': { content: 'step-1', usage: { inputTokens: 60, outputTokens: 0 } },
+      'normalize-output': { content: 'should-not-run', usage: { inputTokens: 0, outputTokens: 0 } },
+    });
+    const workflow = createTeamWorkflow({
+      workflowId: 'workflow-budget-hard',
+      orchestrationMode: 'pipeline',
+      workflowTemplateId: 'pipeline-deterministic-tools',
+      taskType: 'deterministic-toolchain',
+    });
+    workflow.budget = {
+      ...workflow.budget!,
+      limitTokens: 50,
+      softLimitRatio: 0.8,
+    };
+    const orchestrator = new TeamOrchestrator({
+      agentRunner: runner,
+      checkpointStore: new CheckpointStore({ root }),
+      budgetStore: store,
+      createId: createIdFactory(['merge-ref-hard-blocked']),
+    });
+
+    const result = await orchestrator.executeWorkflow(
+      workflow,
+      {
+        executionMode: 'team',
+        orchestrationMode: 'pipeline',
+        workflowTemplateId: 'pipeline-deterministic-tools',
+      },
+      createRawContextRefs(),
+    );
+    const summary = store.readWorkflowPermissionBudgetSummary(workflow.workflowId);
+
+    expect(runner.calls).toHaveLength(1);
+    expect(result.envelope.status).toBe('blocked');
+    expect(result.envelope.body.kind).toBe('pipeline');
+    expect(result.envelope.body.decision.outcome).toBe('blocked');
+    expect(result.state.branches['workflow-budget-hard:normalize-output']?.lastError).toContain(
+      'token budget exceeded',
+    );
+    expect(summary.budgetExceeded).toBe(true);
+    expect(summary.blockedReason).toContain('token budget exceeded');
+    expect(summary.audit.events.some((event) => event.eventType === 'budget-exceeded')).toBe(true);
+    store.close();
   });
 });
 

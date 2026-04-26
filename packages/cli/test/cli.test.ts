@@ -132,6 +132,7 @@ describe('runCli [FEAT-006]', () => {
                 type: 'result',
                 content: 'src/index.ts\nsrc/runtime/runner.ts',
                 responseId: 'resp-run-1',
+                usage: { inputTokens: 12, outputTokens: 8 },
               };
             },
           }),
@@ -171,9 +172,24 @@ describe('runCli [FEAT-006]', () => {
       const session = db
         .prepare('SELECT id FROM sessions ORDER BY started_at ASC LIMIT 1')
         .get() as { id: string } | undefined;
+      const budget = db
+        .prepare('SELECT workflow_id, state, used_input_tokens, used_output_tokens FROM workflow_budgets WHERE workflow_id = ?')
+        .get('workflow-run-1') as
+        | { workflow_id: string; state: string; used_input_tokens: number; used_output_tokens: number }
+        | undefined;
+      const auditCount = db
+        .prepare('SELECT COUNT(*) AS count FROM operation_audit_log WHERE workflow_id = ?')
+        .get('workflow-run-1') as { count: number };
 
       expect(workflowCheckpoint).toBeDefined();
       expect(session).toBeDefined();
+      expect(budget).toEqual({
+        workflow_id: 'workflow-run-1',
+        state: 'ok',
+        used_input_tokens: 12,
+        used_output_tokens: 8,
+      });
+      expect(auditCount.count).toBe(0);
       expect(ingressSessionIds).toEqual(['cli-bootstrap-run-1', 'channel-run-1']);
       expect(workflowCheckpoint?.workflow_id).toBe('workflow-run-1');
       expect(workflowCheckpoint?.workflow_id).not.toBe(ingressSessionIds[1]);
@@ -181,10 +197,13 @@ describe('runCli [FEAT-006]', () => {
 
       const state = JSON.parse(workflowCheckpoint!.state) as {
         routingDecision: { executionMode: string };
+        budget: { budgetId: string; estimatedTokens: number };
         rawContextRefs: Array<{ kind: string; ref: string }>;
         leafSessionRefs: Array<{ nodeId: string; sessionId: string; providerResponseId?: string }>;
       };
       expect(state.routingDecision.executionMode).toBe('single-agent');
+      expect(state.budget.budgetId).toBe('budget:workflow-run-1');
+      expect(state.budget.estimatedTokens).toBeGreaterThan(0);
       expect(state.rawContextRefs).toEqual([{ kind: 'input', ref: 'channel://cli/sessions/channel-run-1' }]);
       expect(state.leafSessionRefs).toEqual([
         {
@@ -1161,6 +1180,27 @@ describe('runCli [FEAT-006]', () => {
     expect(dryRun.exitCode).toBe(0);
     expect(chunks.join('')).toContain('custom-skill');
 
+    const blockedOut = new PassThrough();
+    const blockedChunks: string[] = [];
+    blockedOut.on('data', (chunk) => blockedChunks.push(String(chunk)));
+    const blocked = await runCli({
+      argv: ['shit', '--scope', 'skills', '--days', '0'],
+      root,
+      stdout: blockedOut,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+    expect(blocked.exitCode).toBe(0);
+    expect(blockedChunks.join('')).toContain('archive requires explicit CLI confirmation');
+    expect(existsSync(join(root, 'skills', 'user', 'custom-skill', 'SKILL.md'))).toBe(true);
+
     const execOut = new PassThrough();
     const execChunks: string[] = [];
     execOut.on('data', (chunk) => execChunks.push(String(chunk)));
@@ -1199,6 +1239,108 @@ describe('runCli [FEAT-006]', () => {
     });
     expect(rollback.exitCode).toBe(0);
     expect(existsSync(join(root, 'skills', 'user', 'custom-skill', 'SKILL.md'))).toBe(true);
+  });
+
+  it('FEAT-023 AC8 blocks external channel writes and audits the permission decision', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-external-guard-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    const sendCalls: unknown[] = [];
+    const externalChannel: ManagedChannel = {
+      id: 'feishu',
+      async start(ctx) {
+        await ctx.onInbound({
+          sessionId: 'feishu-session-1',
+          userId: 'user-1',
+          channelId: 'feishu',
+          type: 'text',
+          content: '请快速总结',
+          timestamp: '2026-04-26T06:00:00.000Z',
+        });
+      },
+      async stop() {
+        return undefined;
+      },
+      async send(_sessionId, msg) {
+        sendCalls.push(msg);
+      },
+      capabilities() {
+        return {
+          streaming: false,
+          richText: false,
+          attachments: true,
+          threading: false,
+          requiresWebhook: false,
+        } as const;
+      },
+      async healthCheck() {
+        return true;
+      },
+    };
+
+    const runPromise = runCli({
+      argv: [],
+      root,
+      stdin,
+      stdout,
+      createSessionId: createIdFactory(['workflow-external-1', 'leaf-external-1']),
+      createConversationId: createIdFactory(['cli-session-1']),
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield {
+                type: 'result',
+                content: 'external response',
+                responseId: 'resp-external-1',
+              };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [
+        {
+          channel: externalChannel,
+          enabled: true,
+          removable: true,
+          source: 'package',
+          displayName: 'Feishu',
+        },
+      ],
+    });
+    stdin.end();
+    const result = await runPromise;
+
+    expect(result.exitCode).toBe(0);
+    expect(sendCalls).toHaveLength(0);
+    const db = openDatabase(root);
+    try {
+      const audit = db
+        .prepare(
+          `SELECT event_type, operation_class, policy, outcome, target_ref
+             FROM operation_audit_log
+            WHERE workflow_id = ?`,
+        )
+        .all('workflow-external-1') as Array<{
+        event_type: string;
+        operation_class: string;
+        policy: string;
+        outcome: string;
+        target_ref: string;
+      }>;
+      expect(audit).toEqual([
+        {
+          event_type: 'permission-decision',
+          operation_class: 'external-service',
+          policy: 'needs-approval',
+          outcome: 'needs-approval',
+          target_ref: 'feishu',
+        },
+      ]);
+    } finally {
+      db.close();
+    }
   });
 
   it('/new clears the current continuation so the next task starts a fresh session context', async () => {

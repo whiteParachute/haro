@@ -154,3 +154,15 @@ Haro 在进化中坚持"留精华、不堆数量"：
 | 进化 | eat/shit 代谢 + Evolution Asset Registry；Phase 2+ 接入 OODA、Dreaming、Pattern Miner 与自动触发 | 参考 yoyo-evolve / EvoMap / OpenClaw |
 | Agent SDK | `@openai/codex-sdk`（Phase 0 当前正式实现） | 对齐现有 Codex Provider |
 | 消息渠道 | Channel 抽象层 + 飞书（复用 lark-bridge）+ Telegram | 参考 OpenClaw / KeyClaw |
+
+## Permission & Token Budget Guard（FEAT-023）
+
+FEAT-023 在 Router、Team Orchestrator、CLI/Web read model 之间提供统一护栏 contract：
+
+- **权限分级**：`read-local`、`write-local`、`execute-local`、`network`、`external-service`、`archive`、`delete`、`credential`、`budget-increase` 映射到默认 policy；`delete`/`credential` 默认拒绝，`archive`/`budget-increase`/外部服务写默认需要显式确认。
+- **写入范围保留**：`write-local` 会区分 workspace、`~/.haro/` 状态目录与 workspace 外路径，classification/audit 不把 workspace 外写入泛化为普通本地写入。
+- **预算边界**：Phase 1 使用固定 token hard limit；provider/model 成本估算仅作为展示字段，不作为阻断依据。
+- **Team 汇总**：Team Orchestrator 在 branch attempt / retry / merge 前检查预算，leaf terminal 后从 usage 写入 `token_budget_ledger`，summary 汇总所有 branch。
+- **审计与观测**：denied、needs-approval、near-limit、exceeded 写入 `operation_audit_log`；CLI `status` 与 Web `/api/v1/guard/*` 可读取 workflow blocked reason、budget exceeded 与 permission decision 摘要。
+
+边界说明：Permission Guard 不替代 `shit` 的 dry-run-first / `--confirm-high` 机制；二者叠加时取更严格策略。FEAT-023 不实现企业 RBAC/SSO、真实账单或 Dashboard 页面，只提供后端 read model/API。

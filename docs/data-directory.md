@@ -205,11 +205,61 @@ CREATE TABLE evolution_asset_events (
 );
 
 -- FEAT-023: Permission & Token Budget Guard
-CREATE TABLE operation_audit_log (...);
-CREATE TABLE token_budget_ledger (...);
+CREATE TABLE operation_audit_log (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT,
+  branch_id TEXT,
+  agent_id TEXT,
+  event_type TEXT NOT NULL,
+  operation_class TEXT,
+  policy TEXT,
+  outcome TEXT NOT NULL,
+  target_scope TEXT,   -- write-local: workspace / haro-state / outside-workspace / unknown
+  target_ref TEXT,
+  reason TEXT,
+  approval_ref TEXT,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE workflow_budgets (
+  budget_id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL UNIQUE,
+  limit_tokens INTEGER NOT NULL,       -- Phase 1 fixed hard token limit
+  soft_limit_ratio REAL NOT NULL,
+  estimated_branches INTEGER NOT NULL DEFAULT 0,
+  estimated_tokens INTEGER NOT NULL DEFAULT 0,
+  used_input_tokens INTEGER NOT NULL DEFAULT 0,
+  used_output_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost REAL,                 -- display/read-model only; not a blocking input
+  state TEXT NOT NULL DEFAULT 'ok',
+  blocked_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE token_budget_ledger (
+  id TEXT PRIMARY KEY,
+  budget_id TEXT NOT NULL REFERENCES workflow_budgets(budget_id),
+  workflow_id TEXT NOT NULL,
+  branch_id TEXT,
+  agent_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost REAL,
+  created_at TEXT NOT NULL
+);
 ```
 
 这些表是 SQLite read model / audit model；Markdown skill、prompt、memory 文件仍保留为人工可读 source 或兼容层。
+
+FEAT-023 的审计边界：
+
+- `operation_audit_log` 只记录被拒绝、需要审批、预算 near-limit、预算 exceeded 等护栏事件；普通低风险 `haro run` 不额外要求审批。
+- `workflow_budgets` 使用固定 token hard limit；`estimated_cost` 只用于展示，不参与阻断。
+- `token_budget_ledger` 按 workflow / branch / agent 记录 provider/model 与 input/output token，Team workflow 汇总所有 branch，不只看 merge session。
 
 ## Agent 状态文件
 

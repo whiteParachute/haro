@@ -160,6 +160,13 @@ interface ScenarioWorkflow {
   orchestrationMode?: 'parallel' | 'debate' | 'pipeline' | 'hub-spoke' | 'evolution-loop'
   workflowTemplateId: string
   sceneDescriptor?: SceneDescriptor
+  budget?: {
+    budgetId: string
+    estimatedBranches: number
+    estimatedTokens: number
+    limitTokens: number
+    softLimitRatio: number
+  }
   nodes: Array<{ id: string; type: 'router' | 'agent' | 'team' | 'validator' | 'merge' | 'tool' }>
   leafSessionRefs: Array<{
     nodeId: string
@@ -177,6 +184,13 @@ interface ScenarioWorkflow {
 - `team`：只创建 `dispatch-1 / team` 与 `merge-1 / merge`
 
 也就是说，Router 当前只负责把 team workflow 的入口和 merge 边界固定下来，不在这里展开 FEAT-014 的内部调度图。
+
+FEAT-023 后，Router 创建的 workflow 会附带预算估计：
+
+- `budgetId`：固定为 `budget:${workflowId}`，便于 SQLite read model 关联。
+- `estimatedBranches`：single-agent 为 1；team 根据 workflow template 使用保守 branch 数估计。
+- `estimatedTokens`：按复杂度和 branch 数估算，仅用于提示/可观测，不作为 hard-block 输入。
+- `limitTokens` / `softLimitRatio`：Phase 1 固定 token hard limit 与 near-limit 阈值。
 
 ## Checkpoint：直接写 SQLite，不依赖 LangGraph
 
@@ -210,6 +224,7 @@ interface WorkflowCheckpointState {
   nodeType: 'router' | 'agent' | 'team' | 'validator' | 'merge' | 'tool'
   sceneDescriptor: SceneDescriptor
   routingDecision: RoutingDecision
+  budget?: WorkflowBudgetEstimate
   rawContextRefs: RawContextRef[]
   branchState: Record<string, unknown>
   leafSessionRefs: LeafSessionRef[]
