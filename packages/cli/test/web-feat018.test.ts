@@ -321,12 +321,14 @@ describe('web dashboard orchestration debugger API [FEAT-018]', () => {
     });
   });
 
-  it('does not register FEAT-024/025 memory, skills, or providers REST contracts', async () => {
+  it('keeps FEAT-025 providers unregistered while FEAT-024 owns memory and skills contracts', async () => {
     delete process.env.HARO_WEB_API_KEY;
-    const app = createWebApp({ logger: createMockLogger(), staticRoot: process.cwd() });
+    const root = mkdtempSync(join(tmpdir(), 'haro-web-feat018-feat024-boundary-'));
+    tempRoots.push(root);
+    const app = createWebApp({ logger: createMockLogger(), staticRoot: process.cwd(), runtime: { root } });
 
-    await expect(app.request('/api/v1/memory')).resolves.toMatchObject({ status: 404 });
-    await expect(app.request('/api/v1/skills')).resolves.toMatchObject({ status: 404 });
+    await expect(app.request('/api/v1/memory/stats')).resolves.toMatchObject({ status: 200 });
+    await expect(app.request('/api/v1/skills')).resolves.toMatchObject({ status: 200 });
     await expect(app.request('/api/v1/providers')).resolves.toMatchObject({ status: 404 });
   });
 });

@@ -15,6 +15,8 @@ import { createConfigRoute } from './routes/config.js';
 import { createDoctorRoute, createStatusRoute } from './routes/status.js';
 import { createGatewayRoute } from './routes/gateway.js';
 import { createGuardRoute } from './routes/guard.js';
+import { createMemoryRoute } from './routes/memory.js';
+import { createSkillsRoute } from './routes/skills.js';
 import { createWorkflowsRoute } from './routes/workflows.js';
 import { createSessionsRoute } from './routes/sessions.js';
 import type { WebRuntime } from './runtime.js';
@@ -76,6 +78,9 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
     ...(options.runtime?.dbFile ? { dbFile: options.runtime.dbFile } : {}),
     ...(options.runtime?.providerRegistry ? { providerRegistry: options.runtime.providerRegistry } : {}),
     ...(options.runtime?.channelRegistry ? { channelRegistry: options.runtime.channelRegistry } : {}),
+    ...(options.runtime?.skillsManager ? { skillsManager: options.runtime.skillsManager } : {}),
+    ...(options.runtime?.evolutionAssetRegistry !== undefined ? { evolutionAssetRegistry: options.runtime.evolutionAssetRegistry } : {}),
+    ...(options.runtime?.skillAssetAuditSupported !== undefined ? { skillAssetAuditSupported: options.runtime.skillAssetAuditSupported } : {}),
     ...(options.runtime?.loaded ? { loaded: options.runtime.loaded } : {}),
     logger,
     startedAt: options.runtime?.startedAt ?? Date.now(),
@@ -109,6 +114,8 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   app.route('/api/v1/guard', createGuardRoute(runtime));
   app.route('/api/v1/workflows', createWorkflowsRoute(runtime));
   app.route('/api/v1/sessions', createSessionsRoute(runtime));
+  app.route('/api/v1/memory', createMemoryRoute(runtime));
+  app.route('/api/v1/skills', createSkillsRoute(runtime));
   app.route('/api/v1/status', createStatusRoute(runtime));
   app.route('/api/v1/doctor', createDoctorRoute(runtime));
   app.route('/api/v1/config', createConfigRoute(runtime));

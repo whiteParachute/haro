@@ -1,11 +1,11 @@
 ---
 id: FEAT-024
 title: Web Dashboard — Knowledge & Skills（知识与技能管理）
-status: draft
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-25
-updated: 2026-04-25
+updated: 2026-04-26
 related:
   - ./FEAT-018-web-dashboard-orchestration-observability.md
   - ./FEAT-021-memory-fabric-v1.md
@@ -108,9 +108,13 @@ packages/web/src/
 
 ## 8. Open Questions / 待定问题
 
-- Q1: FEAT-024 是否必须等待 FEAT-021/022 都 done 后才能 approved，还是允许先做只读页面？
-- Q2: `memory/maintenance` 在 Phase 1 是同步返回结果，还是异步 taskId？
+全部已关闭（见 Changelog 2026-04-26 决策条）。
+
+- Q1: FEAT-024 是否必须等待 FEAT-021/022 都 done 后才能 approved，还是允许先做只读页面？ —— 等待 FEAT-021/022 都 done 后再 approved；当前 FEAT-021 和 FEAT-022 已为 `done`，满足开工前置条件。
+- Q2: `memory/maintenance` 在 Phase 1 是同步返回结果，还是异步 taskId？ —— Phase 1 先采用异步 `taskId`，后续可再优化为同步返回结果。
 
 ## 9. Changelog / 变更记录
 
 - 2026-04-25: Codex — 从 FEAT-018 拆分 KnowledgePage 与 SkillsPage，形成独立 FEAT-024。
+- 2026-04-26: whiteParachute — 关闭 Open Questions 并批准进入实现：FEAT-024 等待 FEAT-021/022 done 后开工，当前前置均已满足；`memory/maintenance` Phase 1 先返回异步 `taskId`，后续再考虑同步优化。status: draft → approved。
+- 2026-04-26: Codex — 交付 Memory REST、Skills REST、KnowledgePage、SkillsPage、asset audit/unsupported 分支、文档与回归测试；验证命令：`pnpm -F @haro/core test`、`pnpm -F @haro/cli test -- web-feat024.test.ts`、`pnpm -F @haro/web test -- feat024.test.tsx`、`pnpm test`、`pnpm lint`、`pnpm -F @haro/web lint`、`pnpm build`、`pnpm smoke`、Web smoke（/knowledge、/skills 截图 + REST）；commit: 9be4c40。status: approved → done。

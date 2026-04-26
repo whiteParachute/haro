@@ -5,6 +5,15 @@ import {
 } from '@/stores/auth';
 import type {
   ApiResponse,
+  MemoryMaintenanceTask,
+  MemoryQueryFilters,
+  MemoryQueryResponse,
+  MemoryStats,
+  MemoryWriteInput,
+  MemoryEntry,
+  SkillListResponse,
+  SkillMutationResponse,
+  SkillDetail,
   WorkflowDebugDetail,
   WorkflowListResponse,
 } from '@/types';
@@ -147,4 +156,52 @@ export function getWorkflowCheckpoints<T>(
   const query = searchParams.toString();
   const path = `/v1/workflows/${encodePathSegment(workflowId)}/checkpoints${query ? `?${query}` : ''}`;
   return get<T>(path, init);
+}
+
+export function queryMemory(filters: MemoryQueryFilters = {}, init?: RequestInit) {
+  const searchParams = new URLSearchParams();
+  if (filters.keyword) searchParams.set('keyword', filters.keyword);
+  if (filters.scope) searchParams.set('scope', filters.scope);
+  if (filters.agentId) searchParams.set('agentId', filters.agentId);
+  if (filters.layer) searchParams.set('layer', filters.layer);
+  if (filters.verificationStatus) searchParams.set('verificationStatus', filters.verificationStatus);
+  if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
+  const query = searchParams.toString();
+  return get<MemoryQueryResponse>(`/v1/memory/query${query ? `?${query}` : ''}`, init);
+}
+
+export function writeMemory(input: MemoryWriteInput, init?: RequestInit) {
+  return post<MemoryEntry>('/v1/memory/write', input, init);
+}
+
+export function getMemoryStats(init?: RequestInit) {
+  return get<MemoryStats>('/v1/memory/stats', init);
+}
+
+export function runMemoryMaintenance(input: { scope?: string; agentId?: string } = {}, init?: RequestInit) {
+  return post<MemoryMaintenanceTask>('/v1/memory/maintenance', input, init);
+}
+
+export function listSkills(init?: RequestInit) {
+  return get<SkillListResponse>('/v1/skills', init);
+}
+
+export function getSkill(id: string, init?: RequestInit) {
+  return get<SkillDetail>(`/v1/skills/${encodePathSegment(id)}`, init);
+}
+
+export function enableSkill(id: string, init?: RequestInit) {
+  return post<SkillMutationResponse>(`/v1/skills/${encodePathSegment(id)}/enable`, undefined, init);
+}
+
+export function disableSkill(id: string, init?: RequestInit) {
+  return post<SkillMutationResponse>(`/v1/skills/${encodePathSegment(id)}/disable`, undefined, init);
+}
+
+export function installSkill(source: string, init?: RequestInit) {
+  return post<SkillMutationResponse>('/v1/skills/install', { source }, init);
+}
+
+export function uninstallSkill(id: string, init?: RequestInit) {
+  return del<SkillMutationResponse>(`/v1/skills/${encodePathSegment(id)}`, init);
 }

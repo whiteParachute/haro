@@ -1,10 +1,12 @@
 import {
   Bot,
+  BookOpenText,
   Home,
   MessageSquare,
   RadioTower,
   Settings,
   ServerCog,
+  Sparkles,
   SquareActivity,
   Workflow,
   GitBranch,
@@ -43,6 +45,20 @@ export const navigationItems: NavigationItem[] = [
     title: 'Dispatch / Orchestration Debugger',
     description: '查看 workflow 拓扑、checkpoint timeline 与 stalled branch。',
     icon: GitBranch,
+  },
+  {
+    to: '/knowledge',
+    label: 'Knowledge',
+    title: 'Knowledge',
+    description: '搜索、浏览和安全写入 Memory Fabric 知识。',
+    icon: BookOpenText,
+  },
+  {
+    to: '/skills',
+    label: 'Skills',
+    title: 'Skills',
+    description: '管理预装和 user skill，并查看资产审计状态。',
+    icon: Sparkles,
   },
   {
     to: '/sessions',

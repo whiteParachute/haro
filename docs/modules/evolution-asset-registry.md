@@ -37,6 +37,7 @@ registry.exportManifest({ outputFile: '~/.haro/assets/manifest-exports/assets.js
 - `SkillsManager`：install/promote、enable、disable、uninstall、use 追加对应事件；skill 资产 id 使用 `skill:<skillId>`。
 - `shit`：archive 创建 `archive:<archiveId>` asset；受影响对象追加 `archived` event；rollback 追加 `rollback` event，不删除历史事件。
 - Memory Fabric：`memory_entries.asset_ref` 可通过 `queryEntries({ assetRef })` 反查相关 memory。
+- Web Dashboard（FEAT-024）：Skills REST 的 install/uninstall 必须返回 audit 结果；如果 Registry 能力缺失，返回显式 `unsupported`，不能静默跳过事件。Memory REST 暴露 `assetRef` 字段用于 KnowledgePage 追溯来源。
 
 ## Phase 1 边界
 

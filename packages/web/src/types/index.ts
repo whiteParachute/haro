@@ -165,3 +165,138 @@ export interface WorkflowCheckpointDetail extends WorkflowCheckpointMetadata {
   budgetState?: WorkflowBudgetState;
   permissionState?: WorkflowPermissionState;
 }
+
+export type MemoryScope = 'platform' | 'shared' | 'agent';
+export type MemoryLayer = 'session' | 'persistent' | 'skill';
+export type VerificationStatus = 'unverified' | 'verified' | 'conflicted' | 'rejected';
+
+export interface MemoryEntry {
+  id: string;
+  layer: MemoryLayer;
+  scope: 'platform' | 'shared' | `agent:${string}` | `project:${string}`;
+  agentId?: string;
+  topic: string;
+  summary: string;
+  content: string;
+  contentPath?: string;
+  sourceRef: string;
+  assetRef?: string;
+  verificationStatus: VerificationStatus;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemorySearchResult {
+  entry: MemoryEntry;
+  score: number;
+  rank: number;
+  matchedBy: string[];
+}
+
+export interface MemoryQueryResponse {
+  items: MemorySearchResult[];
+  count: number;
+  limit: number;
+}
+
+export interface MemoryQueryFilters {
+  keyword?: string;
+  scope?: MemoryScope | '';
+  agentId?: string;
+  layer?: MemoryLayer | '';
+  verificationStatus?: VerificationStatus | '';
+  limit?: number;
+}
+
+export interface MemoryWriteInput {
+  scope: 'shared' | 'agent';
+  agentId?: string;
+  layer: MemoryLayer;
+  topic: string;
+  summary?: string;
+  content: string;
+  sourceRef?: string;
+  assetRef?: string;
+  verificationStatus?: VerificationStatus;
+  tags?: string[];
+}
+
+export interface MemoryStats {
+  root: string;
+  totalEntries?: number;
+  archivedEntries?: number;
+  byLayer?: Partial<Record<MemoryLayer, number>>;
+  byScope?: Record<string, number>;
+  byVerificationStatus?: Partial<Record<VerificationStatus, number>>;
+  lastMaintenanceAt?: string;
+}
+
+export interface MemoryMaintenanceTask {
+  taskId: string;
+  status: 'accepted';
+  async: true;
+}
+
+export type SkillSource = 'preinstalled' | 'user';
+export type SkillAssetStatus = 'proposed' | 'active' | 'archived' | 'rejected' | 'superseded' | 'missing';
+
+export interface SkillSummary {
+  id: string;
+  source: SkillSource;
+  enabled: boolean;
+  installedAt: string;
+  isPreinstalled: boolean;
+  originalSource: string;
+  pinnedCommit: string;
+  license: string;
+  description?: string;
+  assetStatus: SkillAssetStatus;
+  assetRef: string;
+  lastUsedAt?: string;
+  useCount: number;
+}
+
+export interface SkillDetail extends SkillSummary {
+  descriptor: {
+    id: string;
+    description: string;
+    content: string;
+  };
+  asset?: {
+    id: string;
+    status: SkillAssetStatus;
+    updatedAt: string;
+    events?: Array<{
+      id: string;
+      assetId: string;
+      type: string;
+      createdAt: string;
+    }>;
+  };
+}
+
+export interface SkillListResponse {
+  items: SkillSummary[];
+  count: number;
+}
+
+export interface SkillAuditResult {
+  status: 'recorded' | 'missing';
+  event?: {
+    id: string;
+    assetId: string;
+    type: string;
+    createdAt: string;
+  };
+  asset?: {
+    id: string;
+    status: SkillAssetStatus;
+    updatedAt: string;
+  };
+}
+
+export interface SkillMutationResponse {
+  skill: SkillSummary;
+  audit?: SkillAuditResult;
+}

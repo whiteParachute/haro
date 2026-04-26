@@ -1162,6 +1162,8 @@ function registerWebCommand(program: Command, app: AppContext): void {
                 dbFile: app.paths.dbFile,
                 providerRegistry: app.providerRegistry,
                 channelRegistry: app.channelRegistry,
+                skillsManager: app.skills,
+                skillAssetAuditSupported: true,
                 loaded: app.loaded,
               },
             }),

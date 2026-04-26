@@ -13,6 +13,8 @@ import { SessionsPage } from '@/pages/SessionsPage';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { StatusPage } from '@/pages/StatusPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { KnowledgePage } from '@/pages/KnowledgePage';
+import { SkillsPage } from '@/pages/SkillsPage';
 
 function PlaceholderPage({ title, description }: { title: string; description: string }) {
   return (
@@ -40,6 +42,8 @@ const concreteRoutes = [
   '/gateway',
   '/agents',
   '/dispatch',
+  '/knowledge',
+  '/skills',
 ];
 const placeholderRoutes = navigationItems.filter((item) => !concreteRoutes.includes(item.to));
 
@@ -57,6 +61,8 @@ export default function App() {
           <Route path="channels" element={<ChannelPage />} />
           <Route path="gateway" element={<GatewayPage />} />
           <Route path="agents" element={<AgentEditorPage />} />
+          <Route path="knowledge" element={<KnowledgePage />} />
+          <Route path="skills" element={<SkillsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           {placeholderRoutes.map((item) => (
             <Route

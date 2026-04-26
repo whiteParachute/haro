@@ -127,6 +127,17 @@ Phase 1 起，skill proposal、promote、disable、archive 都要同步写入 Ev
 - `haro eat` 生成 skill proposal bundle 时创建 `proposed` skill asset；重复 contentHash proposal 不新增资产，只追加 `conflict` event。
 - `haro shit` archive / rollback 对受影响 skill 追加 `archived` / `rollback` event，并创建 `archive:<id>` 资产以保存 archive manifest 关联。
 
+## Web Dashboard contract（FEAT-024）
+
+FEAT-024 在 Web Dashboard 暴露 Skills REST 与页面，但仍复用 `SkillsManager`，不直接操作 skill 文件：
+
+- `GET /api/v1/skills` / `GET /api/v1/skills/:id`：展示 `id/source/enabled/installedAt/isPreinstalled/assetStatus/lastUsedAt/useCount`。
+- `POST /api/v1/skills/:id/enable` / `disable`：调用 `SkillsManager.enable/disable`，并返回 asset audit 摘要。
+- `POST /api/v1/skills/install`：安装 user skill，成功后返回 `promoted` audit event；若 Evolution Asset Registry 审计不可用，显式返回 `unsupported`。
+- `DELETE /api/v1/skills/:id`：预装 skill 返回拒绝；user skill 走 `SkillsManager.uninstall()`，写 `archived` event，不允许绕过审计直接删除目录。
+
+SkillsPage 按预装和 user skill 分组；页面只提示 `haro shit` 代谢流程，不在浏览器中直接执行清理。
+
 ## 防误删
 
 以下情况 shit 不得淘汰：

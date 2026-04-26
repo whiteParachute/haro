@@ -145,6 +145,17 @@ API：
 
 以上能力均为 Haro 原生实现；"目录布局"层兼容 aria-memory，使用户已有目录可直接挂载。
 
+### Web Dashboard contract（FEAT-024）
+
+Dashboard 只通过 Memory Fabric API 访问记忆，不直接读写 `~/.haro/memory/**`：
+
+- `GET /api/v1/memory/query`：映射到 `queryEntries()`，支持 `scope/agentId/layer/verificationStatus/keyword/limit`。
+- `POST /api/v1/memory/write`：映射到 `writeEntry()`，仅允许 `shared` 与当前 `agent:{id}`；`platform` scope 返回拒绝且不得落库。
+- `GET /api/v1/memory/stats`：映射到 `stats()`，用于页面摘要与 smoke 断言。
+- `POST /api/v1/memory/maintenance`：Phase 1 Web contract 返回 `202`、`taskId` 与 `async=true`；维护在后台运行，不把同步完成伪装成用户可等待的 UI 操作。
+
+KnowledgePage 查询结果必须展示 `sourceRef` 和 `verificationStatus`，写入表单默认 `shared`，不提供 platform 写入入口。
+
 ## 目录结构
 
 ```
