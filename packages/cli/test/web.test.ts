@@ -206,53 +206,51 @@ describe('web dashboard Hono app [FEAT-015]', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-web-workflows-'));
     tempRoots.push(root);
     const store = new CheckpointStore({ root, createId: createIdFactory(['checkpoint-1', 'checkpoint-2']) });
-    store.save({
-      state: createCheckpointState({
-        workflowId: 'workflow-web-debug',
-        nodeId: 'fork-dispatch',
-        teamStatus: 'running',
-        createdAt: '2026-04-26T08:00:00.000Z',
-      }),
+    const checkpointOneState = createCheckpointState({
+      workflowId: 'workflow-web-debug',
+      nodeId: 'fork-dispatch',
+      teamStatus: 'running',
+      createdAt: '2026-04-26T08:00:00.000Z',
     });
-    store.save({
-      state: createCheckpointState({
-        workflowId: 'workflow-web-debug',
-        nodeId: 'merge',
+    const checkpointTwoState = createCheckpointState({
+      workflowId: 'workflow-web-debug',
+      nodeId: 'merge',
+      teamStatus: 'merge-ready',
+      createdAt: '2026-04-26T08:01:00.000Z',
+      branchState: {
         teamStatus: 'merge-ready',
-        createdAt: '2026-04-26T08:01:00.000Z',
-        branchState: {
-          teamStatus: 'merge-ready',
-          branches: {
-            branchA: {
-              branchId: 'branchA',
-              memberKey: 'researcher',
-              status: 'completed',
-              attempt: 1,
-              consumedByMerge: true,
-              leafSessionRef: { sessionId: 'session-branchA' },
-            },
-            branchB: {
-              branchId: 'branchB',
-              memberKey: 'critic',
-              status: 'failed',
-              attempt: 1,
-              lastError: 'tool failed',
-              consumedByMerge: false,
-              leafSessionRef: { sessionId: 'session-branchB' },
-            },
+        branches: {
+          branchA: {
+            branchId: 'branchA',
+            memberKey: 'researcher',
+            status: 'completed',
+            attempt: 1,
+            consumedByMerge: true,
+            leafSessionRef: { sessionId: 'session-branchA' },
           },
-          merge: {
-            status: 'ready',
-            consumedBranches: ['branchA'],
-            envelope: {
-              workflowId: 'workflow-web-debug',
-              status: 'ready',
-              consumedBranches: ['branchA'],
-            },
+          branchB: {
+            branchId: 'branchB',
+            memberKey: 'critic',
+            status: 'failed',
+            attempt: 1,
+            lastError: 'tool failed',
+            consumedByMerge: false,
+            leafSessionRef: { sessionId: 'session-branchB' },
           },
         },
-      }),
+        merge: {
+          status: 'ready',
+          consumedBranches: ['branchA'],
+          envelope: {
+            workflowId: 'workflow-web-debug',
+            status: 'ready',
+            consumedBranches: ['branchA'],
+          },
+        },
+      },
     });
+    store.save({ state: checkpointOneState });
+    store.save({ state: checkpointTwoState });
     const budgetStore = new PermissionBudgetStore({ root });
     budgetStore.ensureWorkflowBudget({
       workflowId: 'workflow-web-debug',
@@ -302,6 +300,7 @@ describe('web dashboard Hono app [FEAT-015]', () => {
     const detailBody = await detailResponse.json();
 
     expect(detailResponse.status).toBe(200);
+    expect(detailBody.data.detail.rawJson).toEqual(checkpointTwoState);
     expect(detailBody).toMatchObject({
       success: true,
       data: {
