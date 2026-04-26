@@ -196,5 +196,5 @@ operation request
   - 核心交付：新增 PermissionBudgetStore / operation classifier / policy resolver；SQLite 增加 `operation_audit_log`、`workflow_budgets`、`token_budget_ledger`；Router 产出 budget estimate；Team Orchestrator 在 branch/retry/merge 处执行 soft/hard token guard；CLI 外部 channel 写操作与 `shit` archive 接入 Permission Guard；Web 暴露只读 `/api/v1/guard/workflows` read model。
   - 验证命令：`pnpm -F @haro/core test`、`pnpm -F @haro/cli test`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm smoke` 全部通过。
   - 独立 review：native verifier 复核 PASS；早期 review 提出的 runtime Permission Guard wiring 与多目标 `write-local` scope 问题已修复。
-  - Commit: ca0b39f63ffbe4dfecc4780d18e3e89632a088a1
+  - Commit: 29e3f6566c192790256b9e35540c5cfb59f02429
   - Not-tested: 未连接真实 Feishu/Telegram 外部发送审批链路，只通过 fake channel harness 验证未批准时 audit + no-send；真实 provider billing/cost 不是 Phase 1 阻断依据。
