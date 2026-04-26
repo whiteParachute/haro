@@ -1,11 +1,11 @@
 ---
 id: FEAT-018
 title: Web Dashboard — Orchestration Debugger（编排调试）
-status: draft
+status: approved
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-23
-updated: 2026-04-25
+updated: 2026-04-26
 related:
   - ../design-principles.md
   - ../multi-agent-design-constraints.md
@@ -165,3 +165,4 @@ Debug drawer 展示原始 checkpoint JSON，至少分区：
 - 2026-04-23: review fix — R2 补充 Memory 写入 scope 限制（禁止写入 platform/）；Open Questions 清零（workflow 只读、系统资源 placeholder）。
 - 2026-04-25: roadmap adjustment — 参考 LangGraph / CrewAI 增加 orchestration debugger、stalled branch、checkpoint debug drawer、budget/permission 摘要；因新增 Requirement，status 从 approved 回退为 draft。
 - 2026-04-25: owner split — 按 owner 指示拆分 FEAT-018；本 spec 收窄为 Orchestration Debugger，Knowledge/Skills 拆到 FEAT-024，Logs/Provider/Monitor 拆到 FEAT-025。
+- 2026-04-26: owner approved — whiteParachute 确认 Open Questions 已解决，status: draft → approved；下一步可按当前 Orchestration Debugger 范围进入实现。
