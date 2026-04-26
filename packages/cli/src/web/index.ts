@@ -15,6 +15,7 @@ import { createConfigRoute } from './routes/config.js';
 import { createDoctorRoute, createStatusRoute } from './routes/status.js';
 import { createGatewayRoute } from './routes/gateway.js';
 import { createGuardRoute } from './routes/guard.js';
+import { createWorkflowsRoute } from './routes/workflows.js';
 import { createSessionsRoute } from './routes/sessions.js';
 import type { WebRuntime } from './runtime.js';
 import { WebSocketManager } from './websocket/manager.js';
@@ -106,6 +107,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   app.route('/api/v1/channels', createChannelsRoute(runtime));
   app.route('/api/v1/gateway', createGatewayRoute(runtime));
   app.route('/api/v1/guard', createGuardRoute(runtime));
+  app.route('/api/v1/workflows', createWorkflowsRoute(runtime));
   app.route('/api/v1/sessions', createSessionsRoute(runtime));
   app.route('/api/v1/status', createStatusRoute(runtime));
   app.route('/api/v1/doctor', createDoctorRoute(runtime));

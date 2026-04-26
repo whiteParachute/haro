@@ -12,6 +12,7 @@ import {
 import { HomePage } from '@/pages/HomePage';
 import { ChatPage } from '@/pages/ChatPage';
 import { ChannelPage } from '@/pages/ChannelPage';
+import { DispatchPage } from '@/pages/DispatchPage';
 import { GatewayPage } from '@/pages/GatewayPage';
 import { AgentEditorPage } from '@/pages/AgentEditorPage';
 import { SessionsPage } from '@/pages/SessionsPage';
@@ -41,7 +42,7 @@ function PlaceholderPage({
   );
 }
 
-const concreteRoutes = ['/', '/chat', '/sessions', '/status', '/settings', '/channels', '/gateway', '/agents'];
+const concreteRoutes = ['/', '/chat', '/dispatch', '/sessions', '/status', '/settings', '/channels', '/gateway', '/agents'];
 const placeholderRoutes = navigationItems.filter((item) => !concreteRoutes.includes(item.to));
 
 export default function App() {
@@ -51,6 +52,7 @@ export default function App() {
         <Route element={<RootLayout />}>
           <Route index element={<HomePage />} />
           <Route path="chat" element={<ChatPage />} />
+          <Route path="dispatch" element={<DispatchPage />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="sessions/:id" element={<SessionDetailPage />} />
           <Route path="status" element={<StatusPage />} />

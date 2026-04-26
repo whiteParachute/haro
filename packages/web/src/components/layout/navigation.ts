@@ -7,6 +7,7 @@ import {
   ServerCog,
   SquareActivity,
   Workflow,
+  GitBranch,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -34,6 +35,14 @@ export const navigationItems: NavigationItem[] = [
     title: 'Chat',
     description: '与 Agent 对话并实时查看事件流。',
     icon: MessageSquare,
+  },
+
+  {
+    to: '/dispatch',
+    label: 'Dispatch',
+    title: 'Dispatch',
+    description: 'Team workflow 编排调试与 checkpoint 只读观测。',
+    icon: GitBranch,
   },
   {
     to: '/sessions',
