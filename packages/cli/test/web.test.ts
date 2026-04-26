@@ -33,6 +33,7 @@ function createCheckpointState(input: {
   nodeId: string;
   teamStatus: string;
   createdAt: string;
+  branchState?: Record<string, unknown>;
 }): WorkflowCheckpointState {
   return {
     workflowId: input.workflowId,
@@ -52,7 +53,7 @@ function createCheckpointState(input: {
       workflowTemplateId: 'parallel-research',
     },
     rawContextRefs: [{ kind: 'input', ref: 'channel://messages/workflow' }],
-    branchState: { teamStatus: input.teamStatus },
+    branchState: input.branchState ?? { teamStatus: input.teamStatus },
     leafSessionRefs: [{ nodeId: input.nodeId, sessionId: `session-${input.nodeId}` }],
     createdAt: input.createdAt,
   };
@@ -219,8 +220,47 @@ describe('web dashboard Hono app [FEAT-015]', () => {
         nodeId: 'merge',
         teamStatus: 'merge-ready',
         createdAt: '2026-04-26T08:01:00.000Z',
+        branchState: {
+          teamStatus: 'merge-ready',
+          branches: {
+            branchA: {
+              branchId: 'branchA',
+              memberKey: 'researcher',
+              status: 'completed',
+              attempt: 1,
+              consumedByMerge: true,
+              leafSessionRef: { sessionId: 'session-branchA' },
+            },
+            branchB: {
+              branchId: 'branchB',
+              memberKey: 'critic',
+              status: 'failed',
+              attempt: 1,
+              lastError: 'tool failed',
+              consumedByMerge: false,
+              leafSessionRef: { sessionId: 'session-branchB' },
+            },
+          },
+          merge: {
+            status: 'ready',
+            consumedBranches: ['branchA'],
+            envelope: {
+              workflowId: 'workflow-web-debug',
+              status: 'ready',
+              consumedBranches: ['branchA'],
+            },
+          },
+        },
       }),
     });
+    const budgetStore = new PermissionBudgetStore({ root });
+    budgetStore.ensureWorkflowBudget({
+      workflowId: 'workflow-web-debug',
+      budgetId: 'budget:workflow-web-debug',
+      limitTokens: 100,
+      softLimitRatio: 0.8,
+    });
+    budgetStore.close();
     store.close();
 
     const app = createWebApp({
@@ -275,7 +315,22 @@ describe('web dashboard Hono app [FEAT-015]', () => {
             workflowId: 'workflow-web-debug',
             nodeId: 'merge',
             rawContextRefs: [{ kind: 'input', ref: 'channel://messages/workflow' }],
-            branchState: { teamStatus: 'merge-ready' },
+            branchState: {
+              teamStatus: 'merge-ready',
+              branches: {
+                branchB: {
+                  branchId: 'branchB',
+                  status: 'failed',
+                  lastError: 'tool failed',
+                },
+              },
+              merge: {
+                envelope: {
+                  workflowId: 'workflow-web-debug',
+                  status: 'ready',
+                },
+              },
+            },
             leafSessionRefs: [{ nodeId: 'merge', sessionId: 'session-merge' }],
           },
           sceneDescriptor: expect.any(Object),
@@ -283,6 +338,41 @@ describe('web dashboard Hono app [FEAT-015]', () => {
           branchState: { teamStatus: 'merge-ready' },
           leafSessionRefs: [{ nodeId: 'merge', sessionId: 'session-merge' }],
           rawContextRefs: [{ kind: 'input', ref: 'channel://messages/workflow' }],
+        },
+      },
+    });
+
+    const workflowDetailResponse = await app.request('/api/v1/workflows/workflow-web-debug');
+    const workflowDetailBody = await workflowDetailResponse.json();
+
+    expect(workflowDetailResponse.status).toBe(200);
+    expect(workflowDetailBody).toMatchObject({
+      success: true,
+      data: {
+        workflowId: 'workflow-web-debug',
+        executionMode: 'team',
+        orchestrationMode: 'parallel',
+        workflowTemplateId: 'parallel-research',
+        status: 'merge-ready',
+        currentNodeId: 'merge',
+        latestCheckpointRef: 'checkpoint-2',
+        rawContextRefs: [{ kind: 'input', ref: 'channel://messages/workflow' }],
+        leafSessionRefs: [{ nodeId: 'merge', sessionId: 'session-merge' }],
+        branchLedger: [
+          expect.objectContaining({ branchId: 'branchA', status: 'completed' }),
+          expect.objectContaining({ branchId: 'branchB', status: 'failed', lastError: 'tool failed' }),
+        ],
+        stalledBranches: [expect.objectContaining({ branchId: 'branchB', status: 'failed' })],
+        mergeEnvelope: {
+          workflowId: 'workflow-web-debug',
+          status: 'ready',
+          consumedBranches: ['branchA'],
+        },
+        budgetState: {
+          budgetId: 'budget:workflow-web-debug',
+          usedTokens: 0,
+          limitTokens: 100,
+          state: 'ok',
         },
       },
     });
