@@ -61,6 +61,21 @@ import {
 这对应 FEAT-014 的双层超时模型：整体 deadline 会裁剪 branch 的可运行时长；若先触发 workflow deadline，
 branch 记为 `cancelled` 且 teamStatus 记为 `timed-out`；否则保留 `timed-out` 给 per-leaf timeout。
 
+## Dashboard read model（FEAT-018）
+
+FEAT-018 的 Dashboard 只能把 Team Orchestrator 的 checkpoint 状态投影成只读 read model，不改变执行语义：
+
+- `GET /api/v1/workflows` 从最新 workflow checkpoint 汇总 list summary：`workflowId`、`executionMode`、
+  `orchestrationMode`、`workflowTemplateId`、`status`、`currentNodeId`、`blockedReason` 与更新时间。
+- `GET /api/v1/workflows/:id` 读取最新 checkpoint 的完整 `branchState`，投影出 branch ledger、merge envelope、
+  `leafSessionRefs`、`rawContextRefs`、`latestCheckpointRef` 和 `stalledBranches`。
+- `GET /api/v1/workflows/:id/checkpoints` 按时间顺序返回 checkpoint metadata，并允许按 checkpoint id 查看原始
+  JSON，用于 debug drawer。
+- `budgetState / permissionState` 来自 FEAT-023 guard read model；Dashboard 只聚合展示，不在这里重新执行策略判断。
+
+read model 必须保留 fork-and-merge 形状：branch 平行展示并统一汇入 merge；不得把 `branches[]` 排序结果解释为
+branch-to-branch handoff，也不得把 checkpoint JSON 压缩成不可追溯摘要。
+
 ## 四种编排模式
 
 ### 1. parallel
