@@ -255,6 +255,37 @@ describe('web dashboard Hono app [FEAT-015]', () => {
         ],
       },
     });
+
+    const detailResponse = await app.request(
+      '/api/v1/workflows/workflow-web-debug/checkpoints?checkpointId=checkpoint-2',
+    );
+    const detailBody = await detailResponse.json();
+
+    expect(detailResponse.status).toBe(200);
+    expect(detailBody).toMatchObject({
+      success: true,
+      data: {
+        workflowId: 'workflow-web-debug',
+        checkpointId: 'checkpoint-2',
+        detail: {
+          checkpointId: 'checkpoint-2',
+          nodeId: 'merge',
+          status: 'merge-ready',
+          rawJson: {
+            workflowId: 'workflow-web-debug',
+            nodeId: 'merge',
+            rawContextRefs: [{ kind: 'input', ref: 'channel://messages/workflow' }],
+            branchState: { teamStatus: 'merge-ready' },
+            leafSessionRefs: [{ nodeId: 'merge', sessionId: 'session-merge' }],
+          },
+          sceneDescriptor: expect.any(Object),
+          routingDecision: expect.any(Object),
+          branchState: { teamStatus: 'merge-ready' },
+          leafSessionRefs: [{ nodeId: 'merge', sessionId: 'session-merge' }],
+          rawContextRefs: [{ kind: 'input', ref: 'channel://messages/workflow' }],
+        },
+      },
+    });
   });
 
   it('allows matching x-api-key when HARO_WEB_API_KEY is configured', async () => {
