@@ -117,4 +117,4 @@ packages/web/src/
 
 - 2026-04-25: Codex — 从 FEAT-018 拆分 KnowledgePage 与 SkillsPage，形成独立 FEAT-024。
 - 2026-04-26: whiteParachute — 关闭 Open Questions 并批准进入实现：FEAT-024 等待 FEAT-021/022 done 后开工，当前前置均已满足；`memory/maintenance` Phase 1 先返回异步 `taskId`，后续再考虑同步优化。status: draft → approved。
-- 2026-04-26: Codex — 交付 Memory REST、Skills REST、KnowledgePage、SkillsPage、asset audit/unsupported 分支、文档与回归测试；验证命令：`pnpm -F @haro/core test`、`pnpm -F @haro/cli test -- web-feat024.test.ts`、`pnpm -F @haro/web test -- feat024.test.tsx`、`pnpm test`、`pnpm lint`、`pnpm -F @haro/web lint`、`pnpm build`、`pnpm smoke`、Web smoke（/knowledge、/skills 截图 + REST）；commit: 9be4c40。status: approved → done。
+- 2026-04-26: Codex — 交付 Memory REST、Skills REST、KnowledgePage、SkillsPage、asset audit/unsupported 分支、文档与回归测试；验证命令：`pnpm -F @haro/core test`、`pnpm -F @haro/cli test -- web-feat024.test.ts`、`pnpm -F @haro/web test -- feat024.test.tsx`、`pnpm test`、`pnpm lint`、`pnpm -F @haro/web lint`、`pnpm build`、`pnpm smoke`、Web smoke（/knowledge、/skills 截图 + REST）；commit: 99cbf28。status: approved → done。
