@@ -1,17 +1,18 @@
 import { Button } from '@/components/ui/Button';
-import type { WorkflowCheckpointDebug, WorkflowDetail } from '@/stores/workflows';
+import type { WorkflowCheckpointMetadata, WorkflowDebugDetail } from '@/types';
 
-interface CheckpointDebugDrawerProps {
-  checkpoint: WorkflowCheckpointDebug | null;
-  workflow?: WorkflowDetail | null;
+export function CheckpointDebugDrawer({
+  checkpoint,
+  workflow,
+  open,
+  onClose,
+}: {
+  checkpoint: WorkflowCheckpointMetadata | null;
+  workflow: WorkflowDebugDetail;
   open: boolean;
   onClose?: () => void;
-}
-
-export function CheckpointDebugDrawer({ checkpoint, workflow, open, onClose }: CheckpointDebugDrawerProps) {
+}) {
   if (!open || !checkpoint) return null;
-  const state = checkpoint.state;
-  const branchState = asRecord(state.branchState);
   return (
     <aside className="rounded-xl border border-border bg-card p-4 shadow-lg" aria-label="Checkpoint debug drawer">
       <div className="flex items-start justify-between gap-3">
@@ -21,13 +22,12 @@ export function CheckpointDebugDrawer({ checkpoint, workflow, open, onClose }: C
         </div>
         {onClose ? <Button variant="ghost" size="sm" onClick={onClose}>关闭</Button> : null}
       </div>
-      <DebugSection title="rawContextRefs" value={state.rawContextRefs} />
-      <DebugSection title="sceneDescriptor / routingDecision" value={{ sceneDescriptor: state.sceneDescriptor, routingDecision: state.routingDecision }} />
-      <DebugSection title="branchState.branches" value={asRecord(branchState.branches)} />
-      <DebugSection title="branchState.merge" value={asRecord(branchState.merge)} />
-      <DebugSection title="leafSessionRefs" value={state.leafSessionRefs} />
-      <DebugSection title="budgetState / permissionState" value={{ budgetState: workflow?.budgetState, permissionState: workflow?.permissionState, permissionBudget: workflow?.permissionBudget }} />
-      <DebugSection title="complete checkpoint JSON" value={checkpoint} />
+      <DebugSection title="rawContextRefs" value={workflow.rawContextRefs} />
+      <DebugSection title="branch ledger" value={workflow.branchLedger} />
+      <DebugSection title="merge envelope" value={workflow.mergeEnvelope ?? workflow.mergeState} />
+      <DebugSection title="leafSessionRefs" value={workflow.leafSessionRefs} />
+      <DebugSection title="budget / permission summary" value={{ budgetState: workflow.budgetState, permissionState: workflow.permissionState, budgetPermissionSummary: workflow.budgetPermissionSummary }} />
+      <DebugSection title="checkpoint metadata" value={checkpoint} />
     </aside>
   );
 }
@@ -39,8 +39,4 @@ function DebugSection({ title, value }: { title: string; value: unknown }) {
       <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-muted p-3 text-xs text-muted-foreground">{JSON.stringify(value ?? null, null, 2)}</pre>
     </section>
   );
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }

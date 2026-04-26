@@ -1,29 +1,24 @@
 import { useEffect } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { BranchLedgerTable } from '@/components/dispatch/BranchLedgerTable';
 import { CheckpointTimeline } from '@/components/dispatch/CheckpointTimeline';
 import { WorkflowGraph } from '@/components/dispatch/WorkflowGraph';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
-import { useWorkflowStore } from '@/stores/workflows';
+import { isWorkflowBlocked, useWorkflowsStore } from '@/stores/workflows';
+import type { WorkflowDebugDetail, WorkflowDebugSummary } from '@/types';
 
 export function DispatchPage() {
-  const { items, total, selectedWorkflowId, detail, loading, error, loadWorkflows, selectWorkflow } = useWorkflowStore();
+  const { items, selectedWorkflowId, detail, loading, error, loadWorkflows, selectWorkflow } = useWorkflowsStore();
 
   useEffect(() => {
     void loadWorkflows();
   }, [loadWorkflows]);
 
-  useEffect(() => {
-    if (!detail && items[0] && selectedWorkflowId !== items[0].workflowId) {
-      void selectWorkflow(items[0].workflowId);
-    }
-  }, [detail, items, selectWorkflow, selectedWorkflowId]);
-
   return (
     <DispatchPageView
       items={items}
-      total={total}
+      selectedWorkflowId={selectedWorkflowId}
       detail={detail}
       loading={loading}
       error={error}
@@ -35,16 +30,16 @@ export function DispatchPage() {
 
 export function DispatchPageView({
   items,
-  total,
+  selectedWorkflowId,
   detail,
   loading,
   error,
   loadWorkflows,
   selectWorkflow,
 }: {
-  items: ReturnType<typeof useWorkflowStore.getState>['items'];
-  total: number;
-  detail: ReturnType<typeof useWorkflowStore.getState>['detail'];
+  items: WorkflowDebugSummary[];
+  selectedWorkflowId: string | null;
+  detail: WorkflowDebugDetail | null;
   loading: boolean;
   error: string | null;
   loadWorkflows: () => Promise<void>;
@@ -58,8 +53,10 @@ export function DispatchPageView({
           <CardDescription>只读查看 Team workflow 的 fork-and-merge 拓扑、checkpoint、branch ledger 与预算/权限阻断原因。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3 text-sm">
-          <Button variant="outline" onClick={() => void loadWorkflows()}>刷新</Button>
-          <span className="text-muted-foreground">total {total}</span>
+          <Button variant="outline" onClick={() => void loadWorkflows()}>
+            <RefreshCw className="mr-2 h-4 w-4" />刷新
+          </Button>
+          <span className="text-muted-foreground">workflows {items.length}</span>
           {loading ? <span className="text-muted-foreground">加载中…</span> : null}
           {error ? <span className="text-destructive">{error}</span> : null}
         </CardContent>
@@ -69,77 +66,92 @@ export function DispatchPageView({
         <Card>
           <CardHeader>
             <CardTitle>Workflows</CardTitle>
-            <CardDescription>summary read model</CardDescription>
+            <CardDescription>checkpoint read model</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {items.length === 0 ? <p className="text-sm text-muted-foreground">暂无 workflow checkpoint 数据。</p> : null}
             {items.map((workflow) => (
-              <button
+              <WorkflowListItem
                 key={workflow.workflowId}
-                type="button"
-                onClick={() => void selectWorkflow(workflow.workflowId)}
-                className="w-full rounded-lg border border-border p-3 text-left text-sm hover:bg-muted"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs">{workflow.workflowId}</span>
-                  <span>{workflow.status}</span>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">{workflow.executionMode} / {workflow.orchestrationMode ?? 'n/a'} / {workflow.templateId}</p>
-                {workflow.blockedReason ? <HumanIntervention reason={workflow.blockedReason} compact /> : null}
-              </button>
+                workflow={workflow}
+                selected={selectedWorkflowId === workflow.workflowId}
+                onSelect={() => void selectWorkflow(workflow.workflowId)}
+              />
             ))}
           </CardContent>
         </Card>
 
-        {detail ? (
-          <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>{detail.workflowId}</CardTitle>
-                <CardDescription>{detail.executionMode} / {detail.orchestrationMode ?? 'n/a'} / {detail.templateId}</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {detail.blockedReason ? <HumanIntervention reason={detail.blockedReason} /> : null}
-                <WorkflowGraph workflow={detail} />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Branch Ledger</CardTitle>
-                <CardDescription>stalled branch、leafSessionRef、outputRef、lastError 与 merge consumption 状态。</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <BranchLedgerTable branches={detail.branchLedger} />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Merge Envelope</CardTitle>
-                <CardDescription>只读 merge 输出与 consumedBranches。</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <pre className="overflow-auto rounded-lg bg-muted p-3 text-xs text-muted-foreground">{JSON.stringify(detail.mergeEnvelope ?? null, null, 2)}</pre>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Checkpoint Timeline</CardTitle>
-                <CardDescription>点击 checkpoint 打开只读 debug drawer，展示完整结构化 JSON。</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <CheckpointTimeline workflow={detail} />
-              </CardContent>
-            </Card>
-          </div>
-        ) : (
+        {detail ? <WorkflowDetailPanel detail={detail} /> : (
           <Card>
             <CardContent className="pt-6 text-sm text-muted-foreground">请选择一个 workflow。</CardContent>
           </Card>
         )}
       </div>
+    </div>
+  );
+}
+
+function WorkflowListItem({ workflow, selected, onSelect }: { workflow: WorkflowDebugSummary; selected: boolean; onSelect: () => void }) {
+  const blocked = isWorkflowBlocked(workflow);
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`w-full rounded-lg border p-3 text-left text-sm transition-colors ${selected ? 'border-primary bg-muted' : 'border-border hover:bg-muted'} ${blocked ? 'ring-1 ring-amber-300' : ''}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-mono text-xs">{workflow.workflowId}</span>
+        <span>{workflow.status}</span>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">{workflow.executionMode} / {workflow.orchestrationMode ?? 'n/a'} / {workflow.templateId}</p>
+      {workflow.blockedReason ? <HumanIntervention reason={workflow.blockedReason} compact /> : null}
+    </button>
+  );
+}
+
+function WorkflowDetailPanel({ detail }: { detail: WorkflowDebugDetail }) {
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>{detail.workflowId}</CardTitle>
+          <CardDescription>{detail.executionMode} / {detail.orchestrationMode ?? 'n/a'} / {detail.templateId}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {detail.blockedReason ? <HumanIntervention reason={detail.blockedReason} /> : null}
+          <WorkflowGraph workflow={detail} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Branch Ledger</CardTitle>
+          <CardDescription>stalled branch、leafSessionRef、outputRef、lastError 与 merge consumption 状态。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <BranchLedgerTable branches={detail.branchLedger} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Merge Envelope</CardTitle>
+          <CardDescription>只读 merge 输出与 consumedBranches。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <pre className="overflow-auto rounded-lg bg-muted p-3 text-xs text-muted-foreground">{JSON.stringify(detail.mergeEnvelope ?? null, null, 2)}</pre>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Checkpoint Timeline</CardTitle>
+          <CardDescription>点击 checkpoint 查看只读 debug drawer。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CheckpointTimeline workflow={detail} />
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -150,7 +162,7 @@ function HumanIntervention({ reason, compact = false }: { reason: string; compac
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
         <p className="font-semibold">需要人类介入</p>
-        <p>阻断原因：{reason}。本页面仅提供详情入口，不提供 approve / continue / stop 写操作。</p>
+        <p>阻断原因：{reason}。本页面仅提供详情入口，不提供审批 / 继续 / 停止写操作。</p>
       </div>
     </div>
   );

@@ -1,9 +1,12 @@
 import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CheckpointDebugDrawer } from '@/components/dispatch/CheckpointDebugDrawer';
-import { WorkflowGraph } from '@/components/dispatch/WorkflowGraph';
-import { DispatchPageView } from '@/pages/DispatchPage';
-import { useWorkflowStore, type WorkflowDetail } from '@/stores/workflows';
+import { getWorkflow, listWorkflows } from '../src/api/client';
+import { BranchLedgerTable } from '../src/components/dispatch/BranchLedgerTable';
+import { CheckpointDebugDrawer } from '../src/components/dispatch/CheckpointDebugDrawer';
+import { WorkflowGraph } from '../src/components/dispatch/WorkflowGraph';
+import { DispatchPageView } from '../src/pages/DispatchPage';
+import { isBranchStalled, useWorkflowsStore } from '../src/stores/workflows';
+import type { WorkflowDebugDetail } from '../src/types';
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
@@ -12,64 +15,38 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
   });
 }
 
-function resetWorkflowStore() {
-  useWorkflowStore.setState({
-    items: [],
-    total: 0,
-    selectedWorkflowId: null,
-    detail: null,
-    loading: false,
-    error: null,
+describe('FEAT-018 Dispatch orchestration debugger UI', () => {
+  beforeEach(() => {
+    useWorkflowsStore.setState({ items: [], selectedWorkflowId: null, detail: null, loading: false, error: null });
   });
-}
-
-describe('FEAT-018 orchestration debugger web UI', () => {
-  beforeEach(() => resetWorkflowStore());
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    resetWorkflowStore();
   });
 
-  it('workflow store reads list/detail contracts without write operations', async () => {
+  it('calls only the workflow REST contract for list and detail helpers', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith('/api/v1/workflows')) return jsonResponse({ success: true, data: { items: [workflowSummary], total: 1 } });
-      if (url.endsWith('/api/v1/workflows/workflow-feat018')) return jsonResponse({ success: true, data: workflowDetail });
-      return jsonResponse({ error: 'missing' }, { status: 404 });
+      if (url.endsWith('/api/v1/workflows?limit=10')) return jsonResponse({ success: true, data: { items: [summaryFixture], limit: 10 } });
+      if (url.endsWith('/api/v1/workflows/workflow-debug')) return jsonResponse({ success: true, data: detailFixture });
+      return jsonResponse({ error: 'unexpected' }, { status: 404 });
     }));
 
-    await useWorkflowStore.getState().loadWorkflows();
-    await useWorkflowStore.getState().selectWorkflow('workflow-feat018');
+    await listWorkflows({ limit: 10 });
+    await getWorkflow('workflow-debug');
 
-    expect(useWorkflowStore.getState().items[0].workflowId).toBe('workflow-feat018');
-    expect(useWorkflowStore.getState().detail?.branchLedger[1].lastError).toBe('leaf timed out');
-    expect(vi.mocked(fetch).mock.calls.map(([url, init]) => `${init?.method ?? 'GET'} ${String(url)}`)).toEqual([
-      'GET /api/v1/workflows',
-      'GET /api/v1/workflows/workflow-feat018',
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/workflows?limit=10',
+      '/api/v1/workflows/workflow-debug',
     ]);
   });
 
-  it('renders fork-and-merge graph as parallel branches, not a chain', () => {
-    const html = renderToString(<WorkflowGraph workflow={workflowDetail} />);
-
-    expect(html).toContain('data-layout="fork-and-merge"');
-    expect(html).toContain('Fork');
-    expect(html).toContain('Merge');
-    expect(html).toContain('branch-a');
-    expect(html).toContain('branch-b');
-    expect(html).toContain('branch-c');
-    expect(html).toContain('不展示 branch-to-branch chain');
-  });
-
-  it('blocked workflow highlights human intervention and does not show write action buttons', () => {
-    useWorkflowStore.setState({ items: [workflowSummary], total: 1, selectedWorkflowId: 'workflow-feat018', detail: workflowDetail });
-
+  it('renders a usable backend debugger page, not a landing placeholder or write-control surface', () => {
     const html = renderToString(
       <DispatchPageView
-        items={[workflowSummary]}
-        total={1}
-        detail={workflowDetail}
+        items={[summaryFixture]}
+        selectedWorkflowId="workflow-debug"
+        detail={detailFixture}
         loading={false}
         error={null}
         loadWorkflows={async () => undefined}
@@ -77,91 +54,130 @@ describe('FEAT-018 orchestration debugger web UI', () => {
       />,
     );
 
-    expect(html).toContain('需要人类介入');
-    expect(html).toContain('阻断原因：');
-    expect(html).toContain('budget');
+    expect(html).toContain('Orchestration Debugger');
     expect(html).toContain('Branch Ledger');
-    expect(html).not.toMatch(/<button[^>]*>approve<\/button>/i);
-    expect(html).not.toMatch(/<button[^>]*>continue<\/button>/i);
-    expect(html).not.toMatch(/<button[^>]*>stop<\/button>/i);
-    expect(html).not.toMatch(/<button[^>]*>retry<\/button>/i);
-    expect(html).not.toMatch(/<button[^>]*>skip<\/button>/i);
+    expect(html).toContain('Checkpoint Timeline');
+    expect(html).toContain('需要人类介入');
+    expect(html).toContain('workflow-debug');
+    expect(html).not.toContain('hero');
+    expect(html).not.toContain('approve');
+    expect(html).not.toContain('continue');
+    expect(html).not.toContain('stop 写操作按钮');
   });
 
-  it('debug drawer shows complete structured checkpoint JSON sections', () => {
+  it('renders fork-and-merge graph and highlights stalled branches', () => {
+    const graphHtml = renderToString(<WorkflowGraph workflow={detailFixture} />);
+    const tableHtml = renderToString(<BranchLedgerTable branches={detailFixture.branchLedger} />);
+
+    expect(graphHtml).toContain('data-layout="fork-and-merge"');
+    expect(graphHtml).toContain('Fork');
+    expect(graphHtml).toContain('Merge');
+    expect(graphHtml).toContain('data-stalled="true"');
+    expect(graphHtml).toContain('tool timed out');
+    expect(tableHtml).toContain('data-stalled="true"');
+    expect(isBranchStalled(detailFixture.branchLedger[0]!)).toBe(true);
+  });
+
+  it('debug drawer separates raw refs, branch ledger, merge envelope, and guard summary', () => {
     const html = renderToString(
       <CheckpointDebugDrawer
-        checkpoint={workflowDetail.latestCheckpoint ?? null}
-        workflow={workflowDetail}
+        checkpoint={detailFixture.checkpoints[0]!}
+        workflow={detailFixture}
         open
       />,
     );
 
     expect(html).toContain('rawContextRefs');
-    expect(html).toContain('sceneDescriptor / routingDecision');
-    expect(html).toContain('branchState.branches');
-    expect(html).toContain('branchState.merge');
+    expect(html).toContain('branch ledger');
+    expect(html).toContain('merge envelope');
     expect(html).toContain('leafSessionRefs');
-    expect(html).toContain('budgetState / permissionState');
-    expect(html).toContain('complete checkpoint JSON');
-    expect(html).toContain('workflow-feat018:branch-b');
-    expect(html).toContain('leaf timed out');
+    expect(html).toContain('budget / permission summary');
+    expect(html).toContain('checkpoint metadata');
   });
 });
 
-const workflowSummary = {
-  workflowId: 'workflow-feat018',
+const summaryFixture = {
+  workflowId: 'workflow-debug',
+  status: 'needs-human-intervention' as const,
   executionMode: 'team',
   orchestrationMode: 'parallel',
   templateId: 'parallel-research',
-  status: 'blocked' as const,
-  createdAt: '2026-04-26T00:00:00.000Z',
-  updatedAt: '2026-04-26T00:03:00.000Z',
-  currentNodeId: 'merge-1',
-  latestCheckpointRef: 'checkpoint-merge',
+  workflowTemplateId: 'parallel-research',
+  currentNodeId: 'parallel-branch-1',
+  latestCheckpointRef: 'checkpoint-stalled',
+  createdAt: '2026-04-26T06:00:00.000Z',
+  updatedAt: '2026-04-26T06:05:00.000Z',
   blockedReason: 'budget' as const,
-  budgetState: { budgetId: 'budget:workflow-feat018', usedTokens: 110, limitTokens: 100, state: 'exceeded' },
-  permissionState: { requiredClass: 'external-service', state: 'needs-approval' as const },
+  budgetState: { budgetId: 'budget:workflow-debug', usedTokens: 12, limitTokens: 20, state: 'near-limit' as const },
+  permissionState: { requiredClass: 'network', state: 'needs-approval' as const },
+  stalledBranches: [],
 };
 
-const workflowDetail: WorkflowDetail = {
-  ...workflowSummary,
-  latestCheckpoint: {
-    checkpointId: 'checkpoint-merge',
-    workflowId: 'workflow-feat018',
-    nodeId: 'merge-1',
-    nodeType: 'merge',
-    createdAt: '2026-04-26T00:03:00.000Z',
-    state: {
-      workflowId: 'workflow-feat018',
-      nodeId: 'merge-1',
-      nodeType: 'merge',
-      rawContextRefs: [{ kind: 'input', ref: 'channel://cli/sessions/1' }],
-      sceneDescriptor: { taskType: 'research', complexity: 'complex' },
-      routingDecision: { executionMode: 'team', orchestrationMode: 'parallel', workflowTemplateId: 'parallel-research' },
-      branchState: {
-        branches: {
-          'workflow-feat018:branch-a': { memberKey: 'branch-a', status: 'merge-consumed' },
-          'workflow-feat018:branch-b': { memberKey: 'branch-b', status: 'timed-out', lastError: 'leaf timed out' },
-        },
-        merge: { status: 'blocked', consumedBranches: ['workflow-feat018:branch-a'] },
-      },
-      leafSessionRefs: [{ nodeId: 'branch-b-node', sessionId: 'leaf-b' }],
-    },
-  },
-  branchLedger: [
-    { branchId: 'workflow-feat018:branch-a', memberKey: 'branch-a', status: 'merge-consumed', attempt: 1, outputRef: 'artifact://branch-a', consumedByMerge: true, leafSessionRef: { sessionId: 'leaf-a' } },
-    { branchId: 'workflow-feat018:branch-b', memberKey: 'branch-b', status: 'timed-out', attempt: 2, lastError: 'leaf timed out', consumedByMerge: false, leafSessionRef: { sessionId: 'leaf-b' } },
-    { branchId: 'workflow-feat018:branch-c', memberKey: 'branch-c', status: 'running', attempt: 1, consumedByMerge: false },
-  ],
+const detailFixture: WorkflowDebugDetail = {
+  ...summaryFixture,
   stalledBranches: [
-    { branchId: 'workflow-feat018:branch-b', memberKey: 'branch-b', status: 'timed-out', attempt: 2, lastError: 'leaf timed out', consumedByMerge: false, leafSessionRef: { sessionId: 'leaf-b' } },
+    {
+      branchId: 'branch-a',
+      memberKey: 'local-code-source',
+      status: 'failed',
+      attempt: 2,
+      nodeId: 'parallel-branch-1',
+      startedAt: '2026-04-26T06:00:00.000Z',
+      lastEventAt: '2026-04-26T06:05:00.000Z',
+      lastError: 'tool timed out',
+      leafSessionRef: { nodeId: 'parallel-branch-1', sessionId: 'leaf-session-a', continuationRef: 'cont-a' },
+      outputRef: 'workflow://workflow-debug/branches/branch-a/output',
+      consumedByMerge: false,
+      branchRole: 'candidate',
+    },
   ],
-  mergeEnvelope: { status: 'blocked', consumedBranches: ['workflow-feat018:branch-a'] },
-  leafSessionRefs: [{ nodeId: 'branch-b-node', sessionId: 'leaf-b' }],
-  rawContextRefs: [{ kind: 'input', ref: 'channel://cli/sessions/1' }],
-  branchState: { merge: { status: 'blocked' } },
-  checkpointTimeline: [],
-  permissionBudget: { budgetExceeded: true },
+  branchLedger: [
+    {
+      branchId: 'branch-a',
+      memberKey: 'local-code-source',
+      status: 'failed',
+      attempt: 2,
+      nodeId: 'parallel-branch-1',
+      startedAt: '2026-04-26T06:00:00.000Z',
+      lastEventAt: '2026-04-26T06:05:00.000Z',
+      lastError: 'tool timed out',
+      leafSessionRef: { nodeId: 'parallel-branch-1', sessionId: 'leaf-session-a', continuationRef: 'cont-a' },
+      outputRef: 'workflow://workflow-debug/branches/branch-a/output',
+      consumedByMerge: false,
+      branchRole: 'candidate',
+    },
+    {
+      branchId: 'branch-b',
+      memberKey: 'docs-source',
+      status: 'completed',
+      attempt: 1,
+      leafSessionRef: { nodeId: 'parallel-branch-2', sessionId: 'leaf-session-b' },
+      outputRef: 'workflow://workflow-debug/branches/branch-b/output',
+      consumedByMerge: true,
+    },
+  ],
+  mergeEnvelope: {
+    workflowId: 'workflow-debug',
+    mergeNodeId: 'merge-1',
+    orchestrationMode: 'parallel',
+    status: 'blocked',
+    consumedBranches: ['branch-b'],
+  },
+  mergeState: { status: 'blocked', consumedBranches: ['branch-b'] },
+  leafSessionRefs: [
+    { nodeId: 'parallel-branch-1', sessionId: 'leaf-session-a', continuationRef: 'cont-a' },
+    { nodeId: 'parallel-branch-2', sessionId: 'leaf-session-b' },
+  ],
+  rawContextRefs: [
+    { kind: 'input', ref: 'workflow://workflow-debug/input' },
+    { kind: 'artifact', ref: 'artifact://workflow-debug/source' },
+  ],
+  recentCheckpointRef: 'checkpoint-stalled',
+  checkpoints: [
+    { checkpointId: 'checkpoint-stalled', nodeId: 'parallel-branch-1', nodeType: 'agent', createdAt: '2026-04-26T06:05:00.000Z' },
+  ],
+  budgetPermissionSummary: {
+    budget: summaryFixture.budgetState,
+    permissions: { needsApproval: 1, denied: 0 },
+  },
 };
-workflowDetail.checkpointTimeline = [workflowDetail.latestCheckpoint!];

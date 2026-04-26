@@ -1,64 +1,67 @@
-import type { BranchLedgerEntry, WorkflowDetail } from '@/stores/workflows';
+import { AlertTriangle, CheckCircle2, GitBranch, GitMerge, RadioTower } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isBranchStalled } from '@/stores/workflows';
+import type { WorkflowBranchReadModel, WorkflowDebugDetail } from '@/types';
 
-interface WorkflowGraphProps {
-  workflow: WorkflowDetail;
-}
-
-export function WorkflowGraph({ workflow }: WorkflowGraphProps) {
+export function WorkflowGraph({ workflow }: { workflow: WorkflowDebugDetail }) {
   const branches = workflow.branchLedger.length > 0 ? workflow.branchLedger : workflow.stalledBranches;
+
   return (
     <section aria-label="Fork-and-merge workflow graph" data-layout="fork-and-merge" className="space-y-4">
-      <div className="flex items-center justify-between gap-4 text-center text-sm">
-        <GraphNode title="Fork" subtitle={workflow.currentNodeId} tone="running" />
-        <div className="h-px flex-1 bg-border" />
-        <div className="grid min-w-0 flex-[2] gap-3 md:grid-cols-3">
+      <div className="grid items-center gap-4 lg:grid-cols-[8rem_1fr_8rem]">
+        <GraphNode title="Fork" subtitle={workflow.currentNodeId} icon="fork" tone="running" />
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {branches.map((branch) => <BranchNode key={branch.branchId} branch={branch} />)}
         </div>
-        <div className="h-px flex-1 bg-border" />
-        <GraphNode title="Merge" subtitle={mergeStatus(workflow)} tone={workflow.status} />
+        <GraphNode title="Merge" subtitle={workflow.status} icon="merge" tone={workflow.status} />
       </div>
       <p className="text-xs text-muted-foreground">
-        Fork-and-merge layout：branch 并行展开，merge 在所有 branch 下游汇聚；不展示 branch-to-branch chain。
+        Fork-and-merge layout：branch 平行展开，merge 在所有 branch 下游汇聚；不展示 branch-to-branch chain。
       </p>
     </section>
   );
 }
 
-function BranchNode({ branch }: { branch: BranchLedgerEntry }) {
+function BranchNode({ branch }: { branch: WorkflowBranchReadModel }) {
+  const stalled = isBranchStalled(branch);
   return (
-    <div
-      title={branch.lastError ?? (branch.leafSessionRef ? JSON.stringify(branch.leafSessionRef) : branch.status)}
+    <article
+      title={branch.lastError ?? branch.leafSessionRef?.sessionId ?? branch.status}
       className={cn(
-        'rounded-lg border p-3 text-left shadow-sm',
-        statusClass(branch.consumedByMerge ? 'merge-consumed' : branch.status),
+        'rounded-xl border p-3 shadow-sm transition-colors',
+        stalled
+          ? 'border-amber-400 bg-amber-50 text-amber-950 ring-2 ring-amber-200'
+          : statusClass(branch.consumedByMerge ? 'merge-consumed' : branch.status),
       )}
+      data-stalled={stalled ? 'true' : 'false'}
     >
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-mono text-xs">{branch.memberKey}</p>
-        <span className="rounded-full bg-background/80 px-2 py-0.5 text-[11px] uppercase tracking-wide">{branch.status}</span>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-mono text-xs font-semibold">{branch.memberKey}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{branch.branchId}</p>
+        </div>
+        {stalled ? <AlertTriangle className="h-4 w-4 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 opacity-70" />}
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">attempt {branch.attempt}</p>
-      {branch.lastError ? <p className="mt-2 text-xs text-destructive">{branch.lastError}</p> : null}
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <div><dt className="text-muted-foreground">status</dt><dd>{branch.status}</dd></div>
+        <div><dt className="text-muted-foreground">attempt</dt><dd>{branch.attempt}</dd></div>
+        <div className="col-span-2"><dt className="text-muted-foreground">leaf</dt><dd className="truncate font-mono">{branch.leafSessionRef?.sessionId ?? '—'}</dd></div>
+      </dl>
+      {branch.lastError ? <p className="mt-3 rounded-md bg-background/70 p-2 text-xs text-amber-800">{branch.lastError}</p> : null}
       {branch.consumedByMerge ? <p className="mt-2 text-xs text-emerald-700">merge-consumed</p> : null}
-    </div>
+    </article>
   );
 }
 
-function GraphNode({ title, subtitle, tone }: { title: string; subtitle?: string; tone: string }) {
+function GraphNode({ title, subtitle, icon, tone }: { title: string; subtitle?: string; icon: 'fork' | 'merge'; tone: string }) {
+  const Icon = icon === 'fork' ? GitBranch : icon === 'merge' ? GitMerge : RadioTower;
   return (
-    <div className={cn('min-w-24 rounded-lg border p-3 shadow-sm', statusClass(tone))}>
-      <p className="font-semibold">{title}</p>
-      {subtitle ? <p className="mt-1 font-mono text-xs text-muted-foreground">{subtitle}</p> : null}
+    <div className={cn('rounded-xl border p-4 text-center shadow-sm', statusClass(tone))}>
+      <Icon className="mx-auto h-5 w-5" />
+      <p className="mt-2 font-semibold">{title}</p>
+      {subtitle ? <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{subtitle}</p> : null}
     </div>
   );
-}
-
-function mergeStatus(workflow: WorkflowDetail) {
-  if (workflow.mergeEnvelope && typeof workflow.mergeEnvelope === 'object' && 'status' in workflow.mergeEnvelope) {
-    return String((workflow.mergeEnvelope as { status?: unknown }).status ?? workflow.status);
-  }
-  return workflow.status;
 }
 
 function statusClass(status: string) {
@@ -68,13 +71,13 @@ function statusClass(status: string) {
     case 'merge-consumed':
       return 'border-emerald-300 bg-emerald-50 text-emerald-950';
     case 'running':
-    case 'dispatched':
     case 'merge-ready':
       return 'border-sky-300 bg-sky-50 text-sky-950';
     case 'failed':
     case 'timed-out':
     case 'blocked':
-      return 'border-destructive/40 bg-destructive/10 text-destructive';
+    case 'needs-human-intervention':
+      return 'border-amber-400 bg-amber-50 text-amber-950';
     default:
       return 'border-border bg-card';
   }

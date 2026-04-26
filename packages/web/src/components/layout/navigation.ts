@@ -45,6 +45,13 @@ export const navigationItems: NavigationItem[] = [
     icon: GitBranch,
   },
   {
+    to: '/dispatch',
+    label: 'Dispatch',
+    title: 'Dispatch',
+    description: 'Team workflow 编排调试与 checkpoint 只读观测。',
+    icon: GitBranch,
+  },
+  {
     to: '/sessions',
     label: 'Sessions',
     title: 'Sessions',
