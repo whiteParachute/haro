@@ -162,3 +162,15 @@ FEAT-023 增加预算护栏：
 - lifecycle：状态迁移、retry attempt、provider fallback 不新增 branch、workflow deadline 抢占 leaf timeout
 - retry isolation：branch retry 不续接其他 branch 或普通 CLI latest session
 - checkpoint / resume：fork 恢复、partial-merge 去重、merge-ready envelope commit、continuationRef 优先级、leafSessionRefs 历史保留
+
+
+## Web 可观测性（FEAT-018）
+
+FEAT-018 的 Dashboard 不改变 TeamOrchestrator 执行语义，只读取既有持久化结果：
+
+- `workflow_checkpoints.state.branchState.branches` 作为 branch ledger read model。
+- `workflow_checkpoints.state.branchState.merge` / `merge.envelope` 作为 merge envelope read model。
+- `workflow_checkpoints.state.leafSessionRefs` 与 branch 内 `leafSessionRef` 用于定位 leaf session / continuation。
+- `PermissionBudgetStore.readWorkflowPermissionBudgetSummary()` 作为预算/权限阻断摘要来源。
+
+因此，调试面可以解释 fork、leaf terminal、merge、budget blocked、permission needs-approval 等状态，但不会触发 approve/continue/stop/retry/skip，也不会重放或修改 workflow。
