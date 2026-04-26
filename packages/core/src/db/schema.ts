@@ -46,6 +46,8 @@ export const CORE_TABLES: readonly TableDefinition[] = [
     )`,
     supportingDdl: [
       `CREATE INDEX IF NOT EXISTS idx_workflow_checkpoints_workflow_id ON workflow_checkpoints(workflow_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_workflow_checkpoints_workflow_created
+         ON workflow_checkpoints(workflow_id, created_at)`,
     ],
   },
   {
