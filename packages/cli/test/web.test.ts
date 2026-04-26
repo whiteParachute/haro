@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PermissionBudgetStore } from '@haro/core';
+import { CheckpointStore, PermissionBudgetStore, type WorkflowCheckpointState } from '@haro/core';
 import { createWebApp, resolveWebDistRoot } from '../src/web/index.js';
 import { UNAUTHENTICATED_DASHBOARD_WARNING } from '../src/web/auth.js';
 import type { WebLogger } from '../src/web/types.js';
@@ -21,6 +21,41 @@ function firstBuiltAsset(): string {
   const asset = readdirSync(assetsDir).find((entry) => entry.endsWith('.js') || entry.endsWith('.css'));
   if (!asset) throw new Error('packages/web/dist/assets must contain a built asset');
   return `/assets/${asset}`;
+}
+
+function createIdFactory(ids: string[]): () => string {
+  let index = 0;
+  return () => ids[index++] ?? `id-${index}`;
+}
+
+function createCheckpointState(input: {
+  workflowId: string;
+  nodeId: string;
+  teamStatus: string;
+  createdAt: string;
+}): WorkflowCheckpointState {
+  return {
+    workflowId: input.workflowId,
+    nodeId: input.nodeId,
+    nodeType: 'agent',
+    sceneDescriptor: {
+      taskType: 'research',
+      complexity: 'complex',
+      collaborationNeed: 'team',
+      timeSensitivity: 'normal',
+      validationNeed: 'standard',
+      tags: ['team'],
+    },
+    routingDecision: {
+      executionMode: 'team',
+      orchestrationMode: 'parallel',
+      workflowTemplateId: 'parallel-research',
+    },
+    rawContextRefs: [{ kind: 'input', ref: 'channel://messages/workflow' }],
+    branchState: { teamStatus: input.teamStatus },
+    leafSessionRefs: [{ nodeId: input.nodeId, sessionId: `session-${input.nodeId}` }],
+    createdAt: input.createdAt,
+  };
 }
 
 describe('web dashboard Hono app [FEAT-015]', () => {
@@ -161,6 +196,63 @@ describe('web dashboard Hono app [FEAT-015]', () => {
         ledger: {
           totalTokens: 15,
         },
+      },
+    });
+  });
+
+  it('FEAT-018 exposes workflow checkpoints metadata in chronological order', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    const root = mkdtempSync(join(tmpdir(), 'haro-web-workflows-'));
+    tempRoots.push(root);
+    const store = new CheckpointStore({ root, createId: createIdFactory(['checkpoint-1', 'checkpoint-2']) });
+    store.save({
+      state: createCheckpointState({
+        workflowId: 'workflow-web-debug',
+        nodeId: 'fork-dispatch',
+        teamStatus: 'running',
+        createdAt: '2026-04-26T08:00:00.000Z',
+      }),
+    });
+    store.save({
+      state: createCheckpointState({
+        workflowId: 'workflow-web-debug',
+        nodeId: 'merge',
+        teamStatus: 'merge-ready',
+        createdAt: '2026-04-26T08:01:00.000Z',
+      }),
+    });
+    store.close();
+
+    const app = createWebApp({
+      logger: createMockLogger(),
+      runtime: { root },
+    });
+
+    const response = await app.request('/api/v1/workflows/workflow-web-debug/checkpoints');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      success: true,
+      data: {
+        workflowId: 'workflow-web-debug',
+        count: 2,
+        items: [
+          {
+            checkpointId: 'checkpoint-1',
+            workflowId: 'workflow-web-debug',
+            nodeId: 'fork-dispatch',
+            status: 'running',
+            createdAt: '2026-04-26T08:00:00.000Z',
+          },
+          {
+            checkpointId: 'checkpoint-2',
+            workflowId: 'workflow-web-debug',
+            nodeId: 'merge',
+            status: 'merge-ready',
+            createdAt: '2026-04-26T08:01:00.000Z',
+          },
+        ],
       },
     });
   });
