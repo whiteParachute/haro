@@ -6,7 +6,16 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
 export type WorkflowStatus =
+  | 'pending'
   | 'running'
   | 'merge-ready'
   | 'merged'
@@ -17,6 +26,16 @@ export type WorkflowStatus =
   | 'needs-human-intervention'
   | 'unknown';
 
+export type WorkflowExecutionMode = 'single-agent' | 'team' | 'unknown';
+
+export type WorkflowOrchestrationMode =
+  | 'parallel'
+  | 'debate'
+  | 'pipeline'
+  | 'hub-spoke'
+  | 'evolution-loop'
+  | 'unknown';
+
 export type WorkflowBlockedReason =
   | 'permission'
   | 'budget'
@@ -25,84 +44,96 @@ export type WorkflowBlockedReason =
   | 'timeout'
   | 'unknown';
 
-export type WorkflowPermissionState = 'allowed' | 'needs-approval' | 'denied';
-export type WorkflowBudgetState = 'ok' | 'near-limit' | 'exceeded';
+export interface WorkflowBudgetState {
+  budgetId?: string;
+  usedTokens?: number;
+  limitTokens?: number;
+  state: 'ok' | 'near-limit' | 'exceeded' | 'unknown';
+}
 
-export interface WorkflowBranchReadModel {
+export interface WorkflowPermissionState {
+  requiredClass?: string;
+  state: 'allowed' | 'needs-approval' | 'denied' | 'unknown';
+}
+
+export interface WorkflowLeafSessionRef {
+  sessionId: string;
+  continuationRef?: string;
+  providerResponseId?: string;
+  retryOfSessionId?: string;
+}
+
+export interface WorkflowBranchLedgerEntry {
   branchId: string;
-  memberKey: string;
-  status: string;
-  attempt: number;
   nodeId?: string;
+  memberKey?: string;
+  status: string;
+  attempt?: number;
   startedAt?: string;
   lastEventAt?: string;
-  finishedAt?: string;
+  completedAt?: string;
   lastError?: string;
-  leafSessionRef?: {
-    nodeId?: string;
-    sessionId?: string;
-    continuationRef?: string;
-    providerResponseId?: string;
-    [key: string]: unknown;
-  };
+  leafSessionRef?: WorkflowLeafSessionRef;
   outputRef?: string;
-  consumedByMerge: boolean;
-  branchRole?: string;
+  consumedByMerge?: boolean;
 }
 
-export interface WorkflowBudgetReadModel {
-  budgetId: string;
-  usedTokens: number;
-  limitTokens: number;
-  state: WorkflowBudgetState;
+export interface WorkflowMergeEnvelope {
+  workflowId?: string;
+  nodeId?: string;
+  status?: string;
+  consumedBranches?: string[];
+  blockedReason?: WorkflowBlockedReason | string;
+  body?: JsonValue;
+  createdAt?: string;
 }
 
-export interface WorkflowPermissionReadModel {
-  requiredClass?: string;
-  state: WorkflowPermissionState;
+export interface WorkflowSummary {
+  workflowId: string;
+  executionMode: WorkflowExecutionMode;
+  orchestrationMode?: WorkflowOrchestrationMode;
+  workflowTemplateId?: string;
+  templateId?: string;
+  status: WorkflowStatus;
+  createdAt?: string;
+  updatedAt?: string;
+  currentNodeId?: string;
+  blockedReason?: WorkflowBlockedReason | string;
+  budgetState?: WorkflowBudgetState;
+  permissionState?: WorkflowPermissionState;
+}
+
+export interface WorkflowDetail extends WorkflowSummary {
+  branchLedger: WorkflowBranchLedgerEntry[];
+  mergeEnvelope?: WorkflowMergeEnvelope | null;
+  leafSessionRefs: WorkflowLeafSessionRef[];
+  rawContextRefs: JsonValue[];
+  latestCheckpointRef?: string;
+  stalledBranches: WorkflowBranchLedgerEntry[];
 }
 
 export interface WorkflowCheckpointMetadata {
   checkpointId: string;
-  nodeId: string;
-  nodeType?: string;
-  createdAt: string;
+  workflowId: string;
+  nodeId?: string | null;
+  status?: WorkflowStatus | string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  latest?: boolean;
   parseError?: string;
 }
 
-export interface WorkflowDebugSummary {
-  workflowId: string;
-  status: WorkflowStatus;
-  executionMode: string;
-  orchestrationMode?: string;
-  templateId: string;
-  workflowTemplateId: string;
-  currentNodeId: string;
-  latestCheckpointRef?: string;
-  createdAt: string;
-  updatedAt: string;
-  blockedReason?: WorkflowBlockedReason;
-  budgetState?: WorkflowBudgetReadModel;
-  permissionState?: WorkflowPermissionReadModel;
-  stalledBranches: WorkflowBranchReadModel[];
-  checkpointError?: {
-    checkpointId: string;
-    message: string;
+export interface WorkflowCheckpointDetail extends WorkflowCheckpointMetadata {
+  rawJson?: JsonValue;
+  sceneDescriptor?: JsonValue;
+  routingDecision?: JsonValue;
+  branchState?: {
+    branches?: WorkflowBranchLedgerEntry[];
+    merge?: WorkflowMergeEnvelope | JsonValue | null;
+    [key: string]: JsonValue | WorkflowBranchLedgerEntry[] | WorkflowMergeEnvelope | undefined;
   };
-}
-
-export interface WorkflowDebugDetail extends WorkflowDebugSummary {
-  branchLedger: WorkflowBranchReadModel[];
-  mergeEnvelope?: unknown;
-  mergeState?: unknown;
-  leafSessionRefs: unknown[];
-  rawContextRefs: unknown[];
-  recentCheckpointRef?: string;
-  checkpoints: WorkflowCheckpointMetadata[];
-  budgetPermissionSummary: unknown;
-}
-
-export interface WorkflowListResponse {
-  items: WorkflowDebugSummary[];
-  limit: number;
+  leafSessionRefs?: WorkflowLeafSessionRef[];
+  rawContextRefs?: JsonValue[];
+  budgetState?: WorkflowBudgetState;
+  permissionState?: WorkflowPermissionState;
 }
