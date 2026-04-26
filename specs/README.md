@@ -237,6 +237,16 @@ Dashboard 第一批功能使用 `FEAT-015`~`FEAT-019`。后续全局编号仍按
 
 FEAT-020 已作为非 Dashboard 插队任务登记：Codex runtime `shit` skill。
 
+#### FEAT-018 当前边界（Orchestration Debugger）
+
+FEAT-018 只负责 **workflow 编排调试的只读可观测面**，避免把后续 Dashboard 页面重新塞回同一个大 spec：
+
+- **拥有的 REST contract**：`/api/v1/workflows*`，用于 workflow list/detail/checkpoints read model。
+- **必须展示的核心对象**：fork-and-merge workflow graph、checkpoint timeline、branch ledger、merge envelope、leafSessionRefs、rawContextRefs、stalled branch / blocked reason。
+- **只读读取 FEAT-023**：预算与权限状态来自 FEAT-023 已提供的 `/api/v1/guard/workflows*` read model；FEAT-018 只聚合/展示 summary，不重复实现策略引擎。
+- **不得新增或注册**：`/api/v1/memory*`、`/api/v1/skills*`、`/api/v1/providers*`。这些范围分别由 FEAT-024 / FEAT-025 或后续 spec 承接。
+- **不得提供写操作**：不在 Dashboard 中直接 approve/continue/stop、重跑 branch、跳过 branch 或修改编排策略。
+
 2026-04-25 路线调整新增：
 
 | 编号 | 范围 | 说明 |
