@@ -1,19 +1,9 @@
 import { Hono } from 'hono';
-import { PermissionBudgetStore, db as haroDb, type WorkflowPermissionBudgetSummary } from '@haro/core';
+import { PermissionBudgetStore, db as haroDb, type WorkflowCheckpointState, type WorkflowPermissionBudgetSummary } from '@haro/core';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
-type JsonRecord = Record<string, unknown>;
-
-type DatabaseLike = {
-  prepare(sql: string): {
-    all(...params: unknown[]): unknown[];
-    get(...params: unknown[]): unknown;
-  };
-  close(): void;
-};
-
-interface CheckpointRow {
+interface WorkflowCheckpointRow {
   id: string;
   workflow_id: string;
   node_id: string;
@@ -21,348 +11,385 @@ interface CheckpointRow {
   created_at: string;
 }
 
-interface WorkflowCheckpointDebug {
-  checkpointId: string;
+interface ParsedCheckpoint {
+  id: string;
   workflowId: string;
   nodeId: string;
-  nodeType?: string;
   createdAt: string;
-  state: JsonRecord;
+  state: WorkflowCheckpointState | null;
+  parseError?: string;
 }
 
-interface BranchLedgerDebug {
+type WorkflowStatus =
+  | 'running'
+  | 'merge-ready'
+  | 'merged'
+  | 'failed'
+  | 'cancelled'
+  | 'timed-out'
+  | 'blocked'
+  | 'needs-human-intervention'
+  | 'unknown';
+
+type BlockedReason = 'permission' | 'budget' | 'validator' | 'tool-failure' | 'timeout' | 'unknown';
+
+export interface WorkflowDebugSummary {
+  workflowId: string;
+  status: WorkflowStatus;
+  executionMode: string;
+  orchestrationMode?: string;
+  templateId: string;
+  workflowTemplateId: string;
+  currentNodeId: string;
+  latestCheckpointRef?: string;
+  createdAt: string;
+  updatedAt: string;
+  blockedReason?: BlockedReason;
+  budgetState?: {
+    budgetId: string;
+    usedTokens: number;
+    limitTokens: number;
+    state: 'ok' | 'near-limit' | 'exceeded';
+  };
+  permissionState?: {
+    requiredClass?: string;
+    state: 'allowed' | 'needs-approval' | 'denied';
+  };
+  stalledBranches: WorkflowBranchReadModel[];
+  checkpointError?: {
+    checkpointId: string;
+    message: string;
+  };
+}
+
+export interface WorkflowBranchReadModel {
   branchId: string;
   memberKey: string;
   status: string;
   attempt: number;
+  nodeId?: string;
   startedAt?: string;
   lastEventAt?: string;
+  finishedAt?: string;
   lastError?: string;
   leafSessionRef?: unknown;
   outputRef?: string;
   consumedByMerge: boolean;
+  branchRole?: string;
 }
 
-type WorkflowDebugStatus = 'running' | 'merge-ready' | 'merged' | 'failed' | 'cancelled' | 'timed-out' | 'blocked';
-type BlockedReason = 'permission' | 'budget' | 'validator' | 'tool-failure' | 'timeout' | 'unknown';
+export interface WorkflowDebugDetail extends WorkflowDebugSummary {
+  branchLedger: WorkflowBranchReadModel[];
+  mergeEnvelope?: unknown;
+  mergeState?: unknown;
+  leafSessionRefs: unknown[];
+  rawContextRefs: unknown[];
+  recentCheckpointRef?: string;
+  checkpoints: Array<{
+    checkpointId: string;
+    nodeId: string;
+    nodeType?: string;
+    createdAt: string;
+    parseError?: string;
+  }>;
+  budgetPermissionSummary: WorkflowPermissionBudgetSummary;
+}
 
 export function createWorkflowsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
 
   route.get('/', (c) => {
-    const db = openDb(runtime);
-    const store = openStore(runtime);
+    const limit = clampNumber(c.req.query('limit'), 1, 100, 20);
+    const rows = readAllCheckpointRows(runtime);
+    const store = openPermissionBudgetStore(runtime);
     try {
-      const limit = clampNumber(c.req.query('limit'), 1, 100, 20);
-      const checkpoints = readLatestCheckpoints(db, limit);
+      const summaries = groupByWorkflow(rows)
+        .map((workflowRows) => buildWorkflowSummary(workflowRows, store.readWorkflowPermissionBudgetSummary(workflowRows[0]!.workflow_id)))
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+        .slice(0, limit);
+
       return c.json({
         success: true,
         data: {
-          items: checkpoints.map((checkpoint) => toSummary(checkpoint, readPermissionBudget(store, checkpoint.workflowId))),
-          total: countDistinctWorkflows(db),
+          items: summaries,
           limit,
         },
       });
     } finally {
       store.close();
-      db.close();
     }
   });
 
-  route.get('/:workflowId', (c) => {
-    const db = openDb(runtime);
-    const store = openStore(runtime);
+  route.get('/:id', (c) => {
+    const workflowId = c.req.param('id');
+    const rows = readWorkflowCheckpointRows(runtime, workflowId);
+    if (rows.length === 0) {
+      return c.json({ error: 'Workflow not found' }, 404);
+    }
+
+    const store = openPermissionBudgetStore(runtime);
     try {
-      const workflowId = c.req.param('workflowId');
-      const latest = readLatestCheckpoint(db, workflowId);
-      if (!latest) return c.json({ error: 'Workflow not found' }, 404);
-      const checkpoints = readWorkflowCheckpoints(db, workflowId);
-      const permissionBudget = readPermissionBudget(store, workflowId);
+      const budgetPermissionSummary = store.readWorkflowPermissionBudgetSummary(workflowId);
       return c.json({
         success: true,
-        data: toDetail(latest, checkpoints, permissionBudget),
+        data: buildWorkflowDetail(rows, budgetPermissionSummary),
       });
     } finally {
       store.close();
-      db.close();
-    }
-  });
-
-  route.get('/:workflowId/checkpoints', (c) => {
-    const db = openDb(runtime);
-    try {
-      const workflowId = c.req.param('workflowId');
-      const checkpoints = readWorkflowCheckpoints(db, workflowId);
-      if (checkpoints.length === 0) return c.json({ error: 'Workflow not found' }, 404);
-      return c.json({
-        success: true,
-        data: {
-          items: checkpoints.map((checkpoint) => ({
-            checkpointId: checkpoint.checkpointId,
-            workflowId: checkpoint.workflowId,
-            nodeId: checkpoint.nodeId,
-            nodeType: checkpoint.nodeType,
-            createdAt: checkpoint.createdAt,
-            state: checkpoint.state,
-          })),
-        },
-      });
-    } finally {
-      db.close();
-    }
-  });
-
-  route.get('/:workflowId/checkpoints/:checkpointId', (c) => {
-    const db = openDb(runtime);
-    try {
-      const checkpoint = readCheckpoint(db, c.req.param('workflowId'), c.req.param('checkpointId'));
-      if (!checkpoint) return c.json({ error: 'Checkpoint not found' }, 404);
-      return c.json({ success: true, data: checkpoint });
-    } finally {
-      db.close();
     }
   });
 
   return route;
 }
 
-function openDb(runtime: WebRuntime): DatabaseLike {
-  return haroDb.initHaroDatabase({ root: runtime.root, dbFile: runtime.dbFile, keepOpen: true }).database as unknown as DatabaseLike;
-}
-
-function openStore(runtime: WebRuntime): PermissionBudgetStore {
-  return new PermissionBudgetStore({ root: runtime.root, dbFile: runtime.dbFile });
-}
-
-function readLatestCheckpoints(db: DatabaseLike, limit: number): WorkflowCheckpointDebug[] {
-  const rows = db
-    .prepare(
-      `SELECT id, workflow_id, node_id, state, created_at
-         FROM workflow_checkpoints
-     ORDER BY created_at DESC, rowid DESC
-        LIMIT ?`,
-    )
-    .all(Math.max(limit * 5, limit)) as CheckpointRow[];
-  const seen = new Set<string>();
-  const checkpoints: WorkflowCheckpointDebug[] = [];
-  for (const row of rows) {
-    if (seen.has(row.workflow_id)) continue;
-    seen.add(row.workflow_id);
-    checkpoints.push(toCheckpoint(row));
-    if (checkpoints.length >= limit) break;
+function readAllCheckpointRows(runtime: WebRuntime): WorkflowCheckpointRow[] {
+  const opened = haroDb.initHaroDatabase({
+    root: runtime.root,
+    dbFile: runtime.dbFile,
+    keepOpen: true,
+  });
+  const db = opened.database!;
+  try {
+    return db
+      .prepare(
+        `SELECT id, workflow_id, node_id, state, created_at
+           FROM workflow_checkpoints
+       ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all() as WorkflowCheckpointRow[];
+  } finally {
+    db.close();
   }
-  return checkpoints;
 }
 
-function countDistinctWorkflows(db: DatabaseLike): number {
-  const row = db.prepare('SELECT COUNT(DISTINCT workflow_id) AS count FROM workflow_checkpoints').get() as { count: number };
-  return row.count;
+function readWorkflowCheckpointRows(runtime: WebRuntime, workflowId: string): WorkflowCheckpointRow[] {
+  const opened = haroDb.initHaroDatabase({
+    root: runtime.root,
+    dbFile: runtime.dbFile,
+    keepOpen: true,
+  });
+  const db = opened.database!;
+  try {
+    return db
+      .prepare(
+        `SELECT id, workflow_id, node_id, state, created_at
+           FROM workflow_checkpoints
+          WHERE workflow_id = ?
+       ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(workflowId) as WorkflowCheckpointRow[];
+  } finally {
+    db.close();
+  }
 }
 
-function readLatestCheckpoint(db: DatabaseLike, workflowId: string): WorkflowCheckpointDebug | null {
-  const row = db
-    .prepare(
-      `SELECT id, workflow_id, node_id, state, created_at
-         FROM workflow_checkpoints
-        WHERE workflow_id = ?
-     ORDER BY created_at DESC, rowid DESC
-        LIMIT 1`,
-    )
-    .get(workflowId) as CheckpointRow | undefined;
-  return row ? toCheckpoint(row) : null;
+function openPermissionBudgetStore(runtime: WebRuntime): PermissionBudgetStore {
+  return new PermissionBudgetStore({
+    root: runtime.root,
+    dbFile: runtime.dbFile,
+  });
 }
 
-function readWorkflowCheckpoints(db: DatabaseLike, workflowId: string): WorkflowCheckpointDebug[] {
-  const rows = db
-    .prepare(
-      `SELECT id, workflow_id, node_id, state, created_at
-         FROM workflow_checkpoints
-        WHERE workflow_id = ?
-     ORDER BY created_at ASC, rowid ASC`,
-    )
-    .all(workflowId) as CheckpointRow[];
-  return rows.map(toCheckpoint);
+function groupByWorkflow(rows: WorkflowCheckpointRow[]): WorkflowCheckpointRow[][] {
+  const grouped = new Map<string, WorkflowCheckpointRow[]>();
+  for (const row of rows) {
+    const workflowRows = grouped.get(row.workflow_id) ?? [];
+    workflowRows.push(row);
+    grouped.set(row.workflow_id, workflowRows);
+  }
+  return [...grouped.values()];
 }
 
-function readCheckpoint(db: DatabaseLike, workflowId: string, checkpointId: string): WorkflowCheckpointDebug | null {
-  const row = db
-    .prepare(
-      `SELECT id, workflow_id, node_id, state, created_at
-         FROM workflow_checkpoints
-        WHERE workflow_id = ? AND id = ?
-        LIMIT 1`,
-    )
-    .get(workflowId, checkpointId) as CheckpointRow | undefined;
-  return row ? toCheckpoint(row) : null;
-}
-
-function readPermissionBudget(store: PermissionBudgetStore, workflowId: string): WorkflowPermissionBudgetSummary | undefined {
-  const summary = store.readWorkflowPermissionBudgetSummary(workflowId);
-  if (!summary.budget && summary.ledger.entries.length === 0 && summary.audit.events.length === 0) return undefined;
+function buildWorkflowSummary(
+  rows: WorkflowCheckpointRow[],
+  budgetPermissionSummary: WorkflowPermissionBudgetSummary,
+): WorkflowDebugSummary {
+  const parsed = rows.map(parseCheckpointRow);
+  const latest = parsed.at(-1)!;
+  const first = parsed[0]!;
+  const state = latest.state;
+  const branchLedger = extractBranchLedger(state?.branchState);
+  const blockedReason = deriveBlockedReason(state, branchLedger, budgetPermissionSummary);
+  const workflowTemplateId = state?.routingDecision?.workflowTemplateId ?? 'unknown';
+  const summary: WorkflowDebugSummary = {
+    workflowId: latest.workflowId,
+    status: deriveWorkflowStatus(state, branchLedger, budgetPermissionSummary),
+    executionMode: state?.routingDecision?.executionMode ?? 'unknown',
+    ...(state?.routingDecision?.orchestrationMode ? { orchestrationMode: state.routingDecision.orchestrationMode } : {}),
+    templateId: workflowTemplateId,
+    workflowTemplateId,
+    currentNodeId: state?.nodeId ?? latest.nodeId,
+    latestCheckpointRef: latest.id,
+    createdAt: first.createdAt,
+    updatedAt: latest.createdAt,
+    ...(blockedReason ? { blockedReason } : {}),
+    ...deriveBudgetPermissionState(budgetPermissionSummary),
+    stalledBranches: branchLedger.filter(isStalledBranch),
+    ...(latest.parseError
+      ? {
+          checkpointError: {
+            checkpointId: latest.id,
+            message: latest.parseError,
+          },
+        }
+      : {}),
+  };
   return summary;
 }
 
-function toCheckpoint(row: CheckpointRow): WorkflowCheckpointDebug {
-  const state = parseState(row.state);
-  return {
-    checkpointId: row.id,
-    workflowId: row.workflow_id,
-    nodeId: row.node_id,
-    nodeType: stringValue(state.nodeType),
-    createdAt: row.created_at,
-    state,
-  };
-}
-
-function toSummary(checkpoint: WorkflowCheckpointDebug, permissionBudget?: WorkflowPermissionBudgetSummary) {
-  const state = checkpoint.state;
-  const branchState = recordValue(state.branchState);
-  const workflow = recordValue(branchState.workflow);
-  const decision = recordValue(state.routingDecision);
-  const branchLedger = readBranchLedger(state);
-  return {
-    workflowId: checkpoint.workflowId,
-    executionMode: stringValue(workflow.executionMode) ?? stringValue(decision.executionMode) ?? 'team',
-    orchestrationMode: stringValue(workflow.orchestrationMode) ?? stringValue(decision.orchestrationMode),
-    templateId: stringValue(workflow.workflowTemplateId) ?? stringValue(decision.workflowTemplateId) ?? 'unknown',
-    workflowTemplateId: stringValue(workflow.workflowTemplateId) ?? stringValue(decision.workflowTemplateId) ?? 'unknown',
-    status: deriveStatus(branchState, branchLedger),
-    createdAt: stringValue(workflow.createdAt) ?? checkpoint.createdAt,
-    updatedAt: checkpoint.createdAt,
-    currentNodeId: checkpoint.nodeId,
-    latestCheckpointRef: checkpoint.checkpointId,
-    blockedReason: deriveBlockedReason(branchState, branchLedger, permissionBudget),
-    budgetState: toBudgetState(permissionBudget),
-    permissionState: toPermissionState(permissionBudget),
-  };
-}
-
-function toDetail(
-  latest: WorkflowCheckpointDebug,
-  checkpoints: WorkflowCheckpointDebug[],
-  permissionBudget?: WorkflowPermissionBudgetSummary,
-) {
+function buildWorkflowDetail(
+  rows: WorkflowCheckpointRow[],
+  budgetPermissionSummary: WorkflowPermissionBudgetSummary,
+): WorkflowDebugDetail {
+  const summary = buildWorkflowSummary(rows, budgetPermissionSummary);
+  const parsed = rows.map(parseCheckpointRow);
+  const latest = parsed.at(-1)!;
   const state = latest.state;
-  const branchState = recordValue(state.branchState);
-  const summary = toSummary(latest, permissionBudget);
-  const branchLedger = readBranchLedger(state);
+  const branchState = asRecord(state?.branchState);
+  const mergeState = asRecord(branchState?.merge);
+  const mergeEnvelope = mergeState?.envelope;
   return {
     ...summary,
-    latestCheckpointRef: latest.checkpointId,
-    latestCheckpoint: latest,
-    branchLedger,
-    stalledBranches: branchLedger.filter(isStalledBranch),
-    mergeEnvelope: readMergeEnvelope(state),
-    leafSessionRefs: arrayValue(state.leafSessionRefs),
-    rawContextRefs: arrayValue(state.rawContextRefs),
-    branchState,
-    checkpointTimeline: checkpoints.map((checkpoint) => ({
-      checkpointId: checkpoint.checkpointId,
-      workflowId: checkpoint.workflowId,
-      nodeId: checkpoint.nodeId,
-      nodeType: checkpoint.nodeType,
+    branchLedger: extractBranchLedger(state?.branchState),
+    ...(mergeEnvelope ? { mergeEnvelope } : {}),
+    ...(mergeState ? { mergeState } : {}),
+    leafSessionRefs: Array.isArray(state?.leafSessionRefs) ? state.leafSessionRefs : [],
+    rawContextRefs: Array.isArray(state?.rawContextRefs) ? state.rawContextRefs : [],
+    recentCheckpointRef: latest.id,
+    checkpoints: parsed.map((checkpoint) => ({
+      checkpointId: checkpoint.id,
+      nodeId: checkpoint.state?.nodeId ?? checkpoint.nodeId,
+      ...(checkpoint.state?.nodeType ? { nodeType: checkpoint.state.nodeType } : {}),
       createdAt: checkpoint.createdAt,
-      state: checkpoint.state,
+      ...(checkpoint.parseError ? { parseError: checkpoint.parseError } : {}),
     })),
-    permissionBudget,
+    budgetPermissionSummary,
   };
 }
 
-function readBranchLedger(state: JsonRecord): BranchLedgerDebug[] {
-  const branches = recordValue(recordValue(state.branchState).branches);
-  return Object.entries(branches).map(([fallbackId, value]) => {
-    const branch = recordValue(value);
+function parseCheckpointRow(row: WorkflowCheckpointRow): ParsedCheckpoint {
+  try {
     return {
-      branchId: stringValue(branch.branchId) ?? fallbackId,
-      memberKey: stringValue(branch.memberKey) ?? fallbackId,
+      id: row.id,
+      workflowId: row.workflow_id,
+      nodeId: row.node_id,
+      createdAt: row.created_at,
+      state: JSON.parse(row.state) as WorkflowCheckpointState,
+    };
+  } catch (error) {
+    return {
+      id: row.id,
+      workflowId: row.workflow_id,
+      nodeId: row.node_id,
+      createdAt: row.created_at,
+      state: null,
+      parseError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function extractBranchLedger(branchState: unknown): WorkflowBranchReadModel[] {
+  const branches = asRecord(asRecord(branchState)?.branches);
+  if (!branches) return [];
+  return Object.entries(branches).map(([branchId, value]) => {
+    const branch = asRecord(value) ?? {};
+    const lastEventAt = stringValue(branch.finishedAt) ?? stringValue(branch.startedAt);
+    return {
+      branchId: stringValue(branch.branchId) ?? branchId,
+      memberKey: stringValue(branch.memberKey) ?? 'unknown',
       status: stringValue(branch.status) ?? 'unknown',
       attempt: numberValue(branch.attempt) ?? 0,
-      startedAt: stringValue(branch.startedAt),
-      lastEventAt: stringValue(branch.lastEventAt),
-      lastError: stringValue(branch.lastError),
-      leafSessionRef: branch.leafSessionRef,
-      outputRef: stringValue(branch.outputRef),
-      consumedByMerge: booleanValue(branch.consumedByMerge) ?? stringValue(branch.status) === 'merge-consumed',
+      ...(stringValue(branch.nodeId) ? { nodeId: stringValue(branch.nodeId) } : {}),
+      ...(stringValue(branch.startedAt) ? { startedAt: stringValue(branch.startedAt) } : {}),
+      ...(lastEventAt ? { lastEventAt } : {}),
+      ...(stringValue(branch.finishedAt) ? { finishedAt: stringValue(branch.finishedAt) } : {}),
+      ...(stringValue(branch.lastError) ? { lastError: stringValue(branch.lastError) } : {}),
+      ...(branch.leafSessionRef ? { leafSessionRef: branch.leafSessionRef } : {}),
+      ...(stringValue(branch.outputRef) ? { outputRef: stringValue(branch.outputRef) } : {}),
+      consumedByMerge: Boolean(branch.consumedByMerge),
+      ...(stringValue(branch.branchRole) ? { branchRole: stringValue(branch.branchRole) } : {}),
     };
   });
 }
 
-function readMergeEnvelope(state: JsonRecord): unknown {
-  const merge = recordValue(recordValue(state.branchState).merge);
-  return merge.envelope ?? merge;
-}
-
-function deriveStatus(branchState: JsonRecord, branches: BranchLedgerDebug[]): WorkflowDebugStatus {
-  const teamStatus = stringValue(branchState.teamStatus);
-  const merge = recordValue(branchState.merge);
-  const mergeStatus = stringValue(merge.status);
-  if (mergeStatus === 'completed' || teamStatus === 'merged') return 'merged';
+function deriveWorkflowStatus(
+  state: WorkflowCheckpointState | null,
+  branches: WorkflowBranchReadModel[],
+  summary: WorkflowPermissionBudgetSummary,
+): WorkflowStatus {
+  if (!state) return 'unknown';
+  const branchState = asRecord(state.branchState);
+  const teamStatus = stringValue(branchState?.teamStatus);
+  if (isWorkflowStatus(teamStatus)) return teamStatus;
+  if (summary.budget?.state === 'near-limit' || summary.permissions.needsApproval > 0) return 'needs-human-intervention';
+  if (summary.budget?.state === 'exceeded' || summary.permissions.denied > 0) return 'blocked';
+  const mergeStatus = stringValue(asRecord(branchState?.merge)?.status);
   if (mergeStatus === 'ready') return 'merge-ready';
-  if (mergeStatus === 'blocked' || teamStatus === 'blocked') return 'blocked';
+  if (mergeStatus === 'completed') return 'merged';
+  if (mergeStatus === 'blocked') return 'blocked';
   if (branches.some((branch) => branch.status === 'timed-out')) return 'timed-out';
   if (branches.some((branch) => branch.status === 'failed')) return 'failed';
-  if (branches.some((branch) => branch.status === 'cancelled')) return 'cancelled';
-  if (teamStatus === 'failed' || teamStatus === 'cancelled' || teamStatus === 'timed-out') return teamStatus;
   return 'running';
 }
 
 function deriveBlockedReason(
-  branchState: JsonRecord,
-  branches: BranchLedgerDebug[],
-  permissionBudget?: WorkflowPermissionBudgetSummary,
+  state: WorkflowCheckpointState | null,
+  branches: WorkflowBranchReadModel[],
+  summary: WorkflowPermissionBudgetSummary,
 ): BlockedReason | undefined {
-  if (permissionBudget?.budgetExceeded || permissionBudget?.budget?.state === 'exceeded') return 'budget';
-  if (permissionBudget?.permissions.denied || permissionBudget?.permissions.needsApproval) return 'permission';
-  const merge = recordValue(branchState.merge);
-  const errors = [stringValue(merge.blockedReason), stringValue(permissionBudget?.blockedReason), ...branches.map((branch) => branch.lastError)]
-    .filter((value): value is string => Boolean(value))
-    .join(' ')
-    .toLowerCase();
-  if (!errors && merge.status !== 'blocked' && !branches.some(isStalledBranch)) return undefined;
-  if (errors.includes('budget') || errors.includes('token')) return 'budget';
-  if (errors.includes('permission') || errors.includes('approval') || errors.includes('denied')) return 'permission';
-  if (errors.includes('validator') || errors.includes('validation')) return 'validator';
-  if (errors.includes('tool')) return 'tool-failure';
-  if (errors.includes('timeout') || branches.some((branch) => branch.status === 'timed-out')) return 'timeout';
-  return 'unknown';
+  if (summary.budgetExceeded || summary.budget?.state === 'exceeded' || summary.budget?.state === 'near-limit') return 'budget';
+  if (summary.permissions.denied > 0 || summary.permissions.needsApproval > 0) return 'permission';
+  const branchState = asRecord(state?.branchState);
+  const explicit = stringValue(branchState?.blockedReason);
+  if (isBlockedReason(explicit)) return explicit;
+  if (branches.some((branch) => branch.status === 'timed-out' || branch.lastError?.toLowerCase().includes('timeout'))) {
+    return 'timeout';
+  }
+  if (branches.some((branch) => branch.lastError)) return 'tool-failure';
+  if (stringValue(asRecord(branchState?.merge)?.status) === 'blocked') return 'validator';
+  return undefined;
 }
 
-function isStalledBranch(branch: BranchLedgerDebug): boolean {
-  return !branch.consumedByMerge && ['failed', 'timed-out', 'blocked'].includes(branch.status);
-}
-
-function toBudgetState(summary?: WorkflowPermissionBudgetSummary) {
-  if (!summary?.budget) return undefined;
+function deriveBudgetPermissionState(summary: WorkflowPermissionBudgetSummary): Pick<WorkflowDebugSummary, 'budgetState' | 'permissionState'> {
+  const latestPermissionEvent = summary.permissions.events.at(-1);
   return {
-    budgetId: summary.budget.budgetId,
-    usedTokens: summary.budget.usedTotalTokens,
-    limitTokens: summary.budget.limitTokens,
-    state: summary.budget.state,
+    ...(summary.budget
+      ? {
+          budgetState: {
+            budgetId: summary.budget.budgetId,
+            usedTokens: summary.budget.usedTotalTokens,
+            limitTokens: summary.budget.limitTokens,
+            state: summary.budget.state,
+          },
+        }
+      : {}),
+    permissionState: {
+      ...(latestPermissionEvent?.operationClass ? { requiredClass: latestPermissionEvent.operationClass } : {}),
+      state: summary.permissions.denied > 0 ? 'denied' : summary.permissions.needsApproval > 0 ? 'needs-approval' : 'allowed',
+    },
   };
 }
 
-function toPermissionState(summary?: WorkflowPermissionBudgetSummary) {
-  if (!summary) return undefined;
-  const requiredClass = summary.permissions.events.find((event) => event.operationClass)?.operationClass;
-  const state = summary.permissions.denied > 0 ? 'denied' : summary.permissions.needsApproval > 0 ? 'needs-approval' : 'allowed';
-  return { requiredClass, state };
+function isStalledBranch(branch: WorkflowBranchReadModel): boolean {
+  return (
+    branch.status === 'failed' ||
+    branch.status === 'timed-out' ||
+    branch.status === 'cancelled' ||
+    branch.status === 'blocked' ||
+    Boolean(branch.lastError)
+  );
 }
 
-function parseState(value: string): JsonRecord {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return recordValue(parsed);
-  } catch {
-    return { parseError: value };
-  }
+function clampNumber(raw: string | undefined, min: number, max: number, fallback: number): number {
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }
 
-function recordValue(value: unknown): JsonRecord {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function arrayValue(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -373,13 +400,26 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function booleanValue(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
+function isWorkflowStatus(value: string | undefined): value is WorkflowStatus {
+  return (
+    value === 'running' ||
+    value === 'merge-ready' ||
+    value === 'merged' ||
+    value === 'failed' ||
+    value === 'cancelled' ||
+    value === 'timed-out' ||
+    value === 'blocked' ||
+    value === 'needs-human-intervention'
+  );
 }
 
-function clampNumber(raw: string | undefined, min: number, max: number, fallback: number): number {
-  if (!raw) return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, parsed));
+function isBlockedReason(value: string | undefined): value is BlockedReason {
+  return (
+    value === 'permission' ||
+    value === 'budget' ||
+    value === 'validator' ||
+    value === 'tool-failure' ||
+    value === 'timeout' ||
+    value === 'unknown'
+  );
 }
