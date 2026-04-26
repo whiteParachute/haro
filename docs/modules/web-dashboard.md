@@ -47,7 +47,7 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
 - `GET /api/v1/doctor` 返回按 filesystem/database/config/providers/channels 分组的 doctor 报告；Channel 分组仅诊断展示，不提供 lifecycle 操作
 - `GET /api/v1/config`、`PUT /api/v1/config`、`GET /api/v1/config/sources` 提供合并配置、项目级 `.haro/config.yaml` 写入、字段来源展示；PUT 写入前通过现有 config schema/loading path 校验，失败返回字段级 issues
 - `GET /api/v1/guard/workflows`、`GET /api/v1/guard/workflows/:workflowId` 提供 FEAT-023 权限/预算只读 read model，返回 workflow budget state、`budgetExceeded`、`blockedReason`、branch token ledger 与 permission audit 摘要；该 API 不提供 Web 审批队列或写操作。
-- `GET /api/v1/workflows`、`GET /api/v1/workflows/:workflowId`、`GET /api/v1/workflows/:workflowId/checkpoints` 提供 FEAT-018 Orchestration Debugger read model：从 `workflow_checkpoints.state` 读取 workflow summary、branch ledger、merge envelope、leafSessionRefs、rawContextRefs 和完整 checkpoint JSON，并合并 FEAT-023 `/guard` 预算/权限摘要。该 API 只读，不注册 Memory/Skills/Providers contract，也不提供 approve/continue/stop。
+- `GET /api/v1/workflows`、`GET /api/v1/workflows/:id`、`GET /api/v1/workflows/:id/checkpoints` 提供 FEAT-018 Orchestration Debugger 只读 read model，返回 workflow summary、branch ledger、merge envelope、checkpoint metadata / JSON、leafSessionRefs、rawContextRefs 与 stalled branch 信息；该 API 不注册 Memory、Skills 或 Providers contract。
 
 ## 认证与日志
 
@@ -100,6 +100,17 @@ FEAT-017 在 Web Dashboard 中补齐系统管理页面：
 - 高级 YAML 模式使用现有 `<textarea>` 原语实现，未引入 CodeMirror/Monaco 等新依赖；保存仍走同一后端 schema/loading 校验。
 - Config API 只写项目级 `.haro/config.yaml`，不修改全局配置、默认配置或 CLI overrides。
 - Channel 在 FEAT-017 中仅作为 Status/Doctor/Config response 内嵌的只读摘要出现；独立 `/api/v1/channels*` contract、enable/disable/setup/remove、Gateway 控制与 Channel 专属页面仍由 FEAT-019 拥有。
+
+## Orchestration Debugger（FEAT-018）
+
+FEAT-018 在 Web Dashboard 中新增 Dispatch / Orchestration Debugger 页面，用于只读排查 team workflow：
+
+- 列出 workflows，并突出 `blocked`、`needs-human-intervention`、`stalled` 等需要关注的状态。
+- 选择 workflow 后展示 fork-and-merge 拓扑：branch 平行排列，merge 位于所有 branch 下游；不得渲染成 branch-to-branch chain。
+- 展示 checkpoint timeline、branch ledger、merge envelope、leafSessionRefs 与 latest checkpoint ref。
+- stalled branch 需要突出展示 `branchId`、`memberKey`、`status`、`attempt`、`lastEventAt`、`lastError`、`leafSessionRef`、`outputRef`、`consumedByMerge`。
+- 点击 checkpoint 打开只读 debug drawer，分区展示完整结构化 JSON：`rawContextRefs`、`sceneDescriptor/routingDecision`、`branchState.branches`、`branchState.merge`、`leafSessionRefs`、`budgetState/permissionState`。
+- 预算/权限摘要来自 FEAT-023 `/api/v1/guard/workflows*`；页面只展示阻断原因，不提供 approve/continue/stop、重跑 branch、跳过 branch 或策略修改。
 
 ## 与后续 FEAT 的边界
 
