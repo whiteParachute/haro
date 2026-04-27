@@ -1,11 +1,11 @@
 ---
 id: FEAT-028
 title: Web Dashboard Product Maturity（多用户、分页与中文本地化）
-status: draft
+status: approved
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-25
-updated: 2026-04-25
+updated: 2026-04-27
 related:
   - ./FEAT-015-web-dashboard-foundation.md
   - ./FEAT-016-web-dashboard-agent-interaction.md
@@ -65,26 +65,32 @@ KeyClaw 等成熟控制面产品的经验说明，管理后台必须优先解决
 ```sql
 CREATE TABLE web_users (
   id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
   role TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  last_login_at TEXT
+  last_login_at TEXT,
+  password_updated_at TEXT
 );
 
-CREATE TABLE web_user_tokens (
+CREATE TABLE web_sessions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
-  token_hash TEXT NOT NULL,
-  label TEXT,
+  session_token_hash TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  last_used_at TEXT,
-  revoked_at TEXT
+  last_seen_at TEXT,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  FOREIGN KEY (user_id) REFERENCES web_users(id)
 );
 ```
 
-Phase 1 可以先采用 user token/session token，不引入密码登录；首次 owner token 由 setup 或 bootstrap 页面生成并只显示一次。
+Phase 1 采用用户名密码登录，不采用 token-only 本地用户。首次启动时若不存在任何用户，Dashboard 进入 Web bootstrap 页面，由用户创建第一个 `owner` 账号并设置密码；bootstrap 成功后进入正常登录流程。
+
+旧 `HARO_WEB_API_KEY` 保留为兼容入口：已有部署不应因为 FEAT-028 直接失效，但新部署的长期认证主路径必须是本地用户 + Web session。兼容入口只能用于迁移提示、bootstrap 辅助或 legacy API 访问，不应继续作为唯一认证模型。
 
 ### 5.2 Pagination contract
 
@@ -159,10 +165,13 @@ Dashboard 操作统一转换为 operation class：
 
 ## 8. Open Questions / 待定问题
 
-- Q1: Phase 1 是否采用“token-only 本地用户”，还是需要引入用户名密码登录？
-- Q2: owner bootstrap 入口以 `haro setup` 为主，还是允许首次 Web 页面创建？
-- Q3: 分页 contract 是否统一使用 page/pageSize，还是对日志类页面采用 cursor pagination？
+已关闭。2026-04-27 的决策如下：
+
+- D1: Phase 1 采用用户名密码登录，不采用 token-only 本地用户。初始化、登录和后续用户管理都必须能从 Web 前端完成，参考 KeyClaw 的控制面体验。
+- D2: owner bootstrap 入口允许首次 Web 页面创建；`haro setup` 可以作为辅助路径，但不能成为唯一入口。
+- D3: 分页 contract 统一使用 `page/pageSize`；日志类页面不单独采用 cursor pagination。
 
 ## 9. Changelog / 变更记录
 
+- 2026-04-27: whiteParachute / Codex — 关闭 Q1-Q3 Open Questions，将 FEAT-028 收口为用户名密码登录、Web owner bootstrap、统一 `page/pageSize` 分页，并将 spec 状态提升为 approved。
 - 2026-04-25: Codex — 初稿，补齐 Dashboard 多用户、服务端分页和中文本地化产品成熟度规划。
