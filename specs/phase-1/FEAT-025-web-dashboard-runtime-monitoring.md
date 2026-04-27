@@ -139,4 +139,4 @@ Provider 调用事件必须记录可靠的 latency 字段并落库。若现有 r
 - 2026-04-26: implementation done — Runtime Logs & Provider Monitoring 已交付。
   - 核心交付：新增 `/api/v1/logs/session-events`、`/api/v1/logs/provider-fallbacks`、`/api/v1/providers/stats`；Runner terminal events 补充 provider/model/latencyMs 并落库 `session_events.latency_ms`；前端新增 Logs、Invoke/Provider Monitoring、Monitor 页面和日志/监控组件；WebSocket client 断线后恢复 system/sessions/session 订阅。
   - 验证命令：`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm smoke`、Playwright browser smoke（截图 `/tmp/haro-feat-025-web-smoke.png`）。
-  - Commit: this commit（最终 hash 见交付报告）。
+  - Commit: 2d59328。
