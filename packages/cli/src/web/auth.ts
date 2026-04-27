@@ -130,11 +130,14 @@ function readSessionToken(c: Context<ApiKeyAuthEnv>): string | undefined {
   return headerToken || undefined;
 }
 
-function isPublicRequest(path: string, legacyApiKeyEnabled: boolean): boolean {
+function isPublicRequest(path: string, _legacyApiKeyEnabled: boolean): boolean {
   if (path === '/api/health') return true;
   if (path === '/api/v1/auth/status') return true;
   if (path === '/api/v1/auth/bootstrap') return true;
   if (path === '/api/v1/auth/login') return true;
-  if (!path.startsWith('/api/') && !legacyApiKeyEnabled) return true;
+  // FEAT-029 H1 — SPA static assets must always be public so the dashboard can
+  // render its own login form before the user has any credential. The legacy
+  // HARO_WEB_API_KEY only protects /api/* surface; non-/api paths are static.
+  if (!path.startsWith('/api/')) return true;
   return false;
 }

@@ -123,7 +123,10 @@ describe('web dashboard Hono app [FEAT-015]', () => {
       }),
     );
 
-    const apiResponse = await app.request('/api/health', {
+    // FEAT-029 — /api/health is intentionally public (probes / k8s liveness).
+    // Use a guarded endpoint to verify the auth middleware actually rejects
+    // unauthenticated /api/* traffic when HARO_WEB_API_KEY is configured.
+    const apiResponse = await app.request('/api/v1/agents', {
       headers: {
         origin: 'http://localhost:5173',
       },
@@ -410,8 +413,9 @@ describe('web dashboard Hono app [FEAT-015]', () => {
     const logger = createMockLogger();
     const app = createWebApp({ logger });
 
-    const missingKeyResponse = await app.request('/api/health');
-    const invalidKeyResponse = await app.request('/api/health', {
+    // FEAT-029 — /api/health stays public; probe a guarded endpoint instead.
+    const missingKeyResponse = await app.request('/api/v1/agents');
+    const invalidKeyResponse = await app.request('/api/v1/agents', {
       headers: {
         'x-api-key': 'wrong-secret',
       },
