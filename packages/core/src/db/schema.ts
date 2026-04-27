@@ -294,8 +294,71 @@ export const EVOLUTION_ASSET_TABLES: readonly TableDefinition[] = [
   },
 ];
 
+export const WEB_DASHBOARD_TABLES: readonly TableDefinition[] = [
+  {
+    name: 'web_users',
+    ddl: `CREATE TABLE IF NOT EXISTS web_users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'operator', 'viewer')),
+      status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_login_at TEXT,
+      password_updated_at TEXT NOT NULL
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_web_users_role ON web_users(role)`,
+      `CREATE INDEX IF NOT EXISTS idx_web_users_status ON web_users(status)`,
+    ],
+  },
+  {
+    name: 'web_sessions',
+    ddl: `CREATE TABLE IF NOT EXISTS web_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      session_token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES web_users(id)
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_web_sessions_user_id ON web_sessions(user_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_web_sessions_token_hash ON web_sessions(session_token_hash)`,
+      `CREATE INDEX IF NOT EXISTS idx_web_sessions_expires_at ON web_sessions(expires_at)`,
+    ],
+  },
+  {
+    name: 'web_audit_events',
+    ddl: `CREATE TABLE IF NOT EXISTS web_audit_events (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT,
+      actor_kind TEXT NOT NULL CHECK (actor_kind IN ('web-user', 'legacy-api-key', 'anonymous', 'system')),
+      actor_role TEXT,
+      target_type TEXT NOT NULL,
+      target_id TEXT,
+      operation TEXT NOT NULL,
+      operation_class TEXT NOT NULL,
+      result TEXT NOT NULL CHECK (result IN ('allowed', 'denied', 'failed')),
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (actor_user_id) REFERENCES web_users(id)
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_web_audit_events_actor ON web_audit_events(actor_user_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_web_audit_events_target ON web_audit_events(target_type, target_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_web_audit_events_operation ON web_audit_events(operation, created_at)`,
+    ],
+  },
+];
+
 export const HARO_TABLES: readonly TableDefinition[] = [
   ...CORE_TABLES,
   ...MEMORY_READ_MODEL_TABLES,
   ...EVOLUTION_ASSET_TABLES,
+  ...WEB_DASHBOARD_TABLES,
 ];

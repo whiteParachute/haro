@@ -20,6 +20,9 @@ const EXPECTED_TABLE_NAMES = [
   'memory_entries_fts',
   'evolution_assets',
   'evolution_asset_events',
+  'web_users',
+  'web_sessions',
+  'web_audit_events',
 ];
 
 function listUserTables(dbFile: string): string[] {

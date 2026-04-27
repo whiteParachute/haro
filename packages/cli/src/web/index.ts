@@ -6,10 +6,11 @@ import { compress } from 'hono/compress';
 import { cors } from 'hono/cors';
 import type { MiddlewareHandler } from 'hono';
 import { AgentRegistry } from '@haro/core';
-import { apiKeyAuth, warnIfApiKeyAuthDisabled } from './auth.js';
+import { createDashboardAuth, warnIfApiKeyAuthDisabled } from './auth.js';
 import { createWebLogger } from './logger.js';
 import type { ApiKeyAuthEnv, WebApp, WebLogger } from './types.js';
 import { createAgentsRoute } from './routes/agents.js';
+import { createAuthRoute } from './routes/auth.js';
 import { createChannelsRoute } from './routes/channels.js';
 import { createConfigRoute } from './routes/config.js';
 import { createDoctorRoute, createStatusRoute } from './routes/status.js';
@@ -20,12 +21,13 @@ import { createMemoryRoute } from './routes/memory.js';
 import { createProvidersRoute } from './routes/providers.js';
 import { createSkillsRoute } from './routes/skills.js';
 import { createWorkflowsRoute } from './routes/workflows.js';
+import { createUsersRoute } from './routes/users.js';
 import { createSessionsRoute } from './routes/sessions.js';
 import type { WebRuntime } from './runtime.js';
 import { WebSocketManager } from './websocket/manager.js';
 
 const VITE_DEV_ORIGIN = 'http://localhost:5173';
-const ALLOWED_CORS_HEADERS = ['content-type', 'authorization', 'x-api-key'];
+const ALLOWED_CORS_HEADERS = ['content-type', 'authorization', 'x-api-key', 'x-haro-session-token'];
 
 export interface CreateWebAppOptions {
   logger?: WebLogger;
@@ -99,7 +101,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
       allowHeaders: ALLOWED_CORS_HEADERS,
     }),
   );
-  app.use('/api/*', apiKeyAuth);
+  app.use('*', createDashboardAuth(runtime));
   app.use('*', compress());
   app.get('/api/health', (c) =>
     c.json({
@@ -110,6 +112,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
       },
     }),
   );
+  app.route('/api/v1/auth', createAuthRoute(runtime));
   app.route('/api/v1/agents', createAgentsRoute(runtime, websocketManager));
   app.route('/api/v1/channels', createChannelsRoute(runtime));
   app.route('/api/v1/gateway', createGatewayRoute(runtime));
@@ -120,6 +123,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   app.route('/api/v1/sessions', createSessionsRoute(runtime));
   app.route('/api/v1/memory', createMemoryRoute(runtime));
   app.route('/api/v1/skills', createSkillsRoute(runtime));
+  app.route('/api/v1/users', createUsersRoute(runtime));
   app.route('/api/v1/status', createStatusRoute(runtime));
   app.route('/api/v1/doctor', createDoctorRoute(runtime));
   app.route('/api/v1/config', createConfigRoute(runtime));
