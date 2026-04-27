@@ -163,13 +163,15 @@ Dashboard 操作统一转换为 operation class：
 - E2E 测试：bootstrap owner、viewer 只读、admin 重置 token、Sessions 服务端分页。
 - 回归测试：旧 `HARO_WEB_API_KEY` 模式、Chat/Sessions/WebSocket auth 不被破坏。
 
-## 8. Open Questions / 待定问题
+## 8. Decision Records / 正式决策
 
-已关闭。2026-04-27 的决策如下：
+FEAT-028 的 Q1-Q3 已于 2026-04-27 关闭。以下决策作为实现和验收的正式依据；spec status 保持 `approved`，不得因决策关闭直接改为 `done`，必须等待实现完成、验证通过并获得 owner 收尾批准。
 
-- D1: Phase 1 采用用户名密码登录，不采用 token-only 本地用户。初始化、登录和后续用户管理都必须能从 Web 前端完成，参考 KeyClaw 的控制面体验。
-- D2: owner bootstrap 入口允许首次 Web 页面创建；`haro setup` 可以作为辅助路径，但不能成为唯一入口。
-- D3: 分页 contract 统一使用 `page/pageSize`；日志类页面不单独采用 cursor pagination。
+| ID | 原问题 | 正式决策 | 实现约束 |
+| --- | --- | --- | --- |
+| D1 | 本地用户采用 token-only 还是用户名密码登录？ | Phase 1 采用用户名密码登录，不采用 token-only 本地用户。初始化、登录和后续用户管理都必须能从 Web 前端完成，参考 KeyClaw 的控制面体验。 | 后端必须提供密码 hash/verify 与 Web session；前端必须提供登录、登出和用户管理主路径。 |
+| D2 | 第一个 owner 通过 CLI 创建还是 Web bootstrap 创建？ | owner bootstrap 入口允许首次 Web 页面创建；`haro setup` 可以作为辅助路径，但不能成为唯一入口。 | 当实例没有任何 `web_users` 时，Dashboard 必须进入 Web owner bootstrap；旧 `HARO_WEB_API_KEY` 只能作为兼容/辅助路径。 |
+| D3 | 分页统一用 page/pageSize 还是为日志单独采用 cursor？ | 分页 contract 统一使用 `page/pageSize`；日志类页面不单独采用 cursor pagination。 | Sessions、Logs、Knowledge、Skills、Users 等列表必须共享 `page`、`pageSize`、`sort`、`order`、`q` 语义，并对 sort 字段做 allowlist。 |
 
 ## 9. Changelog / 变更记录
 
