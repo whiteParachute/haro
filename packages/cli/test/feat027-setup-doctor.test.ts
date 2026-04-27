@@ -47,6 +47,18 @@ function okCommand(command: string, args: readonly string[] = []) {
   return { status: 0, stdout: '' };
 }
 
+// FEAT-029 — diagnostics tests must be hermetic about codex CLI auth state;
+// inject a "no chatgpt login" probe so tests pass on dev machines where the
+// developer has run `codex login`.
+const noChatgptAuth = () => ({
+  detected: false,
+  hasAuth: false,
+  authMode: null,
+  accountId: null,
+  lastRefresh: null,
+  authFilePath: '/tmp/no-codex-home/auth.json',
+});
+
 async function runJson(root: string, argv: string[], opts: Partial<RunCliOptions> = {}) {
   const stdout = new PassThrough();
   const chunks: string[] = [];
@@ -55,7 +67,12 @@ async function runJson(root: string, argv: string[], opts: Partial<RunCliOptions
     argv,
     root,
     stdout,
-    setupDeps: { nodeVersion: 'v22.3.0', env: { OPENAI_API_KEY: 'test-key' }, runCommand: okCommand },
+    setupDeps: {
+      nodeVersion: 'v22.3.0',
+      env: { OPENAI_API_KEY: 'test-key' },
+      runCommand: okCommand,
+      readCodexAuth: noChatgptAuth,
+    },
     createProviderRegistry: async () => createProviderRegistry(),
     loadAgentRegistry: async () => createAgentRegistry(),
     createAdditionalChannels: async () => [],
@@ -79,7 +96,7 @@ describe('guided setup and doctor remediation [FEAT-027]', () => {
   it('setup --check --json returns staged results with issue contract and next actions', async () => {
     const root = tempRoot('haro-feat027-setup-check-');
     const { result, json } = await runJson(root, ['setup', '--check', '--json'], {
-      setupDeps: { nodeVersion: 'v22.3.0', env: {}, runCommand: okCommand },
+      setupDeps: { nodeVersion: 'v22.3.0', env: {}, runCommand: okCommand, readCodexAuth: noChatgptAuth },
     });
 
     expect(result.action).toBe('setup');
@@ -109,7 +126,7 @@ describe('guided setup and doctor remediation [FEAT-027]', () => {
       return okCommand(command, args);
     };
     const { json } = await runJson(root, ['setup', '--profile', 'global', '--check', '--json'], {
-      setupDeps: { nodeVersion: 'v22.3.0', env: { OPENAI_API_KEY: 'test-key' }, runCommand },
+      setupDeps: { nodeVersion: 'v22.3.0', env: { OPENAI_API_KEY: 'test-key' }, runCommand, readCodexAuth: noChatgptAuth },
     });
     const globalStage = json.stages.find((stage: { id: string }) => stage.id === 'global-command');
     expect(globalStage.status).toBe('error');
@@ -126,7 +143,7 @@ describe('guided setup and doctor remediation [FEAT-027]', () => {
       return okCommand(command, args);
     };
     const { json } = await runJson(root, ['setup', '--profile', 'systemd', '--repair', '--json'], {
-      setupDeps: { nodeVersion: 'v22.3.0', env: { OPENAI_API_KEY: 'test-key', XDG_CONFIG_HOME: configHome }, runCommand },
+      setupDeps: { nodeVersion: 'v22.3.0', env: { OPENAI_API_KEY: 'test-key', XDG_CONFIG_HOME: configHome }, runCommand, readCodexAuth: noChatgptAuth },
     });
     const unit = join(configHome, 'systemd', 'user', 'haro-web.service');
     expect(existsSync(unit)).toBe(true);
@@ -162,7 +179,7 @@ describe('guided setup and doctor remediation [FEAT-027]', () => {
   it('smoke-test marks offline dry-run passed when provider secret is missing', async () => {
     const root = tempRoot('haro-feat027-offline-smoke-');
     const { json } = await runJson(root, ['setup', '--check', '--json'], {
-      setupDeps: { nodeVersion: 'v22.3.0', env: {}, runCommand: okCommand },
+      setupDeps: { nodeVersion: 'v22.3.0', env: {}, runCommand: okCommand, readCodexAuth: noChatgptAuth },
     });
     const smoke = json.stages.find((stage: { id: string }) => stage.id === 'smoke-test');
     expect(smoke.status).toBe('warning');

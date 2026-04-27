@@ -9,6 +9,13 @@ export {
 } from './schema.js';
 export type { CodexProviderOptions } from './schema.js';
 export {
+  readLocalCodexAuth,
+  redactAccountId,
+  resolveCodexAuthPath,
+  DEFAULT_CODEX_HOME,
+} from './codex-auth.js';
+export type { LocalCodexAuth, ReadLocalCodexAuthOptions } from './codex-auth.js';
+export {
   buildCodexCapabilities,
   CODEX_PROVIDER_CAPABILITIES_BASE,
 } from './capabilities.js';

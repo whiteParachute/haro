@@ -27,16 +27,33 @@ export const codexProviderOptionsSchema = z
      * 600 (10 min). Tests override to exercise expiration.
      */
     listModelsTtlSeconds: z.number().positive().optional(),
+    /**
+     * FEAT-029 — auth selection mode. See core schema for full semantics.
+     * Default: 'auto'. 'chatgpt' rides along the official `codex login`
+     * subscription token; 'env' requires OPENAI_API_KEY.
+     */
+    authMode: z.enum(['env', 'chatgpt', 'auto']).optional(),
   })
   .passthrough()
   .superRefine((val, ctx) => {
-    if (val && typeof val === 'object' && 'apiKey' in (val as Record<string, unknown>)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['apiKey'],
-        message:
-          'Codex Provider 不接受配置中的 apiKey（见 FEAT-003 R5）— 请通过 OPENAI_API_KEY 环境变量传递凭证',
-      });
+    if (val && typeof val === 'object') {
+      const record = val as Record<string, unknown>;
+      if ('apiKey' in record) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['apiKey'],
+          message:
+            'Codex Provider 不接受配置中的 apiKey（见 FEAT-003 R5）— 请通过 OPENAI_API_KEY 环境变量传递凭证',
+        });
+      }
+      if ('tokens' in record) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['tokens'],
+          message:
+            'Codex Provider 不接受配置中的 tokens 字段（FEAT-029）— ChatGPT 凭据由 codex CLI 管理',
+        });
+      }
     }
   });
 

@@ -67,6 +67,8 @@ export interface SetupRunDeps {
     command: string,
     args: readonly string[],
   ) => { status: number | null; stdout?: string | null; stderr?: string | null; error?: Error };
+  /** FEAT-029 — inject a fake codex auth probe so diagnostics tests are hermetic across dev machines. */
+  readCodexAuth?: () => import('@haro/provider-codex').LocalCodexAuth;
 }
 
 export interface DiagnosticsInput {
@@ -322,6 +324,7 @@ async function checkProvider(ctx: { providerRegistry: ProviderRegistry; provider
         providerRegistry: ctx.providerRegistry,
         root: ctx.root,
         env: ctx.deps.env,
+        ...(ctx.deps.readCodexAuth ? { readCodexAuth: ctx.deps.readCodexAuth } : {}),
       });
       return {
         report,
@@ -603,6 +606,7 @@ interface RequiredDeps {
   nodeVersion: string;
   env: NodeJS.ProcessEnv;
   runCommand: NonNullable<SetupRunDeps['runCommand']>;
+  readCodexAuth?: NonNullable<SetupRunDeps['readCodexAuth']>;
 }
 
 function normalizeDeps(deps?: SetupRunDeps): RequiredDeps {
@@ -610,6 +614,7 @@ function normalizeDeps(deps?: SetupRunDeps): RequiredDeps {
     nodeVersion: deps?.nodeVersion ?? process.version,
     env: deps?.env ?? process.env,
     runCommand: deps?.runCommand ?? ((command, args) => spawnSync(command, args, { encoding: 'utf8' })),
+    ...(deps?.readCodexAuth ? { readCodexAuth: deps.readCodexAuth } : {}),
   };
 }
 

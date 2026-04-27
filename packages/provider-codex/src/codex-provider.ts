@@ -9,6 +9,7 @@ import { createCodexEventMapper } from './event-mapping.js';
 import { mapCodexError } from './error-mapping.js';
 import { createModelLister, type ModelLister, type CodexModelInfo, type ListModelsDeps } from './list-models.js';
 import { codexProviderOptionsSchema, type CodexProviderOptions } from './schema.js';
+import { readLocalCodexAuth, type LocalCodexAuth } from './codex-auth.js';
 import type {
   SdkCodex,
   SdkCodexFactory,
@@ -26,11 +27,17 @@ export interface CodexProviderDeps {
   loadSdk?: () => Promise<{ Codex: new (options?: SdkCodexOptions) => SdkCodex }>;
   /** Replace `process.env.OPENAI_API_KEY` lookup. */
   readApiKey?: () => string | undefined;
+  /** Override `readLocalCodexAuth()` for FEAT-029 ChatGPT mode (tests inject status). */
+  readCodexAuth?: () => LocalCodexAuth;
   /** Override fetch / clock for `listModels()` cache. */
   modelListerDeps?: ListModelsDeps;
   /** Optional pre-built lister (tests wire this directly). */
   modelLister?: ModelLister;
 }
+
+export type CodexResolvedAuth =
+  | { kind: 'env-api-key'; token: string }
+  | { kind: 'chatgpt'; accountId: string | null; lastRefresh: string | null; authFilePath: string };
 
 /**
  * FEAT-003 Codex Provider. Wraps `@openai/codex-sdk`.
@@ -188,13 +195,13 @@ export class CodexProvider implements AgentProvider {
   private async constructCodex(): Promise<SdkCodex> {
     const sdkOptions: SdkCodexOptions = {};
     if (this.options.baseUrl) sdkOptions.baseUrl = this.options.baseUrl;
-    const apiKey = this.readApiKey();
-    if (!apiKey) {
-      throw new Error(
-        'Codex Provider: OPENAI_API_KEY is not set (FEAT-003 R5). Export the env var before issuing queries.',
-      );
+
+    const auth = this.resolveAuth();
+    if (auth.kind === 'env-api-key') {
+      sdkOptions.apiKey = auth.token;
     }
-    sdkOptions.apiKey = apiKey;
+    // FEAT-029 R7: chatgpt mode passes no apiKey; the SDK spawns the codex
+    // binary which reads ~/.codex/auth.json directly.
 
     if (this.deps.codexFactory) {
       return this.deps.codexFactory(sdkOptions);
@@ -202,6 +209,54 @@ export class CodexProvider implements AgentProvider {
     const loader = this.deps.loadSdk ?? this.defaultSdkLoader();
     const { Codex } = await loader();
     return new Codex(sdkOptions);
+  }
+
+  /**
+   * FEAT-029 R6 — auth resolution priority:
+   *   1. explicit OPENAI_API_KEY env var (developer / org accounts)
+   *   2. authMode='chatgpt' (ride-along ~/.codex/auth.json)
+   *   3. authMode='auto' && ~/.codex/auth.json has access_token
+   *   else throw with remediation pointing to `haro provider setup codex`.
+   */
+  resolveAuth(): CodexResolvedAuth {
+    const apiKey = this.readApiKey();
+    const authMode = (this.options as { authMode?: 'env' | 'chatgpt' | 'auto' }).authMode ?? 'auto';
+
+    if (apiKey && (authMode === 'env' || authMode === 'auto')) {
+      return { kind: 'env-api-key', token: apiKey };
+    }
+
+    if (authMode === 'env') {
+      throw new Error(
+        'Codex Provider: authMode=env but OPENAI_API_KEY is not set. Export OPENAI_API_KEY or rerun `haro provider setup codex`.',
+      );
+    }
+
+    const localAuth = this.readCodexAuth();
+    if (localAuth.hasAuth) {
+      return {
+        kind: 'chatgpt',
+        accountId: localAuth.accountId,
+        lastRefresh: localAuth.lastRefresh,
+        authFilePath: localAuth.authFilePath,
+      };
+    }
+
+    if (authMode === 'chatgpt') {
+      throw new Error(
+        `Codex Provider: authMode=chatgpt but no ChatGPT login was found at ${localAuth.authFilePath}. Run \`codex login\` (or \`haro provider setup codex\`) to sign in.`,
+      );
+    }
+
+    if (apiKey) {
+      // authMode === 'auto' but explicitly fell through above — only happens
+      // if logic changes. Defensive return for type completeness.
+      return { kind: 'env-api-key', token: apiKey };
+    }
+
+    throw new Error(
+      'Codex Provider: no auth available. Set OPENAI_API_KEY or run `haro provider setup codex` to sign in with ChatGPT.',
+    );
   }
 
   private defaultSdkLoader(): () => Promise<{ Codex: new (options?: SdkCodexOptions) => SdkCodex }> {
@@ -219,6 +274,11 @@ export class CodexProvider implements AgentProvider {
   private readApiKey(): string | undefined {
     if (this.deps.readApiKey) return this.deps.readApiKey();
     return process.env.OPENAI_API_KEY;
+  }
+
+  private readCodexAuth(): LocalCodexAuth {
+    if (this.deps.readCodexAuth) return this.deps.readCodexAuth();
+    return readLocalCodexAuth();
   }
 }
 

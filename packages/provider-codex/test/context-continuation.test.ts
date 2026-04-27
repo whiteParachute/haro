@@ -216,6 +216,17 @@ describe('CodexProvider.query [FEAT-003 R2 / R3]', () => {
       {},
       {
         readApiKey: () => undefined,
+        // FEAT-029: explicitly stub the codex auth check to "no auth" so this
+        // test stays deterministic on machines where the developer is signed
+        // in to codex CLI's ChatGPT subscription.
+        readCodexAuth: () => ({
+          detected: false,
+          hasAuth: false,
+          authMode: null,
+          accountId: null,
+          lastRefresh: null,
+          authFilePath: '/tmp/no-such-codex/auth.json',
+        }),
         codexFactory: vi.fn() as unknown as () => SdkCodex,
       },
     );

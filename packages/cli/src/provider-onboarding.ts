@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { buildHaroPaths, config as haroConfig, type ProviderRegistry } from '@haro/core';
 import type { AgentProvider } from '@haro/core/provider';
+import { readLocalCodexAuth, type LocalCodexAuth } from '@haro/provider-codex';
 import {
   getProviderCatalogEntry,
   providerEnvFileSystemdReference,
@@ -66,6 +67,15 @@ export interface ProviderDoctorResult {
   secret: ProviderSecretSummary;
   config: ProviderConfigSourceSummary;
   models?: Array<{ id: string; maxContextTokens?: number }>;
+  /** FEAT-029 — when codex provider is in chatgpt mode, surface ride-along auth status. */
+  chatgptAuth?: {
+    authMode: 'env' | 'chatgpt' | 'auto';
+    detected: boolean;
+    hasAuth: boolean;
+    accountId: string | null;
+    lastRefresh: string | null;
+    authFilePath: string;
+  };
 }
 
 export interface ProviderDoctorInput {
@@ -76,6 +86,8 @@ export interface ProviderDoctorInput {
   env?: NodeJS.ProcessEnv;
   checkHealth?: boolean;
   checkModels?: boolean;
+  /** FEAT-029 — inject a fake codex auth probe for hermetic tests / diagnostics. */
+  readCodexAuth?: () => LocalCodexAuth;
 }
 
 export type ProviderScope = 'global' | 'project';
@@ -120,6 +132,52 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
   };
 
   const issues: ProviderDoctorIssue[] = [];
+
+  // FEAT-029 — codex provider chatgpt mode: ride-along ~/.codex/auth.json.
+  // Surface auth status and downgrade "secret missing" to info when ChatGPT
+  // login is the active auth path.
+  let chatgptAuthSummary: ProviderDoctorResult['chatgptAuth'];
+  let chatgptModeActive = false;
+  if (input.entry.id === 'codex') {
+    const declaredAuthMode = (() => {
+      const raw = sources.effective.authMode;
+      return raw === 'env' || raw === 'chatgpt' || raw === 'auto' ? raw : 'auto';
+    })();
+    let localAuth: LocalCodexAuth | null = null;
+    if (declaredAuthMode === 'chatgpt' || declaredAuthMode === 'auto') {
+      // FEAT-029 — when the caller passed an explicit env (tests / hermetic
+      // diagnostics), forward it so `readLocalCodexAuth` does not read from
+      // the developer's real ~/.codex/auth.json.
+      localAuth = input.readCodexAuth
+        ? input.readCodexAuth()
+        : readLocalCodexAuth(input.env ? { env: input.env as Record<string, string | undefined> } : {});
+    }
+    chatgptAuthSummary = {
+      authMode: declaredAuthMode,
+      detected: localAuth?.detected ?? false,
+      hasAuth: localAuth?.hasAuth ?? false,
+      accountId: localAuth?.accountId ?? null,
+      lastRefresh: localAuth?.lastRefresh ?? null,
+      authFilePath: localAuth?.authFilePath ?? '',
+    };
+    if (declaredAuthMode === 'chatgpt') {
+      chatgptModeActive = true;
+      if (!localAuth?.hasAuth) {
+        issues.push({
+          code: 'PROVIDER_SECRET_MISSING',
+          severity: 'error',
+          component: 'provider',
+          evidence: `authMode=chatgpt but no ChatGPT login was found at ${localAuth?.authFilePath ?? '~/.codex/auth.json'}.`,
+          remediation: 'Run `haro provider setup codex` (or `codex login`) to sign in with ChatGPT.',
+          fixable: false,
+        });
+      }
+    } else if (declaredAuthMode === 'auto' && localAuth?.hasAuth && !currentSecret) {
+      // auto mode + chatgpt auth present + no env API key → effective path is chatgpt.
+      chatgptModeActive = true;
+    }
+  }
+
   if (envFile.exists && !envFile.readable) {
     issues.push({
       code: 'PROVIDER_ENV_FILE_UNREADABLE',
@@ -131,7 +189,7 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
     });
   }
 
-  if (!currentSecret) {
+  if (!currentSecret && !chatgptModeActive) {
     const evidence = envFile.containsSecret
       ? `未检测到 ${envVar}；${envVar} is missing in the current process, but ${envFile.path} is readable and contains ${envVar} for systemd/service loading.`
       : `未检测到 ${envVar}；${envVar} is not set in the current process and was not found in ${envFile.path}.`;
@@ -237,6 +295,7 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
     secret,
     config: sources,
     ...(models ? { models } : {}),
+    ...(chatgptAuthSummary ? { chatgptAuth: chatgptAuthSummary } : {}),
   };
 }
 
@@ -397,6 +456,7 @@ export function buildProviderPatch(input: {
   model?: string;
   baseUrl?: string;
   secretRef?: string;
+  authMode?: 'env' | 'chatgpt' | 'auto';
 }): Record<string, unknown> {
   const patch: Record<string, unknown> = {
     enabled: input.enabled ?? true,
@@ -404,6 +464,7 @@ export function buildProviderPatch(input: {
   };
   if (input.model) patch.defaultModel = input.model;
   if (input.baseUrl) patch.baseUrl = input.baseUrl;
+  if (input.authMode) patch.authMode = input.authMode;
   return patch;
 }
 

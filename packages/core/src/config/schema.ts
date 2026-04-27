@@ -13,17 +13,35 @@ const codexProviderConfigSchema = z
     secretRef: z.string().optional(),
     baseUrl: z.string().url().optional(),
     defaultModel: z.string().optional(),
+    /**
+     * FEAT-029 R8 — auth selection.
+     * - 'env': require OPENAI_API_KEY (developer / org accounts).
+     * - 'chatgpt': ride-along the official `codex login` ChatGPT subscription auth in ~/.codex/auth.json.
+     * - 'auto' (default): prefer env if OPENAI_API_KEY is set, otherwise chatgpt if ~/.codex/auth.json exists.
+     */
+    authMode: z.enum(['env', 'chatgpt', 'auto']).optional(),
   })
   .partial()
   .passthrough()
   .superRefine((value, ctx) => {
-    if (value && typeof value === 'object' && 'apiKey' in value) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['apiKey'],
-        message:
-          'Codex Provider 不接受 YAML 配置中的 apiKey（见 FEAT-003 R5）— 请通过 OPENAI_API_KEY 环境变量传递凭证',
-      });
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      if ('apiKey' in record) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['apiKey'],
+          message:
+            'Codex Provider 不接受 YAML 配置中的 apiKey（见 FEAT-003 R5）— 请通过 OPENAI_API_KEY 环境变量传递凭证',
+        });
+      }
+      if ('tokens' in record) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['tokens'],
+          message:
+            'Codex Provider YAML 不接受 tokens 字段（FEAT-029 R8）— ChatGPT 凭据由 codex CLI 的 ~/.codex/auth.json 管理',
+        });
+      }
     }
   });
 

@@ -63,6 +63,12 @@ export const CODEX_PROVIDER_CATALOG_ENTRY: ProviderCatalogEntry = {
       type: 'model',
       description: 'Default model id selected from the provider live model list.',
     },
+    {
+      key: 'authMode',
+      label: 'Auth mode',
+      type: 'string',
+      description: 'env (OPENAI_API_KEY), chatgpt (codex login subscription), or auto (default).',
+    },
   ],
   modelDiscovery: 'provider-live',
   docsUrl: 'https://platform.openai.com/docs',

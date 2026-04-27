@@ -520,6 +520,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
         .option('--model <id>', 'live model id to set as default')
         .option('--base-url <url>', 'provider API base URL override')
         .option('--secret-ref <ref>', 'secret reference, for example env:OPENAI_API_KEY')
+        .option('--auth-mode <mode>', 'auth mode: env, chatgpt, or auto (FEAT-029, codex provider only)')
         .option('--non-interactive', 'do not prompt; use flags/current environment only')
         .option('--write-env-file', 'explicitly write current process secret to the protected provider env file')
         .option('--env-file <path>', 'override provider env file path for --write-env-file')
@@ -532,6 +533,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
               model?: string;
               baseUrl?: string;
               secretRef?: string;
+              authMode?: string;
               nonInteractive?: boolean;
               writeEnvFile?: boolean;
               envFile?: string;
@@ -543,6 +545,52 @@ function registerProviderCommands(program: Command, app: AppContext): void {
             if (options.model) {
               await assertProviderModelExists(app.providerRegistry, id, options.model);
             }
+
+            let resolvedAuthMode: 'env' | 'chatgpt' | 'auto' | undefined;
+            if (options.authMode) {
+              if (options.authMode !== 'env' && options.authMode !== 'chatgpt' && options.authMode !== 'auto') {
+                throw new CommanderExit(1, `--auth-mode must be one of env|chatgpt|auto (got '${options.authMode}')`);
+              }
+              resolvedAuthMode = options.authMode;
+            }
+
+            // FEAT-029 — codex-only ChatGPT subscription wizard. Only triggers
+            // when interactive (TTY) AND no explicit auth flags were given.
+            const stdinForTty = app.stdin as NodeJS.ReadableStream & { isTTY?: boolean };
+            const isTTY = !!(stdinForTty?.isTTY ?? process.stdin.isTTY);
+            const wantWizard =
+              id === 'codex' &&
+              isTTY &&
+              options.nonInteractive !== true &&
+              options.json !== true &&
+              !options.authMode &&
+              !options.secretRef &&
+              !options.writeEnvFile;
+            if (wantWizard) {
+              const { runCodexAuthWizard } = await import('./provider-codex-wizard.js');
+              const result = await runCodexAuthWizard(entry);
+              if (result.choice === 'cancelled') {
+                throw new CommanderExit(1, 'provider setup cancelled');
+              }
+              if (result.choice === 'chatgpt') {
+                resolvedAuthMode = 'chatgpt';
+              } else {
+                resolvedAuthMode = 'env';
+              }
+            }
+
+            // FEAT-029 — non-interactive --auth-mode chatgpt: validate auth file is ready.
+            if (resolvedAuthMode === 'chatgpt' && !wantWizard) {
+              const { readLocalCodexAuth } = await import('@haro/provider-codex');
+              const auth = readLocalCodexAuth();
+              if (!auth.hasAuth) {
+                throw new CommanderExit(
+                  1,
+                  `--auth-mode=chatgpt requires a completed \`codex login\` (no token at ${auth.authFilePath}). Run \`codex login\` first or rerun without --non-interactive.`,
+                );
+              }
+            }
+
             const configWrite = writeProviderConfig({
               scope,
               root: app.opts.root,
@@ -553,6 +601,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
                 model: options.model,
                 baseUrl: options.baseUrl,
                 secretRef: options.secretRef,
+                ...(resolvedAuthMode ? { authMode: resolvedAuthMode } : {}),
               }),
             });
             reloadLoadedConfig(app, scope);
@@ -577,6 +626,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
               scope,
               nonInteractive: options.nonInteractive === true,
               configPath: configWrite.path,
+              ...(resolvedAuthMode ? { authMode: resolvedAuthMode } : {}),
               ...(envWrite ? { envFile: envWrite } : {}),
               doctor,
             };
@@ -585,7 +635,13 @@ function registerProviderCommands(program: Command, app: AppContext): void {
             } else {
               app.stdout.write(formatProviderSetupHuman(payload));
             }
-            if (!doctor.ok) {
+            // FEAT-029: in chatgpt mode the env-API-key doctor stage will
+            // still report "secret missing" because OPENAI_API_KEY is not
+            // set. That is expected — gate on authMode and don't fail.
+            const blockingForChatGpt =
+              resolvedAuthMode === 'chatgpt' &&
+              doctor.issues.every((issue) => issue.code === 'PROVIDER_SECRET_MISSING');
+            if (!doctor.ok && !blockingForChatGpt) {
               throw new CommanderExit(1, `provider setup ${id} found blockers`);
             }
           },
