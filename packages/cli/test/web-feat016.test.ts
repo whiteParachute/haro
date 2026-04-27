@@ -42,10 +42,13 @@ function createRunner(sessionId = 'session-run-1') {
 
 describe('web dashboard agent interaction REST [FEAT-016]', () => {
   const originalApiKey = process.env.HARO_WEB_API_KEY;
+  const originalAllowDelete = process.env.HARO_WEB_ALLOW_SESSION_DELETE;
   const tempRoots: string[] = [];
 
   afterEach(() => {
     process.env.HARO_WEB_API_KEY = originalApiKey;
+    if (originalAllowDelete === undefined) delete process.env.HARO_WEB_ALLOW_SESSION_DELETE;
+    else process.env.HARO_WEB_ALLOW_SESSION_DELETE = originalAllowDelete;
     for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -99,8 +102,9 @@ describe('web dashboard agent interaction REST [FEAT-016]', () => {
     expect((await okRun.json()).data.sessionId).toEqual(expect.any(String));
   });
 
-  it('lists session history, returns events, and deletes session events', async () => {
+  it('lists session history, returns events, and deletes session events when explicitly enabled', async () => {
     delete process.env.HARO_WEB_API_KEY;
+    process.env.HARO_WEB_ALLOW_SESSION_DELETE = 'true';
     const root = mkdtempSync(join(tmpdir(), 'haro-web-feat016-'));
     tempRoots.push(root);
     const opened = haroDb.initHaroDatabase({ root, keepOpen: true });
@@ -119,6 +123,45 @@ describe('web dashboard agent interaction REST [FEAT-016]', () => {
     expect((await app.request('/api/v1/sessions/s1', { method: 'DELETE' })).status).toBe(200);
     expect((await app.request('/api/v1/sessions/s1')).status).toBe(404);
     expect((await app.request('/api/v1/sessions/s1/events')).status).toBe(404);
+
+    const verifyDb = haroDb.initHaroDatabase({ root, keepOpen: true }).database!;
+    const auditRows = verifyDb
+      .prepare(`SELECT event_type, outcome, target_ref, operation_class, target_scope FROM operation_audit_log WHERE event_type = 'web.session.delete' ORDER BY created_at ASC`)
+      .all() as Array<{ event_type: string; outcome: string; target_ref: string; operation_class: string; target_scope: string }>;
+    verifyDb.close();
+    expect(auditRows).toEqual([
+      { event_type: 'web.session.delete', outcome: 'success', target_ref: 's1', operation_class: 'delete', target_scope: 'haro-state' },
+    ]);
+  });
+
+  it('rejects session DELETE by default and writes a denied audit event (FEAT-028 R11)', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    delete process.env.HARO_WEB_ALLOW_SESSION_DELETE;
+    const root = mkdtempSync(join(tmpdir(), 'haro-web-feat016-deny-'));
+    tempRoots.push(root);
+    const opened = haroDb.initHaroDatabase({ root, keepOpen: true });
+    const db = opened.database!;
+    db.prepare(`INSERT INTO sessions (id, agent_id, provider, model, started_at, status, context_ref) VALUES (?, ?, ?, ?, ?, ?, NULL)`).run('s-denied', 'assistant', 'codex', 'gpt-test', '2026-04-24T00:00:00.000Z', 'completed');
+    db.prepare(`INSERT INTO session_events (session_id, event_type, event_data, created_at) VALUES (?, ?, ?, ?)`).run('s-denied', 'text', JSON.stringify({ type: 'text', content: 'keep me', delta: false }), '2026-04-24T00:00:01.000Z');
+    db.close();
+
+    const app = createWebApp({ logger: createMockLogger(), runtime: { agentRegistry: createRegistry(), runner: createRunner() as never, root } });
+    const response = await app.request('/api/v1/sessions/s-denied', { method: 'DELETE' });
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toBe('Session deletion is disabled');
+    expect(body.reason).toContain('HARO_WEB_ALLOW_SESSION_DELETE');
+
+    expect((await app.request('/api/v1/sessions/s-denied')).status).toBe(200);
+    const eventsAfter = await (await app.request('/api/v1/sessions/s-denied/events')).json();
+    expect(eventsAfter.data.items).toHaveLength(1);
+
+    const verifyDb = haroDb.initHaroDatabase({ root, keepOpen: true }).database!;
+    const auditRows = verifyDb
+      .prepare(`SELECT event_type, outcome, target_ref FROM operation_audit_log WHERE event_type = 'web.session.delete'`)
+      .all() as Array<{ event_type: string; outcome: string; target_ref: string }>;
+    verifyDb.close();
+    expect(auditRows).toEqual([{ event_type: 'web.session.delete', outcome: 'denied', target_ref: 's-denied' }]);
   });
 });
 

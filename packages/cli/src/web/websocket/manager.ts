@@ -13,8 +13,15 @@ interface ClientState extends WebSocketLike {
   channels: Set<string>;
   sessionIds: Set<string>;
   cancelledSessionIds: Set<string>;
+  pending: Buffer;
+  fragmentOpcode: number | null;
+  fragmentChunks: Buffer[];
+  fragmentLength: number;
+  closed: boolean;
   sendMessage(message: ServerMessage): void;
 }
+
+const MAX_PENDING_BYTES = 16 * 1024 * 1024;
 
 interface PendingChatSession {
   agentId: string;
@@ -106,32 +113,107 @@ export class WebSocketManager {
       channels: new Set(),
       sessionIds: new Set(),
       cancelledSessionIds: new Set(),
-      send: (data) => socket.write(encodeFrame(data)),
+      pending: Buffer.alloc(0),
+      fragmentOpcode: null,
+      fragmentChunks: [],
+      fragmentLength: 0,
+      closed: false,
+      send: (data) => {
+        if (client.closed) return;
+        socket.write(encodeFrame(data));
+      },
       close: (code = 1000, reason = '') => {
+        if (client.closed) return;
+        client.closed = true;
         socket.write(encodeFrame(Buffer.concat([writeCloseCode(code), Buffer.from(reason)]), 0x8));
         socket.end();
       },
-      sendMessage: (message) => socket.write(encodeFrame(JSON.stringify(message))),
+      sendMessage: (message) => {
+        if (client.closed) return;
+        socket.write(encodeFrame(JSON.stringify(message)));
+      },
     };
     return client;
   }
 
   private handleData(client: ClientState, chunk: Buffer): void {
-    for (const payload of decodeFrames(chunk)) {
-      if (payload.opcode === 0x8) {
+    if (client.closed) return;
+    if (client.pending.length + chunk.length > MAX_PENDING_BYTES) {
+      this.logger.warn?.({ clientId: client.id, pendingBytes: client.pending.length, chunkBytes: chunk.length }, 'websocket pending buffer overflow');
+      client.close(1009, 'message too big');
+      return;
+    }
+    client.pending = client.pending.length === 0 ? chunk : Buffer.concat([client.pending, chunk]);
+
+    while (true) {
+      const frame = decodeFrame(client.pending);
+      if (!frame) return;
+      client.pending = client.pending.subarray(frame.consumed);
+
+      if (frame.opcode === 0x8) {
         client.close();
         return;
       }
-      if (payload.opcode !== 0x1) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(payload.data.toString('utf8'));
-      } catch {
-        client.sendMessage({ type: 'authenticated', ok: false });
+      if (frame.opcode === 0x9 || frame.opcode === 0xa) {
+        // ping/pong — keepalive frames, no application handling
         continue;
       }
-      void this.handleMessage(client, parsed);
+
+      if (frame.opcode === 0x0) {
+        if (client.fragmentOpcode === null) {
+          client.sendMessage({ type: 'event.error', sessionId: 'protocol', error: 'Unexpected continuation frame' });
+          client.close(1002, 'continuation without start');
+          return;
+        }
+        if (client.fragmentLength + frame.data.length > MAX_PENDING_BYTES) {
+          client.close(1009, 'message too big');
+          return;
+        }
+        client.fragmentChunks.push(frame.data);
+        client.fragmentLength += frame.data.length;
+        if (frame.fin) {
+          const opcode = client.fragmentOpcode;
+          const data = Buffer.concat(client.fragmentChunks, client.fragmentLength);
+          client.fragmentOpcode = null;
+          client.fragmentChunks = [];
+          client.fragmentLength = 0;
+          this.dispatchMessage(client, opcode, data);
+        }
+        continue;
+      }
+
+      if (frame.opcode !== 0x1 && frame.opcode !== 0x2) {
+        client.sendMessage({ type: 'event.error', sessionId: 'protocol', error: `Unsupported opcode 0x${frame.opcode.toString(16)}` });
+        client.close(1003, 'unsupported opcode');
+        return;
+      }
+
+      if (!frame.fin) {
+        if (client.fragmentOpcode !== null) {
+          client.sendMessage({ type: 'event.error', sessionId: 'protocol', error: 'Nested data frame during fragmented message' });
+          client.close(1002, 'nested fragmented message');
+          return;
+        }
+        client.fragmentOpcode = frame.opcode;
+        client.fragmentChunks.push(frame.data);
+        client.fragmentLength = frame.data.length;
+        continue;
+      }
+
+      this.dispatchMessage(client, frame.opcode, frame.data);
     }
+  }
+
+  private dispatchMessage(client: ClientState, opcode: number, data: Buffer): void {
+    if (opcode !== 0x1) return; // only text frames carry our protocol
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data.toString('utf8'));
+    } catch {
+      client.sendMessage({ type: 'authenticated', ok: false });
+      return;
+    }
+    void this.handleMessage(client, parsed);
   }
 
   private async handleMessage(client: ClientState, raw: unknown): Promise<void> {
@@ -329,40 +411,43 @@ function encodeFrame(data: string | Buffer, opcode = 0x1): Buffer {
   return Buffer.concat([header, payload]);
 }
 
-function decodeFrames(buffer: Buffer): Array<{ opcode: number; data: Buffer }> {
-  const frames: Array<{ opcode: number; data: Buffer }> = [];
-  let offset = 0;
-  while (offset + 2 <= buffer.length) {
-    const first = buffer[offset]!;
-    const second = buffer[offset + 1]!;
-    const opcode = first & 0x0f;
-    const masked = (second & 0x80) !== 0;
-    let length = second & 0x7f;
+interface DecodedFrame {
+  fin: boolean;
+  opcode: number;
+  data: Buffer;
+  consumed: number;
+}
+
+export function decodeFrame(buffer: Buffer): DecodedFrame | null {
+  if (buffer.length < 2) return null;
+  const first = buffer[0]!;
+  const second = buffer[1]!;
+  const fin = (first & 0x80) !== 0;
+  const opcode = first & 0x0f;
+  const masked = (second & 0x80) !== 0;
+  let length = second & 0x7f;
+  let offset = 2;
+  if (length === 126) {
+    if (buffer.length < offset + 2) return null;
+    length = buffer.readUInt16BE(offset);
     offset += 2;
-    if (length === 126) {
-      if (offset + 2 > buffer.length) break;
-      length = buffer.readUInt16BE(offset);
-      offset += 2;
-    } else if (length === 127) {
-      if (offset + 8 > buffer.length) break;
-      length = Number(buffer.readBigUInt64BE(offset));
-      offset += 8;
-    }
-    let mask: Buffer | undefined;
-    if (masked) {
-      if (offset + 4 > buffer.length) break;
-      mask = buffer.subarray(offset, offset + 4);
-      offset += 4;
-    }
-    if (offset + length > buffer.length) break;
-    const data = Buffer.from(buffer.subarray(offset, offset + length));
-    offset += length;
-    if (mask) {
-      for (let index = 0; index < data.length; index += 1) data[index] = data[index]! ^ mask[index % 4]!;
-    }
-    frames.push({ opcode, data });
+  } else if (length === 127) {
+    if (buffer.length < offset + 8) return null;
+    length = Number(buffer.readBigUInt64BE(offset));
+    offset += 8;
   }
-  return frames;
+  let mask: Buffer | undefined;
+  if (masked) {
+    if (buffer.length < offset + 4) return null;
+    mask = buffer.subarray(offset, offset + 4);
+    offset += 4;
+  }
+  if (buffer.length < offset + length) return null;
+  const data = Buffer.from(buffer.subarray(offset, offset + length));
+  if (mask) {
+    for (let index = 0; index < data.length; index += 1) data[index] = data[index]! ^ mask[index % 4]!;
+  }
+  return { fin, opcode, data, consumed: offset + length };
 }
 
 function writeCloseCode(code: number): Buffer {

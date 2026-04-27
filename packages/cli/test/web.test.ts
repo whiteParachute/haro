@@ -100,28 +100,37 @@ describe('web dashboard Hono app [FEAT-015]', () => {
     );
   });
 
-  it('applies middleware order: request log, CORS, auth, then static serving', async () => {
+  it('applies middleware order: request log, CORS, auth scoped to /api/*, then static serving', async () => {
     process.env.HARO_WEB_API_KEY = 'secret';
     const logger = createMockLogger();
     const app = createWebApp({ logger });
 
-    const response = await app.request('/', {
+    const htmlResponse = await app.request('/', {
       headers: {
         origin: 'http://localhost:5173',
       },
     });
-    const body = await response.json();
-
-    expect(response.status).toBe(401);
-    expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
-    expect(body).toEqual({ error: 'Unauthorized' });
+    const html = await htmlResponse.text();
+    expect(htmlResponse.status).toBe(200);
+    expect(htmlResponse.headers.get('content-type')).toContain('text/html');
+    expect(htmlResponse.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+    expect(html).toContain('<div id="root"></div>');
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         method: 'GET',
         path: '/',
-        statusCode: 401,
+        statusCode: 200,
       }),
     );
+
+    const apiResponse = await app.request('/api/health', {
+      headers: {
+        origin: 'http://localhost:5173',
+      },
+    });
+    expect(apiResponse.status).toBe(401);
+    expect(apiResponse.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+    expect(await apiResponse.json()).toEqual({ error: 'Unauthorized' });
   });
 
   it('exposes a foundation health endpoint for Vite /api proxy checks', async () => {
@@ -377,28 +386,32 @@ describe('web dashboard Hono app [FEAT-015]', () => {
     });
   });
 
-  it('allows matching x-api-key when HARO_WEB_API_KEY is configured', async () => {
+  it('allows matching x-api-key on /api routes when HARO_WEB_API_KEY is configured', async () => {
     process.env.HARO_WEB_API_KEY = 'secret';
     const logger = createMockLogger();
     const app = createWebApp({ logger });
 
-    const response = await app.request('/', {
+    const apiResponse = await app.request('/api/health', {
       headers: {
         'x-api-key': 'secret',
       },
     });
+    expect(apiResponse.status).toBe(200);
 
-    expect(response.status).toBe(200);
+    const htmlResponse = await app.request('/');
+    expect(htmlResponse.status).toBe(200);
+    expect(htmlResponse.headers.get('content-type')).toContain('text/html');
+
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it('rejects missing or invalid x-api-key when HARO_WEB_API_KEY is configured', async () => {
+  it('rejects missing or invalid x-api-key on /api routes when HARO_WEB_API_KEY is configured', async () => {
     process.env.HARO_WEB_API_KEY = 'secret';
     const logger = createMockLogger();
     const app = createWebApp({ logger });
 
-    const missingKeyResponse = await app.request('/');
-    const invalidKeyResponse = await app.request('/', {
+    const missingKeyResponse = await app.request('/api/health');
+    const invalidKeyResponse = await app.request('/api/health', {
       headers: {
         'x-api-key': 'wrong-secret',
       },

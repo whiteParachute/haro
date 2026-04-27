@@ -99,7 +99,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
       allowHeaders: ALLOWED_CORS_HEADERS,
     }),
   );
-  app.use('*', apiKeyAuth);
+  app.use('/api/*', apiKeyAuth);
   app.use('*', compress());
   app.get('/api/health', (c) =>
     c.json({
