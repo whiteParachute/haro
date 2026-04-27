@@ -10,6 +10,9 @@ import {
   SquareActivity,
   Workflow,
   GitBranch,
+  FileJson,
+  Gauge,
+  MonitorUp,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -59,6 +62,27 @@ export const navigationItems: NavigationItem[] = [
     title: 'Skills',
     description: '管理预装和 user skill，并查看资产审计状态。',
     icon: Sparkles,
+  },
+  {
+    to: '/logs',
+    label: 'Logs',
+    title: 'Runtime Logs',
+    description: '查询 session events、结构化 JSON 与 provider fallback log。',
+    icon: FileJson,
+  },
+  {
+    to: '/invoke',
+    label: 'Invoke',
+    title: 'Invoke Agent / Provider Monitoring',
+    description: '按 24h、7d、all 查看 provider/model 调用统计、延迟与 token 趋势。',
+    icon: Gauge,
+  },
+  {
+    to: '/monitor',
+    label: 'Monitor',
+    title: 'Runtime Monitor',
+    description: '实时查看 system.status、session.update 与 provider 告警。',
+    icon: MonitorUp,
   },
   {
     to: '/sessions',

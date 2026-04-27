@@ -229,11 +229,16 @@ describe('AgentRunner [FEAT-005]', () => {
     });
 
     expect(result.finalEvent).toMatchObject({ type: 'result', content: 'final' });
-    expect(seen).toEqual([
-      { type: 'text', content: 'chunk-1', delta: true },
-      { type: 'text', content: 'chunk-2', delta: true },
-      { type: 'result', content: 'final', responseId: 'resp-1' },
-    ]);
+    expect(seen[0]).toEqual({ type: 'text', content: 'chunk-1', delta: true });
+    expect(seen[1]).toEqual({ type: 'text', content: 'chunk-2', delta: true });
+    expect(seen[2]).toMatchObject({
+      type: 'result',
+      content: 'final',
+      responseId: 'resp-1',
+      provider: 'codex',
+      model: 'codex-default',
+    });
+    expect((seen[2] as Extract<AgentEvent, { type: 'result' }>).latencyMs).toEqual(expect.any(Number));
   });
 
   it('falls back to the next provider and records provider_fallback_log', async () => {

@@ -14,6 +14,9 @@ import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { StatusPage } from '@/pages/StatusPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { KnowledgePage } from '@/pages/KnowledgePage';
+import { InvokeAgentPage } from '@/pages/InvokeAgentPage';
+import { LogsPage } from '@/pages/LogsPage';
+import { MonitorPage } from '@/pages/MonitorPage';
 import { SkillsPage } from '@/pages/SkillsPage';
 
 function PlaceholderPage({ title, description }: { title: string; description: string }) {
@@ -43,6 +46,9 @@ const concreteRoutes = [
   '/agents',
   '/dispatch',
   '/knowledge',
+  '/logs',
+  '/invoke',
+  '/monitor',
   '/skills',
 ];
 const placeholderRoutes = navigationItems.filter((item) => !concreteRoutes.includes(item.to));
@@ -62,6 +68,9 @@ export default function App() {
           <Route path="gateway" element={<GatewayPage />} />
           <Route path="agents" element={<AgentEditorPage />} />
           <Route path="knowledge" element={<KnowledgePage />} />
+          <Route path="logs" element={<LogsPage />} />
+          <Route path="invoke" element={<InvokeAgentPage />} />
+          <Route path="monitor" element={<MonitorPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           {placeholderRoutes.map((item) => (

@@ -57,6 +57,11 @@ export interface AgentResultEvent {
   type: 'result';
   content: string;
   responseId?: string;
+  /** Provider/model observed by the runner for read-model aggregation. */
+  provider?: string;
+  model?: string;
+  /** End-to-end provider attempt latency measured by the runner. */
+  latencyMs?: number;
   usage?: {
     inputTokens: number;
     outputTokens: number;
@@ -68,6 +73,11 @@ export interface AgentErrorEvent {
   code: string;
   message: string;
   retryable: boolean;
+  /** Provider/model observed by the runner for read-model aggregation. */
+  provider?: string;
+  model?: string;
+  /** End-to-end provider attempt latency measured by the runner. */
+  latencyMs?: number;
   /**
    * Optional handling hint surfaced to the upper layer (FEAT-005 Runner).
    * Example: `'save-and-clear'` for `code === 'context_too_long'` —

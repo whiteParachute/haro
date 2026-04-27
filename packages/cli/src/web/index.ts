@@ -15,7 +15,9 @@ import { createConfigRoute } from './routes/config.js';
 import { createDoctorRoute, createStatusRoute } from './routes/status.js';
 import { createGatewayRoute } from './routes/gateway.js';
 import { createGuardRoute } from './routes/guard.js';
+import { createLogsRoute } from './routes/logs.js';
 import { createMemoryRoute } from './routes/memory.js';
+import { createProvidersRoute } from './routes/providers.js';
 import { createSkillsRoute } from './routes/skills.js';
 import { createWorkflowsRoute } from './routes/workflows.js';
 import { createSessionsRoute } from './routes/sessions.js';
@@ -113,6 +115,8 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   app.route('/api/v1/gateway', createGatewayRoute(runtime));
   app.route('/api/v1/guard', createGuardRoute(runtime));
   app.route('/api/v1/workflows', createWorkflowsRoute(runtime));
+  app.route('/api/v1/logs', createLogsRoute(runtime));
+  app.route('/api/v1/providers', createProvidersRoute(runtime));
   app.route('/api/v1/sessions', createSessionsRoute(runtime));
   app.route('/api/v1/memory', createMemoryRoute(runtime));
   app.route('/api/v1/skills', createSkillsRoute(runtime));

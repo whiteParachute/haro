@@ -51,6 +51,9 @@ function runMigrations(db: Database.Database): void {
   if (!hasColumn(db, 'sessions', 'context_ref')) {
     db.exec(`ALTER TABLE sessions ADD COLUMN context_ref TEXT`);
   }
+  if (!hasColumn(db, 'session_events', 'latency_ms')) {
+    db.exec(`ALTER TABLE session_events ADD COLUMN latency_ms INTEGER`);
+  }
 }
 
 /**

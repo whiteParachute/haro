@@ -14,6 +14,10 @@ import type {
   SkillListResponse,
   SkillMutationResponse,
   SkillDetail,
+  LogSessionEventFilters,
+  LogSessionEventRecord,
+  ProviderFallbackRecord,
+  ProviderStatsResponse,
   WorkflowDebugDetail,
   WorkflowListResponse,
 } from '@/types';
@@ -204,4 +208,30 @@ export function installSkill(source: string, init?: RequestInit) {
 
 export function uninstallSkill(id: string, init?: RequestInit) {
   return del<SkillMutationResponse>(`/v1/skills/${encodePathSegment(id)}`, init);
+}
+
+export function listSessionEvents(filters: LogSessionEventFilters = {}, init?: RequestInit) {
+  const searchParams = new URLSearchParams();
+  if (filters.sessionId) searchParams.set('sessionId', filters.sessionId);
+  if (filters.agentId) searchParams.set('agentId', filters.agentId);
+  if (filters.eventType) searchParams.set('eventType', filters.eventType);
+  if (filters.from) searchParams.set('from', filters.from);
+  if (filters.to) searchParams.set('to', filters.to);
+  if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
+  const query = searchParams.toString();
+  return get<{ items: LogSessionEventRecord[]; limit: number }>(`/v1/logs/session-events${query ? `?${query}` : ''}`, init);
+}
+
+export function listProviderFallbacks(filters: Pick<LogSessionEventFilters, 'sessionId' | 'from' | 'to' | 'limit'> = {}, init?: RequestInit) {
+  const searchParams = new URLSearchParams();
+  if (filters.sessionId) searchParams.set('sessionId', filters.sessionId);
+  if (filters.from) searchParams.set('from', filters.from);
+  if (filters.to) searchParams.set('to', filters.to);
+  if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
+  const query = searchParams.toString();
+  return get<{ items: ProviderFallbackRecord[]; limit: number }>(`/v1/logs/provider-fallbacks${query ? `?${query}` : ''}`, init);
+}
+
+export function getProviderStats(init?: RequestInit) {
+  return get<ProviderStatsResponse>('/v1/providers/stats', init);
 }

@@ -88,7 +88,8 @@ CREATE TABLE session_events (
   session_id TEXT NOT NULL,
   event_type TEXT NOT NULL,
   event_data TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  latency_ms INTEGER
 );
 
 CREATE TABLE provider_fallback_log (
@@ -107,7 +108,7 @@ CREATE TABLE provider_fallback_log (
 其中：
 
 - `sessions.context_ref` 用于存 provider-specific continuation state（Phase 0 先承载 Codex `previousResponseId`）
-- `session_events` 记录所有 `AgentEvent`
+- `session_events` 记录所有 `AgentEvent`；terminal `result/error` 事件由 Runner 补充 `provider`、`model`、`latencyMs`，并把 `latency_ms` 单独落列，供 Provider stats 聚合平均延迟。
 - `provider_fallback_log` 记录 fallback 触发链路
 
 ## 跨 Session 状态文件

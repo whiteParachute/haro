@@ -29,10 +29,13 @@ export const CORE_TABLES: readonly TableDefinition[] = [
       session_id TEXT NOT NULL,
       event_type TEXT NOT NULL,
       event_data TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      latency_ms INTEGER
     )`,
     supportingDdl: [
       `CREATE INDEX IF NOT EXISTS idx_session_events_session_id ON session_events(session_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_session_events_event_type_created
+         ON session_events(event_type, created_at)`,
     ],
   },
   {

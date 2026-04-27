@@ -4,8 +4,8 @@ export type AgentEvent =
   | { type: 'text'; content: string; delta?: boolean }
   | { type: 'tool_call'; callId: string; toolName: string; toolInput: Record<string, unknown> }
   | { type: 'tool_result'; callId: string; result: unknown; isError?: boolean }
-  | { type: 'result'; content: string; responseId?: string; usage?: { inputTokens: number; outputTokens: number } }
-  | { type: 'error'; code: string; message: string; retryable: boolean; hint?: string };
+  | { type: 'result'; content: string; responseId?: string; provider?: string; model?: string; latencyMs?: number; usage?: { inputTokens: number; outputTokens: number } }
+  | { type: 'error'; code: string; message: string; retryable: boolean; provider?: string; model?: string; latencyMs?: number; hint?: string };
 
 export type ServerMessage =
   | { type: 'authenticated'; ok: boolean }
@@ -30,6 +30,7 @@ export class DashboardWebSocketClient {
   private socket: WebSocket | null = null;
   private readonly listeners = new Set<Listener>();
   private readonly pending: ClientMessage[] = [];
+  private readonly subscribedChannels = new Set<Extract<ClientMessage, { type: 'subscribe' }>['channel']>();
   private readonly observedSessions = new Set<string>();
   private reconnectAttempt = 0;
   private manualClose = false;
@@ -70,9 +71,13 @@ export class DashboardWebSocketClient {
   }
 
   send(message: ClientMessage): void {
-    if (message.type === 'subscribe' && message.sessionId) {
-      this.observedSessions.add(message.sessionId);
-      if (this.socket?.readyState !== WebSocket.OPEN) return;
+    if (message.type === 'subscribe') {
+      if (message.sessionId) {
+        this.observedSessions.add(message.sessionId);
+        if (this.socket?.readyState !== WebSocket.OPEN) return;
+      } else {
+        this.subscribedChannels.add(message.channel);
+      }
     }
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(message));
@@ -89,6 +94,9 @@ export class DashboardWebSocketClient {
     this.reconnectAttempt = 0;
     const token = resolveApiKey();
     this.sendNow({ type: 'authenticate', ...(token ? { token } : {}) });
+    for (const channel of this.subscribedChannels) {
+      this.sendNow({ type: 'subscribe', channel });
+    }
     for (const sessionId of this.observedSessions) {
       this.sendNow({ type: 'subscribe', channel: 'sessions', sessionId });
     }

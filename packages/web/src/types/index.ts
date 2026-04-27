@@ -300,3 +300,56 @@ export interface SkillMutationResponse {
   skill: SkillSummary;
   audit?: SkillAuditResult;
 }
+
+export interface LogSessionEventRecord {
+  id: number;
+  sessionId: string;
+  agentId: string;
+  provider: string;
+  model: string;
+  eventType: string;
+  payload: JsonValue | string | null;
+  latencyMs?: number | null;
+  createdAt: string;
+}
+
+export interface ProviderFallbackRecord {
+  id: number;
+  sessionId: string;
+  originalProvider: string;
+  originalModel: string;
+  fallbackProvider: string;
+  fallbackModel: string;
+  trigger: string;
+  ruleId?: string | null;
+  createdAt: string;
+}
+
+export interface LogSessionEventFilters {
+  sessionId?: string;
+  agentId?: string;
+  eventType?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export interface ProviderStats {
+  provider: string;
+  model: string;
+  callCount: number;
+  successCount: number;
+  failureCount: number;
+  fallbackCount: number;
+  avgLatencyMs: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+}
+
+export type ProviderStatsWindow = '24h' | '7d' | 'all';
+
+export interface ProviderStatsResponse {
+  windows: Record<ProviderStatsWindow, ProviderStats[]>;
+  generatedAt: string;
+}

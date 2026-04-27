@@ -313,6 +313,7 @@ export class AgentRunner {
     db: Database.Database;
     onEvent?: (event: AgentEvent, sessionId: string) => void;
   }): Promise<QueryAttemptOutcome> {
+    const attemptStartedAt = Date.now();
     const iterator = input.provider.query({
       prompt: input.task,
       systemPrompt: input.systemPrompt,
@@ -339,7 +340,10 @@ export class AgentRunner {
     };
     const consume = (async (): Promise<QueryAttemptOutcome> => {
       let terminal: AgentResultEvent | AgentErrorEvent | null = null;
-      for await (const event of iterator) {
+      for await (const rawEvent of iterator) {
+        const event = rawEvent.type === 'result' || rawEvent.type === 'error'
+          ? this.withProviderTelemetry(rawEvent, input.provider.id, input.model, attemptStartedAt)
+          : rawEvent;
         if (!appendEvent(event)) continue;
         if (event.type === 'result') {
           terminal = event;
@@ -351,12 +355,12 @@ export class AgentRunner {
         if (timedOut && timeoutEvent) {
           terminal = timeoutEvent;
         } else {
-          terminal = {
+          terminal = this.withProviderTelemetry({
             type: 'error',
             code: 'missing_terminal_event',
             message: `Provider '${input.provider.id}' completed without a terminal result/error event`,
             retryable: false,
-          };
+          }, input.provider.id, input.model, attemptStartedAt);
           appendEvent(terminal);
         }
       }
@@ -369,12 +373,12 @@ export class AgentRunner {
         consume,
         new Promise<QueryAttemptOutcome>((resolve) => {
           timer = setTimeout(() => {
-            timeoutEvent = {
+            timeoutEvent = this.withProviderTelemetry({
               type: 'error',
               code: 'timeout',
               message: `Task timed out after ${input.timeoutMs}ms`,
               retryable: true,
-            };
+            }, input.provider.id, input.model, attemptStartedAt);
             timedOut = true;
             appendEvent(timeoutEvent);
             void iterator.return?.(undefined).catch(() => {
@@ -470,9 +474,24 @@ export class AgentRunner {
 
   private insertEvent(db: Database.Database, sessionId: string, event: AgentEvent): void {
     db.prepare(
-      `INSERT INTO session_events (session_id, event_type, event_data, created_at)
-       VALUES (?, ?, ?, ?)`,
-    ).run(sessionId, event.type, JSON.stringify(event), this.timestamp());
+      `INSERT INTO session_events (session_id, event_type, event_data, created_at, latency_ms)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(sessionId, event.type, JSON.stringify(event), this.timestamp(), eventLatencyMs(event));
+  }
+
+  private withProviderTelemetry<T extends AgentResultEvent | AgentErrorEvent>(
+    event: T,
+    provider: string,
+    model: string,
+    startedAtMs: number,
+  ): T {
+    const elapsed = Math.max(0, Date.now() - startedAtMs);
+    return {
+      ...event,
+      provider: event.provider ?? provider,
+      model: event.model ?? model,
+      latencyMs: event.latencyMs ?? elapsed,
+    };
   }
 
   private insertSyntheticRetryEvent(
@@ -805,4 +824,11 @@ function applyInputOverrides(
 
 function shouldFallback(event: AgentErrorEvent): boolean {
   return FALLBACK_TRIGGERS.has(event.code);
+}
+
+function eventLatencyMs(event: AgentEvent): number | null {
+  const latencyMs = (event.type === 'result' || event.type === 'error') ? event.latencyMs : undefined;
+  return typeof latencyMs === 'number' && Number.isFinite(latencyMs) && latencyMs >= 0
+    ? Math.round(latencyMs)
+    : null;
 }

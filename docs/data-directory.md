@@ -112,7 +112,8 @@ CREATE TABLE session_events (
   session_id TEXT NOT NULL,
   event_type TEXT NOT NULL,
   event_data TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  latency_ms INTEGER
 );
 
 CREATE TABLE workflow_checkpoints (
@@ -260,6 +261,7 @@ FEAT-023 的审计边界：
 - `operation_audit_log` 只记录被拒绝、需要审批、预算 near-limit、预算 exceeded 等护栏事件；普通低风险 `haro run` 不额外要求审批。
 - `workflow_budgets` 使用固定 token hard limit；`estimated_cost` 只用于展示，不参与阻断。
 - `token_budget_ledger` 按 workflow / branch / agent 记录 provider/model 与 input/output token，Team workflow 汇总所有 branch，不只看 merge session。
+- `session_events.latency_ms` 保存 Runner 观测到的 provider attempt terminal 延迟；Web Provider stats 的 `avgLatencyMs` 基于该落库字段聚合，而不是前端占位或静态 mock。
 
 ## Agent 状态文件
 
