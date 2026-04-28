@@ -37,7 +37,7 @@ export interface CodexProviderDeps {
 
 export type CodexResolvedAuth =
   | { kind: 'env-api-key'; token: string }
-  | { kind: 'chatgpt'; accountId: string | null; lastRefresh: string | null; authFilePath: string };
+  | { kind: 'chatgpt'; accountId?: string; lastRefresh?: string; authFilePath: string };
 
 /**
  * FEAT-003 Codex Provider. Wraps `@openai/codex-sdk`.
@@ -194,14 +194,15 @@ export class CodexProvider implements AgentProvider {
 
   private async constructCodex(): Promise<SdkCodex> {
     const sdkOptions: SdkCodexOptions = {};
-    if (this.options.baseUrl) sdkOptions.baseUrl = this.options.baseUrl;
 
     const auth = this.resolveAuth();
     if (auth.kind === 'env-api-key') {
       sdkOptions.apiKey = auth.token;
+      if (this.options.baseUrl) sdkOptions.baseUrl = this.options.baseUrl;
     }
     // FEAT-029 R7: chatgpt mode passes no apiKey; the SDK spawns the codex
-    // binary which reads ~/.codex/auth.json directly.
+    // binary which reads ~/.codex/auth.json directly. Do not pass baseUrl in
+    // this mode either; the codex binary owns its ChatGPT subscription route.
 
     if (this.deps.codexFactory) {
       return this.deps.codexFactory(sdkOptions);
@@ -222,7 +223,7 @@ export class CodexProvider implements AgentProvider {
     const apiKey = this.readApiKey();
     const authMode = (this.options as { authMode?: 'env' | 'chatgpt' | 'auto' }).authMode ?? 'auto';
 
-    if (apiKey && (authMode === 'env' || authMode === 'auto')) {
+    if (apiKey) {
       return { kind: 'env-api-key', token: apiKey };
     }
 
@@ -232,26 +233,24 @@ export class CodexProvider implements AgentProvider {
       );
     }
 
-    const localAuth = this.readCodexAuth();
-    if (localAuth.hasAuth) {
+    if (authMode === 'chatgpt') {
+      const localAuth = this.readCodexAuth();
       return {
         kind: 'chatgpt',
-        accountId: localAuth.accountId,
-        lastRefresh: localAuth.lastRefresh,
+        ...(localAuth.accountId ? { accountId: localAuth.accountId } : {}),
+        ...(localAuth.lastRefresh ? { lastRefresh: localAuth.lastRefresh } : {}),
         authFilePath: localAuth.authFilePath,
       };
     }
 
-    if (authMode === 'chatgpt') {
-      throw new Error(
-        `Codex Provider: authMode=chatgpt but no ChatGPT login was found at ${localAuth.authFilePath}. Run \`codex login\` (or \`haro provider setup codex\`) to sign in.`,
-      );
-    }
-
-    if (apiKey) {
-      // authMode === 'auto' but explicitly fell through above — only happens
-      // if logic changes. Defensive return for type completeness.
-      return { kind: 'env-api-key', token: apiKey };
+    const localAuth = this.readCodexAuth();
+    if (localAuth.hasAuth) {
+      return {
+        kind: 'chatgpt',
+        ...(localAuth.accountId ? { accountId: localAuth.accountId } : {}),
+        ...(localAuth.lastRefresh ? { lastRefresh: localAuth.lastRefresh } : {}),
+        authFilePath: localAuth.authFilePath,
+      };
     }
 
     throw new Error(

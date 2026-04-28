@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { access, constants } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { buildHaroPaths, config as haroConfig, type ProviderRegistry } from '@haro/core';
 import type { AgentProvider } from '@haro/core/provider';
@@ -76,6 +76,12 @@ export interface ProviderDoctorResult {
     lastRefresh: string | null;
     authFilePath: string;
   };
+  /** FEAT-029 R9 — codex binary PATH visibility for ChatGPT auth remediation. */
+  codexBinary?: {
+    name: 'codex';
+    onPath: boolean;
+    path?: string;
+  };
 }
 
 export interface ProviderDoctorInput {
@@ -137,8 +143,10 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
   // Surface auth status and downgrade "secret missing" to info when ChatGPT
   // login is the active auth path.
   let chatgptAuthSummary: ProviderDoctorResult['chatgptAuth'];
+  let codexBinarySummary: ProviderDoctorResult['codexBinary'];
   let chatgptModeActive = false;
   if (input.entry.id === 'codex') {
+    codexBinarySummary = resolveExecutableOnPath('codex', env);
     const declaredAuthMode = (() => {
       const raw = sources.effective.authMode;
       return raw === 'env' || raw === 'chatgpt' || raw === 'auto' ? raw : 'auto';
@@ -296,6 +304,7 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
     config: sources,
     ...(models ? { models } : {}),
     ...(chatgptAuthSummary ? { chatgptAuth: chatgptAuthSummary } : {}),
+    ...(codexBinarySummary ? { codexBinary: codexBinarySummary } : {}),
   };
 }
 
@@ -405,6 +414,19 @@ export function formatProviderDoctorHuman(result: ProviderDoctorResult): string 
     `Systemd EnvironmentFile: EnvironmentFile=${result.secret.envFile.systemdReference}`,
     `Config: global=${result.config.globalPath}${result.config.projectPath ? ` project=${result.config.projectPath}` : ''}`,
   ];
+  if (isChatGptAuthActive(result)) {
+    const chatgptAuth = result.chatgptAuth;
+    if (!chatgptAuth) return `${lines.join('\n')}\n`;
+    lines.push(
+      `Auth mode: ${chatgptAuth.authMode}`,
+      `ChatGPT auth.json: ${chatgptAuth.authFilePath || '~/.codex/auth.json'} (${chatgptAuth.hasAuth ? 'present' : 'missing'})`,
+      `ChatGPT account_id: ${chatgptAuth.accountId ?? '…'}`,
+      `ChatGPT last_refresh: ${chatgptAuth.lastRefresh ?? '<unknown>'}`,
+    );
+  }
+  if (result.codexBinary) {
+    lines.push(`Codex binary: ${result.codexBinary.onPath ? result.codexBinary.path : 'not found in PATH'}`);
+  }
   if (result.models) {
     lines.push(`Models: ${result.models.map((model) => model.id).join(', ') || '<none>'}`);
   }
@@ -419,6 +441,23 @@ export function formatProviderDoctorHuman(result: ProviderDoctorResult): string 
 }
 
 export function formatProviderEnvHuman(result: ProviderDoctorResult): string {
+  if (isChatGptAuthActive(result)) {
+    const authPath = result.chatgptAuth?.authFilePath || '~/.codex/auth.json';
+    const lines = [
+      `Provider env: ${result.provider} (${result.displayName})`,
+      '',
+      `ChatGPT subscription auth via ~/.codex/auth.json`,
+      `- authMode: ${result.chatgptAuth?.authMode ?? 'chatgpt'}`,
+      `- auth.json: ${authPath}`,
+      `- account_id: ${result.chatgptAuth?.accountId ?? '…'}`,
+      `- last_refresh: ${result.chatgptAuth?.lastRefresh ?? '<unknown>'}`,
+      `- codex binary: ${result.codexBinary?.onPath ? result.codexBinary.path : 'not found in PATH'}`,
+      '',
+      'No OPENAI_API_KEY export is required for this provider mode.',
+    ];
+    return `${lines.join('\n')}\n`;
+  }
+
   const template = result.secret.envVar;
   const lines = [
     `Provider env: ${result.provider} (${result.displayName})`,
@@ -565,4 +604,26 @@ function quoteEnvValue(value: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isChatGptAuthActive(result: ProviderDoctorResult): boolean {
+  if (!result.chatgptAuth) return false;
+  return result.chatgptAuth.authMode === 'chatgpt' || (result.chatgptAuth.authMode === 'auto' && result.chatgptAuth.hasAuth && result.secret.currentProcess === 'missing');
+}
+
+function resolveExecutableOnPath(name: 'codex', env: NodeJS.ProcessEnv): ProviderDoctorResult['codexBinary'] {
+  const pathValue = env.PATH ?? process.env.PATH ?? '';
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    try {
+      const stat = statSync(candidate);
+      if (stat.isFile() && (stat.mode & 0o111) !== 0) {
+        return { name, onPath: true, path: candidate };
+      }
+    } catch {
+      // Continue scanning PATH.
+    }
+  }
+  return { name, onPath: false };
 }

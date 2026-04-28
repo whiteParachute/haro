@@ -24,4 +24,17 @@ describe('codexProviderOptionsSchema [FEAT-003 R5]', () => {
       createCodexProvider({ apiKey: 'sk-x' } as never, { readApiKey: () => 'sk-real' }),
     ).toThrow(/apiKey/);
   });
+
+  it('accepts only env|chatgpt|auto for authMode', () => {
+    expect(codexProviderOptionsSchema.parse({ authMode: 'env' }).authMode).toBe('env');
+    expect(codexProviderOptionsSchema.parse({ authMode: 'chatgpt' }).authMode).toBe('chatgpt');
+    expect(codexProviderOptionsSchema.parse({ authMode: 'auto' }).authMode).toBe('auto');
+    expect(() => codexProviderOptionsSchema.parse({ authMode: 'oauth' })).toThrow(/Invalid enum value/);
+  });
+
+  it.each(['access_token', 'refresh_token', 'id_token'])('rejects tokens.%s in provider options', (tokenField) => {
+    expect(() =>
+      codexProviderOptionsSchema.parse({ tokens: { [tokenField]: 'secret-token-value' } }),
+    ).toThrow(/tokens/);
+  });
 });

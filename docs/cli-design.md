@@ -97,6 +97,8 @@ Provider 配置与诊断命令族。`haro model` 保留为快速查看/切换默
 ```bash
 haro provider list
 haro provider setup codex
+haro provider setup codex --auth-mode chatgpt --non-interactive
+haro provider setup codex --auth-mode env --secret-ref env:OPENAI_API_KEY --non-interactive
 haro provider setup codex --scope global --model <live-model-id>
 haro provider setup codex --scope project --base-url https://api.example/v1 --non-interactive
 haro provider doctor codex
@@ -110,6 +112,56 @@ haro provider env codex
 - 默认通过环境变量读取 secret；只有显式 `--write-env-file` 才会把当前进程 secret 写入受保护 env file（0600，输出脱敏）
 - `haro provider doctor` 输出 `PROVIDER_SECRET_MISSING`、`PROVIDER_HEALTHCHECK_FAILED`、`PROVIDER_MODEL_LIST_FAILED` 等 issue code 和下一条可执行修复命令
 - provider 配置元数据来自 provider catalog/schema，避免命令层散落 `providerId === 'codex'` 分支
+
+**Codex ChatGPT subscription auth（FEAT-029）**：
+
+TTY 下运行 `haro provider setup codex` 会先选择认证方式：
+
+```
+? Choose authentication method for Codex
+  ▸ Sign in with ChatGPT (recommended for Plus / Pro / Team)
+    Use OPENAI_API_KEY (developer / org accounts)
+```
+
+选择 ChatGPT 后，Haro 会在当前终端执行官方 `codex login`；成功后只写入非敏感配置：
+
+```yaml
+providers:
+  codex:
+    enabled: true
+    secretRef: env:OPENAI_API_KEY
+    authMode: chatgpt
+```
+
+示例输出（account_id 已脱敏）：
+
+```
+✓ ChatGPT login detected (account: user_2…XaxL, refreshed 2026-04-27T11:30:00Z)
+Provider setup: codex
+Auth mode: chatgpt
+ChatGPT auth.json: /home/user/.codex/auth.json (present)
+Codex binary: /home/user/.local/bin/codex
+```
+
+非交互 ChatGPT 模式不会 spawn 登录流程，只校验本机已经完成 `codex login`：
+
+```bash
+haro provider setup codex --auth-mode chatgpt --non-interactive
+```
+
+`haro provider env codex` 在 ChatGPT 模式下输出：
+
+```
+Provider env: codex (Codex)
+
+ChatGPT subscription auth via ~/.codex/auth.json
+- authMode: chatgpt
+- account_id: user_2…XaxL
+
+No OPENAI_API_KEY export is required for this provider mode.
+```
+
+`haro provider doctor codex` 在 ChatGPT 模式下额外显示 `auth.json` 路径、`authMode`、脱敏 `account_id`、`last_refresh` 与 `codex` binary 是否在 PATH。任何 `access_token` / `refresh_token` / `id_token` 都不会出现在 stdout、日志或 YAML 中。
 
 ### `haro config`
 

@@ -9,6 +9,8 @@ export interface ProviderConfigField {
   label: string;
   type: ProviderConfigFieldType;
   description: string;
+  enumValues?: readonly string[];
+  defaultValue?: string | boolean;
   sensitive?: boolean;
 }
 
@@ -68,6 +70,8 @@ export const CODEX_PROVIDER_CATALOG_ENTRY: ProviderCatalogEntry = {
       label: 'Auth mode',
       type: 'string',
       description: 'env (OPENAI_API_KEY), chatgpt (codex login subscription), or auto (default).',
+      enumValues: ['env', 'chatgpt', 'auto'],
+      defaultValue: 'auto',
     },
   ],
   modelDiscovery: 'provider-live',

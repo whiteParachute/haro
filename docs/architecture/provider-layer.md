@@ -79,14 +79,46 @@ class CodexProvider implements AgentProvider {
 
 | Provider | 认证方式 | 参考 |
 |---------|---------|------|
-| Codex | API Key（通过环境变量传递） | 社区实践 |
+| Codex | API Key（通过环境变量传递）或 ChatGPT subscription auth（`codex login` 写入 `~/.codex/auth.json`） | FEAT-003 / FEAT-029 |
 
 ```yaml
 # ~/.haro/config.yaml
 providers:
   codex:
+    authMode: "auto"  # env | chatgpt | auto；默认 auto
     baseUrl: "https://api.openai.com/v1"  # 可选企业端点覆盖
 ```
+
+### Phase 1 ChatGPT subscription auth（FEAT-029）
+
+Codex Provider 支持 `providers.codex.authMode`：
+
+| authMode | 行为 |
+| --- | --- |
+| `env` | 只接受当前进程 `OPENAI_API_KEY`；缺失时报错。 |
+| `chatgpt` | 不向 `@openai/codex-sdk` 传 `apiKey`，也不切 `baseUrl`；SDK 子进程复用官方 `codex` binary，并由 binary 读取 `~/.codex/auth.json`。 |
+| `auto`（默认） | `OPENAI_API_KEY` 显式存在时优先走 env；否则如果本机 `~/.codex/auth.json` 有 `tokens.access_token`，走 ChatGPT subscription auth；否则报错并提示 `haro provider setup codex`。 |
+
+`resolveAuth()` 优先级固定为：
+
+1. 显式 `OPENAI_API_KEY`（developer / org accounts）；
+2. `authMode === 'chatgpt'`；
+3. `authMode === 'auto' && readLocalCodexAuth().hasAuth`；
+4. 报错，提示运行 `haro provider setup codex`。
+
+ChatGPT 模式数据流（文字图）：
+
+```
+haro provider setup codex
+  -> spawn('codex', ['login'], { stdio: 'inherit' })
+  -> codex CLI 完成 OAuth 并写 ~/.codex/auth.json
+  -> Haro 只读校验 tokens.access_token
+  -> Haro YAML 只写 providers.codex.authMode=chatgpt
+  -> CodexProvider 调 SDK 时不传 apiKey/baseUrl
+  -> SDK/codex binary 直接读取 ~/.codex/auth.json 并自行 refresh
+```
+
+安全边界：Haro 不复制 `access_token` / `refresh_token` / `id_token`，不把 `tokens.*` 写入 YAML；schema 显式拒绝 `providers.codex.tokens`。
 
 ### Phase 1 配置体验补齐（FEAT-026）
 

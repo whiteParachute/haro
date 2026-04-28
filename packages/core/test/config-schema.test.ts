@@ -51,6 +51,26 @@ describe('config schema [FEAT-001]', () => {
       expect(issues[0]?.path).toBe('logging.level');
     }
   });
+
+  it('FEAT-029 accepts only env|chatgpt|auto for providers.codex.authMode', () => {
+    expect(parseHaroConfig('test', { providers: { codex: { authMode: 'env' } } }).providers?.codex?.authMode).toBe('env');
+    expect(parseHaroConfig('test', { providers: { codex: { authMode: 'chatgpt' } } }).providers?.codex?.authMode).toBe('chatgpt');
+    expect(parseHaroConfig('test', { providers: { codex: { authMode: 'auto' } } }).providers?.codex?.authMode).toBe('auto');
+    expect(() => parseHaroConfig('test', { providers: { codex: { authMode: 'oauth' } } })).toThrow(HaroConfigValidationError);
+  });
+
+  it.each(['access_token', 'refresh_token', 'id_token'])('FEAT-029 rejects providers.codex.tokens.%s', (tokenField) => {
+    expect(() =>
+      parseHaroConfig('test', {
+        providers: {
+          codex: {
+            authMode: 'chatgpt',
+            tokens: { [tokenField]: 'secret-token-value' },
+          },
+        },
+      }),
+    ).toThrow(HaroConfigValidationError);
+  });
 });
 
 describe('config loader [FEAT-001]', () => {

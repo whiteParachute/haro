@@ -568,7 +568,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
               !options.writeEnvFile;
             if (wantWizard) {
               const { runCodexAuthWizard } = await import('./provider-codex-wizard.js');
-              const result = await runCodexAuthWizard(entry);
+              const result = await runCodexAuthWizard(entry, { write: (chunk) => app.stdout.write(chunk) });
               if (result.choice === 'cancelled') {
                 throw new CommanderExit(1, 'provider setup cancelled');
               }

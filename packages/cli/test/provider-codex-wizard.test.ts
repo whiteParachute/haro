@@ -3,7 +3,7 @@
  */
 import type { SpawnOptions } from 'node:child_process';
 import { describe, it, expect } from 'vitest';
-import { runCodexAuthWizard, runChatGptLogin } from '../src/provider-codex-wizard.js';
+import { runCodexAuthWizard, runChatGptLogin, runProviderSetupWizard } from '../src/provider-codex-wizard.js';
 import { CODEX_PROVIDER_CATALOG_ENTRY } from '../src/provider-catalog.js';
 import type { LocalCodexAuth } from '@haro/provider-codex';
 
@@ -117,5 +117,60 @@ describe('runCodexAuthWizard [FEAT-029 R2]', () => {
     expect(out).toContain('user_2…AaaA');
     // Make sure raw access tokens are never written; the helper only ever sees the LocalCodexAuth shape.
     expect(out).not.toContain('access_token');
+  });
+
+  it('runProviderSetupWizard writes only authMode=chatgpt on successful ChatGPT login', async () => {
+    const stdout = captureStdout();
+    const writes: unknown[] = [];
+    const result = await runProviderSetupWizard({
+      entry: CODEX_PROVIDER_CATALOG_ENTRY,
+      scope: 'global',
+      deps: {
+        promptChoice: async () => 'chatgpt',
+        spawnCodexLogin: async (_binary, _args, options) => {
+          expect(options.stdio).toBe('inherit');
+          return { exitCode: 0 };
+        },
+        readAuth: () =>
+          fakeAuth({
+            detected: true,
+            hasAuth: true,
+            accountId: 'user_2…AaaA',
+            lastRefresh: '2026-04-27T11:30:00Z',
+            authFilePath: '/p/.codex/auth.json',
+          }),
+        write: stdout.write,
+        writeConfig: async (input) => {
+          writes.push(input);
+        },
+      },
+    });
+
+    expect(result).toEqual({ authMode: 'chatgpt', accountId: 'user_2…AaaA' });
+    expect(writes).toEqual([
+      {
+        scope: 'global',
+        entry: CODEX_PROVIDER_CATALOG_ENTRY,
+        patch: { authMode: 'chatgpt' },
+      },
+    ]);
+    expect(JSON.stringify(writes)).not.toContain('access-token-raw');
+    expect(JSON.stringify(writes)).not.toContain('refresh-token-raw');
+  });
+
+  it('runProviderSetupWizard leaves YAML untouched on ctrl-C cancellation', async () => {
+    let writeCalled = false;
+    const result = await runProviderSetupWizard({
+      entry: CODEX_PROVIDER_CATALOG_ENTRY,
+      scope: 'project',
+      deps: {
+        promptChoice: async () => 'cancelled',
+        writeConfig: async () => {
+          writeCalled = true;
+        },
+      },
+    });
+    expect(result).toEqual({ cancelled: true });
+    expect(writeCalled).toBe(false);
   });
 });

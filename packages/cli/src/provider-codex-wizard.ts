@@ -16,6 +16,7 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { readLocalCodexAuth, type LocalCodexAuth } from '@haro/provider-codex';
 import type { ProviderCatalogEntry } from './provider-catalog.js';
+import type { ProviderScope } from './provider-onboarding.js';
 
 export type CodexWizardChoice = 'chatgpt' | 'env-api-key' | 'cancelled';
 
@@ -38,6 +39,24 @@ export interface CodexWizardDeps {
   write?: (chunk: string) => void;
 }
 
+export type ProviderSetupWizardResult =
+  | { authMode: 'chatgpt' | 'env'; accountId?: string }
+  | { cancelled: true };
+
+export interface ProviderSetupWizardInput {
+  entry: ProviderCatalogEntry;
+  scope: ProviderScope;
+  deps?: CodexWizardDeps & {
+    /** Persist non-sensitive provider config; tests inject this to assert YAML-safe writes. */
+    writeConfig?: (input: {
+      scope: ProviderScope;
+      entry: ProviderCatalogEntry;
+      patch: { authMode: 'chatgpt' };
+    }) => void | Promise<void>;
+    logger?: Pick<Console, 'log'>;
+  };
+}
+
 const CHATGPT_LABEL = 'Sign in with ChatGPT (recommended for Plus / Pro / Team)';
 const API_KEY_LABEL = 'Use OPENAI_API_KEY (developer / org accounts)';
 
@@ -58,6 +77,35 @@ export async function runCodexAuthWizard(
   const auth = await runChatGptLogin(deps);
   if (!auth) return { choice: 'cancelled' };
   return { choice: 'chatgpt', auth };
+}
+
+/**
+ * Spec-facing setup wizard entrypoint (FEAT-029 §5.1). It owns the ChatGPT
+ * branch end-to-end: choose auth method, spawn `codex login`, verify
+ * auth.json, then write only `providers.codex.authMode = chatgpt`.
+ *
+ * The OPENAI_API_KEY branch deliberately returns `{ authMode: 'env' }` and
+ * leaves secret-ref handling to the existing provider onboarding flow.
+ */
+export async function runProviderSetupWizard(input: ProviderSetupWizardInput): Promise<ProviderSetupWizardResult> {
+  const result = await runCodexAuthWizard(input.entry, input.deps);
+  if (result.choice === 'cancelled') return { cancelled: true };
+  if (result.choice === 'env-api-key') return { authMode: 'env' };
+
+  await input.deps?.writeConfig?.({
+    scope: input.scope,
+    entry: input.entry,
+    patch: { authMode: 'chatgpt' },
+  });
+  input.deps?.logger?.log?.(
+    `✓ ChatGPT login detected (account: ${result.auth?.accountId ?? '…'}` +
+      (result.auth?.lastRefresh ? `, refreshed ${result.auth.lastRefresh}` : '') +
+      ')',
+  );
+  return {
+    authMode: 'chatgpt',
+    ...(result.auth?.accountId ? { accountId: result.auth.accountId } : {}),
+  };
 }
 
 /**
@@ -105,7 +153,7 @@ export async function runChatGptLogin(deps: CodexWizardDeps = {}): Promise<Local
   }
 
   write(
-    `\n[ok] ChatGPT login detected (account: ${after.accountId ?? '***'}` +
+    `\n✓ ChatGPT login detected (account: ${after.accountId ?? '…'}` +
       (after.lastRefresh ? `, refreshed ${after.lastRefresh}` : '') +
       `, auth file: ${after.authFilePath}).\n`,
   );

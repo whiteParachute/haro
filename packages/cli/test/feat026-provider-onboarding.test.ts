@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
@@ -8,6 +8,11 @@ import { AgentRegistry, ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli, type RunCliOptions } from '../src/index.js';
 import type { ProviderCatalogEntry } from '../src/provider-catalog.js';
+
+vi.mock('@clack/prompts', () => ({
+  select: vi.fn(async () => 'chatgpt'),
+  isCancel: vi.fn(() => false),
+}));
 
 class StubProvider implements AgentProvider {
   readonly id: string;
@@ -99,6 +104,7 @@ describe('provider onboarding wizard [FEAT-026]', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
@@ -310,5 +316,107 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     expect(output).toContain('OPENAI_API_KEY=<your-provider-secret>');
     expect(output).toContain('present (masked)');
     expect(output).not.toContain(secret);
+  });
+
+  it('FEAT-029: TTY wizard completes ChatGPT path, writes only authMode, and never echoes tokens', async () => {
+    const root = tempRoot('haro-feat029-tty-root-');
+    const codexHome = join(root, 'codex-home');
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(codexHome, { recursive: true });
+    const fakeCodex = join(binDir, 'codex');
+    writeFileSync(
+      fakeCodex,
+      `#!/usr/bin/env node\n` +
+        `const fs = require('node:fs');\n` +
+        `const path = require('node:path');\n` +
+        `if (process.argv[2] !== 'login') process.exit(2);\n` +
+        `fs.mkdirSync(process.env.CODEX_HOME, { recursive: true });\n` +
+        `fs.writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', last_refresh: '2026-04-27T11:30:00Z', tokens: { access_token: 'access-token-raw', refresh_token: 'refresh-token-raw', account_id: 'user_2NfXabcdefghXaxL' } }));\n`,
+      { mode: 0o755 },
+    );
+    chmodSync(fakeCodex, 0o755);
+    const env = { HOME: root, CODEX_HOME: codexHome, PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}` };
+    vi.stubEnv('CODEX_HOME', codexHome);
+    vi.stubEnv('PATH', env.PATH);
+    const stdin = new PassThrough() as PassThrough & { isTTY?: boolean };
+    stdin.isTTY = true;
+
+    const { result, output } = await runWithOutput({
+      argv: ['provider', 'setup', 'codex'],
+      root,
+      stdin,
+      setupDeps: { env, runCommand: okCommand },
+      createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output).toContain('Auth mode: chatgpt');
+    expect(output).toContain('ChatGPT login detected');
+    expect(output).toContain('user_2…XaxL');
+    expect(output).not.toContain('access-token-raw');
+    expect(output).not.toContain('refresh-token-raw');
+    const configText = readFileSync(join(root, 'config.yaml'), 'utf8');
+    const config = parseYaml(configText) as { providers?: { codex?: Record<string, unknown> } };
+    expect(config.providers?.codex).toMatchObject({ enabled: true, secretRef: 'env:OPENAI_API_KEY', authMode: 'chatgpt' });
+    expect(config.providers?.codex).not.toHaveProperty('tokens');
+    expect(configText).not.toContain('access-token-raw');
+    expect(configText).not.toContain('refresh-token-raw');
+
+    const envReport = await runWithOutput({
+      argv: ['provider', 'env', 'codex'],
+      root,
+      setupDeps: { env, runCommand: okCommand },
+      createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
+    });
+    expect(envReport.result.exitCode).toBe(0);
+    expect(envReport.output).toContain('ChatGPT subscription auth via ~/.codex/auth.json');
+    expect(envReport.output).not.toContain('OPENAI_API_KEY=<your-provider-secret>');
+    expect(envReport.output).not.toContain('access-token-raw');
+
+    const doctor = await runWithOutput({
+      argv: ['provider', 'doctor', 'codex'],
+      root,
+      setupDeps: { env, runCommand: okCommand },
+      createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
+    });
+    expect(doctor.result.exitCode).toBe(0);
+    expect(doctor.output).toContain('ChatGPT auth.json');
+    expect(doctor.output).toContain('Codex binary:');
+    expect(doctor.output).not.toContain('refresh-token-raw');
+  });
+
+  it('FEAT-029: non-interactive --auth-mode chatgpt validates existing codex auth without spawning', async () => {
+    const root = tempRoot('haro-feat029-noninteractive-root-');
+    const codexHome = join(root, 'codex-home');
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(
+      join(codexHome, 'auth.json'),
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        last_refresh: '2026-04-27T11:30:00Z',
+        tokens: {
+          access_token: 'access-token-raw',
+          refresh_token: 'refresh-token-raw',
+          account_id: 'user_2NfXabcdefghXaxL',
+        },
+      }),
+    );
+    const env = { HOME: root, CODEX_HOME: codexHome };
+    vi.stubEnv('CODEX_HOME', codexHome);
+
+    const { result, output } = await runWithOutput({
+      argv: ['provider', 'setup', 'codex', '--auth-mode', 'chatgpt', '--non-interactive'],
+      root,
+      setupDeps: { env, runCommand: okCommand },
+      createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output).toContain('Auth mode: chatgpt');
+    const configText = readFileSync(join(root, 'config.yaml'), 'utf8');
+    expect(configText).toContain('authMode: chatgpt');
+    expect(configText).not.toContain('access-token-raw');
+    expect(output).not.toContain('refresh-token-raw');
   });
 });

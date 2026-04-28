@@ -1,11 +1,11 @@
 ---
 id: FEAT-029
 title: Codex ChatGPT-Subscription Auth（ChatGPT 订阅 OAuth 登录）
-status: approved
+status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-27
-updated: 2026-04-27
+updated: 2026-04-28
 related:
   - ../phase-0/FEAT-003-codex-provider.md
   - ./FEAT-026-provider-onboarding-wizard.md
@@ -124,3 +124,4 @@ then return here.
 ## 9. Changelog / 变更记录
 
 - 2026-04-27: whiteParachute / Claude — 初稿后重构：从 device-code 自实现重构为 ride-along 官方 codex CLI；与 keyclaw UI 提示语义对齐，与 hermes 的复杂度脱钩。spec 提升为 approved 同时落实现。
+- 2026-04-28: Claude/whiteParachute — 实现 R1–R11 / AC1–AC6，验证 pnpm lint/test/build/smoke 全绿，commit c02dbed。

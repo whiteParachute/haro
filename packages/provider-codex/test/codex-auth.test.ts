@@ -27,8 +27,8 @@ describe('codex-auth.readLocalCodexAuth [FEAT-029 R4]', () => {
     const result = readLocalCodexAuth({ homeDir: root, env: {} });
     expect(result.detected).toBe(false);
     expect(result.hasAuth).toBe(false);
-    expect(result.accountId).toBeNull();
-    expect(result.authMode).toBeNull();
+    expect(result.accountId).toBeUndefined();
+    expect(result.authMode).toBeUndefined();
   });
 
   it('returns detected=true, hasAuth=false when auth.json is missing despite ~/.codex existing', () => {
@@ -72,13 +72,24 @@ describe('codex-auth.readLocalCodexAuth [FEAT-029 R4]', () => {
     expect(result.hasAuth).toBe(false);
   });
 
+  it('returns hasAuth=false when tokens.access_token is missing', () => {
+    const { home, codexHome } = makeHome();
+    writeFileSync(
+      join(codexHome, 'auth.json'),
+      JSON.stringify({ auth_mode: 'chatgpt', tokens: { account_id: 'user_xxxxxxxxxxxx' } }),
+    );
+    const result = readLocalCodexAuth({ homeDir: home, env: {} });
+    expect(result.detected).toBe(true);
+    expect(result.hasAuth).toBe(false);
+  });
+
   it('survives a corrupt JSON file without throwing', () => {
     const { home, codexHome } = makeHome();
     writeFileSync(join(codexHome, 'auth.json'), 'not-json{{{');
     const result = readLocalCodexAuth({ homeDir: home, env: {} });
     expect(result.detected).toBe(true);
     expect(result.hasAuth).toBe(false);
-    expect(result.authMode).toBeNull();
+    expect(result.authMode).toBeUndefined();
   });
 
   it('honors CODEX_HOME env override', () => {
@@ -106,13 +117,15 @@ describe('codex-auth.redactAccountId [FEAT-029 R5]', () => {
     expect(redactAccountId('user_2NfXabcdefghXaxL')).toBe('user_2…XaxL');
   });
 
-  it('returns *** for short ids', () => {
-    expect(redactAccountId('short')).toBe('***');
-    expect(redactAccountId('')).toBe('***');
+  it('returns … for short or undefined ids', () => {
+    expect(redactAccountId('short')).toBe('…');
+    expect(redactAccountId('')).toBe('…');
+    expect(redactAccountId(undefined)).toBe('…');
   });
 
   it('handles strings exactly at the boundary', () => {
     expect(redactAccountId('123456789012')).toBe('123456…9012');
-    expect(redactAccountId('12345678901')).toBe('***');
+    expect(redactAccountId('12345678901')).toBe('123456…8901');
+    expect(redactAccountId('1234567890')).toBe('…');
   });
 });
