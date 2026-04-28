@@ -130,4 +130,4 @@ then return here.
 - 2026-04-28: Claude/whiteParachute — 实现 R1–R11 / AC1–AC6，验证 pnpm lint/test/build/smoke 全绿，commit 82d1af3。
 - 2026-04-28: Claude/whiteParachute — amend: 写入 FEAT-029 实现 commit hash 82d1af3。
 
-- 2026-04-28: Claude/whiteParachute — post-done amendment：默认 `codex login --device-auth`，新增 R12 / AC7 / D5。原因：devbox / SSH 远端实际登录失败。commit <pending>。
+- 2026-04-28: Claude/whiteParachute — post-done amendment：默认 `codex login --device-auth`，新增 R12 / AC7 / D5。原因：devbox / SSH 远端实际登录失败。commit e9d9332。
