@@ -141,7 +141,10 @@ export function createSessionsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     const sessionId = c.req.param('id');
     const auth = readWebAuth(c);
     if (!auth || !canPerform(auth.role, 'local-write')) {
-      writeAudit(runtime, {
+      // RBAC denial — caller never reached the DB, audit on a separate
+      // connection is acceptable (no tx to roll back). Failures here are
+      // logged but do not block the 403 response.
+      writeAuditSeparateConnection(runtime, {
         sessionId,
         outcome: 'denied',
         reason: `requires operator role or higher; current role is ${auth?.role ?? 'anonymous'}`,
@@ -149,27 +152,35 @@ export function createSessionsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
       return c.json({ error: 'Forbidden', operationClass: 'local-write', minimumRole: 'operator' }, 403);
     }
 
+    // FEAT-028 critical fix — keep delete + success/failure audit in the same
+    // transaction so a successful response is never returned without an
+    // audit row, and a failed audit insert rolls the delete back.
     const db = openDb(runtime);
     try {
       db.exec('BEGIN');
       try {
         db.prepare(`DELETE FROM session_events WHERE session_id = ?`).run(sessionId);
         const result = db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
-        db.exec('COMMIT');
         if (result.changes === 0) {
-          writeAudit(runtime, { sessionId, outcome: 'denied', reason: 'session not found' });
+          // Session not found — record denied audit in the same tx and commit.
+          insertSessionDeleteAudit(db, { sessionId, outcome: 'denied', reason: 'session not found' });
+          db.exec('COMMIT');
           return c.json({ error: 'Session not found' }, 404);
         }
-        writeAudit(runtime, { sessionId, outcome: 'success' });
+        insertSessionDeleteAudit(db, { sessionId, outcome: 'success' });
+        db.exec('COMMIT');
         return c.json({ success: true, data: { deleted: true, sessionId } });
       } catch (error) {
         db.exec('ROLLBACK');
-        writeAudit(runtime, {
+        // Audit the failure on a fresh connection (the original tx is gone).
+        // If this also fails, log only — but the delete itself was already
+        // rolled back so observable state is consistent.
+        writeAuditSeparateConnection(runtime, {
           sessionId,
           outcome: 'failure',
           reason: error instanceof Error ? error.message : String(error),
         });
-        throw error;
+        return c.json({ error: 'Session delete failed', code: 'SESSION_DELETE_FAILED' }, 500);
       }
     } finally {
       db.close();
@@ -216,40 +227,56 @@ function buildSessionFilters(filters: {
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params };
 }
 
-function writeAudit(
+/**
+ * FEAT-028 critical fix — insert audit row on the *same* DB connection so it
+ * participates in the caller's transaction. If this throws the caller's
+ * outer catch will roll back the delete, guaranteeing audit-or-no-state.
+ */
+function insertSessionDeleteAudit(
+  db: DatabaseLike,
+  input: { sessionId: string; outcome: 'success' | 'denied' | 'failure'; reason?: string },
+): void {
+  db.prepare(
+    `INSERT INTO operation_audit_log (
+      id,
+      workflow_id,
+      branch_id,
+      agent_id,
+      event_type,
+      operation_class,
+      policy,
+      outcome,
+      target_scope,
+      target_ref,
+      reason,
+      approval_ref,
+      metadata_json,
+      created_at
+    ) VALUES (?, NULL, NULL, NULL, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?)`,
+  ).run(
+    randomUUID(),
+    'web.session.delete',
+    'delete',
+    input.outcome,
+    'haro-state',
+    input.sessionId,
+    input.reason ?? null,
+    new Date().toISOString(),
+  );
+}
+
+/**
+ * Last-resort audit on a fresh connection — used only when the original tx
+ * is gone (RBAC denial before any writes; rollback already happened).
+ */
+function writeAuditSeparateConnection(
   runtime: WebRuntime,
   input: { sessionId: string; outcome: 'success' | 'denied' | 'failure'; reason?: string },
 ): void {
   let db: DatabaseLike | undefined;
   try {
     db = openDb(runtime);
-    db.prepare(
-      `INSERT INTO operation_audit_log (
-        id,
-        workflow_id,
-        branch_id,
-        agent_id,
-        event_type,
-        operation_class,
-        policy,
-        outcome,
-        target_scope,
-        target_ref,
-        reason,
-        approval_ref,
-        metadata_json,
-        created_at
-      ) VALUES (?, NULL, NULL, NULL, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?)`,
-    ).run(
-      randomUUID(),
-      'web.session.delete',
-      'delete',
-      input.outcome,
-      'haro-state',
-      input.sessionId,
-      input.reason ?? null,
-      new Date().toISOString(),
-    );
+    insertSessionDeleteAudit(db, input);
   } catch (error) {
     runtime.logger.warn?.(
       { sessionId: input.sessionId, outcome: input.outcome, error: error instanceof Error ? error.message : String(error) },

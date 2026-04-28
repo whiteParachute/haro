@@ -135,11 +135,17 @@ function readSessionToken(c: Context<ApiKeyAuthEnv>): string | undefined {
   return cookieToken || undefined;
 }
 
-function isPublicRequest(path: string, _legacyApiKeyEnabled: boolean): boolean {
+function isPublicRequest(path: string, legacyApiKeyEnabled: boolean): boolean {
   if (path === '/api/health') return true;
   if (path === '/api/v1/auth/status') return true;
-  if (path === '/api/v1/auth/bootstrap') return true;
   if (path === '/api/v1/auth/login') return true;
+  // FEAT-028 critical fix — bootstrap is NOT public when HARO_WEB_API_KEY is
+  // configured. A legacy-key deployment with no users yet would otherwise be
+  // taken over by the first anonymous visitor (creating an `owner`). Require
+  // the legacy key to flow through `createDashboardAuth`'s api-key branch,
+  // which keeps bootstrap reachable only from operators who already hold the
+  // shared secret.
+  if (path === '/api/v1/auth/bootstrap' && !legacyApiKeyEnabled) return true;
   // FEAT-029 H1 — SPA static assets must always be public so the dashboard can
   // render its own login form before the user has any credential. The legacy
   // HARO_WEB_API_KEY only protects /api/* surface; non-/api paths are static.

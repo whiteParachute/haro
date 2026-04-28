@@ -387,6 +387,13 @@ export function createUser(
   const status = input.status === undefined ? 'active' : input.status;
   if (!isWebUserStatus(status)) throw new WebAuthError(400, 'invalid_status', 'Invalid status');
 
+  // FEAT-028 critical fix — only `owner` actors may create another `owner`.
+  // `config-write` is intentionally narrower: granting owner crosses the
+  // owner-transfer boundary defined in spec §5.4.
+  if (input.role === 'owner' && actor.role !== 'owner') {
+    throw new WebAuthError(403, 'owner_transfer_required', 'Only an owner may create another owner account');
+  }
+
   const database = openDb(runtime);
   try {
     database.exec('BEGIN');
@@ -429,6 +436,15 @@ export function updateUser(
       const nextDisplayName = patch.displayName === undefined ? current.display_name : validateDisplayName(patch.displayName, current.username);
       const nextRole = patch.role === undefined ? current.role : readRolePatch(patch.role);
       const nextStatus = patch.status === undefined ? current.status : readStatusPatch(patch.status);
+      // FEAT-028 critical fix — both promoting to owner and demoting an owner
+      // count as owner-transfer; only an owner actor may do either. Disabling
+      // an owner account is also restricted because it removes owner access.
+      const promoting = current.role !== 'owner' && nextRole === 'owner';
+      const demoting = current.role === 'owner' && nextRole !== 'owner';
+      const disablingOwner = current.role === 'owner' && nextRole === 'owner' && current.status === 'active' && nextStatus !== 'active';
+      if ((promoting || demoting || disablingOwner) && actor.role !== 'owner') {
+        throw new WebAuthError(403, 'owner_transfer_required', 'Only an owner may grant, revoke, or disable owner accounts');
+      }
       assertOwnerSafety(database, current, nextRole, nextStatus);
       const now = timestamp();
       database

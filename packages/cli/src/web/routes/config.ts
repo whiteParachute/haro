@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { Hono } from 'hono';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { buildHaroPaths, config as haroConfig } from '@haro/core';
+import { requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 import { readChannelSummaries } from './status.js';
@@ -54,7 +55,7 @@ export function createConfigRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     });
   });
 
-  route.put('/', async (c) => {
+  route.put('/', requireWebPermission('config-write'), async (c) => {
     const parsed = await parseConfigPayload(c.req.json.bind(c.req));
     if (!parsed.ok) return c.json({ error: parsed.error, issues: parsed.issues }, 400);
 

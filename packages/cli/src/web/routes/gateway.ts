@@ -4,6 +4,7 @@ import { mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Hono } from 'hono';
 import { buildHaroPaths } from '@haro/core';
+import { requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
@@ -23,7 +24,7 @@ export function createGatewayRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
 
   route.get('/', async (c) => c.json({ success: true, data: await readGatewayStatus(runtime) }));
 
-  route.post('/start', async (c) => {
+  route.post('/start', requireWebPermission('config-write'), async (c) => {
     const status = await readGatewayStatus(runtime);
     if (status.running) return c.json({ error: `Gateway already running (PID ${status.pid})` }, 409);
     const externalChannels = (runtime.channelRegistry?.listEnabled() ?? []).filter((entry) => entry.id !== 'cli');
@@ -38,7 +39,7 @@ export function createGatewayRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     return c.json({ success: true, data: await readGatewayStatus(runtime) });
   });
 
-  route.post('/stop', async (c) => {
+  route.post('/stop', requireWebPermission('config-write'), async (c) => {
     const stopped = await stopGateway(runtime);
     if (!stopped.ok) return c.json({ error: stopped.error }, 500);
     return c.json({ success: true, data: await readGatewayStatus(runtime) });

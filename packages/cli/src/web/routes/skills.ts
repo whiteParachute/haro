@@ -10,6 +10,7 @@ import {
 } from '@haro/core';
 import { SkillsManager, type SkillManifestEntry } from '@haro/skills';
 import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
+import { requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
@@ -86,21 +87,21 @@ export function createSkillsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     }
   }));
 
-  route.post('/:id/enable', (c) => withSkills(runtime, (manager, registry) => {
+  route.post('/:id/enable', requireWebPermission('config-write'), (c) => withSkills(runtime, (manager, registry) => {
     const id = c.req.param('id');
     const result = mutateSkill(() => manager.enable(id), manager, registry, id);
     if (!result.ok) return c.json({ error: result.error }, result.status);
     return c.json({ success: true, data: result.value });
   }));
 
-  route.post('/:id/disable', (c) => withSkills(runtime, (manager, registry) => {
+  route.post('/:id/disable', requireWebPermission('config-write'), (c) => withSkills(runtime, (manager, registry) => {
     const id = c.req.param('id');
     const result = mutateSkill(() => manager.disable(id), manager, registry, id);
     if (!result.ok) return c.json({ error: result.error }, result.status);
     return c.json({ success: true, data: result.value });
   }));
 
-  route.post('/install', async (c) => {
+  route.post('/install', requireWebPermission('config-write'), async (c) => {
     if (runtime.skillAssetAuditSupported === false || runtime.evolutionAssetRegistry === false) {
       return c.json(unsupportedAuditPayload(), 501);
     }
@@ -120,7 +121,7 @@ export function createSkillsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     }
   });
 
-  route.delete('/:id', (c) => {
+  route.delete('/:id', requireWebPermission('config-write'), (c) => {
     if (runtime.skillAssetAuditSupported === false || runtime.evolutionAssetRegistry === false) {
       return c.json(unsupportedAuditPayload(), 501);
     }

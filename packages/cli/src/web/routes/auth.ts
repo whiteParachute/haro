@@ -18,6 +18,21 @@ export function createAuthRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   route.get('/status', (c) => c.json({ success: true, data: toStatusResponse(runtime) }));
 
   route.post('/bootstrap', async (c) => {
+    // FEAT-028 critical fix — defense-in-depth on top of `isPublicRequest`'s
+    // gate: even if a future refactor accidentally re-publicizes the path,
+    // refuse bootstrap when HARO_WEB_API_KEY is configured and the caller did
+    // not present a matching key. The middleware already runs the api-key
+    // branch when this is set, so a session-bearing actor (real user) is also
+    // accepted. Only anonymous + legacy-key-set is blocked.
+    const configuredApiKey = process.env.HARO_WEB_API_KEY;
+    if (configuredApiKey) {
+      const auth = readWebAuth(c);
+      const requestApiKey = c.req.header('x-api-key');
+      const acceptedApiKey = requestApiKey === configuredApiKey;
+      if (!auth && !acceptedApiKey) {
+        return c.json({ error: 'Bootstrap requires HARO_WEB_API_KEY when legacy auth is configured', code: 'BOOTSTRAP_REQUIRES_LEGACY_KEY' }, 401);
+      }
+    }
     const body = await readJsonObject(c.req.json.bind(c.req));
     if (!body.ok) return c.json({ error: body.error }, 400);
     try {

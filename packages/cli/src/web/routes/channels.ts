@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { buildHaroPaths, config as haroConfig } from '@haro/core';
 import type { ChannelRegistryEntry, ChannelSetupContext } from '@haro/channel';
 import { stringify as stringifyYaml } from 'yaml';
+import { requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
@@ -26,7 +27,7 @@ export function createChannelsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
 
   route.get('/', async (c) => c.json({ success: true, data: await listChannelSummaries(runtime) }));
 
-  route.post('/:id/enable', async (c) => {
+  route.post('/:id/enable', requireWebPermission('config-write'), async (c) => {
     const entry = getChannelEntry(runtime, c.req.param('id'));
     if (!entry.ok) return c.json({ error: entry.error }, entry.status);
     runtime.channelRegistry!.enable(entry.value.id);
@@ -34,7 +35,7 @@ export function createChannelsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     return c.json({ success: true, data: await summarizeChannel(runtime, entry.value) });
   });
 
-  route.post('/:id/disable', async (c) => {
+  route.post('/:id/disable', requireWebPermission('config-write'), async (c) => {
     const entry = getChannelEntry(runtime, c.req.param('id'));
     if (!entry.ok) return c.json({ error: entry.error }, entry.status);
     await entry.value.channel.stop();
@@ -43,7 +44,7 @@ export function createChannelsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     return c.json({ success: true, data: await summarizeChannel(runtime, entry.value) });
   });
 
-  route.delete('/:id', async (c) => {
+  route.delete('/:id', requireWebPermission('config-write'), async (c) => {
     const entry = getChannelEntry(runtime, c.req.param('id'));
     if (!entry.ok) return c.json({ error: entry.error }, entry.status);
     try {
@@ -67,7 +68,7 @@ export function createChannelsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     return c.json({ success: true, data: report });
   });
 
-  route.post('/:id/setup', async (c) => {
+  route.post('/:id/setup', requireWebPermission('config-write'), async (c) => {
     const entry = getChannelEntry(runtime, c.req.param('id'));
     if (!entry.ok) return c.json({ error: entry.error }, entry.status);
     if (typeof entry.value.channel.setup !== 'function') {

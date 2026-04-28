@@ -11,6 +11,7 @@ import {
   type VerificationStatus,
 } from '@haro/core';
 import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
+import { requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
@@ -89,7 +90,7 @@ export function createMemoryRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     });
   });
 
-  route.post('/write', async (c) => {
+  route.post('/write', requireWebPermission('local-write'), async (c) => {
     const parsed = await parseMemoryWriteBody(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     if (parsed.value.scope === 'platform') {
@@ -122,7 +123,7 @@ export function createMemoryRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     return c.json({ success: true, data: fabric.stats() });
   });
 
-  route.post('/maintenance', async (c) => {
+  route.post('/maintenance', requireWebPermission('config-write'), async (c) => {
     const body = await parseOptionalJson(c);
     if (!body.ok) return c.json({ error: body.error }, 400);
     const scope = readEnum(body.value.scope, MEMORY_SCOPES, 'scope') as MemoryScope | undefined;

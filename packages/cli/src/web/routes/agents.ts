@@ -6,6 +6,7 @@ import { Hono, type Context } from 'hono';
 import { AGENT_ID_MAX_LENGTH, AGENT_ID_PATTERN, buildHaroPaths, DEFAULT_AGENT_ID, loadAgentsFromDir, parseAgentConfig, type AgentConfig, type RunAgentInput } from '@haro/core';
 import { parse as parseYaml } from 'yaml';
 import type { ApiKeyAuthEnv } from '../types.js';
+import { requireWebPermission } from '../auth.js';
 import { getRunner, type WebRuntime } from '../runtime.js';
 import type { WebSocketManager } from '../websocket/manager.js';
 import { streamAgentRun } from '../websocket/streamer.js';
@@ -81,7 +82,7 @@ export function createAgentsRoute(runtime: WebRuntime, manager?: WebSocketManage
 
   route.get('/', (c) => c.json({ success: true, data: runtime.agentRegistry.list().map(toAgentSummary) }));
 
-  route.post('/', async (c) => {
+  route.post('/', requireWebPermission('config-write'), async (c) => {
     const parsed = await parseStrictJson(c, YAML_KEYS, validateYamlEnvelope);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
@@ -113,7 +114,7 @@ export function createAgentsRoute(runtime: WebRuntime, manager?: WebSocketManage
     return c.json({ success: true, data: await readAgentYamlResponse(runtime, id) });
   });
 
-  route.put('/:id/yaml', async (c) => {
+  route.put('/:id/yaml', requireWebPermission('config-write'), async (c) => {
     const id = c.req.param('id');
     const idError = validateRouteAgentId(id);
     if (idError) return c.json({ error: idError }, 400);
@@ -139,7 +140,7 @@ export function createAgentsRoute(runtime: WebRuntime, manager?: WebSocketManage
     return c.json({ success: true, data: validateAgentYaml(parsed.value.yaml, id) });
   });
 
-  route.delete('/:id', async (c) => {
+  route.delete('/:id', requireWebPermission('config-write'), async (c) => {
     const id = c.req.param('id');
     const idError = validateRouteAgentId(id);
     if (idError) return c.json({ error: idError }, 400);
@@ -164,7 +165,7 @@ export function createAgentsRoute(runtime: WebRuntime, manager?: WebSocketManage
     return c.json({ success: true, data: toAgentDetail(agent) });
   });
 
-  route.post('/:id/run', async (c) => {
+  route.post('/:id/run', requireWebPermission('local-write'), async (c) => {
     const agent = runtime.agentRegistry.tryGet(c.req.param('id'));
     if (!agent) return c.json({ error: 'Agent not found' }, 404);
     const parsed = await parseStrictJson(c, RUN_KEYS, validateRunBody);
@@ -181,7 +182,7 @@ export function createAgentsRoute(runtime: WebRuntime, manager?: WebSocketManage
     return c.json({ success: true, data: { sessionId } });
   });
 
-  route.post('/:id/chat', async (c) => {
+  route.post('/:id/chat', requireWebPermission('local-write'), async (c) => {
     const agent = runtime.agentRegistry.tryGet(c.req.param('id'));
     if (!agent) return c.json({ error: 'Agent not found' }, 404);
     const parsed = await parseStrictJson(c, CHAT_KEYS, validateChatBody);
