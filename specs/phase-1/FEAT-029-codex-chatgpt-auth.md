@@ -124,4 +124,5 @@ then return here.
 ## 9. Changelog / 变更记录
 
 - 2026-04-27: whiteParachute / Claude — 初稿后重构：从 device-code 自实现重构为 ride-along 官方 codex CLI；与 keyclaw UI 提示语义对齐，与 hermes 的复杂度脱钩。spec 提升为 approved 同时落实现。
-- 2026-04-28: Claude/whiteParachute — 实现 R1–R11 / AC1–AC6，验证 pnpm lint/test/build/smoke 全绿，commit c02dbed。
+- 2026-04-28: Claude/whiteParachute — 实现 R1–R11 / AC1–AC6，验证 pnpm lint/test/build/smoke 全绿，commit 82d1af3。
+- 2026-04-28: Claude/whiteParachute — amend: 写入 FEAT-029 实现 commit hash 82d1af3。
