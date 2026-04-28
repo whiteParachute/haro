@@ -321,7 +321,7 @@ describe('web dashboard orchestration debugger API [FEAT-018]', () => {
     });
   });
 
-  it('keeps FEAT-025 providers unregistered while FEAT-024 owns memory and skills contracts', async () => {
+  it('keeps FEAT-024 owning memory/skills while FEAT-025 owns providers contracts', async () => {
     delete process.env.HARO_WEB_API_KEY;
     const root = mkdtempSync(join(tmpdir(), 'haro-web-feat018-feat024-boundary-'));
     tempRoots.push(root);
@@ -329,6 +329,8 @@ describe('web dashboard orchestration debugger API [FEAT-018]', () => {
 
     await expect(app.request('/api/v1/memory/stats')).resolves.toMatchObject({ status: 200 });
     await expect(app.request('/api/v1/skills')).resolves.toMatchObject({ status: 200 });
-    await expect(app.request('/api/v1/providers')).resolves.toMatchObject({ status: 404 });
+    // FEAT-029 follow-up: /api/v1/providers exposes the registered provider list
+    // (used by the chat page to populate provider/model dropdowns).
+    await expect(app.request('/api/v1/providers')).resolves.toMatchObject({ status: 200 });
   });
 });

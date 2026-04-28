@@ -1,7 +1,26 @@
 import { Hono } from 'hono';
-import { db as haroDb } from '@haro/core';
+import { db as haroDb, config as haroConfig } from '@haro/core';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
+
+interface ProviderListModelInfo {
+  id: string;
+  maxContextTokens?: number;
+}
+
+interface ProviderListEntry {
+  id: string;
+  enabled: boolean;
+  authMode?: 'env' | 'chatgpt' | 'auto';
+  defaultModel?: string;
+  liveModels: ProviderListModelInfo[];
+  /**
+   * Set when `listModels()` threw. Intentionally a generic boolean and not
+   * the raw error message — upstream errors can carry filesystem paths or
+   * env-var names that should not leak through a public dashboard endpoint.
+   */
+  liveModelsFailed?: boolean;
+}
 
 interface DatabaseLike {
   prepare(sql: string): {
@@ -51,6 +70,11 @@ interface ProviderStatsAccumulator {
 export function createProvidersRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
 
+  route.get('/', async (c) => {
+    const entries = await readProviderListEntries(runtime);
+    return c.json({ success: true, data: entries });
+  });
+
   route.get('/stats', (c) => {
     const db = openDb(runtime);
     try {
@@ -71,6 +95,48 @@ export function createProvidersRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
 
 function openDb(runtime: WebRuntime): DatabaseLike {
   return haroDb.initHaroDatabase({ root: runtime.root, dbFile: runtime.dbFile, keepOpen: true }).database as unknown as DatabaseLike;
+}
+
+async function readProviderListEntries(runtime: WebRuntime): Promise<ProviderListEntry[]> {
+  const registry = runtime.providerRegistry;
+  if (!registry) return [];
+  const loaded = haroConfig.loadHaroConfig({
+    globalRoot: runtime.root,
+    projectRoot: runtime.projectRoot ?? process.cwd(),
+  });
+  const providersConfig = (loaded.config.providers ?? {}) as Record<string, Record<string, unknown> | undefined>;
+  return Promise.all(
+    registry.list().map(async (provider): Promise<ProviderListEntry> => {
+      const cfg = providersConfig[provider.id] ?? {};
+      const entry: ProviderListEntry = {
+        id: provider.id,
+        enabled: cfg.enabled !== false,
+        liveModels: [],
+      };
+      const authModeRaw = cfg.authMode;
+      if (authModeRaw === 'env' || authModeRaw === 'chatgpt' || authModeRaw === 'auto') {
+        entry.authMode = authModeRaw;
+      }
+      const defaultModel = cfg.defaultModel;
+      if (typeof defaultModel === 'string' && defaultModel.trim().length > 0) {
+        entry.defaultModel = defaultModel.trim();
+      }
+      const withList = provider as { listModels?: () => Promise<ReadonlyArray<{ id: string; maxContextTokens?: number }>> };
+      if (typeof withList.listModels === 'function') {
+        try {
+          const models = await withList.listModels();
+          entry.liveModels = models.map((model) => {
+            const info: ProviderListModelInfo = { id: model.id };
+            if (typeof model.maxContextTokens === 'number') info.maxContextTokens = model.maxContextTokens;
+            return info;
+          });
+        } catch {
+          entry.liveModelsFailed = true;
+        }
+      }
+      return entry;
+    }),
+  );
 }
 
 function readWindowStats(db: DatabaseLike, since: string | null) {

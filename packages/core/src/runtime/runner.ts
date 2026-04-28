@@ -16,7 +16,13 @@ import type {
   ProviderRegistry,
 } from '../provider/index.js';
 import { resolveSelection } from './selection.js';
-import type { RunAgentInput, RunAgentResult, ResolvedSelectionCandidate } from './types.js';
+import type {
+  ResolvedSelection,
+  ResolvedSelectionCandidate,
+  RunAgentInput,
+  RunAgentResult,
+  SelectionContext,
+} from './types.js';
 
 const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
 const FALLBACK_TRIGGERS = new Set([
@@ -100,13 +106,14 @@ export class AgentRunner {
   async run(input: RunAgentInput): Promise<RunAgentResult> {
     const agent = this.options.agentRegistry.get(input.agentId);
     const config = this.loadConfig();
-    const selection = await resolveSelection({
+    const selection = await resolveSelectionWithOverrides({
       task: input.task,
       agent,
       providerRegistry: this.options.providerRegistry,
       root: this.options.root,
       projectRoot: this.options.projectRoot,
       config: config.config,
+      input,
     });
 
     const paths = buildHaroPaths(this.options.root);
@@ -804,6 +811,39 @@ function renderAttemptTranscript(input: {
 function readJson<T>(file: string): T | undefined {
   if (!existsSync(file)) return undefined;
   return JSON.parse(readFileSync(file, 'utf8')) as T;
+}
+
+/**
+ * When the FE explicitly pins both provider and model (e.g. user picked from
+ * dropdowns), skip rule-based selection entirely. This avoids `listModels()`
+ * calls in cases where the provider can't list (e.g. Codex in ChatGPT auth
+ * mode — FEAT-029) but the user already told us exactly what to run.
+ *
+ * The shortcut still validates that the requested provider is registered;
+ * unregistered providers throw here rather than after session insert / fallback
+ * loop setup, matching the behaviour of resolveSelection.
+ */
+async function resolveSelectionWithOverrides(
+  context: SelectionContext & { input: RunAgentInput },
+): Promise<ResolvedSelection> {
+  const { input, ...rest } = context;
+  if (input.provider && input.model) {
+    if (!rest.providerRegistry.tryGet(input.provider)) {
+      throw new Error(
+        `Agent run override references unknown provider '${input.provider}' — run \`haro provider list\` to see registered providers.`,
+      );
+    }
+    const candidate: ResolvedSelectionCandidate = {
+      provider: input.provider,
+      model: input.model,
+      source: {
+        provider: input.provider,
+        model: input.model,
+      },
+    };
+    return { ruleId: 'input-override', primary: candidate, fallbacks: [] };
+  }
+  return resolveSelection(rest);
 }
 
 function applyInputOverrides(

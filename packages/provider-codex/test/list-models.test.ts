@@ -56,16 +56,38 @@ describe('createModelLister TTL cache [FEAT-003 R4]', () => {
     expect(second.map((m) => m.id)).toEqual(['dynamic-2']);
   });
 
-  it('throws when OPENAI_API_KEY is missing', async () => {
+  it('returns empty list when OPENAI_API_KEY is missing and no codex models cache (FEAT-029 soft-fail)', async () => {
+    const fetchFn = vi.fn() as unknown as typeof fetch;
     const lister = createModelLister(
       {},
       {
-        fetchFn: vi.fn() as unknown as typeof fetch,
+        fetchFn,
         now: () => 0,
         readApiKey: () => undefined,
+        readLocalModels: () => [],
       },
     );
-    await expect(lister.listModels()).rejects.toThrow(/OPENAI_API_KEY/);
+    await expect(lister.listModels()).resolves.toEqual([]);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('falls back to ~/.codex/models_cache.json when OPENAI_API_KEY is missing (FEAT-029 chatgpt-mode)', async () => {
+    const fetchFn = vi.fn() as unknown as typeof fetch;
+    const lister = createModelLister(
+      {},
+      {
+        fetchFn,
+        now: () => 0,
+        readApiKey: () => undefined,
+        readLocalModels: () => [
+          { slug: 'gpt-5.5', priority: 0 },
+          { slug: 'gpt-5.4', priority: 2 },
+        ],
+      },
+    );
+    const result = await lister.listModels();
+    expect(result.map((m) => m.id)).toEqual(['gpt-5.5', 'gpt-5.4']);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('surfaces non-2xx responses as errors', async () => {

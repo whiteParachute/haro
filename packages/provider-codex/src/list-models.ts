@@ -13,7 +13,13 @@
  * forbids hardcoded model literals in this package; if `listModels()` fails
  * to populate, callers get an empty list / `undefined` context window
  * rather than a stale guess.
+ *
+ * FEAT-029 follow-up: when `OPENAI_API_KEY` is absent (ChatGPT-subscription
+ * mode), we read `~/.codex/models_cache.json` instead. That file is owned
+ * and refreshed by the codex CLI itself and reflects the real, login-scoped
+ * model list — no hardcoded slugs in this package.
  */
+import { readLocalCodexModels } from './codex-auth.js';
 
 export interface CodexModelInfo {
   /** Model id as returned by upstream. */
@@ -37,6 +43,11 @@ export interface ListModelsDeps {
   now?: () => number;
   /** Reads `process.env.OPENAI_API_KEY`; tests inject a stub. */
   readApiKey?: () => string | undefined;
+  /**
+   * Reads `~/.codex/models_cache.json` for ChatGPT-subscription users (no
+   * API key). Tests inject a fixed list. Default: real disk read.
+   */
+  readLocalModels?: () => readonly { slug: string; priority?: number }[];
 }
 
 export interface ListModelsOptions {
@@ -68,6 +79,8 @@ export function createModelLister(
   const now = deps.now ?? (() => Date.now());
   const readApiKey =
     deps.readApiKey ?? (() => process.env.OPENAI_API_KEY);
+  const readLocalModels =
+    deps.readLocalModels ?? (() => readLocalCodexModels());
   const ttlMs = (options.ttlSeconds ?? DEFAULT_TTL_SECONDS) * 1000;
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
 
@@ -77,9 +90,12 @@ export function createModelLister(
   async function fetchOnce(): Promise<readonly CodexModelInfo[]> {
     const apiKey = readApiKey();
     if (!apiKey) {
-      throw new Error(
-        'Codex Provider: OPENAI_API_KEY is not set (FEAT-003 R5). Set the env var before listing models.',
-      );
+      // FEAT-029: ChatGPT-subscription auth has no OPENAI_API_KEY; read the
+      // codex CLI's own `models_cache.json` instead — that file is the
+      // authoritative login-scoped model list. Empty/missing cache returns
+      // [] (FEAT-003 AC6: callers must handle empty).
+      const local = readLocalModels();
+      return local.map((m) => ({ id: m.slug }));
     }
     if (typeof fetchFn !== 'function') {
       throw new Error(

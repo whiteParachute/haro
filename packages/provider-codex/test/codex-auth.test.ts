@@ -5,7 +5,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { readLocalCodexAuth, redactAccountId, resolveCodexAuthPath } from '../src/codex-auth.js';
+import {
+  readLocalCodexAuth,
+  readLocalCodexModels,
+  redactAccountId,
+  resolveCodexAuthPath,
+  resolveCodexModelsCachePath,
+} from '../src/codex-auth.js';
 
 describe('codex-auth.readLocalCodexAuth [FEAT-029 R4]', () => {
   const tempRoots: string[] = [];
@@ -109,6 +115,71 @@ describe('codex-auth.readLocalCodexAuth [FEAT-029 R4]', () => {
   it('resolveCodexAuthPath() composes CODEX_HOME with auth.json', () => {
     expect(resolveCodexAuthPath({ homeDir: '/tmp/h', env: {} })).toBe('/tmp/h/.codex/auth.json');
     expect(resolveCodexAuthPath({ homeDir: '/tmp/h', env: { CODEX_HOME: '/var/cdx' } })).toBe('/var/cdx/auth.json');
+  });
+});
+
+describe('codex-auth.readLocalCodexModels [FEAT-029 follow-up]', () => {
+  const tempRoots: string[] = [];
+  afterEach(() => {
+    for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  function makeHome(): { home: string; codexHome: string } {
+    const root = mkdtempSync(join(tmpdir(), 'haro-codex-models-'));
+    tempRoots.push(root);
+    const codexHome = join(root, '.codex');
+    mkdirSync(codexHome, { recursive: true });
+    return { home: root, codexHome };
+  }
+
+  it('returns [] when models_cache.json does not exist', () => {
+    const { home } = makeHome();
+    expect(readLocalCodexModels({ homeDir: home, env: {} })).toEqual([]);
+  });
+
+  it('returns [] when models_cache.json is malformed JSON', () => {
+    const { home, codexHome } = makeHome();
+    writeFileSync(join(codexHome, 'models_cache.json'), '{not json');
+    expect(readLocalCodexModels({ homeDir: home, env: {} })).toEqual([]);
+  });
+
+  it('skips models without slug or with visibility !== "list" and sorts by priority', () => {
+    const { home, codexHome } = makeHome();
+    writeFileSync(
+      join(codexHome, 'models_cache.json'),
+      JSON.stringify({
+        models: [
+          { slug: 'b-model', visibility: 'list', priority: 5 },
+          { slug: 'hidden', visibility: 'beta', priority: 0 },
+          { slug: 'a-model', visibility: 'list', priority: 1, display_name: 'A' },
+          { visibility: 'list', priority: 0 }, // missing slug
+        ],
+      }),
+    );
+    const result = readLocalCodexModels({ homeDir: home, env: {} });
+    expect(result.map((m) => m.slug)).toEqual(['a-model', 'b-model']);
+  });
+
+  it('honors CODEX_HOME env override and resolveCodexModelsCachePath() composition', () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-codex-models-override-'));
+    tempRoots.push(root);
+    const customHome = join(root, 'custom-codex-home');
+    mkdirSync(customHome, { recursive: true });
+    writeFileSync(
+      join(customHome, 'models_cache.json'),
+      JSON.stringify({ models: [{ slug: 'gpt-foo', visibility: 'list' }] }),
+    );
+    const result = readLocalCodexModels({ homeDir: '/should-be-ignored', env: { CODEX_HOME: customHome } });
+    expect(result.map((m) => m.slug)).toEqual(['gpt-foo']);
+    expect(resolveCodexModelsCachePath({ homeDir: '/tmp/h', env: {} })).toBe('/tmp/h/.codex/models_cache.json');
+    expect(resolveCodexModelsCachePath({ homeDir: '/tmp/h', env: { CODEX_HOME: '/var/cdx' } })).toBe('/var/cdx/models_cache.json');
+  });
+
+  it('does not leak developer ~/.codex when env is provided without HOME', () => {
+    // Symmetric to the resolveCodexAuthPath test-leak guard: when env is
+    // explicitly an empty object (test runner injects it), fallback path
+    // points to /nonexistent — never the dev machine's real homedir.
+    expect(resolveCodexModelsCachePath({ env: {} })).toBe('/nonexistent/.codex/models_cache.json');
   });
 });
 
