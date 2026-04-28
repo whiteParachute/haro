@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { AgentEvent, RunAgentResult } from '@haro/core';
+import { authenticateWebSession, readAuthStatus } from '../auth-store.js';
+import { WEB_SESSION_COOKIE_NAME } from '../auth.js';
 import { getRunner, type WebRuntime } from '../runtime.js';
 import type { WebLogger } from '../types.js';
 import { streamAgentRun } from './streamer.js';
@@ -18,6 +20,7 @@ interface ClientState extends WebSocketLike {
   fragmentChunks: Buffer[];
   fragmentLength: number;
   closed: boolean;
+  cookieSessionToken?: string;
   sendMessage(message: ServerMessage): void;
 }
 
@@ -68,7 +71,7 @@ export class WebSocketManager {
     );
     if (head.length > 0) socket.unshift(head);
 
-    const client = this.createClient(socket);
+    const client = this.createClient(socket, readCookie(request.headers.cookie, WEB_SESSION_COOKIE_NAME));
     this.clients.add(client);
     socket.on('data', (chunk) => this.handleData(client, chunk));
     socket.on('close', () => this.removeClient(client));
@@ -106,7 +109,7 @@ export class WebSocketManager {
     };
   }
 
-  private createClient(socket: Duplex): ClientState {
+  private createClient(socket: Duplex, cookieSessionToken?: string): ClientState {
     const client: ClientState = {
       id: randomBytes(8).toString('hex'),
       authenticated: false,
@@ -118,6 +121,7 @@ export class WebSocketManager {
       fragmentChunks: [],
       fragmentLength: 0,
       closed: false,
+      ...(cookieSessionToken ? { cookieSessionToken } : {}),
       send: (data) => {
         if (client.closed) return;
         socket.write(encodeFrame(data));
@@ -145,7 +149,7 @@ export class WebSocketManager {
     }
     client.pending = client.pending.length === 0 ? chunk : Buffer.concat([client.pending, chunk]);
 
-    while (true) {
+    while (client.pending.length > 0) {
       const frame = decodeFrame(client.pending);
       if (!frame) return;
       client.pending = client.pending.subarray(frame.consumed);
@@ -224,8 +228,7 @@ export class WebSocketManager {
     }
 
     if (message.value.type === 'authenticate') {
-      const expected = process.env.HARO_WEB_API_KEY;
-      client.authenticated = !expected || message.value.token === expected;
+      client.authenticated = this.authenticateClient(message.value.token ?? client.cookieSessionToken);
       client.sendMessage({ type: 'authenticated', ok: client.authenticated });
       if (client.authenticated) client.sendMessage({ type: 'system.status', metrics: this.systemMetrics() });
       return;
@@ -347,6 +350,30 @@ export class WebSocketManager {
       if (clients?.size === 0) this.sessionClients.delete(sessionId);
     }
   }
+
+  private authenticateClient(token?: string): boolean {
+    const expected = process.env.HARO_WEB_API_KEY;
+    if (token && expected && token === expected) return true;
+    if (token && authenticateWebSession(this.runtime, token)) return true;
+    if (!expected) {
+      try {
+        return readAuthStatus(this.runtime).userCount === 0;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+}
+
+function readCookie(header: string | string[] | undefined, name: string): string | undefined {
+  const raw = Array.isArray(header) ? header.join('; ') : header;
+  if (!raw) return undefined;
+  for (const part of raw.split(';')) {
+    const [key, ...value] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(value.join('='));
+  }
+  return undefined;
 }
 
 function parseClientMessage(raw: unknown): { ok: true; value: ClientMessage } | { ok: false; error: string } {

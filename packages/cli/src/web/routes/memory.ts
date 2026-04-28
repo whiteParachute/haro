@@ -10,14 +10,30 @@ import {
   type MemoryScope,
   type VerificationStatus,
 } from '@haro/core';
+import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
 const MEMORY_SCOPES = new Set(['platform', 'shared', 'agent']);
 const MEMORY_LAYERS = new Set(['session', 'persistent', 'skill']);
 const VERIFICATION_STATUSES = new Set(['unverified', 'verified', 'conflicted', 'rejected']);
+const MEMORY_SORTS = ['updatedAt', 'createdAt', 'topic', 'layer', 'verificationStatus', 'score'] as const;
+const MEMORY_VERIFICATION_ORDER: Record<VerificationStatus, number> = {
+  verified: 0,
+  unverified: 1,
+  conflicted: 2,
+  rejected: 3,
+};
+const MEMORY_LAYER_ORDER: Record<MemoryLayer, number> = {
+  persistent: 0,
+  skill: 1,
+  session: 2,
+};
+const MEMORY_QUERY_SCAN_LIMIT = 5000;
 
 type StrictRecord = Record<string, unknown>;
+type MemorySortKey = typeof MEMORY_SORTS[number];
+type MemorySearchResultLike = ReturnType<ReturnType<typeof createRouteMemoryFabric>['queryEntries']>[number];
 
 interface MemoryWriteBody {
   scope: 'shared' | 'agent' | 'platform';
@@ -36,19 +52,39 @@ export function createMemoryRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
 
   route.get('/query', (c) => {
-    const query = parseMemoryQuery(c.req.query());
+    const page = parsePageQuery(c, {
+      allowedSort: MEMORY_SORTS,
+      defaultSort: 'updatedAt',
+      defaultOrder: 'desc',
+    });
+    const rawQuery = c.req.query();
+    const query = parseMemoryQuery(rawQuery, page.q);
     if (!query.ok) return c.json({ error: query.error }, 400);
     const fabric = createRouteMemoryFabric(runtime);
-    const results = fabric.queryEntries(query.value);
+    const results = sortMemoryResults(
+      fabric.queryEntries({
+        ...query.value,
+        limit: Math.max(MEMORY_QUERY_SCAN_LIMIT, page.page * page.pageSize),
+      }),
+      page.sort,
+      page.order,
+    );
+    const total = results.length;
+    const items = results
+      .slice(page.offset, page.offset + page.pageSize)
+      .map((result) => ({
+        ...result,
+        entry: result.entry,
+      }));
     return c.json({
       success: true,
       data: {
-        items: results.map((result) => ({
-          ...result,
-          entry: result.entry,
-        })),
-        count: results.length,
-        limit: query.value.limit ?? 20,
+        items,
+        count: total,
+        total,
+        pageInfo: buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
+        limit: page.pageSize,
+        offset: page.offset,
       },
     });
   });
@@ -118,9 +154,7 @@ function createRouteMemoryFabric(runtime: WebRuntime) {
   return createMemoryFabric({ root: paths.dirs.memory, dbFile: runtime.dbFile ?? paths.dbFile });
 }
 
-function parseMemoryQuery(raw: Record<string, string>): { ok: true; value: MemoryQuery } | { ok: false; error: string } {
-  const limit = parseLimit(raw.limit);
-  if (!limit.ok) return limit;
+function parseMemoryQuery(raw: Record<string, string>, q: string): { ok: true; value: MemoryQuery } | { ok: false; error: string } {
   const scope = parseQueryScope(raw.scope, raw.agentId);
   if (!scope.ok) return scope;
   const layer = raw.layer ? readEnum(raw.layer, MEMORY_LAYERS, 'layer') as MemoryLayer | null : undefined;
@@ -133,9 +167,9 @@ function parseMemoryQuery(raw: Record<string, string>): { ok: true; value: Memor
   }
   const query: MemoryQuery = {
     includeArchived: false,
-    limit: limit.value,
   };
-  if (raw.keyword) query.keyword = raw.keyword;
+  const keyword = q || raw.keyword || raw.query;
+  if (keyword) query.keyword = keyword;
   if (scope.value) query.scope = scope.value;
   if (raw.agentId) query.agentId = raw.agentId;
   if (layer) query.layer = layer;
@@ -151,6 +185,36 @@ function parseQueryScope(scope: string | undefined, agentId: string | undefined)
     return { ok: true, value: `agent:${agentId}` };
   }
   return { ok: true, value: scope as 'platform' | 'shared' };
+}
+
+function sortMemoryResults(
+  results: readonly MemorySearchResultLike[],
+  sort: MemorySortKey,
+  order: 'asc' | 'desc',
+): MemorySearchResultLike[] {
+  return [...results].sort((left, right) => {
+    const direction = order === 'asc' ? 1 : -1;
+    const primary = compareMemoryResult(left, right, sort) * direction;
+    if (primary !== 0) return primary;
+    return left.entry.id.localeCompare(right.entry.id) * direction;
+  });
+}
+
+function compareMemoryResult(left: MemorySearchResultLike, right: MemorySearchResultLike, sort: MemorySortKey): number {
+  switch (sort) {
+    case 'score':
+      return left.score - right.score;
+    case 'createdAt':
+      return left.entry.createdAt.localeCompare(right.entry.createdAt);
+    case 'updatedAt':
+      return left.entry.updatedAt.localeCompare(right.entry.updatedAt);
+    case 'topic':
+      return left.entry.topic.localeCompare(right.entry.topic);
+    case 'layer':
+      return MEMORY_LAYER_ORDER[left.entry.layer] - MEMORY_LAYER_ORDER[right.entry.layer];
+    case 'verificationStatus':
+      return MEMORY_VERIFICATION_ORDER[left.entry.verificationStatus] - MEMORY_VERIFICATION_ORDER[right.entry.verificationStatus];
+  }
 }
 
 async function parseMemoryWriteBody(c: Context<ApiKeyAuthEnv>): Promise<{ ok: true; value: MemoryWriteBody } | { ok: false; error: string }> {
@@ -214,15 +278,6 @@ async function parseOptionalJson(c: { req: { json: () => Promise<unknown> } }): 
   }
   if (!isRecord(body)) return { ok: false, error: 'Request body must be a JSON object' };
   return { ok: true, value: body };
-}
-
-function parseLimit(value: string | undefined): { ok: true; value: number } | { ok: false; error: string } {
-  if (value === undefined) return { ok: true, value: 20 };
-  const limit = Number(value);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-    return { ok: false, error: "Query 'limit' must be an integer between 1 and 100" };
-  }
-  return { ok: true, value: limit };
 }
 
 function readEnum(value: unknown, allowed: Set<string>, _field: string): string | null | undefined {

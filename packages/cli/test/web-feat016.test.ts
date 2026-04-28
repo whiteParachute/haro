@@ -134,7 +134,7 @@ describe('web dashboard agent interaction REST [FEAT-016]', () => {
     ]);
   });
 
-  it('rejects session DELETE by default and writes a denied audit event (FEAT-028 R11)', async () => {
+  it('rejects viewer session DELETE and writes a denied audit event (FEAT-028 R11)', async () => {
     delete process.env.HARO_WEB_API_KEY;
     delete process.env.HARO_WEB_ALLOW_SESSION_DELETE;
     const root = mkdtempSync(join(tmpdir(), 'haro-web-feat016-deny-'));
@@ -146,14 +146,33 @@ describe('web dashboard agent interaction REST [FEAT-016]', () => {
     db.close();
 
     const app = createWebApp({ logger: createMockLogger(), runtime: { agentRegistry: createRegistry(), runner: createRunner() as never, root } });
-    const response = await app.request('/api/v1/sessions/s-denied', { method: 'DELETE' });
+    const bootstrap = await (await app.request('/api/v1/auth/bootstrap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'owner', password: 'owner-password' }),
+    })).json() as { data: { session: { token: string } } };
+    await app.request('/api/v1/users', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${bootstrap.data.session.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'viewer', password: 'viewer-password', role: 'viewer' }),
+    });
+    const viewerLogin = await (await app.request('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'viewer', password: 'viewer-password' }),
+    })).json() as { data: { session: { token: string } } };
+
+    const response = await app.request('/api/v1/sessions/s-denied', {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${viewerLogin.data.session.token}` },
+    });
     expect(response.status).toBe(403);
     const body = await response.json();
-    expect(body.error).toBe('Session deletion is disabled');
-    expect(body.reason).toContain('HARO_WEB_ALLOW_SESSION_DELETE');
+    expect(body.error).toBe('Forbidden');
+    expect(body.minimumRole).toBe('operator');
 
-    expect((await app.request('/api/v1/sessions/s-denied')).status).toBe(200);
-    const eventsAfter = await (await app.request('/api/v1/sessions/s-denied/events')).json();
+    expect((await app.request('/api/v1/sessions/s-denied', { headers: { authorization: `Bearer ${viewerLogin.data.session.token}` } })).status).toBe(200);
+    const eventsAfter = await (await app.request('/api/v1/sessions/s-denied/events', { headers: { authorization: `Bearer ${viewerLogin.data.session.token}` } })).json();
     expect(eventsAfter.data.items).toHaveLength(1);
 
     const verifyDb = haroDb.initHaroDatabase({ root, keepOpen: true }).database!;

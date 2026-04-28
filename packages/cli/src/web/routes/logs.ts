@@ -1,7 +1,29 @@
 import { Hono } from 'hono';
 import { db as haroDb } from '@haro/core';
+import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
+
+const SESSION_EVENT_SORTS = {
+  createdAt: 'se.created_at',
+  sessionId: 'se.session_id',
+  agentId: 's.agent_id',
+  eventType: 'se.event_type',
+  provider: 's.provider',
+  model: 's.model',
+  latencyMs: 'se.latency_ms',
+} as const;
+const PROVIDER_FALLBACK_SORTS = {
+  createdAt: 'created_at',
+  sessionId: 'session_id',
+  originalProvider: 'original_provider',
+  originalModel: 'original_model',
+  fallbackProvider: 'fallback_provider',
+  fallbackModel: 'fallback_model',
+  trigger: 'trigger',
+} as const;
+const SESSION_EVENT_ALLOWED_SORTS = Object.keys(SESSION_EVENT_SORTS) as Array<keyof typeof SESSION_EVENT_SORTS>;
+const PROVIDER_FALLBACK_ALLOWED_SORTS = Object.keys(PROVIDER_FALLBACK_SORTS) as Array<keyof typeof PROVIDER_FALLBACK_SORTS>;
 
 interface DatabaseLike {
   prepare(sql: string): {
@@ -41,14 +63,20 @@ export function createLogsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   route.get('/session-events', (c) => {
     const db = openDb(runtime);
     try {
+      const page = parsePageQuery(c, {
+        allowedSort: SESSION_EVENT_ALLOWED_SORTS,
+        defaultSort: 'createdAt',
+        defaultOrder: 'desc',
+      });
       const filters = buildEventFilters({
         sessionId: c.req.query('sessionId'),
         agentId: c.req.query('agentId'),
         eventType: c.req.query('eventType'),
         from: c.req.query('from'),
         to: c.req.query('to'),
+        q: page.q,
       });
-      const limit = clampNumber(c.req.query('limit'), 1, 1000, 100);
+      const orderBy = SESSION_EVENT_SORTS[page.sort];
       const rows = db.prepare(
         `SELECT se.id,
                 se.session_id,
@@ -62,15 +90,24 @@ export function createLogsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
            FROM session_events se
            JOIN sessions s ON s.id = se.session_id
           ${filters.where}
-       ORDER BY se.created_at DESC, se.id DESC
-          LIMIT ?`,
-      ).all(...filters.params, limit) as SessionEventRow[];
+       ORDER BY ${orderBy} ${toSqlOrder(page.order)}, se.id ${toSqlOrder(page.order)}
+          LIMIT ? OFFSET ?`,
+      ).all(...filters.params, page.pageSize, page.offset) as SessionEventRow[];
+      const total = (db.prepare(
+        `SELECT COUNT(*) AS count
+           FROM session_events se
+           JOIN sessions s ON s.id = se.session_id
+          ${filters.where}`,
+      ).get(...filters.params) as { count: number }).count;
 
       return c.json({
         success: true,
         data: {
           items: rows.map(toSessionEvent),
-          limit,
+          pageInfo: buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
+          total,
+          limit: page.pageSize,
+          offset: page.offset,
         },
       });
     } finally {
@@ -81,12 +118,18 @@ export function createLogsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   route.get('/provider-fallbacks', (c) => {
     const db = openDb(runtime);
     try {
+      const page = parsePageQuery(c, {
+        allowedSort: PROVIDER_FALLBACK_ALLOWED_SORTS,
+        defaultSort: 'createdAt',
+        defaultOrder: 'desc',
+      });
       const filters = buildFallbackFilters({
         sessionId: c.req.query('sessionId'),
         from: c.req.query('from'),
         to: c.req.query('to'),
+        q: page.q,
       });
-      const limit = clampNumber(c.req.query('limit'), 1, 1000, 100);
+      const orderBy = PROVIDER_FALLBACK_SORTS[page.sort];
       const rows = db.prepare(
         `SELECT id,
                 session_id,
@@ -99,15 +142,23 @@ export function createLogsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
                 created_at
            FROM provider_fallback_log
           ${filters.where}
-       ORDER BY created_at DESC, id DESC
-          LIMIT ?`,
-      ).all(...filters.params, limit) as FallbackRow[];
+       ORDER BY ${orderBy} ${toSqlOrder(page.order)}, id ${toSqlOrder(page.order)}
+          LIMIT ? OFFSET ?`,
+      ).all(...filters.params, page.pageSize, page.offset) as FallbackRow[];
+      const total = (db.prepare(
+        `SELECT COUNT(*) AS count
+           FROM provider_fallback_log
+          ${filters.where}`,
+      ).get(...filters.params) as { count: number }).count;
 
       return c.json({
         success: true,
         data: {
           items: rows.map(toFallback),
-          limit,
+          pageInfo: buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
+          total,
+          limit: page.pageSize,
+          offset: page.offset,
         },
       });
     } finally {
@@ -128,6 +179,7 @@ function buildEventFilters(filters: {
   eventType?: string;
   from?: string;
   to?: string;
+  q?: string;
 }): { where: string; params: string[] } {
   const clauses: string[] = [];
   const params: string[] = [];
@@ -151,10 +203,15 @@ function buildEventFilters(filters: {
     clauses.push('se.created_at <= ?');
     params.push(filters.to);
   }
+  if (filters.q) {
+    const like = `%${filters.q}%`;
+    clauses.push('(se.session_id LIKE ? OR s.agent_id LIKE ? OR s.provider LIKE ? OR s.model LIKE ? OR se.event_type LIKE ? OR se.event_data LIKE ?)');
+    params.push(like, like, like, like, like, like);
+  }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params };
 }
 
-function buildFallbackFilters(filters: { sessionId?: string; from?: string; to?: string }): { where: string; params: string[] } {
+function buildFallbackFilters(filters: { sessionId?: string; from?: string; to?: string; q?: string }): { where: string; params: string[] } {
   const clauses: string[] = [];
   const params: string[] = [];
   if (filters.sessionId) {
@@ -168,6 +225,11 @@ function buildFallbackFilters(filters: { sessionId?: string; from?: string; to?:
   if (filters.to) {
     clauses.push('created_at <= ?');
     params.push(filters.to);
+  }
+  if (filters.q) {
+    const like = `%${filters.q}%`;
+    clauses.push("(session_id LIKE ? OR original_provider LIKE ? OR original_model LIKE ? OR fallback_provider LIKE ? OR fallback_model LIKE ? OR trigger LIKE ? OR COALESCE(rule_id, '') LIKE ?)");
+    params.push(like, like, like, like, like, like, like);
   }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params };
 }
@@ -208,9 +270,6 @@ function parseJson(value: string): unknown {
   }
 }
 
-function clampNumber(raw: string | undefined, min: number, max: number, fallback: number): number {
-  if (!raw) return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, parsed));
+function toSqlOrder(order: 'asc' | 'desc'): 'ASC' | 'DESC' {
+  return order === 'asc' ? 'ASC' : 'DESC';
 }

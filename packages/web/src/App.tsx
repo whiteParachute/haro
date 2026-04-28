@@ -1,9 +1,15 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
 
+import { AuthGuard } from '@/components/auth/AuthGuard';
 import { RootLayout } from '@/components/layout/RootLayout';
 import { navigationItems } from '@/components/layout/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
+import { K } from '@/i18n/keys';
+import { useT } from '@/i18n/provider';
 import { HomePage } from '@/pages/HomePage';
+import { LoginPage } from '@/pages/LoginPage';
+import { BootstrapPage } from '@/pages/BootstrapPage';
 import { ChatPage } from '@/pages/ChatPage';
 import { ChannelPage } from '@/pages/ChannelPage';
 import { DispatchPage } from '@/pages/DispatchPage';
@@ -18,8 +24,11 @@ import { InvokeAgentPage } from '@/pages/InvokeAgentPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { MonitorPage } from '@/pages/MonitorPage';
 import { SkillsPage } from '@/pages/SkillsPage';
+import { UsersPage } from '@/pages/UsersPage';
+import type { WebUserRole } from '@/types';
 
 function PlaceholderPage({ title, description }: { title: string; description: string }) {
+  const t = useT();
   return (
     <div className="mx-auto flex w-full max-w-4xl">
       <Card className="w-full">
@@ -28,11 +37,15 @@ function PlaceholderPage({ title, description }: { title: string; description: s
           <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          此页面将在后续 FEAT 中逐步补齐，目前仅保留导航占位与布局结构。
+          {t(K.TABLE.EMPTY)}
         </CardContent>
       </Card>
     </div>
   );
+}
+
+function guard(element: ReactNode, requireRole?: WebUserRole) {
+  return <AuthGuard requireRole={requireRole}>{element}</AuthGuard>;
 }
 
 const concreteRoutes = [
@@ -50,6 +63,7 @@ const concreteRoutes = [
   '/invoke',
   '/monitor',
   '/skills',
+  '/users',
 ];
 const placeholderRoutes = navigationItems.filter((item) => !concreteRoutes.includes(item.to));
 
@@ -57,33 +71,33 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="login" element={<LoginPage />} />
+        <Route path="bootstrap" element={<BootstrapPage />} />
         <Route element={<RootLayout />}>
-          <Route index element={<HomePage />} />
-          <Route path="chat" element={<ChatPage />} />
-          <Route path="dispatch" element={<DispatchPage />} />
-          <Route path="sessions" element={<SessionsPage />} />
-          <Route path="sessions/:id" element={<SessionDetailPage />} />
-          <Route path="status" element={<StatusPage />} />
-          <Route path="channels" element={<ChannelPage />} />
-          <Route path="gateway" element={<GatewayPage />} />
-          <Route path="agents" element={<AgentEditorPage />} />
-          <Route path="knowledge" element={<KnowledgePage />} />
-          <Route path="logs" element={<LogsPage />} />
-          <Route path="invoke" element={<InvokeAgentPage />} />
-          <Route path="monitor" element={<MonitorPage />} />
-          <Route path="skills" element={<SkillsPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route index element={guard(<HomePage />)} />
+          <Route path="chat" element={guard(<ChatPage />)} />
+          <Route path="dispatch" element={guard(<DispatchPage />)} />
+          <Route path="sessions" element={guard(<SessionsPage />)} />
+          <Route path="sessions/:id" element={guard(<SessionDetailPage />)} />
+          <Route path="status" element={guard(<StatusPage />)} />
+          <Route path="channels" element={guard(<ChannelPage />)} />
+          <Route path="gateway" element={guard(<GatewayPage />)} />
+          <Route path="agents" element={guard(<AgentEditorPage />)} />
+          <Route path="knowledge" element={guard(<KnowledgePage />)} />
+          <Route path="logs" element={guard(<LogsPage />)} />
+          <Route path="invoke" element={guard(<InvokeAgentPage />)} />
+          <Route path="monitor" element={guard(<MonitorPage />)} />
+          <Route path="skills" element={guard(<SkillsPage />)} />
+          <Route path="settings" element={guard(<SettingsPage />)} />
+          <Route path="users" element={guard(<UsersPage />, 'admin')} />
           {placeholderRoutes.map((item) => (
             <Route
               key={item.to}
               path={item.to.slice(1)}
-              element={<PlaceholderPage title={item.title} description={item.description} />}
+              element={guard(<PlaceholderPage title={item.title} description={item.description} />, item.requireRole)}
             />
           ))}
-          <Route
-            path="*"
-            element={<PlaceholderPage title="页面未找到" description="当前访问的路由尚未定义。" />}
-          />
+          <Route path="*" element={<PlaceholderPage title="404" description="Not found" />} />
         </Route>
       </Routes>
     </BrowserRouter>

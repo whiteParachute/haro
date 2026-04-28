@@ -20,6 +20,9 @@ import type {
   ProviderStatsResponse,
   WorkflowDebugDetail,
   WorkflowListResponse,
+  PaginatedQuery,
+  PaginatedResponse,
+  WebUser,
 } from '@/types';
 
 interface ErrorPayload {
@@ -90,11 +93,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<ApiResp
   const response = await fetch(`${resolveApiBaseUrl()}${normalizePath(path)}`, {
     ...init,
     headers,
+    credentials: 'include',
   });
 
   const payload = await readPayload<T>(response);
 
   if (!response.ok) {
+    if (response.status === 401 && !normalizePath(path).startsWith('/v1/auth/')) {
+      void useAuthStore.getState().checkAuth();
+    }
     throw createRequestError(response, payload);
   }
 
@@ -124,6 +131,14 @@ export function put<T>(path: string, body?: unknown, init?: RequestInit) {
   });
 }
 
+export function patch<T>(path: string, body?: unknown, init?: RequestInit) {
+  return request<T>(path, {
+    ...init,
+    method: 'PATCH',
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
 export function del<T>(path: string, init?: RequestInit) {
   return request<T>(path, {
     ...init,
@@ -133,6 +148,15 @@ export function del<T>(path: string, init?: RequestInit) {
 
 function encodePathSegment(value: string) {
   return encodeURIComponent(value);
+}
+
+function encodePaginatedQuery(filters: PaginatedQuery = {}) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') searchParams.set(key, String(value));
+  }
+  const query = searchParams.toString();
+  return query ? `?${query}` : '';
 }
 
 export function listWorkflows(filters: { limit?: number } = {}, init?: RequestInit) {
@@ -170,8 +194,17 @@ export function queryMemory(filters: MemoryQueryFilters = {}, init?: RequestInit
   if (filters.layer) searchParams.set('layer', filters.layer);
   if (filters.verificationStatus) searchParams.set('verificationStatus', filters.verificationStatus);
   if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
+  if ('page' in filters && filters.page !== undefined) searchParams.set('page', String(filters.page));
+  if ('pageSize' in filters && filters.pageSize !== undefined) searchParams.set('pageSize', String(filters.pageSize));
+  if ('sort' in filters && filters.sort) searchParams.set('sort', String(filters.sort));
+  if ('order' in filters && filters.order) searchParams.set('order', String(filters.order));
+  if ('q' in filters && filters.q) searchParams.set('q', String(filters.q));
   const query = searchParams.toString();
   return get<MemoryQueryResponse>(`/v1/memory/query${query ? `?${query}` : ''}`, init);
+}
+
+export function queryMemoryPage(filters: MemoryQueryFilters & PaginatedQuery = {}, init?: RequestInit) {
+  return get<PaginatedResponse<MemoryQueryResponse['items'][number]>>(`/v1/memory/query${encodePaginatedQuery(filters)}`, init);
 }
 
 export function writeMemory(input: MemoryWriteInput, init?: RequestInit) {
@@ -186,8 +219,12 @@ export function runMemoryMaintenance(input: { scope?: string; agentId?: string }
   return post<MemoryMaintenanceTask>('/v1/memory/maintenance', input, init);
 }
 
-export function listSkills(init?: RequestInit) {
-  return get<SkillListResponse>('/v1/skills', init);
+export function listSkills(init?: RequestInit): Promise<ApiResponse<SkillListResponse>>;
+export function listSkills(filters: PaginatedQuery, init?: RequestInit): Promise<ApiResponse<PaginatedResponse<SkillListResponse['items'][number]>>>;
+export function listSkills(filtersOrInit?: PaginatedQuery | RequestInit, init?: RequestInit) {
+  const hasQuery = filtersOrInit && !('headers' in filtersOrInit) && !('method' in filtersOrInit) && !('body' in filtersOrInit);
+  if (hasQuery) return get<PaginatedResponse<SkillListResponse['items'][number]>>(`/v1/skills${encodePaginatedQuery(filtersOrInit as PaginatedQuery)}`, init);
+  return get<SkillListResponse>('/v1/skills', filtersOrInit as RequestInit | undefined);
 }
 
 export function getSkill(id: string, init?: RequestInit) {
@@ -218,8 +255,13 @@ export function listSessionEvents(filters: LogSessionEventFilters = {}, init?: R
   if (filters.from) searchParams.set('from', filters.from);
   if (filters.to) searchParams.set('to', filters.to);
   if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
+  if ('page' in filters && filters.page !== undefined) searchParams.set('page', String(filters.page));
+  if ('pageSize' in filters && filters.pageSize !== undefined) searchParams.set('pageSize', String(filters.pageSize));
+  if ('sort' in filters && filters.sort) searchParams.set('sort', String(filters.sort));
+  if ('order' in filters && filters.order) searchParams.set('order', String(filters.order));
+  if ('q' in filters && filters.q) searchParams.set('q', String(filters.q));
   const query = searchParams.toString();
-  return get<{ items: LogSessionEventRecord[]; limit: number }>(`/v1/logs/session-events${query ? `?${query}` : ''}`, init);
+  return get<PaginatedResponse<LogSessionEventRecord> & { limit?: number }>(`/v1/logs/session-events${query ? `?${query}` : ''}`, init);
 }
 
 export function listProviderFallbacks(filters: Pick<LogSessionEventFilters, 'sessionId' | 'from' | 'to' | 'limit'> = {}, init?: RequestInit) {
@@ -228,10 +270,31 @@ export function listProviderFallbacks(filters: Pick<LogSessionEventFilters, 'ses
   if (filters.from) searchParams.set('from', filters.from);
   if (filters.to) searchParams.set('to', filters.to);
   if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
+  if ('page' in filters && filters.page !== undefined) searchParams.set('page', String(filters.page));
+  if ('pageSize' in filters && filters.pageSize !== undefined) searchParams.set('pageSize', String(filters.pageSize));
+  if ('sort' in filters && filters.sort) searchParams.set('sort', String(filters.sort));
+  if ('order' in filters && filters.order) searchParams.set('order', String(filters.order));
+  if ('q' in filters && filters.q) searchParams.set('q', String(filters.q));
   const query = searchParams.toString();
-  return get<{ items: ProviderFallbackRecord[]; limit: number }>(`/v1/logs/provider-fallbacks${query ? `?${query}` : ''}`, init);
+  return get<PaginatedResponse<ProviderFallbackRecord> & { limit?: number }>(`/v1/logs/provider-fallbacks${query ? `?${query}` : ''}`, init);
 }
 
 export function getProviderStats(init?: RequestInit) {
   return get<ProviderStatsResponse>('/v1/providers/stats', init);
+}
+
+export function listSessionsPage<T>(filters: PaginatedQuery = {}, init?: RequestInit) {
+  return get<PaginatedResponse<T>>(`/v1/sessions${encodePaginatedQuery(filters)}`, init);
+}
+
+export function listUsersPage(filters: PaginatedQuery = {}, init?: RequestInit) {
+  return get<PaginatedResponse<WebUser>>(`/v1/users${encodePaginatedQuery(filters)}`, init);
+}
+
+export function createWebUser(input: { username: string; displayName?: string; password: string; role: string }, init?: RequestInit) {
+  return post<WebUser>('/v1/users', input, init);
+}
+
+export function updateWebUser(id: string, input: Partial<Pick<WebUser, 'displayName' | 'role' | 'status'>>, init?: RequestInit) {
+  return patch<WebUser>(`/v1/users/${encodePathSegment(id)}`, input, init);
 }

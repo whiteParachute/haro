@@ -7,16 +7,36 @@ import {
   resetUserPassword,
   updateUser,
   WebAuthError,
+  type WebUserWithAudit,
 } from '../auth-store.js';
+import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
+
+const USER_SORTS = ['createdAt', 'updatedAt', 'lastLoginAt', 'username', 'displayName', 'role', 'status'] as const;
+type UserSortKey = typeof USER_SORTS[number];
 
 export function createUsersRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
 
   route.get('/', requireWebPermission('read-only'), (c) => {
-    const users = listUsers(runtime);
-    return c.json({ success: true, data: { items: users, total: users.length } });
+    const page = parsePageQuery(c, {
+      allowedSort: USER_SORTS,
+      defaultSort: 'createdAt',
+      defaultOrder: 'asc',
+    });
+    const users = sortUsers(filterUsers(listUsers(runtime), page.q), page.sort, page.order);
+    const total = users.length;
+    return c.json({
+      success: true,
+      data: {
+        items: users.slice(page.offset, page.offset + page.pageSize),
+        pageInfo: buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
+        total,
+        limit: page.pageSize,
+        offset: page.offset,
+      },
+    });
   });
 
   route.get('/audit-events', requireWebPermission('read-only'), (c) => {
@@ -76,6 +96,53 @@ export function createUsersRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   });
 
   return route;
+}
+
+function filterUsers(items: readonly WebUserWithAudit[], q: string): WebUserWithAudit[] {
+  if (!q) return [...items];
+  const needle = q.toLowerCase();
+  return items.filter((item) => [
+    item.id,
+    item.username,
+    item.displayName,
+    item.role,
+    item.status,
+  ].some((value) => value.toLowerCase().includes(needle)));
+}
+
+function sortUsers(items: readonly WebUserWithAudit[], sort: UserSortKey, order: 'asc' | 'desc'): WebUserWithAudit[] {
+  return [...items].sort((left, right) => {
+    const direction = order === 'asc' ? 1 : -1;
+    const primary = compareUser(left, right, sort) * direction;
+    if (primary !== 0) return primary;
+    return left.id.localeCompare(right.id) * direction;
+  });
+}
+
+function compareUser(left: WebUserWithAudit, right: WebUserWithAudit, sort: UserSortKey): number {
+  switch (sort) {
+    case 'createdAt':
+      return left.createdAt.localeCompare(right.createdAt);
+    case 'updatedAt':
+      return left.updatedAt.localeCompare(right.updatedAt);
+    case 'lastLoginAt':
+      return compareNullableString(left.lastLoginAt, right.lastLoginAt);
+    case 'username':
+      return left.username.localeCompare(right.username);
+    case 'displayName':
+      return left.displayName.localeCompare(right.displayName);
+    case 'role':
+      return left.role.localeCompare(right.role);
+    case 'status':
+      return left.status.localeCompare(right.status);
+  }
+}
+
+function compareNullableString(left: string | null, right: string | null): number {
+  if (!left && !right) return 0;
+  if (!left) return -1;
+  if (!right) return 1;
+  return left.localeCompare(right);
 }
 
 async function readJsonObject(read: () => Promise<unknown>): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; error: string }> {

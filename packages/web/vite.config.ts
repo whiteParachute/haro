@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type UserConfig } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,4 +23,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
-});
+  test: {
+    exclude: ['e2e/**', 'dist/**', 'node_modules/**'],
+  },
+} as UserConfig & { test: { exclude: string[] } });

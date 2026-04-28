@@ -99,6 +99,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
     cors({
       origin: VITE_DEV_ORIGIN,
       allowHeaders: ALLOWED_CORS_HEADERS,
+      credentials: true,
     }),
   );
   app.use('*', createDashboardAuth(runtime));

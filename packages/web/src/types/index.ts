@@ -353,3 +353,41 @@ export interface ProviderStatsResponse {
   windows: Record<ProviderStatsWindow, ProviderStats[]>;
   generatedAt: string;
 }
+
+export interface PageInfo {
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  pageInfo: PageInfo;
+  total: number;
+}
+
+export interface PaginatedQuery {
+  page?: number;
+  pageSize?: number;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  q?: string;
+  [key: string]: string | number | undefined;
+}
+
+export type WebUserRole = 'viewer' | 'operator' | 'admin' | 'owner';
+export type WebUserStatus = 'active' | 'disabled';
+
+export interface WebUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: WebUserRole;
+  status?: WebUserStatus;
+  createdAt?: string;
+  updatedAt?: string;
+  lastLoginAt?: string | null;
+  auditSummary?: { count: number; lastEventAt: string | null };
+}

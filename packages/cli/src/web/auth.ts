@@ -1,9 +1,12 @@
 import type { Context } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { createMiddleware } from 'hono/factory';
 import { createWebLogger } from './logger.js';
 import { authenticateWebSession, readAuthStatus, WEB_USER_ROLES } from './auth-store.js';
 import type { ApiKeyAuthEnv, WebAuthContext, WebLogger, WebOperationClass, WebUserRole } from './types.js';
 import type { WebRuntime } from './runtime.js';
+
+export const WEB_SESSION_COOKIE_NAME = 'haro_web_session';
 
 export const UNAUTHENTICATED_DASHBOARD_WARNING =
   'Dashboard running in unauthenticated mode — set HARO_WEB_API_KEY to enable auth';
@@ -127,7 +130,9 @@ function readSessionToken(c: Context<ApiKeyAuthEnv>): string | undefined {
     if (token) return token;
   }
   const headerToken = c.req.header('x-haro-session-token')?.trim();
-  return headerToken || undefined;
+  if (headerToken) return headerToken;
+  const cookieToken = getCookie(c, WEB_SESSION_COOKIE_NAME)?.trim();
+  return cookieToken || undefined;
 }
 
 function isPublicRequest(path: string, _legacyApiKeyEnabled: boolean): boolean {

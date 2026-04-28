@@ -35,6 +35,7 @@ export class DashboardWebSocketClient {
   private reconnectAttempt = 0;
   private manualClose = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private triedLegacyToken = false;
 
   constructor(
     private readonly options: {
@@ -92,8 +93,8 @@ export class DashboardWebSocketClient {
 
   private handleOpen(): void {
     this.reconnectAttempt = 0;
-    const token = resolveApiKey();
-    this.sendNow({ type: 'authenticate', ...(token ? { token } : {}) });
+    this.triedLegacyToken = false;
+    this.sendNow({ type: 'authenticate' });
     for (const channel of this.subscribedChannels) {
       this.sendNow({ type: 'subscribe', channel });
     }
@@ -106,6 +107,14 @@ export class DashboardWebSocketClient {
   private handleMessage(event: MessageEvent): void {
     try {
       const message = JSON.parse(String(event.data)) as ServerMessage;
+      if (message.type === 'authenticated' && !message.ok && !this.triedLegacyToken) {
+        const token = resolveApiKey();
+        if (token) {
+          this.triedLegacyToken = true;
+          this.sendNow({ type: 'authenticate', token });
+          return;
+        }
+      }
       if (message.type === 'session.update' && !isTerminalSessionStatus(message.status)) {
         this.observedSessions.add(message.sessionId);
       }

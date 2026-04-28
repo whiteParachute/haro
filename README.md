@@ -25,6 +25,18 @@ Haro 面向的是这样一类问题：
 
 ## 快速开始
 
+### Web Dashboard 首次访问
+
+```bash
+pnpm build
+pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
+```
+
+浏览器打开 `http://127.0.0.1:3456/` 后，首次无用户实例会自动进入
+`/bootstrap`：创建第一个 `owner` → 自动登录 → 进入 `/chat`。后续访问会先到
+`/login`，登录后进入 Dashboard；旧部署仍可在迁移窗口内继续使用
+`HARO_WEB_API_KEY` / `x-api-key` 兼容 API 访问。
+
 ### 安装
 
 **macOS / Linux**

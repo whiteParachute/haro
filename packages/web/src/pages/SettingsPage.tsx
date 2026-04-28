@@ -2,9 +2,13 @@ import { useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfigEditor } from '@/components/settings/ConfigEditor';
 import { ConfigSources } from '@/components/settings/ConfigSources';
+import { K } from '@/i18n/keys';
+import { useI18n, useT, type Locale } from '@/i18n/provider';
 import { useConfigStore } from '@/stores/config';
 
 export function SettingsPage() {
+  const t = useT();
+  const { locale, setLocale } = useI18n();
   const { config, rawYaml, sources, fieldSources, channels, loading, saving, saved, error, issues, loadConfig, saveConfig, validateCommonConfig } = useConfigStore();
 
   useEffect(() => {
@@ -22,6 +26,23 @@ export function SettingsPage() {
           {loading ? <p className="text-muted-foreground">加载配置中…</p> : null}
           {saved ? <p className="text-emerald-600 dark:text-emerald-300">配置已保存，对 CLI 立即生效。</p> : null}
           {error ? <p className="text-destructive">{error}</p> : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t(K.SETTINGS.LOCALE)}</CardTitle>
+          <p className="text-sm text-muted-foreground">{t(K.SETTINGS.LOCALE_DESC)}</p>
+        </CardHeader>
+        <CardContent>
+          <select
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+            value={locale}
+            onChange={(event) => setLocale(event.target.value as Locale)}
+          >
+            <option value="zh-CN">zh-CN · 中文</option>
+            <option value="en-US">en-US · English</option>
+          </select>
         </CardContent>
       </Card>
 

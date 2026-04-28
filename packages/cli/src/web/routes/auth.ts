@@ -1,5 +1,7 @@
 import { Hono, type Context } from 'hono';
+import { deleteCookie, setCookie } from 'hono/cookie';
 import { availablePermissions, availableRoles, readWebAuth } from '../auth.js';
+import { WEB_SESSION_COOKIE_NAME } from '../auth.js';
 import {
   bootstrapOwner,
   loginWithPassword,
@@ -24,6 +26,7 @@ export function createAuthRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
         displayName: body.value.displayName,
         password: body.value.password,
       });
+      setSessionCookie(c, result.session.token, result.session.expiresAt);
       return c.json({ success: true, data: result }, 201);
     } catch (error) {
       return handleAuthError(c, error);
@@ -38,6 +41,7 @@ export function createAuthRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
         username: body.value.username,
         password: body.value.password,
       });
+      setSessionCookie(c, result.session.token, result.session.expiresAt);
       return c.json({ success: true, data: result });
     } catch (error) {
       return handleAuthError(c, error);
@@ -63,10 +67,21 @@ export function createAuthRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     const auth = readWebAuth(c);
     if (!auth) return c.json({ error: 'Unauthorized' }, 401);
     revokeSession(runtime, auth);
+    deleteCookie(c, WEB_SESSION_COOKIE_NAME, { path: '/' });
     return c.json({ success: true, data: { loggedOut: true } });
   });
 
   return route;
+}
+
+function setSessionCookie(c: Context<ApiKeyAuthEnv>, token: string, expiresAt: string): void {
+  setCookie(c, WEB_SESSION_COOKIE_NAME, token, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: c.req.url.startsWith('https://'),
+    expires: new Date(expiresAt),
+  });
 }
 
 function toStatusResponse(runtime: WebRuntime) {

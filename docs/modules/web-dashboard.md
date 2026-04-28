@@ -8,8 +8,8 @@ Web Dashboard 是 Haro 的可视化呈现层。FEAT-015 交付的是基础框架
 
 | 层 | 路径 | 职责 |
 | --- | --- | --- |
-| 前端 | `packages/web/` | React 19 + Vite 8 + Tailwind 4 + shadcn/ui 风格组件，提供 Dashboard shell、首页、Chat、Sessions、Session Detail、主题切换、API/WS client 与 auth/chat/session stores。 |
-| 后端 | `packages/cli/src/web/` | Hono app factory、API key 认证中间件、Agents/Sessions REST、`/ws` WebSocket 协议、HTTP server 启停、生产静态文件服务。 |
+| 前端 | `packages/web/` | React 19 + Vite 8 + Tailwind 4 + shadcn/ui 风格组件，提供 Dashboard shell、bootstrap/login、Chat、Sessions、Users、Logs、Knowledge、Skills、主题切换、轻量 i18n、API/WS client 与 auth/list stores。 |
+| 后端 | `packages/cli/src/web/` | Hono app factory、本地用户/session + legacy API key 认证、RBAC middleware、统一分页 REST、`/ws` WebSocket 协议、HTTP server 启停、生产静态文件服务。 |
 | CLI | `packages/cli/src/index.ts` | 通过 `registerCommand()` 注册 `haro web`，支持 `--port` 与 `--host`。 |
 | 根脚本 | `package.json` | `pnpm dev:web` 同时启动 Vite dev server 与 Hono API server。 |
 
@@ -52,26 +52,82 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
 - `GET /api/v1/providers/stats` 按 `24h`、`7d`、`all` 三个固定窗口聚合 `session_events`、`provider_fallback_log` 与 FEAT-023 `token_budget_ledger`，返回 provider/model 调用、成功/失败、fallback、`avgLatencyMs`、token 和估算成本。
 - `GET /api/v1/memory/query`、`POST /api/v1/memory/write`、`GET /api/v1/memory/stats`、`POST /api/v1/memory/maintenance` 提供 FEAT-024 Knowledge contract。查询支持 `keyword/scope/agentId/layer/verificationStatus/limit`；写入仅允许 `shared` 和当前 agent scope，`platform` scope 一律拒绝；maintenance 返回 `202 + taskId` 异步 contract。
 - `GET /api/v1/skills`、`GET /api/v1/skills/:id`、`POST /api/v1/skills/:id/enable|disable`、`POST /api/v1/skills/install`、`DELETE /api/v1/skills/:id` 提供 FEAT-024 Skills contract。列表展示 enabled/source/installedAt/preinstalled/usage/asset status；预装 skill 不可卸载；user skill install/uninstall 必须返回 asset audit 结果或显式 `unsupported`。
+- `GET /api/v1/users`、`POST /api/v1/users`、`PATCH /api/v1/users/:id` 提供 FEAT-028 本地 Web 用户管理；创建/禁用/改角色等写操作需要 admin 及以上并写入 `web_audit_events`。
 
-## 认证与日志
+## 认证、分页、i18n 与日志（FEAT-028）
 
-- `HARO_WEB_API_KEY` 未配置时，Dashboard 允许本地无认证访问，并写入 WARN：`Dashboard running in unauthenticated mode — set HARO_WEB_API_KEY to enable auth`
-- 配置 `HARO_WEB_API_KEY` 后，请求需携带 `x-api-key`，否则返回 `401 {"error":"Unauthorized"}`
-- 前端首页的 Foundation APIs 卡片提供最小 API key 配置入口；key 持久化在
-  `localStorage["haro:web-api-key"]`，API client 会自动注入 `x-api-key`
-- 当前端收到 401，会提示 Dashboard API key 缺失或不匹配，并指向首页配置入口与
-  `haro:web-api-key` localStorage key，便于用户恢复
-- 所有 HTTP 请求通过 `createLogger()` 写入 `~/.haro/logs/haro.log`，日志为 pino JSON 格式，至少包含 `method`、`path`、`statusCode`、`durationMs`
+### 多用户与登录流程
 
-### Phase 1 产品成熟度补齐（FEAT-028）
+- 新实例首次访问 `/` 或受保护路由时，如果 `web_users` 为空，前端会跳转到
+  `/bootstrap`，由浏览器创建第一个 `owner` 用户。bootstrap 成功后后端写入
+  `web_users` 与 `web_sessions`，设置 httpOnly `haro_web_session` cookie，并自动进入
+  `/chat`。
+- 已有用户实例访问受保护路由时会跳到 `/login`。登录成功后同样设置 session cookie；
+  `/api/v1/auth/me` 返回当前用户、角色与权限摘要，前端 `AuthGuard` 据此决定渲染、
+  跳转或展示 403。
+- 角色层级为 `viewer < operator < admin < owner`。`/users` 需要 admin 及以上；
+  viewer 在 Sessions 页面只能读取列表/详情，删除按钮不渲染，直接调用
+  `DELETE /api/v1/sessions/:id` 会返回 403。
+- WebSocket `authenticate` 同时支持 cookie session 和 legacy API key：前端先发送无
+  token 的 cookie 认证消息，失败后才降级读取 `localStorage["haro:web-api-key"]`。
 
-当前 API key 认证只适合单机单人调试。FEAT-028 将补齐 KeyClaw 风格管理面基础：
+### legacy `HARO_WEB_API_KEY` 兼容窗口
 
-- 本地多用户模型：`owner`、`admin`、`operator`、`viewer`，并提供 owner bootstrap。
-- User token/session token：兼容现有 `HARO_WEB_API_KEY`，但不再把单一 API key 作为长期唯一认证模型。
-- 统一服务端分页：Sessions、Logs、Knowledge、Skills、Users 等列表统一 `page/pageSize/sort/order/q` contract，避免前端一次性拉全量数据。
-- 中文本地化基线：默认 `zh-CN`，所有用户可见文案走 i18n resource，保留 `en-US` fallback。
-- 角色化操作与审计：删除、配置写入、禁用 channel、重置 token 等高风险操作必须经过权限检查并写 audit event。
+- 旧部署配置 `HARO_WEB_API_KEY` 后，`x-api-key` 仍可访问 legacy API 路径，避免升级后
+  直接失效；未携带 key 的受保护 API 仍返回 401。
+- API key 兼容只作为迁移窗口和自动化脚本入口。长期交互式 Dashboard 主路径是本地用户
+  + Web session；建议迁移步骤是：启动新版 Dashboard → bootstrap owner → 创建 admin /
+  operator / viewer → 将脚本逐步迁移到用户 session 或明确保留 `x-api-key` 自动化入口。
+- token、密码和 refresh token 不写入日志、YAML 或 audit metadata。
+
+### 统一分页 contract
+
+Sessions、Logs、Knowledge、Skills、Users 五类列表统一支持：
+
+```http
+GET /api/v1/sessions?page=1&pageSize=25&sort=createdAt&order=desc&q=keyword
+```
+
+响应统一为：
+
+```json
+{
+  "items": [],
+  "pageInfo": {
+    "page": 1,
+    "pageSize": 25,
+    "totalPages": 0,
+    "hasNextPage": false,
+    "hasPreviousPage": false
+  },
+  "total": 0
+}
+```
+
+- 后端统一通过 `parsePageQuery()` 钳制 `page/pageSize/q`，并对 `sort` 做 allowlist；
+  SQL `ORDER BY` 只使用服务端映射后的列名与 `asc|desc`，用户输入不参与拼接。
+- 兼容旧调用方：仍接受 `limit/offset`，服务端会转换为等价 `page/pageSize`。
+- 前端五个列表页共用 `PaginatedTable` / `PaginationControls`，状态覆盖
+  loading、empty、error、ok，并同步 URL search params，方便刷新和分享。
+
+### zh-CN baseline 与 en-US fallback
+
+- 默认 locale 为 `zh-CN`，`packages/web/src/i18n/keys.ts` 提供 key 常量，
+  `locales/zh-CN.ts` 为主资源，`locales/en-US.ts` 作为 fallback。
+- `I18nProvider` 在 `main.tsx` 包裹全应用；Settings 页面提供语言选择并持久化到
+  `localStorage`。技术标识（如 provider/model/status 字段值）允许保留英文，但页面标题、
+  表单校验、按钮、空态与错误摘要默认显示中文。
+
+### 日志与审计
+
+- 所有 HTTP 请求通过 `createLogger()` 写入 `~/.haro/logs/haro.log`，日志为 pino JSON
+  格式，至少包含 `method`、`path`、`statusCode`、`durationMs`。
+- 用户创建、用户状态/角色变更、session 删除等写操作通过 `DashboardAuthStore.recordAudit`
+  写入 `web_audit_events`，包含 actor user、target scope/ref、operation class、outcome
+  与 reason。
+- FEAT-029 Codex ChatGPT auth 与 FEAT-028 用户体系保持分层：ChatGPT provider 的
+  `chatgptAuth` / provider fallback audit 仍归 sessions/logs read model；Dashboard Web
+  登录只保护控制面访问，不修改 Codex provider 的 ChatGPT mode 输出结构。
 
 ## Agent Interaction（FEAT-016）
 

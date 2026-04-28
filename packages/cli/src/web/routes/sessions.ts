@@ -1,14 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { db as haroDb } from '@haro/core';
+import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
+import { canPerform, readWebAuth } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
-const SESSION_DELETE_ALLOW_ENV = 'HARO_WEB_ALLOW_SESSION_DELETE';
-
-function isSessionDeleteAllowed(): boolean {
-  return process.env[SESSION_DELETE_ALLOW_ENV] === 'true';
-}
+const SESSION_SORTS = {
+  createdAt: 'started_at',
+  endedAt: 'ended_at',
+  status: 'status',
+  agentId: 'agent_id',
+  provider: 'provider',
+  model: 'model',
+} as const;
+const SESSION_ALLOWED_SORTS = Object.keys(SESSION_SORTS) as Array<keyof typeof SESSION_SORTS>;
 
 type DatabaseLike = {
   prepare(sql: string): {
@@ -45,50 +51,39 @@ export function createSessionsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   route.get('/', (c) => {
     const db = openDb(runtime);
     try {
-      const limit = clampNumber(c.req.query('limit'), 1, 100, 20);
-      const offset = clampNumber(c.req.query('offset'), 0, Number.MAX_SAFE_INTEGER, 0);
-      const filters: string[] = [];
-      const params: unknown[] = [];
-      const status = c.req.query('status');
-      if (status) {
-        filters.push('status = ?');
-        params.push(status);
-      }
-      const agentId = c.req.query('agentId');
-      if (agentId) {
-        filters.push('agent_id = ?');
-        params.push(agentId);
-      }
-      const createdFrom = c.req.query('createdFrom');
-      if (createdFrom) {
-        filters.push('started_at >= ?');
-        params.push(createdFrom);
-      }
-      const createdTo = c.req.query('createdTo');
-      if (createdTo) {
-        filters.push('started_at <= ?');
-        params.push(createdTo);
-      }
-      const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+      const page = parsePageQuery(c, {
+        allowedSort: SESSION_ALLOWED_SORTS,
+        defaultSort: 'createdAt',
+        defaultOrder: 'desc',
+      });
+      const filters = buildSessionFilters({
+        status: c.req.query('status'),
+        agentId: c.req.query('agentId'),
+        createdFrom: c.req.query('createdFrom'),
+        createdTo: c.req.query('createdTo'),
+        q: page.q,
+      });
+      const orderBy = SESSION_SORTS[page.sort];
       const rows = db
         .prepare(
           `SELECT id, agent_id, provider, model, started_at, ended_at, status, context_ref
              FROM sessions
-             ${where}
-         ORDER BY started_at DESC
+             ${filters.where}
+         ORDER BY ${orderBy} ${toSqlOrder(page.order)}, id ${toSqlOrder(page.order)}
             LIMIT ? OFFSET ?`,
         )
-        .all(...params, limit, offset) as SessionRow[];
-      const totalRow = db
-        .prepare(`SELECT COUNT(*) AS count FROM sessions ${where}`)
-        .get(...params) as { count: number };
+        .all(...filters.params, page.pageSize, page.offset) as SessionRow[];
+      const total = (db
+        .prepare(`SELECT COUNT(*) AS count FROM sessions ${filters.where}`)
+        .get(...filters.params) as { count: number }).count;
       return c.json({
         success: true,
         data: {
           items: rows.map(toSessionSummary),
-          total: totalRow.count,
-          limit,
-          offset,
+          pageInfo: buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
+          total,
+          limit: page.pageSize,
+          offset: page.offset,
         },
       });
     } finally {
@@ -144,21 +139,14 @@ export function createSessionsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
 
   route.delete('/:id', (c) => {
     const sessionId = c.req.param('id');
-    const allowed = isSessionDeleteAllowed();
-
-    if (!allowed) {
+    const auth = readWebAuth(c);
+    if (!auth || !canPerform(auth.role, 'local-write')) {
       writeAudit(runtime, {
         sessionId,
         outcome: 'denied',
-        reason: `${SESSION_DELETE_ALLOW_ENV} is not set to 'true'; FEAT-028 role/audit gating not yet implemented`,
+        reason: `requires operator role or higher; current role is ${auth?.role ?? 'anonymous'}`,
       });
-      return c.json(
-        {
-          error: 'Session deletion is disabled',
-          reason: `Set ${SESSION_DELETE_ALLOW_ENV}=true to enable. Pending FEAT-028 role-based authorization, this endpoint hard-deletes session_events and is not safe for shared deployments.`,
-        },
-        403,
-      );
+      return c.json({ error: 'Forbidden', operationClass: 'local-write', minimumRole: 'operator' }, 403);
     }
 
     const db = openDb(runtime);
@@ -193,6 +181,39 @@ export function createSessionsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
 
 function openDb(runtime: WebRuntime): DatabaseLike {
   return haroDb.initHaroDatabase({ root: runtime.root, dbFile: runtime.dbFile, keepOpen: true }).database as unknown as DatabaseLike;
+}
+
+function buildSessionFilters(filters: {
+  status?: string;
+  agentId?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  q?: string;
+}): { where: string; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (filters.status) {
+    clauses.push('status = ?');
+    params.push(filters.status);
+  }
+  if (filters.agentId) {
+    clauses.push('agent_id = ?');
+    params.push(filters.agentId);
+  }
+  if (filters.createdFrom) {
+    clauses.push('started_at >= ?');
+    params.push(filters.createdFrom);
+  }
+  if (filters.createdTo) {
+    clauses.push('started_at <= ?');
+    params.push(filters.createdTo);
+  }
+  if (filters.q) {
+    const like = `%${filters.q}%`;
+    clauses.push('(id LIKE ? OR agent_id LIKE ? OR provider LIKE ? OR model LIKE ? OR status LIKE ?)');
+    params.push(like, like, like, like, like);
+  }
+  return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params };
 }
 
 function writeAudit(
@@ -275,6 +296,10 @@ function parseJson(value: string | null): unknown {
   } catch {
     return value;
   }
+}
+
+function toSqlOrder(order: 'asc' | 'desc'): 'ASC' | 'DESC' {
+  return order === 'asc' ? 'ASC' : 'DESC';
 }
 
 function clampNumber(raw: string | undefined, min: number, max: number, fallback: number): number {

@@ -1,4 +1,5 @@
 import { renderToString } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getProviderStats, listProviderFallbacks, listSessionEvents } from '../src/api/client';
 import { DashboardWebSocketClient } from '../src/api/ws';
@@ -73,7 +74,7 @@ describe('FEAT-025 runtime logs and provider monitoring UI', () => {
     const filterHtml = renderToString(<EventFilterBar filters={{ sessionId: 's1', eventType: 'result' }} onChange={() => undefined} onApply={() => undefined} />);
     const eventHtml = renderToString(<EventTable events={[eventFixture]} />);
     const statsHtml = renderToString(<ProviderStatsTable windows={providerStats.windows} />);
-    const logsHtml = renderToString(<LogsPage />);
+    const logsHtml = renderToString(<MemoryRouter><LogsPage /></MemoryRouter>);
     const invokeHtml = renderToString(<InvokeAgentPage />);
 
     expect(filterHtml).toContain('sessionId');

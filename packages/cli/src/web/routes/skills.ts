@@ -9,8 +9,12 @@ import {
   type EvolutionAssetWithEvents,
 } from '@haro/core';
 import { SkillsManager, type SkillManifestEntry } from '@haro/skills';
+import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
+
+const SKILL_SORTS = ['id', 'installedAt', 'lastUsedAt', 'useCount', 'assetStatus', 'source'] as const;
+type SkillSortKey = typeof SKILL_SORTS[number];
 
 interface SkillReadModel {
   id: string;
@@ -50,8 +54,26 @@ export function createSkillsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
 
   route.get('/', (c) => withSkills(runtime, (manager, registry) => {
+    const page = parsePageQuery(c, {
+      allowedSort: SKILL_SORTS,
+      defaultSort: 'installedAt',
+      defaultOrder: 'desc',
+    });
     const skills = manager.list().map((entry) => summarizeSkill(entry, manager, registry));
-    return c.json({ success: true, data: { items: skills, count: skills.length } });
+    const filtered = filterSkills(skills, page.q);
+    const sorted = sortSkills(filtered, page.sort, page.order);
+    const total = sorted.length;
+    return c.json({
+      success: true,
+      data: {
+        items: sorted.slice(page.offset, page.offset + page.pageSize),
+        count: total,
+        total,
+        pageInfo: buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
+        limit: page.pageSize,
+        offset: page.offset,
+      },
+    });
   }));
 
   route.get('/:id', (c) => withSkills(runtime, (manager, registry) => {
@@ -244,6 +266,51 @@ function readLatestAudit(registry: EvolutionAssetRegistry, skillId: string, didR
     ...(asset ? { asset } : {}),
     ...(event ? { event } : {}),
   };
+}
+
+function filterSkills(items: readonly SkillReadModel[], q: string): SkillReadModel[] {
+  if (!q) return [...items];
+  const needle = q.toLowerCase();
+  return items.filter((item) => [
+    item.id,
+    item.description,
+    item.originalSource,
+    item.source,
+    item.assetStatus,
+  ].some((value) => typeof value === 'string' && value.toLowerCase().includes(needle)));
+}
+
+function sortSkills(items: readonly SkillReadModel[], sort: SkillSortKey, order: 'asc' | 'desc'): SkillReadModel[] {
+  return [...items].sort((left, right) => {
+    const direction = order === 'asc' ? 1 : -1;
+    const primary = compareSkill(left, right, sort) * direction;
+    if (primary !== 0) return primary;
+    return left.id.localeCompare(right.id) * direction;
+  });
+}
+
+function compareSkill(left: SkillReadModel, right: SkillReadModel, sort: SkillSortKey): number {
+  switch (sort) {
+    case 'id':
+      return left.id.localeCompare(right.id);
+    case 'installedAt':
+      return left.installedAt.localeCompare(right.installedAt);
+    case 'lastUsedAt':
+      return compareNullableString(left.lastUsedAt, right.lastUsedAt);
+    case 'useCount':
+      return left.useCount - right.useCount;
+    case 'assetStatus':
+      return left.assetStatus.localeCompare(right.assetStatus);
+    case 'source':
+      return left.source.localeCompare(right.source);
+  }
+}
+
+function compareNullableString(left?: string, right?: string): number {
+  if (!left && !right) return 0;
+  if (!left) return -1;
+  if (!right) return 1;
+  return left.localeCompare(right);
 }
 
 async function parseJsonObject(c: { req: { json: () => Promise<unknown> } }): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; error: string }> {

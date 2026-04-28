@@ -63,7 +63,7 @@ describe('FEAT-016 web client and stores', () => {
     expect(client.reconnectDelay(2)).toBe(4000);
     expect(client.reconnectDelay(10)).toBe(30000);
     expect(socket.sent.map((item) => JSON.parse(item))).toEqual([
-      { type: 'authenticate', token: 'secret' },
+      { type: 'authenticate' },
       { type: 'subscribe', channel: 'sessions', sessionId: 's1' },
     ]);
   });
@@ -98,7 +98,9 @@ describe('FEAT-016 web client and stores', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: true, data: { items: [{ sessionId: 's1', agentId: 'assistant', status: 'completed', createdAt: '2026-04-24T00:00:00.000Z' }], total: 1 } }), { headers: { 'content-type': 'application/json' } })));
     await useSessionsStore.getState().loadSessions({ status: 'completed', limit: 20 });
     expect(useSessionsStore.getState().items[0].sessionId).toBe('s1');
-    expect(vi.mocked(fetch).mock.calls[0][0]).toContain('/api/v1/sessions?status=completed&limit=20');
+    expect(vi.mocked(fetch).mock.calls[0][0]).toContain('/api/v1/sessions?');
+    expect(vi.mocked(fetch).mock.calls[0][0]).toContain('status=completed');
+    expect(vi.mocked(fetch).mock.calls[0][0]).toContain('pageSize=20');
 
     expect(renderToString(<ChatContainer messages={[]} />)).toContain('历史消息按需加载');
     expect(renderToString(<ChatPage />)).toContain('运行配置');
