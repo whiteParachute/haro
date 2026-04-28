@@ -2,7 +2,7 @@
  * FEAT-029 — Interactive Codex provider wizard.
  *
  * Two paths:
- *   - "Sign in with ChatGPT" — spawns `codex login` with stdio inheritance
+ *   - "Sign in with ChatGPT" — spawns `codex login --device-auth` with stdio inheritance
  *     so the official codex CLI's OAuth device-code flow runs in the user's
  *     TTY (URL + code prompt printed by codex itself). On success we read
  *     ~/.codex/auth.json to confirm and return authMode='chatgpt'.
@@ -37,6 +37,8 @@ export interface CodexWizardDeps {
   promptChoice?: (message: string) => Promise<'chatgpt' | 'env-api-key' | 'cancelled'>;
   /** Output sink for status messages (defaults to process.stdout). */
   write?: (chunk: string) => void;
+  /** Environment override for login mode. Defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export type ProviderSetupWizardResult =
@@ -81,7 +83,7 @@ export async function runCodexAuthWizard(
 
 /**
  * Spec-facing setup wizard entrypoint (FEAT-029 §5.1). It owns the ChatGPT
- * branch end-to-end: choose auth method, spawn `codex login`, verify
+ * branch end-to-end: choose auth method, spawn `codex login --device-auth` by default, verify
  * auth.json, then write only `providers.codex.authMode = chatgpt`.
  *
  * The OPENAI_API_KEY branch deliberately returns `{ authMode: 'env' }` and
@@ -119,35 +121,44 @@ export async function runChatGptLogin(deps: CodexWizardDeps = {}): Promise<Local
   const spawnFn = deps.spawnCodexLogin ?? defaultSpawnCodexLogin;
   const readAuth = deps.readAuth ?? readLocalCodexAuth;
   const write = deps.write ?? ((chunk: string) => process.stdout.write(chunk));
+  const loginMode = (deps.env ?? process.env).HARO_CODEX_LOGIN_MODE;
+  const loginArgs = loginMode === 'browser' ? ['login'] : ['login', '--device-auth'];
+  const loginCommand = [binary, ...loginArgs].join(' ');
 
-  write(
-    `\nLaunching \`${binary} login\` — complete the OAuth flow in this terminal, then return here.\n\n`,
-  );
+  if (loginMode === 'browser') {
+    write(
+      `\nLaunching \`${loginCommand}\` — complete the OAuth flow in this terminal (a local browser window will open), then return here.\n\n`,
+    );
+  } else {
+    write(
+      `\nLaunching \`${loginCommand}\` — open the URL printed below in any browser, enter the code, then return here.\n\n`,
+    );
+  }
 
   let exitCode: number | null;
   try {
-    const result = await spawnFn(binary, ['login'], {
+    const result = await spawnFn(binary, loginArgs, {
       stdio: 'inherit',
     });
     exitCode = result.exitCode;
   } catch (error) {
     write(
-      `\n[error] Failed to launch \`${binary} login\`: ${error instanceof Error ? error.message : String(error)}\n` +
+      `\n[error] Failed to launch \`${loginCommand}\`: ${error instanceof Error ? error.message : String(error)}\n` +
         '  Install the codex CLI (https://github.com/openai/codex) and ensure `codex` is on PATH, or rerun with --auth-mode env to use OPENAI_API_KEY.\n',
     );
     return null;
   }
 
   if (exitCode !== 0) {
-    write(`\n[error] \`${binary} login\` exited with code ${exitCode ?? 'unknown'}; ChatGPT login was not completed.\n`);
+    write(`\n[error] \`${loginCommand}\` exited with code ${exitCode ?? 'unknown'}; ChatGPT login was not completed.\n`);
     return null;
   }
 
   const after = readAuth();
   if (!after.hasAuth) {
     write(
-      `\n[error] \`${binary} login\` finished but no ChatGPT credentials were detected at ${after.authFilePath}. ` +
-        'Re-run the wizard or rerun `codex login` directly to retry.\n',
+      `\n[error] \`${loginCommand}\` finished but no ChatGPT credentials were detected at ${after.authFilePath}. ` +
+        `Re-run the wizard or rerun \`${loginCommand}\` directly to retry.\n`,
     );
     return null;
   }
@@ -170,7 +181,7 @@ async function defaultPromptChoice(message: string): Promise<'chatgpt' | 'env-ap
   const result = await clack.select({
     message,
     options: [
-      { value: 'chatgpt' as const, label: CHATGPT_LABEL, hint: 'Runs `codex login` in this terminal' },
+      { value: 'chatgpt' as const, label: CHATGPT_LABEL, hint: 'Runs the codex login flow in this terminal' },
       { value: 'env-api-key' as const, label: API_KEY_LABEL, hint: 'Reads OPENAI_API_KEY from env / providers.env' },
     ],
   });

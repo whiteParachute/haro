@@ -54,6 +54,7 @@ Phase 1 的 Codex Provider 仍只支持 `OPENAI_API_KEY`，但 ChatGPT Plus / Pr
 - R9: `haro provider doctor codex` 必须在两种模式下都给出报告：env 模式同现有；chatgpt 模式额外打印 `auth.json` 路径、authMode、redacted account_id、last_refresh，以及 codex 二进制是否在 PATH。
 - R10: `haro provider env codex` 必须在 chatgpt 模式下显示 "ChatGPT subscription auth via ~/.codex/auth.json" 而不是 OPENAI_API_KEY 状态。
 - R11: 单元测试覆盖：readLocalCodexAuth (存在/缺失/损坏/字段缺失)，redactAccountId，resolveAuth 优先级矩阵 4×3，wizard chatgpt 路径 (codex 二进制不存在 / spawn 失败 / spawn 成功但 auth 未出现 / spawn 成功 + auth 写入)，schema enum 校验，doctor 输出。
+- R12: ChatGPT 登录路径默认必须执行 `spawn('codex', ['login', '--device-auth'], { stdio: 'inherit' })`，理由是 devbox / SSH 远端 / headless 环境没有本机浏览器，无法接收 localhost callback。允许通过环境变量 `HARO_CODEX_LOGIN_MODE=browser` 显式回退到无 flag 形式（本机带浏览器的人主动选择）；其它路径（auth 校验、resolveAuth、schema、yaml 字段）完全不变。
 
 ## 5. Design / 设计要点
 
@@ -102,6 +103,7 @@ then return here.
 - AC4: `authMode = chatgpt` 时，CodexProvider 不再要求 `OPENAI_API_KEY`；SDK spawn 不传 apiKey；`haro provider doctor codex` 报告 ChatGPT 模式 + redacted account 信息。（R6, R7, R9）
 - AC5: 现有 env API key 用户行为完全不变；schema 校验拒绝 yaml 中写 token 字段。（R7, R8）
 - AC6: 单元测试覆盖 R11 列出全部场景，无新增 npm 依赖。
+- AC7: 默认调用 wizard 时，spawn 实参为 `['login', '--device-auth']`；设置 `HARO_CODEX_LOGIN_MODE=browser` 时，spawn 实参为 `['login']`，不带 flag。两种模式下成功后均调用 readLocalCodexAuth 二次校验。（R12）
 
 ## 7. Test Plan / 测试计划
 
@@ -120,9 +122,12 @@ then return here.
 | D2 | 凭据放 `~/.codex/auth.json` 还是 haro own 目录？ | `~/.codex/auth.json` 单一事实来源，不复制副本。 | refresh 由 codex CLI 托管；haro 不与 CLI 抢 refresh token 轮换。 |
 | D3 | `authMode` 默认 `auto` 还是显式？ | 默认 `auto`；wizard 完成 ChatGPT 后强写 `chatgpt` 避免后续 env 残留误判。 | provider-catalog 公开 `authMode`，settings 页未来（FEAT-030）可视化。 |
 | D4 | 非交互 ChatGPT 怎么办？ | `--auth-mode chatgpt --non-interactive` 仅校验 `~/.codex/auth.json` 已就绪，不 spawn；缺失则 fail。 | CI / 自动化机器需要先 `codex login` 再调 haro。 |
+| D5 | 默认走 callback 还是 device-auth？ | 默认 `--device-auth`，本机带浏览器者用 `HARO_CODEX_LOGIN_MODE=browser` 回退。 | callback 在 devbox / SSH / headless 不可用；device-auth 是 codex CLI 官方 flag，是更通用的默认。 |
 
 ## 9. Changelog / 变更记录
 
 - 2026-04-27: whiteParachute / Claude — 初稿后重构：从 device-code 自实现重构为 ride-along 官方 codex CLI；与 keyclaw UI 提示语义对齐，与 hermes 的复杂度脱钩。spec 提升为 approved 同时落实现。
 - 2026-04-28: Claude/whiteParachute — 实现 R1–R11 / AC1–AC6，验证 pnpm lint/test/build/smoke 全绿，commit 82d1af3。
 - 2026-04-28: Claude/whiteParachute — amend: 写入 FEAT-029 实现 commit hash 82d1af3。
+
+- 2026-04-28: Claude/whiteParachute — post-done amendment：默认 `codex login --device-auth`，新增 R12 / AC7 / D5。原因：devbox / SSH 远端实际登录失败。commit <pending>。

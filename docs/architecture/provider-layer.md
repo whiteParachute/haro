@@ -110,13 +110,15 @@ ChatGPT 模式数据流（文字图）：
 
 ```
 haro provider setup codex
-  -> spawn('codex', ['login'], { stdio: 'inherit' })
+  -> spawn('codex', ['login', '--device-auth'], { stdio: 'inherit' })
   -> codex CLI 完成 OAuth 并写 ~/.codex/auth.json
   -> Haro 只读校验 tokens.access_token
   -> Haro YAML 只写 providers.codex.authMode=chatgpt
   -> CodexProvider 调 SDK 时不传 apiKey/baseUrl
   -> SDK/codex binary 直接读取 ~/.codex/auth.json 并自行 refresh
 ```
+
+默认登录命令使用 `codex login --device-auth`，适配 devbox、SSH 远端和 headless 环境；若在本机有可用浏览器并希望使用 localhost callback，可显式设置 `HARO_CODEX_LOGIN_MODE=browser` 回退到 `codex login`。
 
 安全边界：Haro 不复制 `access_token` / `refresh_token` / `id_token`，不把 `tokens.*` 写入 YAML；schema 显式拒绝 `providers.codex.tokens`。
 

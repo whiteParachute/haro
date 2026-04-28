@@ -34,7 +34,10 @@ describe('runCodexAuthWizard [FEAT-029 R2]', () => {
     const stdout = captureStdout();
     const result = await runCodexAuthWizard(CODEX_PROVIDER_CATALOG_ENTRY, {
       promptChoice: async () => 'chatgpt',
-      spawnCodexLogin: async () => ({ exitCode: 0 }),
+      spawnCodexLogin: async (_binary, args) => {
+        expect(args).toEqual(['login', '--device-auth']);
+        return { exitCode: 0 };
+      },
       readAuth: () => fakeAuth({ detected: true, hasAuth: true, accountId: 'user_2…AaaA', lastRefresh: '2026-04-27T11:30:00Z' }),
       write: stdout.write,
     });
@@ -75,6 +78,82 @@ describe('runCodexAuthWizard [FEAT-029 R2]', () => {
     });
     expect(result.choice).toBe('cancelled');
     expect(stdout.output()).toContain('exited with code 1');
+  });
+
+  it('uses browser login mode without --device-auth when HARO_CODEX_LOGIN_MODE=browser', async () => {
+    const stdout = captureStdout();
+    const result = await runChatGptLogin({
+      env: { HARO_CODEX_LOGIN_MODE: 'browser' },
+      spawnCodexLogin: async (_binary, args, options) => {
+        expect(args).toEqual(['login']);
+        expect(options.stdio).toBe('inherit');
+        return { exitCode: 0 };
+      },
+      readAuth: () => fakeAuth({ detected: true, hasAuth: true, accountId: 'user_2…AaaA' }),
+      write: stdout.write,
+    });
+
+    expect(result?.hasAuth).toBe(true);
+    expect(stdout.output()).toContain('Launching `codex login`');
+    expect(stdout.output()).not.toContain('--device-auth');
+  });
+
+  it('keeps successful device-auth path YAML-safe and redacts account_id', async () => {
+    const stdout = captureStdout();
+    const writes: unknown[] = [];
+    const result = await runProviderSetupWizard({
+      entry: CODEX_PROVIDER_CATALOG_ENTRY,
+      scope: 'global',
+      deps: {
+        promptChoice: async () => 'chatgpt',
+        spawnCodexLogin: async (_binary, args, options) => {
+          expect(args).toEqual(['login', '--device-auth']);
+          expect(options.stdio).toBe('inherit');
+          return { exitCode: 0 };
+        },
+        readAuth: () =>
+          fakeAuth({
+            detected: true,
+            hasAuth: true,
+            accountId: 'user_2…AaaA',
+            lastRefresh: '2026-04-27T11:30:00Z',
+            authFilePath: '/p/.codex/auth.json',
+          }),
+        write: stdout.write,
+        writeConfig: async (input) => {
+          writes.push(input);
+        },
+      },
+    });
+
+    expect(result).toEqual({ authMode: 'chatgpt', accountId: 'user_2…AaaA' });
+    expect(writes).toEqual([
+      {
+        scope: 'global',
+        entry: CODEX_PROVIDER_CATALOG_ENTRY,
+        patch: { authMode: 'chatgpt' },
+      },
+    ]);
+    expect(stdout.output()).toContain('user_2…AaaA');
+    expect(JSON.stringify(writes)).not.toContain('tokens');
+    expect(JSON.stringify(writes)).not.toContain('access_token');
+    expect(JSON.stringify(writes)).not.toContain('refresh_token');
+  });
+
+  it('browser login mode ENOENT message names codex login without --device-auth', async () => {
+    const stdout = captureStdout();
+    const result = await runChatGptLogin({
+      env: { HARO_CODEX_LOGIN_MODE: 'browser' },
+      spawnCodexLogin: async (_b: string, _a: string[], _o: SpawnOptions) => {
+        throw new Error('ENOENT');
+      },
+      readAuth: () => fakeAuth(),
+      write: stdout.write,
+    });
+
+    expect(result).toBeNull();
+    expect(stdout.output()).toContain('Failed to launch `codex login`');
+    expect(stdout.output()).not.toContain('codex login --device-auth');
   });
 
   it('returns cancelled when spawn rejects with binary-not-found', async () => {
@@ -127,7 +206,8 @@ describe('runCodexAuthWizard [FEAT-029 R2]', () => {
       scope: 'global',
       deps: {
         promptChoice: async () => 'chatgpt',
-        spawnCodexLogin: async (_binary, _args, options) => {
+        spawnCodexLogin: async (_binary, args, options) => {
+          expect(args).toEqual(['login', '--device-auth']);
           expect(options.stdio).toBe('inherit');
           return { exitCode: 0 };
         },

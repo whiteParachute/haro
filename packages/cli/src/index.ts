@@ -586,7 +586,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
               if (!auth.hasAuth) {
                 throw new CommanderExit(
                   1,
-                  `--auth-mode=chatgpt requires a completed \`codex login\` (no token at ${auth.authFilePath}). Run \`codex login\` first or rerun without --non-interactive.`,
+                  `--auth-mode=chatgpt requires a completed \`codex login\` (no token at ${auth.authFilePath}). Run \`codex login --device-auth\` (or \`codex login\` on a machine with a local browser) first or rerun without --non-interactive.`,
                 );
               }
             }

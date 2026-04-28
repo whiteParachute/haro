@@ -123,7 +123,7 @@ TTY 下运行 `haro provider setup codex` 会先选择认证方式：
     Use OPENAI_API_KEY (developer / org accounts)
 ```
 
-选择 ChatGPT 后，Haro 会在当前终端执行官方 `codex login`；成功后只写入非敏感配置：
+选择 ChatGPT 后，Haro 默认会在当前终端执行官方 `codex login --device-auth`；用户可在任意有浏览器的设备打开 URL 并输入用户码完成授权。成功后只写入非敏感配置：
 
 ```yaml
 providers:
@@ -136,6 +136,12 @@ providers:
 示例输出（account_id 已脱敏）：
 
 ```
+Launching `codex login --device-auth` — open the URL printed below in any browser, enter the code, then return here.
+
+Open this URL in any browser:
+https://auth.openai.com/device
+Enter code: ABCD-EFGH
+
 ✓ ChatGPT login detected (account: user_2…XaxL, refreshed 2026-04-27T11:30:00Z)
 Provider setup: codex
 Auth mode: chatgpt
@@ -143,7 +149,13 @@ ChatGPT auth.json: /home/user/.codex/auth.json (present)
 Codex binary: /home/user/.local/bin/codex
 ```
 
-非交互 ChatGPT 模式不会 spawn 登录流程，只校验本机已经完成 `codex login`：
+本机有浏览器且希望使用 localhost callback 时，可显式回退：
+
+```bash
+HARO_CODEX_LOGIN_MODE=browser haro provider setup codex
+```
+
+非交互 ChatGPT 模式不会 spawn 登录流程，只校验本机已经完成 `codex login --device-auth`（或浏览器回退模式的 `codex login`）：
 
 ```bash
 haro provider setup codex --auth-mode chatgpt --non-interactive
