@@ -5,7 +5,7 @@ status: done
 phase: phase-1
 owner: whiteParachute
 created: 2026-04-27
-updated: 2026-04-28
+updated: 2026-05-01
 related:
   - ../phase-0/FEAT-003-codex-provider.md
   - ./FEAT-026-provider-onboarding-wizard.md
@@ -131,3 +131,5 @@ then return here.
 - 2026-04-28: Claude/whiteParachute — amend: 写入 FEAT-029 实现 commit hash 82d1af3。
 
 - 2026-04-28: Claude/whiteParachute — post-done amendment：默认 `codex login --device-auth`，新增 R12 / AC7 / D5。原因：devbox / SSH 远端实际登录失败。commit e9d9332。
+- 2026-04-28: Claude/whiteParachute — post-done amendment：让 Dashboard chat 在 ChatGPT-subscription auth 下真正可用。`list-models.ts` 在 `OPENAI_API_KEY` 缺省时 soft-fail 回退到 `~/.codex/models_cache.json`（AC6 不变，仍由 codex CLI 维护，无硬编码 slug）；`codex-auth.ts` 新增 `resolveCodexModelsCachePath` / `readLocalCodexModels`；runner 在 FE pin 住 provider+model 时短路 `resolveSelection`；新增 `GET /api/v1/providers`（enabled / authMode / defaultModel / liveModels），失败折叠成 `liveModelsFailed` 不泄漏上游路径或 env 名；ChatPage 增加可折叠 run-config 卡片与 provider/model 下拉；`@openai/codex-sdk` 0.121.0 → 0.125.0 以兼容上游 gpt-5.5。commit b348e27。
+- 2026-05-01: Claude/whiteParachute — codex review 收尾修复：上一条 b348e27 的 soft-fail 没区分 `authMode`，`authMode=env` 缺 key 时也回退到本地 cache，导致 Dashboard 显示模型但运行必失败。CodexProvider 把 lister 的 `readApiKey` 包到 `resolveAuth()` 之后：`authMode=env` 缺 key → 抛错传播到 `/api/v1/providers` 触发 `liveModelsFailed`；`chatgpt`/`auto` 仍走本地 cache。同时把 `/api/v1/providers` 从 smoke 断言升级为契约测试（shape + 失败折叠不泄漏 env 名/路径）。commit 48b5158。
