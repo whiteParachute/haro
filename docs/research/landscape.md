@@ -2,13 +2,16 @@
 
 ## 调研范围
 
-覆盖 9 个竞品/参考项目，调研时间：2026-04-18。
+覆盖 12 个竞品/参考项目；调研时间：2026-04-18 起持续更新（最近一次：2026-05-01 新增 happyclaw / hermes-agent / hermes-web-ui）。
 
 ## 竞品全景矩阵
 
 | 项目 | 类别 | Stars | 核心特点 | Haro 关联 |
 |------|------|-------|---------|-----------|
 | Hermes | Agent Harness/Runtime | ~97.6k | 技能自创建+自改进+记忆，SQLite+FTS5 | 核心竞品（Agent 级自进化），Haro 做平台级 |
+| happyclaw / AgentDock | 单用户多会话 workbench | ~7 | 飞书/Telegram/QQ/Web 4 channel + Claude/Codex 双 runner + MCP 工具层 + 定时任务 + Web 终端 + PWA | Haro Phase 1.5 借鉴其 Web channel / MCP 工具层 / 定时任务 / 流式 UX；保留 happyclaw 没有的多 Agent 编排 + 进化层 |
+| hermes-agent | CLI 优先 Agent | — | 配置可在终端完成，无 Web UI 依赖 | Haro 借鉴其 CLI 优先理念，要求 CLI 命令族等价于 Web UI 全功能（FEAT-039） |
+| hermes-web-ui | 前后端解耦 Web UI 范例 | — | Web 前端独立 repo，通过稳定 contract 与后端通信 | Haro Phase 1.5 借鉴其前后端解耦做法（FEAT-038） |
 | EvoMap | 进化语法 / 资产化 | — | 声明式进化语法：signal → gene → prompt → event | Haro 参考其资产封装与审计思路，不直接引入完整 GEP runtime |
 | OpenClaw | 统一 Agent 平台 / Gateway | — | Channel/Gateway 隔离、团队工作空间、会话管理 | Haro 参考其会话生命周期和权限模型，Channel 层保持自有可插拔设计 |
 | Mercury Agent | 生产级 Agent Guard | — | 显式权限审批、Token/成本预算 | Haro Phase 1 引入操作分级和预算护栏 |

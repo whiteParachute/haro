@@ -36,6 +36,13 @@ pids/
 *.seed
 *.pid.lock
 
+# Local Claude Code runtime state
+.claude/
+*.lock
+
+# Local runtime log directory (singular form alongside `logs/` above)
+log/
+
 # OS generated
 .DS_Store
 .DS_Store?

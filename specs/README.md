@@ -288,4 +288,4 @@ Dashboard FEAT 的作者在起草时必须回答：
 - [Defect 模板](./_template-defect.md)
 - [PR 模板](../.github/PULL_REQUEST_TEMPLATE.md)
 - [多 Agent 设计约束](./multi-agent-design-constraints.md)
-- [四阶段路线图](../roadmap/phases.md)
+- [路线图](../roadmap/phases.md)（Phase 0/1/1.5/2.0/2.5/3.0/3.5）
