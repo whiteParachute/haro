@@ -109,7 +109,30 @@ haro channel doctor telegram
 - `missing_credentials` → 环境变量未设置，或 `config.yaml` 中的 `${...}` 引用语法错误
 - 网络超时 → 检查当前网络是否可到达飞书/Telegram 服务端
 
-## OPENAI_API_KEY 常见问题
+## Codex 认证常见问题
+
+> Codex Provider 支持两种 `authMode`（FEAT-029）：`env`（OPENAI_API_KEY）与 `chatgpt`（`codex login` 写入 `~/.codex/auth.json`）。`auto`（默认）按优先级自动选择。下面分两块。
+
+### ChatGPT subscription 模式
+
+#### 症状：`haro provider setup codex` 选了 ChatGPT 但向导报错 / yaml 没更新
+
+- 默认实参是 `codex login --device-auth`，需要本机 PATH 中能找到 `codex` 二进制。`which codex` 失败 → 先安装 OpenAI codex CLI。
+- 退出码非 0（包括 ctrl-C 提前退出）→ 向导**不会**更新 yaml；按提示重跑即可。
+- 成功后向导会再读一次 `~/.codex/auth.json` 校验 `tokens.access_token` 存在；缺失同样不会写 yaml。
+- 本机带浏览器、希望走 localhost callback：设置 `HARO_CODEX_LOGIN_MODE=browser` 后重跑向导。
+
+#### 症状：`haro provider doctor codex` 报 "no auth available"，但已经 `codex login` 过
+
+- 检查 `~/.codex/auth.json` 路径与权限（`ls -l ~/.codex/auth.json`）；codex CLI 默认走 `${CODEX_HOME:-~/.codex}`
+- 在 `config.yaml` 显式设置 `providers.codex.authMode: chatgpt` 强制走 ChatGPT 路径，避免 `auto` 模式因 env key 残留误判
+- token 永远不会出现在 Haro 的 yaml / log / audit 里；不要从 doctor 输出里找 access_token，正常情况下只有 redacted account_id 和 last_refresh
+
+#### 症状：Dashboard chat 列出了模型但点 Run 必失败
+
+- 多半是 `authMode=env` 但 `OPENAI_API_KEY` 没设。FEAT-029 follow-up（dd2d6b2）已经在 `/api/v1/providers` 把这种情况折叠成 `liveModelsFailed: true`，前端会禁用提交并给出原因；如果你看到的是旧版本行为（显示模型但提交报错），升级到 dd2d6b2 之后即可。
+
+### OPENAI_API_KEY 模式
 
 ### 症状：setup 报告 "未检测到 OPENAI_API_KEY"
 

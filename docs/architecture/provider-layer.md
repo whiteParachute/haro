@@ -120,6 +120,8 @@ haro provider setup codex
 
 默认登录命令使用 `codex login --device-auth`，适配 devbox、SSH 远端和 headless 环境；若在本机有可用浏览器并希望使用 localhost callback，可显式设置 `HARO_CODEX_LOGIN_MODE=browser` 回退到 `codex login`。
 
+`listModels()` 在 chatgpt 模式下读 codex CLI 自己维护的 `~/.codex/models_cache.json`（无硬编码 slug，仍保持 FEAT-003 AC6）；`authMode=env` 但 `OPENAI_API_KEY` 缺失时 throws，由 `/api/v1/providers` 折叠为 `liveModelsFailed: true`，避免 Dashboard 显示模型但运行必失败。
+
 安全边界：Haro 不复制 `access_token` / `refresh_token` / `id_token`，不把 `tokens.*` 写入 YAML；schema 显式拒绝 `providers.codex.tokens`。
 
 ### Phase 1 配置体验补齐（FEAT-026）

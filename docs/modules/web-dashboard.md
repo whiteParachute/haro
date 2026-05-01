@@ -49,6 +49,7 @@ pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
 - `GET /api/v1/guard/workflows`、`GET /api/v1/guard/workflows/:workflowId` 提供 FEAT-023 权限/预算只读 read model，返回 workflow budget state、`budgetExceeded`、`blockedReason`、branch token ledger 与 permission audit 摘要；该 API 不提供 Web 审批队列或写操作。
 - `GET /api/v1/workflows`、`GET /api/v1/workflows/:id`、`GET /api/v1/workflows/:id/checkpoints` 提供 FEAT-018 Orchestration Debugger 只读 read model，返回 workflow summary、branch ledger、merge envelope、checkpoint metadata / JSON、leafSessionRefs、rawContextRefs 与 stalled branch 信息。
 - `GET /api/v1/logs/session-events` 支持 `sessionId/agentId/eventType/from/to/limit` 查询并返回结构化 payload；`GET /api/v1/logs/provider-fallbacks` 返回 original/fallback provider、trigger、ruleId 与时间。
+- `GET /api/v1/providers` 返回当前注册的 provider 列表（`id` / `enabled` / `authMode` / `defaultModel` / `liveModels`），用于 ChatPage run-config 卡片的 provider/model 下拉；`listModels()` 抛错时折叠成 `liveModelsFailed: true`，错误文本（含 env-var 名 / filesystem path）不进响应体（FEAT-029 follow-up）。
 - `GET /api/v1/providers/stats` 按 `24h`、`7d`、`all` 三个固定窗口聚合 `session_events`、`provider_fallback_log` 与 FEAT-023 `token_budget_ledger`，返回 provider/model 调用、成功/失败、fallback、`avgLatencyMs`、token 和估算成本。
 - `GET /api/v1/memory/query`、`POST /api/v1/memory/write`、`GET /api/v1/memory/stats`、`POST /api/v1/memory/maintenance` 提供 FEAT-024 Knowledge contract。查询支持 `keyword/scope/agentId/layer/verificationStatus/limit`；写入仅允许 `shared` 和当前 agent scope，`platform` scope 一律拒绝；maintenance 返回 `202 + taskId` 异步 contract。
 - `GET /api/v1/skills`、`GET /api/v1/skills/:id`、`POST /api/v1/skills/:id/enable|disable`、`POST /api/v1/skills/install`、`DELETE /api/v1/skills/:id` 提供 FEAT-024 Skills contract。列表展示 enabled/source/installedAt/preinstalled/usage/asset status；预装 skill 不可卸载；user skill install/uninstall 必须返回 asset audit 结果或显式 `unsupported`。
@@ -137,6 +138,7 @@ FEAT-016 在 foundation 上补齐 Agent 交互层：
 - 服务端推送 `authenticated`、`event.stream`、`event.result`、`event.error`、`session.update`、`system.status`，并通过 `AgentRunner.run({ onEvent })` 旁路推送事件；Dashboard 不修改 Runner 核心执行语义。
 - Sessions 列表默认仅展示 `sessionId`、`agentId`、`status`、`createdAt`，详情页将连续 text delta 折叠为消息，tool_call/tool_result 默认收起 JSON。
 - Chat 最近选择持久化到 `localStorage["haro:lastChatConfig"]`，包括 `agentId`、`providerId`、`modelId`。
+- ChatPage 顶部有可折叠的 run-config 卡片（默认收起），provider/model 下拉来自 `/api/v1/providers`；当无可用 (provider, model) 组合时提交按钮禁用并展示原因（FEAT-029 follow-up）。Runner 在 FE pin 住 provider+model 时短路 `resolveSelection`，绕过基于规则的 provider 选择并直接执行用户指定的组合。
 
 
 ## Orchestration Debugger（FEAT-018）

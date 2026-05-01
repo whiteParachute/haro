@@ -85,8 +85,9 @@ defaultAgent: code-reviewer
 
 | 变量名 | 作用 | 示例 |
 |--------|------|------|
-| `OPENAI_API_KEY` | Codex Provider 认证凭证（**必需**） | `sk-...` |
+| `OPENAI_API_KEY` | Codex Provider 在 `authMode=env` 时使用的 API key；ChatGPT 订阅用户走 `codex login` 路径，不需要这个变量 | `sk-...` |
 | `HARO_HOME` | 覆盖全局数据目录路径 | `/data/haro` |
+| `HARO_CODEX_LOGIN_MODE` | `haro provider setup codex` ChatGPT 登录模式：默认 `device-auth`（适配 devbox/SSH/headless）；本机带浏览器者设为 `browser` 走 localhost callback | `browser` |
 | `NPM_CONFIG_REGISTRY` | `haro update` 使用的 registry | `https://registry.npmmirror.com` |
 
 ### Channel 凭证环境变量
@@ -114,24 +115,34 @@ channels:
 
 ## Provider 凭证注入规则
 
-当前正式实现的 Provider 只有 **Codex**。其凭证注入遵循以下规则：
+当前正式实现的 Provider 只有 **Codex**，支持两种认证模式（FEAT-029）。其凭证注入遵循以下规则：
 
-1. **只读环境变量**：`OPENAI_API_KEY` 是 Codex Provider 唯一接受的凭证值来源
-2. **配置文件中禁止写入 apiKey**：`config.yaml` 中若出现 `providers.codex.apiKey`，配置校验会显式报错并拒绝加载
-3. **YAML 只保存引用与非敏感字段**：`providers.codex.secretRef: env:OPENAI_API_KEY`、`enabled`、`baseUrl`、`defaultModel` 可写入配置
-4. **Provider 构造时读取**：`@haro/provider-codex` 在实例化时从 `process.env.OPENAI_API_KEY` 读取凭证
+1. **`authMode=env`（开发者 / 组织账号）**：从 `process.env.OPENAI_API_KEY` 读取；`config.yaml` 禁止写入 `providers.codex.apiKey`，校验会拒绝加载
+2. **`authMode=chatgpt`（ChatGPT Plus/Pro 订阅）**：通过 `haro provider setup codex` → 内部 `spawn('codex', ['login', '--device-auth'])` 走 OAuth，凭证由 codex CLI 写入并刷新 `~/.codex/auth.json`；Haro **不**复制 token，YAML 只写 `authMode: chatgpt`
+3. **`authMode=auto`（默认）**：env 优先，否则若 `~/.codex/auth.json` 存在 access_token 则走 chatgpt，再否则报错并提示运行 `haro provider setup codex`
+4. **YAML 只保存引用与非敏感字段**：`providers.codex.secretRef: env:OPENAI_API_KEY`、`authMode`、`enabled`、`baseUrl`、`defaultModel` 可写入配置；schema 显式拒绝任何 `tokens.*` 字段
+5. **Live model 列表**：env 模式从 `${baseUrl}/models` 拉取；chatgpt 模式从 codex CLI 维护的 `~/.codex/models_cache.json` 读取（无硬编码 slug）
+
+详细认证语义、`resolveAuth()` 优先级和数据流图见 [docs/architecture/provider-layer.md](architecture/provider-layer.md#phase-1-chatgpt-subscription-authfeat-029)。
 
 示例：
 
 ```bash
-# 正确：通过环境变量注入
+# A. env 模式（developer / org accounts）
 export OPENAI_API_KEY=<your-key>
+haro provider setup codex --auth-mode env --non-interactive
 haro run "分析当前代码"
 
-# 错误：试图在 config.yaml 中写入 apiKey
+# B. ChatGPT subscription 模式（推荐订阅用户）
+haro provider setup codex
+# → 选 "Sign in with ChatGPT"，spawn 官方 codex login 完成 device-auth OAuth
+haro run "分析当前代码"
+
+# 错误：试图在 config.yaml 中写入 apiKey 或 tokens
 # providers:
 #   codex:
-#     apiKey: <your-key>   # ← 会导致 HaroConfigValidationError
+#     apiKey: <your-key>   # ← HaroConfigValidationError
+#     tokens: { ... }      # ← schema 直接拒绝
 ```
 
 ### Provider 引导配置（FEAT-026）

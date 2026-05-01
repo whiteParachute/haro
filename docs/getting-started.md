@@ -15,7 +15,9 @@ Haro 是一个自进化多 Agent 中间件平台。它的目标不是只让 Agen
 在开始之前，请确认你的环境满足以下要求：
 
 - **Node.js >= 22**
-- **OPENAI_API_KEY**（当前正式实现的 Provider 是 Codex，凭证必须通过环境变量提供）
+- **Codex Provider 认证**（任选其一，FEAT-029）：
+  - 开发者 / 组织账号：导出 `OPENAI_API_KEY`
+  - ChatGPT Plus/Pro 订阅用户：通过 `haro provider setup codex` 走官方 `codex login` OAuth，无需 API key
 
 > 如果你没有 Node.js 22+，可以参考 [install.md](install.md) 中的环境准备章节。
 
@@ -41,8 +43,11 @@ pnpm add -g @haro/cli@latest
 ## 最短可跑通路径
 
 ```bash
-# 1. 配置 Provider 凭证
+# 1. 配置 Codex Provider 认证（任选其一）
+#    A. 开发者 / 组织账号
 export OPENAI_API_KEY=<your-key>
+#    B. ChatGPT 订阅用户（推荐）
+haro provider setup codex   # 选 "Sign in with ChatGPT"，走官方 codex login OAuth
 
 # 2. 跑首次引导
 haro setup
@@ -64,13 +69,13 @@ haro
 - Node.js 版本是否 >= 22
 - pnpm / npm 是否可用
 - `~/.haro/` 数据目录是否可写
-- `OPENAI_API_KEY` 是否已设置
+- Codex 认证状态：`OPENAI_API_KEY` 或 `~/.codex/auth.json`（FEAT-029 任一即可）
 
-检查通过后，它会将默认的非敏感配置（如 `providers.codex.defaultModel`）写入 `~/.haro/config.yaml`，并给出明确的下一步建议。
+检查通过后，它会将默认的非敏感配置（如 `providers.codex.defaultModel`、`providers.codex.authMode`）写入 `~/.haro/config.yaml`，并给出明确的下一步建议。
 
 如果 `haro doctor` 中 `providers.codex.healthy` 为 `false`，优先排查：
 
-1. `OPENAI_API_KEY` 是否已导出到当前 shell
+1. 当前 `authMode`：env 模式确认 `OPENAI_API_KEY` 已导出；chatgpt 模式确认 `~/.codex/auth.json` 存在 `tokens.access_token`（必要时重跑 `haro provider setup codex`）
 2. 当前 shell 是否与执行 `haro` 的 shell 是同一个会话
 3. 网络是否可访问 Codex 所需接口
 
