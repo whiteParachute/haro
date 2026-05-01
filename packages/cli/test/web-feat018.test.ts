@@ -1,10 +1,42 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CheckpointStore, PermissionBudgetStore, type WorkflowCheckpointState } from '@haro/core';
+import {
+  CheckpointStore,
+  PermissionBudgetStore,
+  ProviderRegistry,
+  type AgentCapabilities,
+  type AgentEvent,
+  type AgentProvider,
+  type AgentQueryParams,
+  type WorkflowCheckpointState,
+} from '@haro/core';
 import { createWebApp } from '../src/web/index.js';
 import type { WebLogger } from '../src/web/types.js';
+
+interface FakeProviderOptions {
+  id: string;
+  listModels?: () => Promise<readonly { id: string; maxContextTokens?: number }[]>;
+}
+
+function makeFakeProvider(options: FakeProviderOptions): AgentProvider & {
+  listModels?: () => Promise<readonly { id: string; maxContextTokens?: number }[]>;
+} {
+  return {
+    id: options.id,
+    capabilities(): AgentCapabilities {
+      return { maxConcurrentRequests: 1, supportsStreaming: false, supportsToolUse: false };
+    },
+    async *query(_params: AgentQueryParams): AsyncGenerator<AgentEvent, void, void> {
+      yield { type: 'result', responseId: 'fake' } as AgentEvent;
+    },
+    async healthCheck(): Promise<boolean> {
+      return true;
+    },
+    ...(options.listModels ? { listModels: options.listModels } : {}),
+  };
+}
 
 function createMockLogger(): WebLogger {
   return {
@@ -332,5 +364,113 @@ describe('web dashboard orchestration debugger API [FEAT-018]', () => {
     // FEAT-029 follow-up: /api/v1/providers exposes the registered provider list
     // (used by the chat page to populate provider/model dropdowns).
     await expect(app.request('/api/v1/providers')).resolves.toMatchObject({ status: 200 });
+  });
+
+  describe('/api/v1/providers contract [FEAT-029 follow-up]', () => {
+    function writeProviderConfig(
+      root: string,
+      providers: Record<string, Record<string, unknown>>,
+    ): void {
+      mkdirSync(root, { recursive: true });
+      const yaml =
+        'providers:\n' +
+        Object.entries(providers)
+          .map(([id, cfg]) => {
+            const lines = Object.entries(cfg).map(([k, v]) => {
+              const value = typeof v === 'string' ? `"${v}"` : String(v);
+              return `    ${k}: ${value}`;
+            });
+            return `  ${id}:\n${lines.join('\n')}`;
+          })
+          .join('\n');
+      // buildHaroPaths puts the global config file at `<root>/config.yaml`.
+      writeFileSync(join(root, 'config.yaml'), yaml + '\n', 'utf8');
+    }
+
+    it('returns enabled / authMode / defaultModel / liveModels per registered provider', async () => {
+      delete process.env.HARO_WEB_API_KEY;
+      const root = mkdtempSync(join(tmpdir(), 'haro-web-providers-shape-'));
+      tempRoots.push(root);
+      writeProviderConfig(root, {
+        codex: { enabled: true, authMode: 'chatgpt', defaultModel: 'gpt-5.5' },
+      });
+      const registry = new ProviderRegistry();
+      registry.register(
+        makeFakeProvider({
+          id: 'codex',
+          listModels: async () => [
+            { id: 'gpt-5.5', maxContextTokens: 256_000 },
+            { id: 'gpt-5.4' },
+          ],
+        }),
+      );
+      const app = createWebApp({
+        logger: createMockLogger(),
+        staticRoot: root,
+        runtime: { root, providerRegistry: registry },
+      });
+      const response = await app.request('/api/v1/providers');
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        success: true,
+        data: [
+          {
+            id: 'codex',
+            enabled: true,
+            authMode: 'chatgpt',
+            defaultModel: 'gpt-5.5',
+            liveModels: [
+              { id: 'gpt-5.5', maxContextTokens: 256_000 },
+              { id: 'gpt-5.4' },
+            ],
+          },
+        ],
+      });
+      expect(body.data[0]).not.toHaveProperty('liveModelsFailed');
+    });
+
+    it('collapses listModels failures into liveModelsFailed without leaking error text (e.g. env-name / file path)', async () => {
+      delete process.env.HARO_WEB_API_KEY;
+      const root = mkdtempSync(join(tmpdir(), 'haro-web-providers-failure-'));
+      tempRoots.push(root);
+      writeProviderConfig(root, {
+        codex: { enabled: true, authMode: 'env' },
+      });
+      const registry = new ProviderRegistry();
+      registry.register(
+        makeFakeProvider({
+          id: 'codex',
+          listModels: async () => {
+            throw new Error(
+              'Codex Provider: authMode=env but OPENAI_API_KEY is not set. Path: /home/user/.codex/auth.json',
+            );
+          },
+        }),
+      );
+      const app = createWebApp({
+        logger: createMockLogger(),
+        staticRoot: root,
+        runtime: { root, providerRegistry: registry },
+      });
+      const response = await app.request('/api/v1/providers');
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).not.toContain('OPENAI_API_KEY');
+      expect(text).not.toContain('/home/user/.codex/auth.json');
+      const body = JSON.parse(text);
+      expect(body).toMatchObject({
+        success: true,
+        data: [
+          {
+            id: 'codex',
+            enabled: true,
+            authMode: 'env',
+            liveModels: [],
+            liveModelsFailed: true,
+          },
+        ],
+      });
+    });
   });
 });

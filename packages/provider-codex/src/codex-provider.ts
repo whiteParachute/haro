@@ -71,7 +71,16 @@ export class CodexProvider implements AgentProvider {
       if (this.options.baseUrl) listerOpts.baseUrl = this.options.baseUrl;
       if (this.options.listModelsTtlSeconds) listerOpts.ttlSeconds = this.options.listModelsTtlSeconds;
       const listerDeps: ListModelsDeps = { ...(deps.modelListerDeps ?? {}) };
-      if (deps.readApiKey && !listerDeps.readApiKey) listerDeps.readApiKey = deps.readApiKey;
+      // FEAT-029 follow-up: route the lister's source through resolveAuth() so
+      // that authMode=env without a key throws (the existing soft-fall would
+      // otherwise display models from the local cache and let Dashboard accept
+      // a request that runtime is guaranteed to fail).
+      if (!listerDeps.readApiKey) {
+        listerDeps.readApiKey = () => {
+          const auth = this.resolveAuth();
+          return auth.kind === 'env-api-key' ? auth.token : undefined;
+        };
+      }
       this.lister = createModelLister(listerOpts, listerDeps);
     }
   }

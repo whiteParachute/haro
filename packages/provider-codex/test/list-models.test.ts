@@ -3,6 +3,20 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createModelLister } from '../src/list-models.js';
+import { CodexProvider } from '../src/codex-provider.js';
+import type { LocalCodexAuth } from '../src/codex-auth.js';
+
+function makeAuth(overrides: Partial<LocalCodexAuth> = {}): LocalCodexAuth {
+  return {
+    detected: false,
+    hasAuth: false,
+    authMode: null,
+    accountId: null,
+    lastRefresh: null,
+    authFilePath: '/tmp/.codex/auth.json',
+    ...overrides,
+  };
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -111,6 +125,79 @@ describe('createModelLister TTL cache [FEAT-003 R4]', () => {
     lister.invalidate();
     await lister.listModels();
     expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('CodexProvider.listModels() routes through resolveAuth() [FEAT-029 follow-up]', () => {
+  it('throws when authMode=env and OPENAI_API_KEY is missing (no soft-fall to local cache)', async () => {
+    const provider = new CodexProvider(
+      { authMode: 'env' },
+      {
+        readApiKey: () => undefined,
+        readCodexAuth: () => makeAuth({ hasAuth: true }),
+        modelListerDeps: {
+          fetchFn: vi.fn() as unknown as typeof fetch,
+          readLocalModels: () => [{ slug: 'gpt-5.5' }],
+        },
+      },
+    );
+    await expect(provider.listModels()).rejects.toThrow(/authMode=env but OPENAI_API_KEY/);
+  });
+
+  it('reads local cache under authMode=chatgpt without env key (no fetch attempted)', async () => {
+    const fetchFn = vi.fn();
+    const provider = new CodexProvider(
+      { authMode: 'chatgpt' },
+      {
+        readApiKey: () => undefined,
+        readCodexAuth: () => makeAuth({ hasAuth: true, authFilePath: '/x/.codex/auth.json' }),
+        modelListerDeps: {
+          fetchFn: fetchFn as unknown as typeof fetch,
+          readLocalModels: () => [{ slug: 'gpt-5.5' }, { slug: 'gpt-5.4' }],
+        },
+      },
+    );
+    const result = await provider.listModels();
+    expect(result.map((m) => m.id)).toEqual(['gpt-5.5', 'gpt-5.4']);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('throws under authMode=auto when neither env key nor local auth.json present', async () => {
+    const provider = new CodexProvider(
+      {},
+      {
+        readApiKey: () => undefined,
+        readCodexAuth: () => makeAuth(),
+        modelListerDeps: {
+          fetchFn: vi.fn() as unknown as typeof fetch,
+          readLocalModels: () => [{ slug: 'gpt-5.5' }],
+        },
+      },
+    );
+    await expect(provider.listModels()).rejects.toThrow(/no auth available/);
+  });
+
+  it('uses HTTP fetch with token when OPENAI_API_KEY is set (env path unchanged)', async () => {
+    const fetchFn = vi.fn(async () =>
+      new Response(JSON.stringify({ data: [{ id: 'gpt-5-codex', context_window: 128_000 }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const provider = new CodexProvider(
+      {},
+      {
+        readApiKey: () => 'sk-secret',
+        readCodexAuth: () => makeAuth(),
+        modelListerDeps: {
+          fetchFn: fetchFn as unknown as typeof fetch,
+          readLocalModels: () => [{ slug: 'should-not-be-used' }],
+        },
+      },
+    );
+    const result = await provider.listModels();
+    expect(result.map((m) => m.id)).toEqual(['gpt-5-codex']);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });
 
