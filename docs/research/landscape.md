@@ -136,6 +136,60 @@
 
 **Haro 参考**：TypeScript 技术栈选型参考。
 
+### happyclaw / AgentDock（2026-05-01 新增）
+
+**定位**：自托管单用户多会话 Agent workbench（fork from `riba2534/happyclaw`，演进为 AgentDock）
+
+**核心特点**：
+- 四 channel 统一路由：飞书 / Telegram / QQ / Web，所有消息通过 `send_message` MCP 工具显式路由
+- 双 runner 切换：Claude / Codex，per-session 选择，runner-descriptor 描述能力差异（Codex 在 IM / observability 上 degraded）
+- 11 内置 MCP 工具：send_message / send_image / send_file / schedule_task 系列 / memory_query / memory_remember / register_group
+- 定时任务三模式：cron / interval / once；两上下文（group / isolated）
+- Memory Sessions one-shot 模型：每次 query / remember / wrapup spawn 新 provider session；持久化到 `data/memory/{owner}/`
+- Web 终端：xterm.js + node-pty
+- 移动 PWA：iOS / Android 主屏添加，全屏运行
+- 流式 UX：扩展思考折叠、工具 timeline（最近 30）、Hook 状态、GFM
+- 文件管理：路径遍历防护 + 系统目录黑名单（`.ssh`、`.gnupg`）
+- 安全：AES-256-GCM 加密配置、本地 operator 上下文
+
+**架构亮点**：
+- 显式消息路由：agent stdout 仅 Web 显示，IM 必须通过 `send_message` 才送出
+- per-session 配置：working dir / runner / 压缩策略 / 环境变量都按 session 切换
+- 单用户多 session 架构（替代上游多用户邀请系统）
+
+**Haro 差异**：
+- happyclaw 是单 Agent + 多 session 的工作面板；Haro 是**多 Agent 编排 + 进化层**
+- happyclaw 没有：Scenario Router / Team Orchestrator / 进化代谢 / Permission Budget / Evolution Asset Registry
+- Haro 借鉴：Phase 1.5 的 Web Channel（FEAT-031）/ MCP 工具层（FEAT-032）/ 定时任务（FEAT-033）/ 流式 UX（FEAT-034）参考其设计；不照搬 PWA / Web 终端 / QQ channel
+
+### hermes-agent（2026-05-01 新增）
+
+**定位**：CLI 优先 Agent 工具，配置可在终端完成、无 Web UI 依赖
+
+**核心特点**：
+- 全部使用与配置可在 CLI 完成，Web UI 只作可选可视化
+- `provider setup / doctor / models / select / env` 命令族
+- staged setup 流程：从 0 到能跑通的引导逻辑
+
+**Haro 参考**：
+- CLI-first 设计理念：CLI 是与 Web Dashboard 平级的入口，不是子集
+- FEAT-039 CLI 等价补完直接借鉴 hermes-agent 的命令面思路
+- staged setup（Phase 1 FEAT-027）已部分参考其阶段化检查
+
+### hermes-web-ui（2026-05-01 新增）
+
+**定位**：前后端解耦的 Web UI 范例
+
+**核心特点**：
+- Web 前端独立 repo，通过稳定 HTTP / JSON contract 与后端通信
+- 不 import 后端内部模块；可独立打包发布
+- 后端通过 OpenAPI / 类似 contract 暴露能力
+
+**Haro 参考**：
+- FEAT-038 Web API 解耦：把 `packages/cli/src/web/` 抽出到独立 `packages/web-api/` 包
+- OpenAPI 3.1 schema 校验前后端一致性
+- 前端不允许 import `@haro/web-api` 或 `@haro/cli` 任何模块
+
 ## 行业共同弱点
 
 所有竞品（Hermes 除外）的共同弱点：**Agent 能力不随使用自动提升**（静态平台）。

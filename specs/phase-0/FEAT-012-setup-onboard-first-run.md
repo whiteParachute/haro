@@ -7,7 +7,7 @@ owner: whiteParachute
 created: 2026-04-20
 updated: 2026-04-20
 related:
-  - ../../docs/reviews/install-ux-plan-2026-04-20.md
+  - ../../docs/reviews/archive/install-ux-plan-2026-04-20.md
   - ../../docs/cli-design.md
   - ../../README.md
   - ./FEAT-003-codex-provider.md
@@ -18,7 +18,7 @@ related:
 
 ## 1. Context / 背景
 
-`README.md` 已能说明 Haro 的工程能力，但首次使用路径仍要求用户自行拼接“安装依赖 → 构建 → 导出 `OPENAI_API_KEY` → 跑 doctor / run”的步骤。根据 [`docs/reviews/install-ux-plan-2026-04-20.md`](../../docs/reviews/install-ux-plan-2026-04-20.md) 的 M1 目标，Haro 需要一个统一的首次命令，把环境检查、配置落盘与下一步建议收敛成一个闭环，消除“第一次应该先做什么”的歧义。
+`README.md` 已能说明 Haro 的工程能力，但首次使用路径仍要求用户自行拼接“安装依赖 → 构建 → 导出 `OPENAI_API_KEY` → 跑 doctor / run”的步骤。根据 [`docs/reviews/archive/install-ux-plan-2026-04-20.md`](../../docs/reviews/archive/install-ux-plan-2026-04-20.md) 的 M1 目标，Haro 需要一个统一的首次命令，把环境检查、配置落盘与下一步建议收敛成一个闭环，消除“第一次应该先做什么”的歧义。
 
 ## 2. Goals / 目标
 

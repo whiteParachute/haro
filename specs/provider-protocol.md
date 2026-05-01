@@ -4,7 +4,12 @@
 
 本文档定义 Haro Provider Abstraction Layer 的核心接口协议。所有 Provider 实现必须遵守此协议。
 
-当前仓库只保留 Codex Provider 的正式实现，但协议层继续保持多 Provider 抽象，便于未来按同一契约接入其他 Provider。
+**当前实现状态**：
+- 唯一正式实现：**Codex Provider**（`packages/provider-codex/`，含 FEAT-029 ChatGPT 订阅认证）
+- 占位包：`packages/providers/`（保留作为后续 Provider 的目录位）
+- 规划接入（Phase 1.5+）：`xiaomi-token-plan` / `kimi-token-plan`；接入时通过 provider catalog 驱动，不允许在核心 CLI / runtime 散落 `providerId === 'xxx'` 特判
+
+协议层始终保持多 Provider 抽象，确保新 Provider 接入只需实现本协议接口 + 注册 catalog 描述，不动核心代码。
 
 ## 核心接口定义
 

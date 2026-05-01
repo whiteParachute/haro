@@ -22,6 +22,32 @@ Evolution Engine 由三件套组成：
 | [provider-protocol.md](./provider-protocol.md) | Auto-Refactorer 执行时是 AgentProvider 的调用方 |
 | FEAT-007 Memory Fabric | evolution-context/ 是临时工作台；Memory 是跨进化周期的长期知识仓（见本规范 §八） |
 
+## Phase 映射（2026-05-01 重排后）
+
+OODA 协议是跨阶段的持久契约。具体落地按 Phase 2.0 / 2.5 / 3.0 / 3.5 分批实现：
+
+| Phase | OODA 段 | 实现 spec | 落地内容 | 自治水平 |
+|---|---|---|---|---|
+| **Phase 2.0 Awareness** | Observe（被动观测） | [FEAT-040 Self-Monitor](./phase-2.0/FEAT-040-self-monitor.md) | session / tool / channel / memory / budget 等被动埋点；feature views | 仅采集，不分析 |
+| Phase 2.0 | Observe（外部信号） | [FEAT-036 Industry Intel](./phase-2.0/FEAT-036-industry-intel.md) | RSS / Atom / GitHub Release 订阅 + 自动 eat | 自动入库，不改 platform |
+| Phase 2.0 | Act（dry-run only） | [FEAT-041 Auto eat/shit Trigger](./phase-2.0/FEAT-041-auto-eat-shit-trigger.md) | 政策驱动 dry-run + artifact 持久化（`bridge_status: pending-bridge`） | 仅写产物，不写 platform 状态 |
+| **Phase 2.5 Proposal** | Orient | [FEAT-042 Pattern Miner](./phase-2.5/FEAT-042-pattern-miner.md) | 跨源（Self-Monitor + Intel + Memory）模式归纳；confidence ∈ [0,1] | Agent 思考，不产生改动 |
+| Phase 2.5 | Decide | [FEAT-037 Evolution Proposal](./phase-2.5/FEAT-037-evolution-proposal.md) | 结构化提案 + Dashboard 审批队列 + bridge from FEAT-041 artifacts + decision log | Owner 决策，平台执行 |
+| **Phase 3.0 Controlled Self-Evolution** | Act（受控） | （后续 spec） | Auto-Refactorer L0（Prompt） + L1（编排 / skill 配置）；approval 后自动落地 + 灰度 + 回滚 | Agent 自治，人类监督 |
+| **Phase 3.5 Agent-as-Developer** | Act（开放） | （后续 spec） | Auto-Refactorer L2（结构重构）+ L3（架构演进）；Agent 自写 spec / 自提 PR | Agent 自治，人类引导 |
+
+**约束 E1（OODA 单向）的 Phase 落地**：
+
+- Phase 2.0 实现 Observe 段（FEAT-040 + FEAT-036），并把 Act 段限制为 dry-run（FEAT-041）；Orient / Decide 段在本阶段缺失，因此触发器仅落 artifact 等待桥接
+- Phase 2.5 补齐 Orient（FEAT-042）和 Decide（FEAT-037）；FEAT-041 artifact 的 `bridge_status: pending-bridge` 在此阶段被 bridge 模块扫描转为 proposal
+- Phase 3.0 / 3.5 补齐 Act 真正的 platform 改动；Auto-Refactorer 的 L 等级与 E10-E12 门控栈对齐
+
+**约束 E13（按变更类型分类自治）的 Phase 落地**：
+
+- Bugfix（Agent 自主 + 事后 review）— Phase 3.0 起允许 Auto-Refactorer 接手 L0 / L1 自动 fix；事后写 `human-review-queue.jsonl`
+- Feature Request（人类决策 + Agent 实现）— Phase 2.5 FEAT-037 Evolution Proposal 是该流程的承载者
+- Architecture Evolution（人类亲自决定 + Agent 协助）— Phase 3.5 才允许 Agent 提出，仍由 owner 在 Dashboard 决议
+
 ---
 
 ## 一、OODA 契约
