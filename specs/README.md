@@ -16,12 +16,17 @@ specs/
 │   └── BUG-001-xxx.md
 ├── phase-1/
 │   └── ...
+├── phase-1.5/                      # 自用底座补完（2026-05-01 重排新增）
+├── phase-2.0/                      # 进化感知层
+├── phase-2.5/                      # 进化提案层
 │
 ├── multi-agent-design-constraints.md   # 强制规范（跨 phase）
 ├── provider-protocol.md                # 协议规范
 ├── provider-selection.md               # 协议规范
 ├── channel-protocol.md                 # 协议规范
-└── evolution-metabolism.md             # 协议规范
+├── evolution-metabolism.md             # 协议规范
+├── evolution-engine-protocol.md        # 协议规范
+└── team-orchestration-protocol.md      # 协议规范
 ```
 
 - **`_template-*`**：以 `_` 前缀排在最上面，复制后填充
@@ -259,12 +264,49 @@ FEAT-018 只负责 **workflow 编排调试的只读可观测面**，避免把后
 | FEAT-026 | Provider Onboarding Wizard | Hermes 风格 `haro provider` 引导配置、model 选择、secretRef 与 provider doctor |
 | FEAT-027 | Guided Setup & Doctor Remediation | OpenClaw/Hermes 风格 `haro setup` 从零引导、`haro doctor` 结构化修复建议 |
 | FEAT-028 | Web Dashboard Product Maturity | KeyClaw 风格本地多用户、统一服务端分页、中文本地化与角色化操作 |
+| FEAT-029 | Codex ChatGPT 订阅认证 | 让 Codex 复用官方 ChatGPT 登录（device-auth），不自实现 OAuth |
+| FEAT-030 | Dashboard ChatGPT 认证 UI | FEAT-029 的 Dashboard 可视化与 terminal login bridge（draft） |
+
+2026-05-01 路线重排新增（详见 [`docs/planning/redesign-2026-05-01.md`](../docs/planning/redesign-2026-05-01.md)）：
+
+**Phase 1.5 — 自用底座补完**（specs/phase-1.5/）：
+
+| 编号 | 范围 | 说明 |
+|------|------|------|
+| FEAT-031 | Web Channel | 浏览器作为 IM channel（对话 / 历史 / 文件），与飞书 / Telegram 同等公民 |
+| FEAT-032 | MCP 工具层 | 内置 MCP server + 4 核心工具（send_message / memory_query / memory_remember / schedule_task） |
+| FEAT-033 | 定时任务最小版 | cron + 一次性，复用现有 session 上下文 |
+| FEAT-034 | 流式 UX 升级 | thinking 折叠 / tool timeline / Hook 状态 / GFM / lightbox |
+| FEAT-038 | Web API 解耦 | 新建 `packages/web-api`，从 CLI 剥离；hermes-web-ui 风格前后端解耦 |
+| FEAT-039 | CLI 等价补完 | chat / session / agent / memory / logs / workflow / budget / user / skill / config 命令族 |
+
+**Phase 2.0 — 进化感知层**（specs/phase-2.0/）：
+
+| 编号 | 范围 | 说明 |
+|------|------|------|
+| FEAT-036 | Industry Intel | Anthropic / OpenAI changelog + 关键 GitHub repo release 订阅 + 自动 eat |
+| FEAT-040 | Self-Monitor | session / tool / 失败 / 重试 / token 浪费 被动观测埋点（Phase 1.5 后期开始预埋） |
+| FEAT-041 | 自动 eat/shit 触发 | 政策驱动 dry-run；artifact 持久化 + Phase 2.5 桥接到 proposal |
+
+**Phase 2.5 — 进化提案层**（specs/phase-2.5/）：
+
+| 编号 | 范围 | 说明 |
+|------|------|------|
+| FEAT-042 | Pattern Miner | 跨源（Self-Monitor + Industry Intel + Memory Fabric）模式归纳 |
+| FEAT-037 | Evolution Proposal | 结构化提案 + Dashboard 审批队列 + 决策反馈到 Pattern Miner |
 
 2026-04-25 后续路线重排原则：
 
 1. **先补首配闭环**：FEAT-026/027 优先于新增复杂能力，确保用户能从空环境配置 provider、全局命令、systemd/web 服务并跑通 smoke test。
 2. **再补智能底座**：FEAT-021/022/023 建立 Memory、资产审计、权限和预算，作为后续 Dashboard 与编排能力的后端基础。
 3. **最后补管理面成熟度**：FEAT-028 与 FEAT-024/025 共同把 Dashboard 从调试壳升级为可多人使用、可分页浏览、中文可读的控制面。
+
+2026-05-01 重排原则：
+
+1. **CLI-first 与前后端解耦先行**：FEAT-038 / 039 是后续所有 Phase 1.5 spec 的架构前提，必须最先落。
+2. **Workbench 补完压在 Phase 1.5**：Web Channel / MCP / 定时 / 流式 UX 让 Haro 成为日用工具并产生进化层数据。
+3. **进化层分感知 → 提案 → 演化三层**：Phase 2.0（FEAT-036/040/041）只感知不改、Phase 2.5（FEAT-042/037）产提案 owner 审批、Phase 3.0+ 才执行。
+4. **跨 phase 依赖只能正向**：前置 phase 不能依赖后置 phase 实现；如必须接合，写双阶段实现条款 + 桥接表 + 状态字段（参见 FEAT-041 的 `auto_trigger_artifacts.bridge_status` 模式）。
 
 ### 规划 checklist（后端 FEAT 起草时自检）
 
