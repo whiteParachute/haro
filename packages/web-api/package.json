@@ -1,0 +1,55 @@
+{
+  "name": "@haro/web-api",
+  "version": "0.1.0",
+  "description": "Haro Web API — decoupled HTTP / WS service backing the Web Dashboard (FEAT-038)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "start": "node ./dist/standalone.js",
+    "test": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" vitest run"
+  },
+  "dependencies": {
+    "@haro/channel": "workspace:*",
+    "@haro/core": "workspace:*",
+    "@haro/skills": "workspace:*",
+    "@hono/node-server": "^1.19.14",
+    "better-sqlite3": "^11.7.0",
+    "hono": "^4.12.14",
+    "ws": "^8.18.0",
+    "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.18.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

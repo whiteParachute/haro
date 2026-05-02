@@ -1,0 +1,34 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "composite": true,
+    "paths": {
+      "@haro/channel": [
+        "../channel/dist/index.d.ts"
+      ],
+      "@haro/skills": [
+        "../skills/dist/index.d.ts"
+      ]
+    }
+  },
+  "references": [
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../channel"
+    },
+    {
+      "path": "../skills"
+    }
+  ],
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
+}

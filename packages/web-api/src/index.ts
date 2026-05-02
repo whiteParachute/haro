@@ -26,6 +26,10 @@ import { createSessionsRoute } from './routes/sessions.js';
 import type { WebRuntime } from './runtime.js';
 import { WebSocketManager } from './websocket/manager.js';
 
+export { startWebServer, type WebServerHandle } from './server.js';
+export type { WebRuntime, DiagnosticsRunner, DiagnosticsRunInput } from './runtime.js';
+export type { WebApp, WebLogger, WebServerOptions, ApiKeyAuthEnv } from './types.js';
+
 const VITE_DEV_ORIGIN = 'http://localhost:5173';
 const ALLOWED_CORS_HEADERS = ['content-type', 'authorization', 'x-api-key', 'x-haro-session-token'];
 
@@ -42,7 +46,10 @@ export function getWebSocketManager(app: WebApp): WebSocketManager | undefined {
 }
 
 export function resolveWebDistRoot(cwd = process.cwd()): string {
-  const absoluteWebDistRoot = resolve(__dirname, '../../..', 'web', 'dist');
+  // After build: __dirname is packages/web-api/dist/, packages/web/dist/ sits
+  // two levels up. (Pre-FEAT-038 the file lived at packages/cli/src/web/ and
+  // walked three levels; the new location only needs two.)
+  const absoluteWebDistRoot = resolve(__dirname, '..', '..', 'web', 'dist');
   const relativeRoot = relative(cwd, absoluteWebDistRoot);
   return relativeRoot.length > 0 ? relativeRoot : '.';
 }
@@ -86,6 +93,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
     ...(options.runtime?.evolutionAssetRegistry !== undefined ? { evolutionAssetRegistry: options.runtime.evolutionAssetRegistry } : {}),
     ...(options.runtime?.skillAssetAuditSupported !== undefined ? { skillAssetAuditSupported: options.runtime.skillAssetAuditSupported } : {}),
     ...(options.runtime?.loaded ? { loaded: options.runtime.loaded } : {}),
+    ...(options.runtime?.runDiagnostics ? { runDiagnostics: options.runtime.runDiagnostics } : {}),
     logger,
     startedAt: options.runtime?.startedAt ?? Date.now(),
   };

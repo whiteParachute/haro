@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ChannelRegistry, type ManagedChannel, type OutboundMessage } from '../src/channel.js';
-import { createWebApp } from '../src/web/index.js';
-import type { WebLogger } from '../src/web/types.js';
+import { ChannelRegistry, type ManagedChannel, type OutboundMessage } from '@haro/channel';
+import { createWebApp } from '../src/index.js';
+import type { WebLogger } from '../src/types.js';
 
 function createMockLogger(): WebLogger {
   return { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };

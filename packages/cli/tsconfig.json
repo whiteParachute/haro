@@ -25,6 +25,9 @@
       ],
       "@haro/skills": [
         "../skills/dist/index.d.ts"
+      ],
+      "@haro/web-api": [
+        "../web-api/dist/index.d.ts"
       ]
     }
   },
@@ -46,6 +49,9 @@
     },
     {
       "path": "../provider-codex"
+    },
+    {
+      "path": "../web-api"
     }
   ],
   "include": [

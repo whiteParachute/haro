@@ -30,6 +30,7 @@
     "@haro/channel-feishu": "workspace:*",
     "@haro/channel-telegram": "workspace:*",
     "@haro/skills": "workspace:*",
+    "@haro/web-api": "workspace:*",
     "@hono/node-server": "^1.19.14",
     "hono": "^4.12.14",
     "yaml": "^2.8.3"

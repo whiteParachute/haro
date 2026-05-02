@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildHaroPaths, createEvolutionAssetRegistry, createMemoryFabric, type EvolutionAssetRegistry } from '@haro/core';
 import type { SkillsManager } from '@haro/skills';
-import { createWebApp } from '../src/web/index.js';
-import type { WebLogger } from '../src/web/types.js';
+import { createWebApp } from '../src/index.js';
+import type { WebLogger } from '../src/types.js';
 
 function createMockLogger(): WebLogger {
   return { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };

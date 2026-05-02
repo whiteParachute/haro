@@ -2,10 +2,10 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CheckpointStore, PermissionBudgetStore, type WorkflowCheckpointState } from '@haro/core';
-import { createWebApp, resolveWebDistRoot } from '../src/web/index.js';
-import { UNAUTHENTICATED_DASHBOARD_WARNING } from '../src/web/auth.js';
-import type { WebLogger } from '../src/web/types.js';
+import { AgentRegistry, CheckpointStore, PermissionBudgetStore, type WorkflowCheckpointState } from '@haro/core';
+import { createWebApp, resolveWebDistRoot } from '../src/index.js';
+import { UNAUTHENTICATED_DASHBOARD_WARNING } from '../src/auth.js';
+import type { WebLogger } from '../src/types.js';
 
 function createMockLogger(): WebLogger {
   return {
@@ -445,8 +445,13 @@ describe('web dashboard Hono app [FEAT-015]', () => {
 
   it('does not fallback /api routes or missing static assets to index.html', async () => {
     delete process.env.HARO_WEB_API_KEY;
+    const root = mkdtempSync(join(tmpdir(), 'haro-web-test-'));
+    tempRoots.push(root);
     const logger = createMockLogger();
-    const app = createWebApp({ logger });
+    const app = createWebApp({
+      logger,
+      runtime: { agentRegistry: new AgentRegistry(), root, projectRoot: root },
+    });
 
     const healthResponse = await app.request('/api/health');
     const missingApiResponse = await app.request('/api/missing');

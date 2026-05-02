@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFrame } from '../src/web/websocket/manager.js';
+import { decodeFrame } from '../src/websocket/manager.js';
 
 function buildFrame(opcode: number, fin: boolean, payload: Buffer, masked = true): Buffer {
   const finBit = fin ? 0x80 : 0x00;

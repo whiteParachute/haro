@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentRegistry, db as haroDb, type AgentConfig, type AgentEvent, type RunAgentInput, type RunAgentResult } from '@haro/core';
-import { createWebApp } from '../src/web/index.js';
-import { startWebServer } from '../src/web/server.js';
-import type { WebLogger } from '../src/web/types.js';
+import { createWebApp } from '../src/index.js';
+import { startWebServer } from '../src/server.js';
+import type { WebLogger } from '../src/types.js';
 
 function createMockLogger(): WebLogger {
   return { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
@@ -55,7 +55,11 @@ describe('web dashboard agent interaction REST [FEAT-016]', () => {
 
   it('returns Agent read-model summaries and details without description/type', async () => {
     delete process.env.HARO_WEB_API_KEY;
-    const app = createWebApp({ logger: createMockLogger(), runtime: { agentRegistry: createRegistry(), runner: createRunner() as never } });
+    const root = mkdtempSync(join(tmpdir(), 'haro-feat016-'));
+    const app = createWebApp({
+      logger: createMockLogger(),
+      runtime: { agentRegistry: createRegistry(), runner: createRunner() as never, root, projectRoot: root },
+    });
 
     const listResponse = await app.request('/api/v1/agents');
     const list = await listResponse.json();

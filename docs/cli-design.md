@@ -68,7 +68,7 @@ pnpm haro run "..."        # 单次任务
 | Workflow | `workflow` | **Phase 1.5 规划** | list / show / replay / checkpoint 检查 |
 | Budget | `budget` | **Phase 1.5 规划** | show / set / audit |
 | User | `user` | **Phase 1.5 规划** | list / create / role / disable（FEAT-028 多用户管理） |
-| Web | `web` | 已实现 | 启动 Web Dashboard 服务（Phase 1.5 后退化为薄启动器，调用 `@haro/web-api`） |
+| Web | `web` | 已实现 | 启动 Web Dashboard 服务（FEAT-038 已退化为 `@haro/web-api` 的薄启动器；`pnpm -F @haro/web-api start` 可独立启动） |
 | Evolution | `eat` / `shit` | 已实现 | 手动代谢 |
 
 详细说明按主题分章节展开。
@@ -351,7 +351,7 @@ haro web --port 3000 --host 0.0.0.0
 haro web --api-key <token>            # _(Phase 1.5 规划)_ CLI 端注入 API key，避免依赖 HARO_WEB_API_KEY 环境变量
 ```
 
-> 当前实现：`haro web` 仅支持 `--port` / `--host`；API key 通过 `HARO_WEB_API_KEY` 环境变量注入。Phase 1.5 FEAT-038 把 Web Server 剥离到独立 `@haro/web-api` 包，`haro web` 退化为薄启动器并随 FEAT-039 补完 `--api-key` 等额外参数。
+> 当前实现：`haro web` 仅支持 `--port` / `--host`；API key 通过 `HARO_WEB_API_KEY` 环境变量注入。FEAT-038 已把 Web Server 剥离到独立 `@haro/web-api` 包，`haro web` 现在是薄启动器（动态 `import('@haro/web-api')` + 注入 CLI 的 runtime 上下文，含 `runDiagnostics` 回调）；`pnpm -F @haro/web-api start [-- --port <n>] [--host <addr>]` 也可独立启动 web-api，但这条路径不带 CLI runtime 上下文，doctor 路由会返回 `WEB_DIAGNOSTICS_RUNNER_NOT_CONFIGURED` fallback。`--api-key` 等 CLI 端额外参数随 FEAT-039 补完。
 
 ### `haro eat` / `haro shit`
 

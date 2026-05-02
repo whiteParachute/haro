@@ -1,11 +1,11 @@
 ---
 id: FEAT-038
 title: Web API 解耦（packages/web-api 独立包）
-status: draft
+status: done
 phase: phase-1.5
 owner: whiteParachute
 created: 2026-05-01
-updated: 2026-05-01
+updated: 2026-05-02
 related:
   - ../phase-1/FEAT-015-web-dashboard-foundation.md
   - ../phase-1/FEAT-017-web-dashboard-system-management.md
@@ -164,3 +164,5 @@ CI 阶段：
 ## 9. Changelog / 变更记录
 
 - 2026-05-01: whiteParachute — 初稿（Phase 1.5 架构调整批次 1）
+- 2026-05-01: whiteParachute — 实现交付，status 由 draft → done。`packages/cli/src/web/` 全树 `git mv` 至 `packages/web-api/src/`（25 文件 + 10 测试）；CLI 端 `haro web` 退化为薄启动器，通过动态 `import('@haro/web-api')` 调用 `createWebApp` / `startWebServer`；为避免循环依赖，新增 `WebRuntime.runDiagnostics?: DiagnosticsRunner` 回调，CLI 在 `haro web` 命令处注入实际 `runDiagnostics` 实现，`status.ts` 走 runtime 调用而非直接 import；`status.ts` 的 `ChannelRegistry` 改从 `@haro/channel` 直接导入。本批 commit 同时修正 `web.test.ts` / `web-feat016.test.ts` 中两个**预先存在**的 flaky test（`createWebApp` 未传 `root` 时回落到真实 `~/.haro` 数据库导致 unauth 流程失败），通过为它们注入 tmp `root` / `projectRoot` 解决。所有 428 测试 + smoke 通过。
+- 2026-05-02: whiteParachute — Codex review 抓出的 P2 修复：(1) `createWebApp` 内部 runtime 重建段漏拷 `runDiagnostics` 字段，导致 CLI 注入失效，`/api/v1/doctor` 永远走 `WEB_DIAGNOSTICS_RUNNER_NOT_CONFIGURED` fallback —— 已在 `index.ts` runtime 拷贝段补 `runDiagnostics` 字段；(2) AC2 / AC6 / R10 要求 `pnpm -F @haro/web-api start` 可独立启动，但 package.json 缺 `start` script —— 已新增 `packages/web-api/src/standalone.ts` 入口（含 `--port` / `--host` 解析、`HARO_WEB_API_PORT` / `HARO_WEB_API_HOST` 环境变量回退、SIGINT/SIGTERM 优雅关停）+ `start: "node ./dist/standalone.js"` script，curl smoke 验证 `/api/health` 200 通过。OpenAPI schema 校验作为 follow-up 留待后续 commit。

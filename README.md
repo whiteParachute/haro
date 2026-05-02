@@ -59,6 +59,7 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **权限/Token 预算守门** — 操作分级 + 预算阻断 + 并行 Agent 汇总（FEAT-023）
 - **Evolution Asset Registry** — eat/shit 产物、prompt、skill、编排规则统一资产化（FEAT-022）
 - **多用户支持** — 本地多用户 + RBAC + Bootstrap + Audit Log（FEAT-028，自用为主，欢迎多人使用）
+- **Web API 解耦**（FEAT-038）— `packages/web-api/` 独立服务，CLI `haro web` 是薄启动器；`pnpm -F @haro/web-api start` 也可独立启动
 
 ### 进行中（Phase 1.5）
 
@@ -66,7 +67,6 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **MCP 工具层**（FEAT-032）— 内置 MCP server + 4 个核心工具
 - **定时任务**（FEAT-033）— cron + 一次性
 - **流式 UX 升级**（FEAT-034）— thinking 折叠、tool timeline、Hook 状态
-- **Web API 解耦**（FEAT-038）— 新建 `packages/web-api`，从 CLI 剥离
 - **CLI 等价补完**（FEAT-039）— chat / session / agent / skill / memory / logs / workflow / budget 命令族
 
 ### 远期（Phase 2.0+）
@@ -165,11 +165,9 @@ packages/
 ├── channel-feishu/     # 飞书 adapter
 ├── channel-telegram/   # Telegram adapter
 ├── skills/             # Skills 子系统与 eat/shit 代谢
-├── cli/                # CLI 入口（Phase 1.5 后：薄启动器 + 命令族）
+├── cli/                # CLI 入口；`haro web` 是 @haro/web-api 的薄启动器
+├── web-api/            # Web 后端服务（FEAT-038 已交付，独立可发布）
 └── web/                # Web Dashboard 前端（React 19 SPA）
-
-# Phase 1.5 新增：
-# packages/web-api/    # Web 后端服务，从 cli 剥离
 
 docs/                   # 架构、模块、演进、评审、规划文档
 specs/                  # 单一真源：feature / defect / protocol / constraints

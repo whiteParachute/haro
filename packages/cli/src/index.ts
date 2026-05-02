@@ -1186,9 +1186,9 @@ function registerWebCommand(program: Command, app: AppContext): void {
         .option('--host <host>', 'bind address', '127.0.0.1')
         .action(async (options: { port: string; host: string }) => {
           const port = parseWebPort(options.port);
-          const [{ createWebApp }, { startWebServer }] = await Promise.all([
-            import('./web/index.js'),
-            import('./web/server.js'),
+          const [{ createWebApp, startWebServer }, { runDiagnostics }] = await Promise.all([
+            import('@haro/web-api'),
+            import('./diagnostics.js'),
           ]);
           const handle = startWebServer(
             createWebApp({
@@ -1221,6 +1221,8 @@ function registerWebCommand(program: Command, app: AppContext): void {
                 skillsManager: app.skills,
                 skillAssetAuditSupported: true,
                 loaded: app.loaded,
+                runDiagnostics: (input) =>
+                  runDiagnostics(input) as unknown as Promise<Record<string, unknown>>,
               },
             }),
             { port, host: options.host },

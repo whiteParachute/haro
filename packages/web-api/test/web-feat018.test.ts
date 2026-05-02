@@ -12,8 +12,8 @@ import {
   type AgentQueryParams,
   type WorkflowCheckpointState,
 } from '@haro/core';
-import { createWebApp } from '../src/web/index.js';
-import type { WebLogger } from '../src/web/types.js';
+import { createWebApp } from '../src/index.js';
+import type { WebLogger } from '../src/types.js';
 
 interface FakeProviderOptions {
   id: string;

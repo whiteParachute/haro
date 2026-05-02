@@ -2,10 +2,9 @@ import { access, constants } from 'node:fs/promises';
 import { Hono } from 'hono';
 import { buildHaroPaths, db as haroDb, config as haroConfig } from '@haro/core';
 import { ProviderRegistry } from '@haro/core';
-import { ChannelRegistry, type ChannelRegistryEntry } from '../../channel.js';
+import { ChannelRegistry, type ChannelRegistryEntry } from '@haro/channel';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
-import { runDiagnostics } from '../../diagnostics.js';
 
 interface SessionCountRow {
   status: string;
@@ -95,15 +94,32 @@ export function createDoctorRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
       providers.every((item) => item.healthy) &&
       channels.every((item) => item.health !== 'unhealthy');
 
-    const diagnostics = await runDiagnostics({
-      mode: 'doctor',
-      profile: 'global',
-      paths,
-      root: runtime.root,
-      loaded,
-      providerRegistry: runtime.providerRegistry ?? new ProviderRegistry(),
-      channelRegistry: runtime.channelRegistry ?? new ChannelRegistry(),
-    });
+    const diagnostics: Record<string, unknown> = runtime.runDiagnostics
+      ? await runtime.runDiagnostics({
+          mode: 'doctor',
+          profile: 'global',
+          paths,
+          root: runtime.root,
+          loaded,
+          providerRegistry: runtime.providerRegistry ?? new ProviderRegistry(),
+          channelRegistry: runtime.channelRegistry ?? new ChannelRegistry(),
+        })
+      : {
+          // Host has not wired a diagnostics runner. The doctor view degrades
+          // gracefully so the rest of the structured payload below still loads.
+          ok: false,
+          issues: [
+            {
+              code: 'WEB_DIAGNOSTICS_RUNNER_NOT_CONFIGURED',
+              severity: 'warning',
+              component: 'web',
+              evidence: 'WebRuntime.runDiagnostics is not provided by the host',
+              remediation: 'Wire a DiagnosticsRunner when starting @haro/web-api (see FEAT-038 §5.2)',
+              fixable: false,
+            },
+          ],
+          stages: [],
+        };
 
     return c.json({
       success: true,
