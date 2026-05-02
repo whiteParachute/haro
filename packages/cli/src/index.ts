@@ -67,6 +67,9 @@ import {
   DEFAULT_PROVIDER_CATALOG,
   type ProviderCatalogEntry,
 } from './provider-catalog.js';
+import { registerSessionCommands } from './commands/session.js';
+import { registerAgentCommands } from './commands/agent.js';
+import { registerChatCommand } from './commands/chat.js';
 import {
   assertProviderModelExists,
   buildProviderPatch,
@@ -184,9 +187,16 @@ interface ReplState {
   lastUserTask?: string;
   lastSessionId?: string;
   continueLatestSession: boolean;
+  /**
+   * One-shot pin set by `haro chat --session <id>` / `haro session resume
+   * <id>`: the very first REPL turn forces continuation from this session;
+   * follow-ups fall back to "latest for agent+provider" (which by that
+   * point is the new session minted on turn 1).
+   */
+  resumeFromSessionId?: string;
 }
 
-interface ExecutionOptions {
+export interface ExecutionOptions {
   task: string;
   agentId: string;
   provider?: string;
@@ -194,9 +204,23 @@ interface ExecutionOptions {
   noMemory?: boolean;
   retryOfSessionId?: string;
   continueLatestSession?: boolean;
+  /**
+   * Resume from a specific prior session (FEAT-039 R1 `--session`); the
+   * runner pins continuation to that session id instead of "latest for
+   * agent+provider". Validation/existence checks happen at call sites.
+   */
+  continueFromSessionId?: string;
   channelSessionId?: string;
   channelId?: string;
 }
+
+export type ExecuteCliTaskFn = (
+  app: AppContext,
+  input: ExecutionOptions,
+  channel?: MessageChannel,
+) => ReturnType<typeof executeTask>;
+
+export type RunCliReplFn = (app: AppContext) => Promise<void>;
 
 export interface AppContext {
   opts: RunCliOptions;
@@ -223,7 +247,7 @@ export interface AppContext {
   skills: SkillsManager;
 }
 
-class CommanderExit extends Error {
+export class CommanderExit extends Error {
   readonly code: number;
 
   constructor(code: number, message: string) {
@@ -495,6 +519,9 @@ function buildProgram(app: AppContext): Command {
   registerGatewayCommands(program, app);
   registerWebCommand(program, app);
   registerUpdateCommand(program, app);
+  registerSessionCommands(program, app, { runRepl });
+  registerAgentCommands(program, app);
+  registerChatCommand(program, app, { executeTask, runRepl });
 
   return program;
 }
@@ -1489,7 +1516,10 @@ async function bootstrapApp(
 }
 
 async function runRepl(app: AppContext): Promise<void> {
-  const replState: ReplState = {
+  // Honor a pre-seeded replState (e.g. from `haro chat --agent <id>` /
+  // `--session <id>` / `session resume <id>`) — only fall back to defaults
+  // when no caller has set one yet.
+  const replState: ReplState = app.replState ?? {
     agentId:
       app.cliState.defaultAgentId ?? app.loaded.config.defaultAgent ?? DEFAULT_AGENT_ID,
     providerOverride: app.cliState.defaultProvider,
@@ -1528,6 +1558,7 @@ async function handleCliInbound(app: AppContext, msg: InboundMessage): Promise<v
       provider: replState.providerOverride,
       model: replState.modelOverride,
       continueLatestSession: replState.continueLatestSession,
+      ...(replState.resumeFromSessionId ? { continueFromSessionId: replState.resumeFromSessionId } : {}),
       channelSessionId: msg.sessionId,
       channelId: msg.channelId,
     },
@@ -1536,6 +1567,9 @@ async function handleCliInbound(app: AppContext, msg: InboundMessage): Promise<v
   replState.lastUserTask = task;
   replState.lastSessionId = result.sessionId;
   replState.continueLatestSession = true;
+  // One-shot resume pin: clear after the first turn so follow-ups continue
+  // from the freshly-minted session (now the latest completed one).
+  delete replState.resumeFromSessionId;
 }
 
 async function handleExternalInbound(app: AppContext, channel: MessageChannel, msg: InboundMessage): Promise<void> {
@@ -1675,6 +1709,7 @@ async function executeTask(
       ...(input.noMemory ? { noMemory: true } : {}),
       ...(input.retryOfSessionId ? { retryOfSessionId: input.retryOfSessionId } : {}),
       ...(input.continueLatestSession === false ? { continueLatestSession: false } : {}),
+      ...(input.continueFromSessionId ? { continueFromSessionId: input.continueFromSessionId } : {}),
       onEvent: queueLiveEvent,
     });
     const usage = extractTokenUsage({ finalEvent: result.finalEvent, events: result.events });

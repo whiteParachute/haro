@@ -70,6 +70,14 @@ export interface RunAgentInput {
   noMemory?: boolean;
   retryOfSessionId?: string;
   continueLatestSession?: boolean;
+  /**
+   * Pin the continuation source to a specific prior session id (FEAT-039 R1
+   * `--session`). When set, the runner ignores the "latest completed
+   * session for agent+provider" heuristic and resumes from this session's
+   * stored `previousResponseId` (or its last `result` event payload).
+   * Implies `continueLatestSession=true` regardless of caller setting.
+   */
+  continueFromSessionId?: string;
   onEvent?: (event: AgentEvent, sessionId: string) => void;
 }
 

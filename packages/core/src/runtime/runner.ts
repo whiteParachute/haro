@@ -172,7 +172,8 @@ export class AgentRunner {
             agent.id,
             candidate.provider,
             sessionId,
-            input.continueLatestSession !== false,
+            input.continueFromSessionId !== undefined || input.continueLatestSession !== false,
+            input.continueFromSessionId,
           );
           let contextResetRetried = false;
           let attemptActive = true;
@@ -407,19 +408,35 @@ export class AgentRunner {
     provider: string,
     currentSessionId: string,
     continueLatestSession: boolean,
+    continueFromSessionId?: string,
   ): { sessionId: string; previousResponseId?: string } {
     if (!continueLatestSession) {
       return { sessionId: currentSessionId };
     }
-    const prior = db
-      .prepare(
-        `SELECT id, context_ref
-           FROM sessions
-          WHERE agent_id = ? AND provider = ? AND status = 'completed'
-       ORDER BY started_at DESC
-          LIMIT 1`,
-      )
-      .get(agentId, provider) as { id: string; context_ref: string | null } | undefined;
+    // Explicit `continueFromSessionId` looks up by id only — caller has
+    // already validated the session exists and matches the target agent
+    // (FEAT-039 R1). The latest-completed heuristic still scopes by
+    // agent_id+provider as before.
+    const prior = continueFromSessionId
+      ? (db
+          .prepare(
+            `SELECT id, context_ref
+               FROM sessions
+              WHERE id = ?
+              LIMIT 1`,
+          )
+          .get(continueFromSessionId) as
+          | { id: string; context_ref: string | null }
+          | undefined)
+      : (db
+          .prepare(
+            `SELECT id, context_ref
+               FROM sessions
+              WHERE agent_id = ? AND provider = ? AND status = 'completed'
+           ORDER BY started_at DESC
+              LIMIT 1`,
+          )
+          .get(agentId, provider) as { id: string; context_ref: string | null } | undefined);
     const contextRef = parseContextRef(prior?.context_ref);
     if (contextRef.previousResponseId) {
       return { sessionId: prior?.id ?? randomUUID(), previousResponseId: contextRef.previousResponseId };

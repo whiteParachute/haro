@@ -372,23 +372,25 @@ haro shit rollback <archive-id>
 
 ---
 
-## Phase 1.5 规划中命令（FEAT-039）
+## Phase 1.5 命令（FEAT-039）
 
-以下命令族尚未实现，详细 spec 见 `specs/phase-1.5/FEAT-039-cli-feature-parity.md`（待起草）。本节先固化命令面与设计意图，避免 Web UI 与 CLI 漂移。
+以下命令族在 FEAT-039 批次 1 已落地（chat / session / agent），其余仍在后续批次规划中。详细 spec 见 [`specs/phase-1.5/FEAT-039-cli-feature-parity.md`](../specs/phase-1.5/FEAT-039-cli-feature-parity.md)。所有命令通过 `@haro/core/services` 与 Web API 共用业务逻辑（R5/R13）。
 
-### `haro chat`（规划中）
+### `haro chat`（已实现，批次 1）
 
 聊天主入口，CLI 端的"对话视图"。与 `haro run` 区别：`run` 是单次任务、立即返回；`chat` 是持续对话，可看历史、切换 agent、附带文件。
 
 ```bash
 haro chat                         # 进入聊天 REPL，新建 session
-haro chat --session <id>          # 接续指定 session
+haro chat --session <id>          # 接续指定 session（pin 到该 session 的 previousResponseId）
 haro chat --agent <id>            # 用指定 agent 开聊
 haro chat --send "<msg>"          # 单轮发送，不进入 REPL（脚本化）
 haro chat --history               # 列出最近 N 个 session 后让用户选
 ```
 
-### `haro session`（规划中）
+`--session` 校验：进入 REPL 前先确认 session 存在、属于当前 agent；不匹配会拒绝并给出建议命令（避免误把别的 agent 的会话续接到当前 agent）。`--session` 通过 runner 的 `continueFromSessionId` 路径精确取该 session 的 `previousResponseId`，不再退回到"latest completed for agent+provider"启发式。
+
+### `haro session`（已实现，批次 1）
 
 Session 管理。
 
@@ -397,24 +399,28 @@ haro session list                 # 列出活跃和最近 session
 haro session list --json
 haro session show <id>            # 查看完整事件流
 haro session show <id> --tail
-haro session resume <id>          # 接续该 session 进入 chat REPL
-haro session export <id> [--format md|json]
-haro session delete <id>
+haro session resume <id>          # 真正进入 chat REPL，pin 到该 session
+haro session export <id> [--format md|json]   # 分页拉满所有事件，输出 exportedCount
+haro session delete <id> [--yes]  # CLI 端 audit event_type='cli.session.delete'
 ```
 
-### `haro agent`（规划中）
+`session resume` 与 `chat --session <id>` 走同一条 REPL 入口；首轮 turn 强制从指定 session 续接，第二轮起回到"latest for agent+provider"（此时 latest 就是新生成的 session）。`session export` 持续分页直到拉空 session_events 表，避免 500 条静默截断。`session delete` 写入 `cli.session.delete` 审计事件，与 Web Dashboard 的 `web.session.delete` 区分来源。
+
+### `haro agent`（已实现，批次 1）
 
 Agent 管理。等价于 Web Dashboard 的 `/agent` 页。
 
 ```bash
 haro agent list
 haro agent show <id>
-haro agent create <id> --from-template default
-haro agent edit <id>              # 打开编辑器修改 ~/.haro/agents/<id>.yaml
-haro agent delete <id>
+haro agent create <id> --from-template default   # 目前只支持 default 模板
+haro agent edit <id>              # 打开 $EDITOR 修改 ~/.haro/agents/<id>.yaml，保存后再校验
+haro agent delete <id>            # 默认 agent 受保护，需要先改 defaultAgent
 haro agent validate <id>          # Zod schema 校验
-haro agent test <id> --task "..."  # 用 sandbox session 跑一次冒烟
+haro agent test <id> --task "..."  # sandbox：noMemory + continueLatestSession=false
 ```
+
+`agent test` 是真正的 sandbox：显式关掉 memory 写入与"latest session 续接"，确保不会读到历史对话上下文，也不会污染下一轮真实会话。
 
 ### `haro memory`（规划中）
 
@@ -533,10 +539,10 @@ haro config unset providers.codex.defaultModel --scope project
 |--------------------------|--------------|------|
 | `/bootstrap` 首用户创建 | `haro user create <name> --role owner` | Phase 1.5 规划 |
 | `/login` 登录 | `haro auth login`（CLI 不强制登录，本地 token 直读） | 自用模式不需要 |
-| `/chat` 对话 | `haro chat` | Phase 1.5 规划 |
-| `/sessions` 会话列表 | `haro session list` | Phase 1.5 规划 |
-| `/sessions/<id>` 会话详情 | `haro session show <id>` | Phase 1.5 规划 |
-| `/agent` Agent 编辑 | `haro agent create/edit/delete/show` | Phase 1.5 规划 |
+| `/chat` 对话 | `haro chat` | 已实现（批次 1） |
+| `/sessions` 会话列表 | `haro session list` | 已实现（批次 1） |
+| `/sessions/<id>` 会话详情 | `haro session show <id>` | 已实现（批次 1） |
+| `/agent` Agent 编辑 | `haro agent create/edit/delete/show` | 已实现（批次 1） |
 | `/skills` Skill 管理 | `haro skills *` + `haro skill <name> *` | 部分实现 |
 | `/knowledge` 记忆 | `haro memory query/remember/list/show` | Phase 1.5 规划 |
 | `/logs` 日志 | `haro logs tail/show/export` | Phase 1.5 规划 |
