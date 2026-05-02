@@ -192,10 +192,21 @@ export function gatewayStop(options: { pidFile?: string; root?: string } = {}): 
   return { exitCode: 0, output: `Gateway stopped (PID ${pid})\n` };
 }
 
+export interface GatewayStatusReport {
+  running: boolean;
+  pid?: number;
+  paths: {
+    root: string;
+    logFile: string;
+    channelData: string;
+  };
+  channels: ReadonlyArray<{ id: string; healthy: boolean }>;
+}
+
 export async function gatewayStatus(
   app: AppContext,
   options: { pidFile?: string } = {},
-): Promise<GatewayCommandResult> {
+): Promise<GatewayCommandResult & { report: GatewayStatusReport }> {
   const pidFile = options.pidFile ?? join(app.paths.root, 'gateway.pid');
   const pid = readPidFile(pidFile);
   const running = pid ? isProcessAlive(pid) : false;
@@ -220,13 +231,35 @@ export async function gatewayStatus(
     output += `  ${check.id}: ${check.healthy ? 'healthy' : 'unhealthy'}\n`;
   }
 
-  return { exitCode: 0, output };
+  const report: GatewayStatusReport = {
+    running,
+    ...(pid ? { pid } : {}),
+    paths: {
+      root: app.paths.root,
+      logFile: resolveGatewayLogFile(app.paths.root),
+      channelData: app.paths.dirs.channels,
+    },
+    channels: healthChecks,
+  };
+
+  return { exitCode: 0, output, report };
+}
+
+export interface GatewayDoctorReport {
+  ok: boolean;
+  gateway: { running: boolean; pid?: number };
+  channels: ReadonlyArray<{ id: string; healthy: boolean }>;
+  paths: {
+    root: string;
+    logFile: string;
+    channelData: string;
+  };
 }
 
 export async function gatewayDoctor(
   app: AppContext,
   options: { pidFile?: string } = {},
-): Promise<GatewayCommandResult> {
+): Promise<GatewayCommandResult & { report: GatewayDoctorReport }> {
   const pidFile = options.pidFile ?? join(app.paths.root, 'gateway.pid');
   const pid = readPidFile(pidFile);
   const running = pid ? isProcessAlive(pid) : false;
@@ -241,7 +274,7 @@ export async function gatewayDoctor(
 
   const ok = channelChecks.every((c) => c.healthy);
 
-  const report = {
+  const report: GatewayDoctorReport = {
     ok,
     gateway: { running, ...(pid ? { pid } : {}) },
     channels: channelChecks,
@@ -252,7 +285,7 @@ export async function gatewayDoctor(
     },
   };
 
-  return { exitCode: ok ? 0 : 1, output: `${JSON.stringify(report, null, 2)}\n` };
+  return { exitCode: ok ? 0 : 1, output: `${JSON.stringify(report, null, 2)}\n`, report };
 }
 
 function readPidFile(path: string): number | undefined {

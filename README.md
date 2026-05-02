@@ -37,11 +37,12 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 
 ## 项目状态
 
-**截至 2026-05-01：Phase 0 与 Phase 1 主线已 done，进入 Phase 1.5（自用底座补完）。**
+**截至 2026-05-02：Phase 0 / Phase 1 / Phase 1.5（自用底座补完）主线全部 done。**
 
 - Phase 0 验收闭环已完成（见 [`docs/reviews/phase-0-audit-2026-04-19.md`](docs/reviews/phase-0-audit-2026-04-19.md)）
 - Phase 1 18 个 spec 中 17 个已 done，FEAT-030（ChatGPT 订阅认证 Dashboard UI）draft
-- 当前规划：[`docs/planning/redesign-2026-05-01.md`](docs/planning/redesign-2026-05-01.md) 是 2026-05-01 重设计的恢复点
+- Phase 1.5 关键 spec（FEAT-038 Web API 解耦 + FEAT-039 CLI 等价补完）已 done；FEAT-031 / 032 / 033 / 034 仍 draft
+- 历史规划记录：[`docs/planning/archive/redesign-2026-05-01.md`](docs/planning/archive/redesign-2026-05-01.md)（已归档）
 - 当前仓库版本：`0.1.0`
 - 当前形态：**源码运行 + 自用为主**，欢迎多人使用但不是对外发布的稳定产品版本
 
@@ -60,6 +61,7 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **Evolution Asset Registry** — eat/shit 产物、prompt、skill、编排规则统一资产化（FEAT-022）
 - **多用户支持** — 本地多用户 + RBAC + Bootstrap + Audit Log（FEAT-028，自用为主，欢迎多人使用）
 - **Web API 解耦**（FEAT-038）— `packages/web-api/` 独立服务，CLI `haro web` 是薄启动器；`pnpm -F @haro/web-api start` 也可独立启动
+- **CLI 等价补完**（FEAT-039）— chat / session / agent / memory / logs / workflow / budget / user / skill 单数 / config get-set-unset 全部落地；REPL `/sessions` `/memory` `/logs` `/budget` slash 直连 `services`；所有命令 `--json/--human` 统一（默认按 TTY 推断），`--json` 输出 `CliRecordEnvelope` / `CliListEnvelope`
 
 ### 进行中（Phase 1.5）
 
@@ -67,7 +69,6 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **MCP 工具层**（FEAT-032）— 内置 MCP server + 4 个核心工具
 - **定时任务**（FEAT-033）— cron + 一次性
 - **流式 UX 升级**（FEAT-034）— thinking 折叠、tool timeline、Hook 状态
-- **CLI 等价补完**（FEAT-039）— 批次 1 + 2 已落地：chat / session / agent / memory / logs / workflow / budget / user / skill 单数 / config get-set-unset；批次 3（REPL slash + 全命令 `--json/--human` 统一 + E2E + 类型守门 CI）规划中
 
 ### 远期（Phase 2.0+）
 
@@ -185,7 +186,7 @@ scripts/                # 辅助脚本
 - [Channels](docs/channels.md) — 飞书 / Telegram / Web channel 启用与 Gateway 控制
 - [架构总览](docs/architecture/overview.md) — 双层架构 + 三层解耦 + 四进化驱动源
 - [路线图](roadmap/phases.md) — Phase 0/1/1.5/2.0/2.5/3.0/3.5
-- [2026-05-01 重设计规划](docs/planning/redesign-2026-05-01.md) — 当前进行中的精简方案
+- [2026-05-01 重设计规划](docs/planning/archive/redesign-2026-05-01.md) — 当前进行中的精简方案
 - [spec 体系与开发流程](specs/README.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
@@ -244,7 +245,7 @@ Haro 采用 **spec 驱动开发**：
 | --- | --- | --- |
 | Phase 0 Foundation | 已完成 | CLI + Codex + 单 Agent + Memory + Channel + Skills + 手动 eat/shit |
 | Phase 1 Intelligence & Safety | 已完成 | Scenario Router + Team Orchestrator + Dashboard + Memory Fabric v1 + Asset Registry + 权限预算 |
-| Phase 1.5 Workbench Parity | **进行中** | Web API 解耦 + CLI 等价补完 + Web Channel + MCP 工具层 + 定时任务 + 流式 UX |
+| Phase 1.5 Workbench Parity | **进行中**（FEAT-038/039 done；FEAT-031/032/033/034 draft）| Web API 解耦 + CLI 等价补完 + Web Channel + MCP 工具层 + 定时任务 + 流式 UX |
 | Phase 2.0 Evolution Awareness | 规划中 | Self-Monitor + Industry Intel + 自动 eat/shit 触发 |
 | Phase 2.5 Evolution Proposal | 规划中 | Pattern Miner + Evolution Proposal + 用户审批闭环 |
 | Phase 3.0 Controlled Self-Evolution | 规划中 | Auto-Refactorer L0–L1 + 灰度 + 回滚 |

@@ -1,11 +1,11 @@
 ---
 id: FEAT-039
 title: CLI 功能等价补完（chat / session / agent / memory / logs / workflow / budget / user / skill / config）
-status: draft
+status: done
 phase: phase-1.5
 owner: whiteParachute
 created: 2026-05-01
-updated: 2026-05-01
+updated: 2026-05-02
 related:
   - ../phase-0/FEAT-006-cli-entry-and-cli-channel.md
   - ../phase-1/FEAT-016-web-dashboard-agent-interaction.md
@@ -16,14 +16,14 @@ related:
   - ../phase-1.5/FEAT-033-scheduled-tasks.md
   - ../phase-1.5/FEAT-038-web-api-decoupling.md
   - ../../docs/cli-design.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # CLI 功能等价补完（chat / session / agent / memory / logs / workflow / budget / user / skill / config）
 
 ## 1. Context / 背景
 
-Haro 的"CLI 优先"边界约束（[2026-05-01 重设计第二条](../../docs/planning/redesign-2026-05-01.md)）要求 CLI 与 Web Dashboard 命令面等价。但当前 CLI 在 Phase 0 / Phase 1 完成的命令族只覆盖了 setup / doctor / provider / channel / gateway / skills / web / run / model / eat / shit / status 等"管理面"，缺**日常使用面**：
+Haro 的"CLI 优先"边界约束（[2026-05-01 重设计第二条](../../docs/planning/archive/redesign-2026-05-01.md)）要求 CLI 与 Web Dashboard 命令面等价。但当前 CLI 在 Phase 0 / Phase 1 完成的命令族只覆盖了 setup / doctor / provider / channel / gateway / skills / web / run / model / eat / shit / status 等"管理面"，缺**日常使用面**：
 
 - 没有 `haro chat`（持续对话视图）
 - 没有 `haro session list/show/resume`（会话浏览）
@@ -184,3 +184,4 @@ CLI 命令通过 `@haro/core/services` 调用业务逻辑；web-api 通过同一
 - 2026-05-02: whiteParachute — 批次 0 落地：抽出 `@haro/core/services`（sessions / agents / memory / logs / workflows）+ `@haro/core/errors`（`HaroError` 目录）+ `@haro/core/types/cli-output` 输出契约；同步反向迁移上述 5 个 `@haro/web-api` routes 调用 service（R5/R13 基础就位）；新增 `packages/cli/src/output/`（json / human / confirm 渲染器，R11/R12）+ `packages/web-api/src/lib/route-query.ts`；442 测试全过。
 - 2026-05-02: whiteParachute — 批次 1 落地：`haro chat` / `haro session` / `haro agent` 命令族实现（R1–R3，含 `--json/--human`、`--yes/--quiet` 守门、`session export` 分页）；同步加 Codex adversarial review 修复——`RunAgentInput.continueFromSessionId` 进入 runner（按 id 取 prior session 的 `previousResponseId`，不再误用 latest-completed 启发式）；`runRepl` 尊重预置 `app.replState`（`chat --agent/--session` 不再被默认值覆盖）；`session resume` 真正进入 REPL；`agent test` 显式 `continueLatestSession=false` 做真正 sandbox；CLI 端 audit event_type 用 `cli.session.delete` 区分 Dashboard 来源。455 测试全过。
 - 2026-05-02: whiteParachute — 批次 2 落地：`haro memory` / `haro logs` / `haro workflow` / `haro budget` / `haro user` / `haro skill <id>` 单数 / `haro config get-set-unset` 命令族（R4–R10）；新增 4 个 core service（`services/{budget,config,users,skills}.ts`，其中 `users.ts` 是 web-api `auth-store.ts` 752 行 user CRUD + audit + 密码处理整体迁入，web-api 端折成 121 行 adapter）；`web-api/src/lib/pagination.ts` 旧分页 shim 删除——所有 routes 走 `services.normalizePageQuery`。Codex adversarial review 修复：`config set` 对象写入递归校验所有 effective dot-path（防 `set channels.feishu '{"appSecret":"..."}'` 这类 parent-object 注入）；`haro logs tail` 用 `(createdAt, id)` 复合游标 + 单 tick 内连续翻页（同时间戳爆发事件不再被丢）；CLI 用户审计 `metadata.actorSource='cli'`（schema CHECK constraint 还只允许四种 actor_kind，所以 actor_kind 仍是 `system`，但 metadata 区分 CLI / bootstrap / pure-system）。已知 carry-over：`haro budget set --agent` 因没 per-agent budget 表暂不支持（命令直接 exit 2 并提示），`haro workflow replay` 是 read-only 检查器。468 测试全过。
+- 2026-05-02: whiteParachute — 批次 3 收尾（status: done）：REPL slash 4 个新命令（`/sessions` / `/memory` / `/logs` / `/budget`）落地，全部走 `@haro/core/services`，禁止重复实现（R15 / AC11）；`/help` 一并补齐 4 行；旧 `/memory <task>` 自然语言路径迁到 `haro run /memory ...`，REPL 内 `/memory` 现在就是 FTS5 slash。`status` / `doctor` / `model` / `provider list+doctor+models+env` / `channel list+doctor` / `skills list+info` / `gateway status+doctor` 全部加 `--json` / `--human`，默认按 TTY 推断（R11）；`--json` 输出统一走 `CliRecordEnvelope` / `CliListEnvelope`，旧裸 JSON 形态破坏，通过 spec changelog 公告。AC12 类型守门 (`packages/cli/test/output-shape.test.ts`) + §7 端到端 lifecycle (`packages/cli/test/feat039-e2e.test.ts`) 测试落地。Gateway helpers (`gatewayStatus` / `gatewayDoctor`) 抽出结构化 `report`，CLI 命令在 JSON 模式下直出 envelope。542 测试全过（cli 142 / web-api 58 / core 156 / 其他）。

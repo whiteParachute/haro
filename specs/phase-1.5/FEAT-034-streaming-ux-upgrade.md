@@ -13,7 +13,7 @@ related:
   - ../phase-1.5/FEAT-031-web-channel.md
   - ../phase-1.5/FEAT-032-mcp-tool-layer.md
   - ../../docs/architecture/overview.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # 流式 UX 升级（thinking / tool timeline / GFM）

@@ -641,7 +641,7 @@ describe('runCli [FEAT-006]', () => {
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
     const result = await runCli({
-      argv: ['channel', 'list'],
+      argv: ['channel', 'list', '--human'],
       root,
       stdout,
       createProviderRegistry: async () =>
@@ -882,7 +882,7 @@ describe('runCli [FEAT-006]', () => {
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
     const result = await runCli({
-      argv: ['channel', 'list'],
+      argv: ['channel', 'list', '--human'],
       root,
       stdout,
       createProviderRegistry: async () =>
@@ -915,7 +915,7 @@ describe('runCli [FEAT-006]', () => {
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
     const listResult = await runCli({
-      argv: ['skills', 'list'],
+      argv: ['skills', 'list', '--human'],
       root,
       stdout,
       createProviderRegistry: async () =>
@@ -1035,18 +1035,20 @@ describe('runCli [FEAT-006]', () => {
     expect(output).toContain('Target skill differs from canonical source: SKILL.md');
   });
 
-  it('FEAT-010 AC4: explicit /memory triggers the skill and writes usage', async () => {
+  it('FEAT-010 AC4: explicit /memory prefix on `haro run` triggers the skill and writes usage', async () => {
+    // FEAT-039 R15 reclaimed `/memory` as a REPL slash that hits the FTS5
+    // service directly. The skills runtime still owns the `/memory` task
+    // prefix on the non-REPL `haro run` path (and any external channel
+    // input), which is what AC4 actually verifies.
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-memory-skill-'));
     roots.push(root);
     const stdout = new PassThrough();
-    const stdin = new PassThrough();
     const chunks: string[] = [];
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
-    const runPromise = runCli({
-      argv: [],
+    const result = await runCli({
+      argv: ['run', '/memory 查一下 xxx'],
       root,
-      stdin,
       stdout,
       createProviderRegistry: async () =>
         createProviderRegistry(
@@ -1057,13 +1059,9 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [],
     });
 
-    stdin.write('/memory 查一下 xxx\n');
-    stdin.end();
-    await runPromise;
-
+    expect(result.exitCode).toBe(0);
     const usageDb = require('better-sqlite3')(join(root, 'skills', 'usage.sqlite'));
     try {
       const row = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('memory') as { use_count: number };

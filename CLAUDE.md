@@ -2,9 +2,9 @@
 
 ## 当前设计基线
 
-**2026-05-01 重设计**：Haro 采用双层架构（workbench + 进化）+ 四边界约束（CLI 优先 / 前后端解耦 / 多 provider 抽象 / 多 channel 抽象）；原 Phase 4 Ecosystem 已移除；当前阶段为 **Phase 1.5（自用底座补完）**。任何 spec 评审、模块设计、UX 决策都要先过这四条边界。
+**2026-05-01 重设计**：Haro 采用双层架构（workbench + 进化）+ 四边界约束（CLI 优先 / 前后端解耦 / 多 provider 抽象 / 多 channel 抽象）；原 Phase 4 Ecosystem 已移除；**Phase 1.5（自用底座补完）已于 2026-05-02 完成**（FEAT-038 + FEAT-039 全收尾，CLI 与 Web 命令面等价、`@haro/core/services` 共享层就位）。任何 spec 评审、模块设计、UX 决策都要先过这四条边界。
 
-新会话或长会话恢复时**先读** [`docs/planning/redesign-2026-05-01.md`](docs/planning/redesign-2026-05-01.md)——这是 Phase 1.5 的执行真源。
+历史决策记录见 [`docs/planning/archive/redesign-2026-05-01.md`](docs/planning/archive/redesign-2026-05-01.md)（已归档）；后续路线以 [`roadmap/phases.md`](roadmap/phases.md) 为准。
 
 ## 开发收尾流程
 

@@ -13,7 +13,7 @@ related:
   - ../phase-1.5/FEAT-031-web-channel.md
   - ../phase-1.5/FEAT-039-cli-feature-parity.md
   - ../../docs/architecture/overview.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # Web API 解耦（packages/web-api 独立包）

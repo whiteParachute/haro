@@ -14,7 +14,7 @@ related:
   - ../phase-1.5/FEAT-033-scheduled-tasks.md
   - ../channel-protocol.md
   - ../../docs/architecture/overview.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # MCP 工具层 + 4 个核心工具

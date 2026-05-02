@@ -19,7 +19,7 @@ related:
   - ../phase-2.5/FEAT-042-pattern-miner.md
   - ../evolution-engine-protocol.md
   - ../../docs/architecture/overview.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # Self-Monitor（被动观测埋点）

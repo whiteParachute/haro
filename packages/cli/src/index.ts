@@ -24,6 +24,7 @@ import {
   resolveOperationPolicy,
   resolveStrictestPermissionDecision,
   resolveSelection,
+  services as coreServices,
   type HaroLogger,
   type HaroPaths,
   type OperationClass,
@@ -77,6 +78,8 @@ import { registerBudgetCommands } from './commands/budget.js';
 import { registerUserCommands } from './commands/user.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerConfigWriteCommands } from './commands/config.js';
+import { buildServiceContext } from './commands/service-context.js';
+import { renderJson, renderListJson, resolveOutputMode } from './output/index.js';
 import {
   assertProviderModelExists,
   buildProviderPatch,
@@ -426,7 +429,9 @@ function buildProgram(app: AppContext): Command {
       cmd
         .argument('[provider]', 'provider id')
         .argument('[model]', 'model id')
-        .action(async (provider?: string, model?: string) => {
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (provider?: string, model?: string, options?: { json?: boolean; human?: boolean }) => {
           const agentId =
             app.cliState.defaultAgentId ?? app.loaded.config.defaultAgent ?? DEFAULT_AGENT_ID;
           if (!provider) {
@@ -437,7 +442,12 @@ function buildProgram(app: AppContext): Command {
               app.cliState.defaultModel,
               DEFAULT_TASK,
             );
-            app.stdout.write(formatModelOutput('current', resolved));
+            const mode = resolveOutputMode(options ?? {}, app.stdout);
+            if (mode === 'json') {
+              renderJson(resolved, { stdout: app.stdout });
+            } else {
+              app.stdout.write(formatModelOutput('current', resolved));
+            }
             return;
           }
 
@@ -476,9 +486,10 @@ function buildProgram(app: AppContext): Command {
     (cmd) => {
       cmd
         .option('--component <component>', 'component: provider, web, database, channel, config, cli, or systemd')
-        .option('--json', 'print machine-readable structured diagnostics')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
         .option('--fix', 'apply safe fixes')
-        .action(async (options: { component?: string; json?: boolean; fix?: boolean }) => {
+        .action(async (options: { component?: string; json?: boolean; human?: boolean; fix?: boolean }) => {
           let component: DoctorComponent | undefined;
           try {
             component = parseDoctorComponent(options.component);
@@ -500,7 +511,8 @@ function buildProgram(app: AppContext): Command {
             deps: app.opts.doctorDeps ?? app.opts.setupDeps,
           });
           const payload = { command: 'doctor', component, fix: options.fix === true, ...report };
-          app.stdout.write(options.json ? `${JSON.stringify(payload, null, 2)}\n` : formatDiagnosticsHuman(report));
+          const mode = resolveOutputMode(options, app.stdout);
+          app.stdout.write(mode === 'json' ? `${JSON.stringify(payload, null, 2)}\n` : formatDiagnosticsHuman(report));
           if (!report.ok) {
             throw new CommanderExit(1, 'doctor found issues');
           }
@@ -512,10 +524,18 @@ function buildProgram(app: AppContext): Command {
   registerCommand(
     'status',
     (cmd) => {
-      cmd.action(async () => {
-        const report = readStatus(app.paths.root, app.paths.dbFile);
-        app.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-      });
+      cmd
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (options: { json?: boolean; human?: boolean }) => {
+          const report = readStatus(app.paths.root, app.paths.dbFile);
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderJson(report, { stdout: app.stdout });
+            return;
+          }
+          app.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+        });
     },
     program,
   );
@@ -546,13 +566,18 @@ function registerProviderCommands(program: Command, app: AppContext): void {
     (cmd) => {
       cmd.description('Manage agent providers, credentials, model discovery, and defaults');
 
-      cmd.command('list').option('--json', 'print machine-readable provider catalog').action((options: { json?: boolean }) => {
-        if (options.json) {
-          app.stdout.write(`${JSON.stringify({ providers: app.providerCatalog }, null, 2)}\n`);
-          return;
-        }
-        app.stdout.write(formatProviderList(app.providerCatalog));
-      });
+      cmd
+        .command('list')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action((options: { json?: boolean; human?: boolean }) => {
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderListJson({ items: app.providerCatalog, total: app.providerCatalog.length }, { stdout: app.stdout });
+            return;
+          }
+          app.stdout.write(formatProviderList(app.providerCatalog));
+        });
 
       cmd
         .command('setup')
@@ -691,8 +716,9 @@ function registerProviderCommands(program: Command, app: AppContext): void {
       cmd
         .command('doctor')
         .argument('<id>', 'provider id')
-        .option('--json', 'print machine-readable provider diagnostics')
-        .action(async (id: string, options: { json?: boolean }) => {
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
           const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
           const report = await runProviderDoctor({
             entry,
@@ -702,7 +728,12 @@ function registerProviderCommands(program: Command, app: AppContext): void {
             env: providerCommandEnv(app),
             checkModels: true,
           });
-          app.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatProviderDoctorHuman(report));
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderJson(report, { stdout: app.stdout });
+          } else {
+            app.stdout.write(formatProviderDoctorHuman(report));
+          }
           if (!report.ok) {
             throw new CommanderExit(1, `provider doctor ${id} found issues`);
           }
@@ -711,13 +742,15 @@ function registerProviderCommands(program: Command, app: AppContext): void {
       cmd
         .command('models')
         .argument('<id>', 'provider id')
-        .option('--json', 'print machine-readable model list')
-        .action(async (id: string, options: { json?: boolean }) => {
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
           getCatalogEntryOrThrow(id, app.providerCatalog);
+          const mode = resolveOutputMode(options, app.stdout);
           try {
             const models = await listProviderModels(app.providerRegistry, id);
-            if (options.json) {
-              app.stdout.write(`${JSON.stringify({ provider: id, models }, null, 2)}\n`);
+            if (mode === 'json') {
+              renderListJson({ items: models, total: models.length }, { stdout: app.stdout });
             } else {
               app.stdout.write(formatProviderModels(id, models));
             }
@@ -730,7 +763,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
               remediation: `Run haro provider setup ${id}, then retry haro provider models ${id}.`,
               fixable: false,
             };
-            app.stdout.write(options.json ? `${JSON.stringify({ provider: id, ok: false, issues: [issue] }, null, 2)}\n` : `PROVIDER_MODEL_LIST_FAILED: ${issue.evidence}\nRemediation: ${issue.remediation}\n`);
+            app.stdout.write(mode === 'json' ? `${JSON.stringify({ provider: id, ok: false, issues: [issue] }, null, 2)}\n` : `PROVIDER_MODEL_LIST_FAILED: ${issue.evidence}\nRemediation: ${issue.remediation}\n`);
             throw new CommanderExit(1, `provider models ${id} failed`);
           }
         });
@@ -759,8 +792,9 @@ function registerProviderCommands(program: Command, app: AppContext): void {
       cmd
         .command('env')
         .argument('<id>', 'provider id')
-        .option('--json', 'print machine-readable env source summary')
-        .action(async (id: string, options: { json?: boolean }) => {
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
           const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
           const report = await runProviderDoctor({
             entry,
@@ -771,7 +805,12 @@ function registerProviderCommands(program: Command, app: AppContext): void {
             checkHealth: false,
             checkModels: false,
           });
-          app.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatProviderEnvHuman(report));
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderJson(report, { stdout: app.stdout });
+          } else {
+            app.stdout.write(formatProviderEnvHuman(report));
+          }
         });
     },
     program,
@@ -827,17 +866,33 @@ function registerChannelCommands(program: Command, app: AppContext): void {
 
       cmd
         .command('list')
-        .action(async () => {
-          const lines = app.channelRegistry.list().map((entry) => {
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (options: { json?: boolean; human?: boolean }) => {
+          const entries = app.channelRegistry.list().map((entry) => {
             const caps = entry.channel.capabilities();
-            return [
+            return {
+              id: entry.id,
+              enabled: entry.enabled,
+              source: entry.source,
+              streaming: caps.streaming,
+              attachments: caps.attachments,
+            };
+          });
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderListJson({ items: entries, total: entries.length }, { stdout: app.stdout });
+            return;
+          }
+          const lines = entries.map((entry) =>
+            [
               entry.id,
               entry.enabled ? 'enabled' : 'disabled',
               entry.source,
-              `streaming=${caps.streaming}`,
-              `attachments=${caps.attachments}`,
-            ].join('\t');
-          });
+              `streaming=${entry.streaming}`,
+              `attachments=${entry.attachments}`,
+            ].join('\t'),
+          );
           app.stdout.write(`${lines.join('\n')}\n`);
         });
 
@@ -875,14 +930,21 @@ function registerChannelCommands(program: Command, app: AppContext): void {
       cmd
         .command('doctor')
         .argument('<id>', 'channel id')
-        .action(async (id: string) => {
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
           const entry = app.channelRegistry.getEntry(id);
           const context = createChannelSetupContext(app, id);
           const report =
             typeof entry.channel.doctor === 'function'
               ? await entry.channel.doctor(context)
               : await fallbackChannelDoctor(entry.channel);
-          app.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderJson(report, { stdout: app.stdout });
+          } else {
+            app.stdout.write(`${report.ok ? 'OK' : 'FAIL'}: ${report.message}\n`);
+          }
           if (!report.ok) {
             throw new CommanderExit(1, report.message);
           }
@@ -915,33 +977,56 @@ function registerSkillsCommands(program: Command, app: AppContext): void {
     (cmd) => {
       cmd.description('Manage installed skills');
 
-      cmd.command('list').action(async () => {
-        const rows = app.skills.list().map((entry) =>
-          [entry.id, entry.enabled ? 'enabled' : 'disabled', entry.source, entry.isPreinstalled ? 'preinstalled' : 'user'].join('\t'),
-        );
-        app.stdout.write(`${rows.join('\n')}\n`);
-      });
+      cmd
+        .command('list')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (options: { json?: boolean; human?: boolean }) => {
+          const items = app.skills.list().map((entry) => ({
+            id: entry.id,
+            enabled: entry.enabled,
+            source: entry.source,
+            preinstalled: entry.isPreinstalled,
+          }));
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderListJson({ items, total: items.length }, { stdout: app.stdout });
+            return;
+          }
+          const rows = items.map((entry) =>
+            [entry.id, entry.enabled ? 'enabled' : 'disabled', entry.source, entry.preinstalled ? 'preinstalled' : 'user'].join('\t'),
+          );
+          app.stdout.write(`${rows.join('\n')}\n`);
+        });
 
-      cmd.command('info').argument('<id>', 'skill id').action(async (id: string) => {
-        let info;
-        try {
-          info = app.skills.info(id);
-        } catch (error) {
-          throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
-        }
-        const payload = {
-          id: info.id,
-          source: info.source,
-          pinnedCommit: info.pinnedCommit,
-          license: info.license,
-          description: info.descriptor.description,
-          enabled: info.enabled,
-          ...(info.resolvedFrom ? { resolvedFrom: info.resolvedFrom } : {}),
-        };
-        app.stdout.write(
-          `${JSON.stringify(payload, null, 2)}\n`,
-        );
-      });
+      cmd
+        .command('info')
+        .argument('<id>', 'skill id')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
+          let info;
+          try {
+            info = app.skills.info(id);
+          } catch (error) {
+            throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
+          }
+          const payload = {
+            id: info.id,
+            source: info.source,
+            pinnedCommit: info.pinnedCommit,
+            license: info.license,
+            description: info.descriptor.description,
+            enabled: info.enabled,
+            ...(info.resolvedFrom ? { resolvedFrom: info.resolvedFrom } : {}),
+          };
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderJson(payload, { stdout: app.stdout });
+          } else {
+            app.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+          }
+        });
 
       cmd.command('install').argument('<source>', 'git url / local path / marketplace:name').action(async (source: string) => {
         let entry;
@@ -1174,18 +1259,32 @@ function registerGatewayCommands(program: Command, app: AppContext): void {
 
       cmd
         .command('status')
-        .action(async () => {
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (options: { json?: boolean; human?: boolean }) => {
           const { gatewayStatus } = await import('./gateway.js');
           const result = await gatewayStatus(app);
-          app.stdout.write(result.output);
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderJson(result.report, { stdout: app.stdout });
+          } else {
+            app.stdout.write(result.output);
+          }
         });
 
       cmd
         .command('doctor')
-        .action(async () => {
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(async (options: { json?: boolean; human?: boolean }) => {
           const { gatewayDoctor } = await import('./gateway.js');
           const result = await gatewayDoctor(app);
-          app.stdout.write(result.output);
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderJson(result.report, { stdout: app.stdout });
+          } else {
+            app.stdout.write(result.output);
+          }
           if (result.exitCode !== 0) {
             throw new CommanderExit(result.exitCode, 'gateway doctor found issues');
           }
@@ -2050,6 +2149,10 @@ async function handleSlashCommand(
           '/skills',
           '/usage',
           '/agent <id>',
+          '/sessions [n]',
+          '/memory <query>',
+          '/logs [n]',
+          '/budget',
           '/help',
         ].join('\n'),
       );
@@ -2150,9 +2253,104 @@ async function handleSlashCommand(
       return true;
     }
 
+    case '/sessions': {
+      const n = parsePositiveInt(args[0], 10);
+      const result = coreServices.sessions.listSessions(buildServiceContext(app), {
+        pageSize: String(n),
+        sort: 'createdAt',
+        order: 'desc',
+      });
+      if (result.items.length === 0) {
+        channel.writeLine('(no sessions yet)');
+        return true;
+      }
+      const lines = result.items.map((row) =>
+        [row.sessionId, row.agentId, row.status ?? '-', row.createdAt].join('\t'),
+      );
+      channel.writeLine(lines.join('\n'));
+      return true;
+    }
+
+    case '/memory': {
+      const query = args.join(' ').trim();
+      if (!query) {
+        channel.writeLine('usage: /memory <query>');
+        return true;
+      }
+      const result = coreServices.memory.queryMemory(buildServiceContext(app), {
+        q: query,
+        pageSize: '10',
+      });
+      if (result.items.length === 0) {
+        channel.writeLine(`(no matches for "${query}")`);
+        return true;
+      }
+      const lines = result.items.map((hit) =>
+        [
+          hit.score.toFixed(2),
+          hit.entry.scope,
+          hit.entry.topic,
+          hit.entry.updatedAt,
+        ].join('\t'),
+      );
+      channel.writeLine(lines.join('\n'));
+      return true;
+    }
+
+    case '/logs': {
+      const n = parsePositiveInt(args[0], 20);
+      const sessionId = replState.lastSessionId;
+      if (!sessionId) {
+        channel.writeLine('(no session yet — send a message first)');
+        return true;
+      }
+      const result = coreServices.logs.listSessionEventLogs(buildServiceContext(app), {
+        sessionId,
+        pageSize: String(n),
+        sort: 'createdAt',
+        order: 'desc',
+      });
+      if (result.items.length === 0) {
+        channel.writeLine(`(no events for session ${sessionId})`);
+        return true;
+      }
+      const lines = result.items.map((event) =>
+        [event.createdAt, event.eventType].join('\t'),
+      );
+      channel.writeLine(lines.join('\n'));
+      return true;
+    }
+
+    case '/budget': {
+      // The "current" budget is the most-recently-touched workflow; each
+      // turn mints a fresh workflow id so listing the latest 1 mirrors
+      // what `haro budget show --workflow <id>` would produce for the
+      // active turn.
+      const items = coreServices.budget.listWorkflowBudgets(buildServiceContext(app), { limit: 1 });
+      if (items.length === 0) {
+        channel.writeLine('(no workflows tracked yet)');
+        return true;
+      }
+      const item = items[0]!;
+      const used = item.budget?.usedTotalTokens ?? item.ledger.totalTokens;
+      const limit = item.budget?.limitTokens ?? 0;
+      const state = item.budget?.state ?? '-';
+      channel.writeLine(
+        `workflow=${item.workflowId} state=${state} used=${used}/${limit} denied=${item.permissions.denied}`,
+      );
+      return true;
+    }
+
     default:
       return false;
   }
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
 }
 
 async function resolveRouteSummary(

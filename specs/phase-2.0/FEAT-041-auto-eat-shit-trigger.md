@@ -16,7 +16,7 @@ related:
   - ../evolution-engine-protocol.md
   - ../evolution-metabolism.md
   - ../../docs/architecture/overview.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # 自动 eat / shit 触发器

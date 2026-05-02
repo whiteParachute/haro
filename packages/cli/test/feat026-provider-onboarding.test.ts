@@ -125,7 +125,7 @@ describe('provider onboarding wizard [FEAT-026]', () => {
       modelDiscovery: 'unsupported',
     };
     const { result, output } = await runWithOutput({
-      argv: ['provider', 'list'],
+      argv: ['provider', 'list', '--human'],
       root,
       providerCatalog: [extra],
       createProviderRegistry: async () => createProviderRegistry(new StubProvider({ id: 'mockai' })),
@@ -184,13 +184,17 @@ describe('provider onboarding wizard [FEAT-026]', () => {
       setupDeps: { env, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(provider),
     });
-    const doctorJson = JSON.parse(doctor.output) as { ok: boolean; secret: { currentProcess: string }; issues: unknown[] };
+    // FEAT-039 R11/AC12: --json now wraps in a CliRecordEnvelope.
+    const doctorEnvelope = JSON.parse(doctor.output) as {
+      ok: true;
+      data: { ok: boolean; secret: { currentProcess: string }; issues: unknown[] };
+    };
     expect(doctor.result.exitCode).toBe(0);
-    expect(doctorJson.ok).toBe(true);
-    expect(doctorJson.secret.currentProcess).toBe('present');
+    expect(doctorEnvelope.data.ok).toBe(true);
+    expect(doctorEnvelope.data.secret.currentProcess).toBe('present');
 
     const model = await runWithOutput({
-      argv: ['model'],
+      argv: ['model', '--human'],
       root,
       setupDeps: { env, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(provider),
@@ -287,11 +291,15 @@ describe('provider onboarding wizard [FEAT-026]', () => {
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
     });
 
-    const json = JSON.parse(output) as {
-      ok: boolean;
-      secret: { source: string; envFile: { path: string; containsSecret: boolean; readable: boolean } };
-      issues: Array<{ code: string; evidence: string }>;
+    const envelope = JSON.parse(output) as {
+      ok: true;
+      data: {
+        ok: boolean;
+        secret: { source: string; envFile: { path: string; containsSecret: boolean; readable: boolean } };
+        issues: Array<{ code: string; evidence: string }>;
+      };
     };
+    const json = envelope.data;
     expect(result.exitCode).toBe(1);
     expect(json.ok).toBe(false);
     expect(json.secret.source).toBe('systemd-env-file');
@@ -306,7 +314,7 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     const root = tempRoot('haro-feat026-env-');
     const secret = 'visible-nowhere-secret-123';
     const { result, output } = await runWithOutput({
-      argv: ['provider', 'env', 'codex'],
+      argv: ['provider', 'env', 'codex', '--human'],
       root,
       setupDeps: { env: { OPENAI_API_KEY: secret, HOME: root }, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
@@ -364,7 +372,7 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     expect(configText).not.toContain('refresh-token-raw');
 
     const envReport = await runWithOutput({
-      argv: ['provider', 'env', 'codex'],
+      argv: ['provider', 'env', 'codex', '--human'],
       root,
       setupDeps: { env, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
@@ -375,7 +383,7 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     expect(envReport.output).not.toContain('access-token-raw');
 
     const doctor = await runWithOutput({
-      argv: ['provider', 'doctor', 'codex'],
+      argv: ['provider', 'doctor', 'codex', '--human'],
       root,
       setupDeps: { env, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),

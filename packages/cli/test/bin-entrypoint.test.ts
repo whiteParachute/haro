@@ -79,7 +79,9 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
   it('shipped binary channel list includes optional adapters on a clean home', () => {
     const home = mkdtempSync(join(tmpdir(), 'haro-bin-channel-list-'));
     try {
-      const res = spawnSync(process.execPath, [bin, 'channel', 'list'], {
+      // FEAT-039 R11: piped (non-TTY) stdout defaults to JSON envelope.
+      // Force --human so the assertion can match the legacy text rows.
+      const res = spawnSync(process.execPath, [bin, 'channel', 'list', '--human'], {
         env: { ...process.env, HARO_HOME: home },
         encoding: 'utf8',
       });

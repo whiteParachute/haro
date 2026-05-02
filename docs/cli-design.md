@@ -374,7 +374,7 @@ haro shit rollback <archive-id>
 
 ## Phase 1.5 命令（FEAT-039）
 
-FEAT-039 批次 1（chat / session / agent）+ 批次 2（memory / logs / workflow / budget / user / skill 单数 / config get-set-unset）已落地。批次 3（REPL slash + 全命令 `--json/--human` 统一 + E2E + 类型守门 CI）仍在规划中。详细 spec 见 [`specs/phase-1.5/FEAT-039-cli-feature-parity.md`](../specs/phase-1.5/FEAT-039-cli-feature-parity.md)。所有命令通过 `@haro/core/services` 与 Web API 共用业务逻辑（R5/R13）。
+FEAT-039 已 done（2026-05-02）：批次 1（chat / session / agent）+ 批次 2（memory / logs / workflow / budget / user / skill 单数 / config get-set-unset）+ 批次 3（REPL slash `/sessions` `/memory` `/logs` `/budget` + 全命令 `--json/--human` 统一 + 端到端 lifecycle 测试 + cli-output 类型守门）。详细 spec 见 [`specs/phase-1.5/FEAT-039-cli-feature-parity.md`](../specs/phase-1.5/FEAT-039-cli-feature-parity.md)。所有命令通过 `@haro/core/services` 与 Web API 共用业务逻辑（R5/R13）；`--json` 输出统一 envelope（`CliRecordEnvelope` / `CliListEnvelope`），便于 `jq` 链式消费。
 
 ### `haro chat`（已实现，批次 1）
 
@@ -520,10 +520,10 @@ haro config unset providers.codex.defaultModel --scope project
 | `/skills` | 已实现 | 查看和管理当前 Agent 的技能 |
 | `/usage` | 已实现 | 查看当前 session 的 token / 事件用量 |
 | `/agent <id>` | 已实现 | 切换当前 Agent |
-| `/sessions` | **Phase 1.5 规划** | REPL 内列出最近 session 并切换 |
-| `/memory` | **Phase 1.5 规划** | REPL 内 FTS5 搜索记忆 |
-| `/logs` | **Phase 1.5 规划** | REPL 内查看最近事件 |
-| `/budget` | **Phase 1.5 规划** | REPL 内查看当前 session 预算消耗 |
+| `/sessions [n]` | 已实现（批次 3） | 列出最近 N 个 session（默认 10），走 `services.sessions.listSessions` |
+| `/memory <query>` | 已实现（批次 3） | FTS5 搜索记忆，走 `services.memory.queryMemory` |
+| `/logs [n]` | 已实现（批次 3） | 当前 session 最近事件（默认 20），走 `services.logs.listSessionEventLogs` |
+| `/budget` | 已实现（批次 3） | 当前 workflow 预算（最近 1 条），走 `services.budget.listWorkflowBudgets` |
 
 > 设计约束：slash 命令只在 CLI 本地消费，不透传给其他 Channel。
 
@@ -544,7 +544,7 @@ haro config unset providers.codex.defaultModel --scope project
 | `/skills` Skill 管理 | `haro skills *` + `haro skill <name> *` | 部分实现 |
 | `/knowledge` 记忆 | `haro memory query/remember/list/show/export` | 已实现（批次 2） |
 | `/logs` 日志 | `haro logs tail/show/export` | 已实现（批次 2） |
-| `/monitor` 监控 | `haro status` + `haro logs show --component provider` | 已实现（status 待统一 --json/--human）|
+| `/monitor` 监控 | `haro status` + `haro logs show --component provider` | 已实现（含 --json/--human 统一）|
 | `/dispatch` 编排 | `haro workflow list/show/replay/checkpoints` | 已实现（批次 2，replay read-only）|
 | `/channel` Channel 管理 | `haro channel *` + `haro gateway *` | 已实现 |
 | `/gateway` Gateway 控制 | `haro gateway start/stop/status` | 已实现 |

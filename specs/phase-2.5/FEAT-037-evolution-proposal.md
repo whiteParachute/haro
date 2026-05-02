@@ -18,7 +18,7 @@ related:
   - ../evolution-engine-protocol.md
   - ../evolution-metabolism.md
   - ../../docs/architecture/overview.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # Evolution Proposal Generator + Dashboard 审批队列

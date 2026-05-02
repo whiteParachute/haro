@@ -15,7 +15,7 @@ related:
   - ../phase-2.5/FEAT-037-evolution-proposal.md
   - ../evolution-engine-protocol.md
   - ../../docs/architecture/overview.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # Pattern Miner（模式归纳）

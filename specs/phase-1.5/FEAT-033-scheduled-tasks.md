@@ -13,7 +13,7 @@ related:
   - ../phase-1.5/FEAT-038-web-api-decoupling.md
   - ../phase-1.5/FEAT-039-cli-feature-parity.md
   - ../../docs/architecture/overview.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # 定时任务最小版（cron + once）

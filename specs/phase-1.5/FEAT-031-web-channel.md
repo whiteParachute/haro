@@ -14,7 +14,7 @@ related:
   - ../channel-protocol.md
   - ../../docs/architecture/overview.md
   - ../../docs/channels.md
-  - ../../docs/planning/redesign-2026-05-01.md
+  - ../../docs/planning/archive/redesign-2026-05-01.md
 ---
 
 # Web Channel（浏览器作为 IM 渠道）

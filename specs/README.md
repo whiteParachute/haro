@@ -267,7 +267,7 @@ FEAT-018 只负责 **workflow 编排调试的只读可观测面**，避免把后
 | FEAT-029 | Codex ChatGPT 订阅认证 | 让 Codex 复用官方 ChatGPT 登录（device-auth），不自实现 OAuth |
 | FEAT-030 | Dashboard ChatGPT 认证 UI | FEAT-029 的 Dashboard 可视化与 terminal login bridge（draft） |
 
-2026-05-01 路线重排新增（详见 [`docs/planning/redesign-2026-05-01.md`](../docs/planning/redesign-2026-05-01.md)）：
+2026-05-01 路线重排新增（详见 [`docs/planning/archive/redesign-2026-05-01.md`](../docs/planning/archive/redesign-2026-05-01.md)）：
 
 **Phase 1.5 — 自用底座补完**（specs/phase-1.5/）：
 
