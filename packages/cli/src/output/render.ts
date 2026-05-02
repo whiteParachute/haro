@@ -4,6 +4,7 @@ import {
   type CliErrorEnvelope,
   type CliListEnvelope,
   type CliRecordEnvelope,
+  type HaroErrorCode,
 } from '@haro/core';
 
 export type OutputMode = 'json' | 'human';
@@ -60,6 +61,38 @@ export function renderListJson<T>(
   // Final summary line: type-checked envelope. Consumers can take only the
   // last line for the count, or take all but the last for individual records.
   out.write(`${JSON.stringify({ ok: true, summary: summary.data })}\n`);
+}
+
+/**
+ * Render a diagnostic report (doctor / health check) whose payload carries its
+ * own top-level `ok` flag. When `ok === true`, we emit a normal record envelope
+ * to stdout. When `ok === false`, we emit a `CliErrorEnvelope` to *stderr* so
+ * scripts piping `--json` cannot read `.ok === true` from stdout and miss the
+ * failure (FEAT-039 R11/AC12 — see doctor failure regression test).
+ *
+ * Callers should still throw `CommanderExit(1, ...)` after this so the process
+ * exit code stays non-zero; this helper only handles the wire format.
+ */
+export function renderJsonDiagnostic<T extends { ok: boolean }>(
+  report: T,
+  target: RenderTarget = {},
+  failure: { code: HaroErrorCode; message: string; remediation?: string },
+): void {
+  if (report.ok) {
+    renderJson(report, target);
+    return;
+  }
+  const stderr = target.stderr ?? process.stderr;
+  const envelope: CliErrorEnvelope = {
+    ok: false,
+    error: {
+      code: failure.code,
+      message: failure.message,
+      ...(failure.remediation ? { remediation: failure.remediation } : {}),
+      details: { report: report as unknown as Record<string, unknown> },
+    },
+  };
+  stderr.write(`${JSON.stringify(envelope)}\n`);
 }
 
 export function renderError(

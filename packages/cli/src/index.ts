@@ -79,7 +79,7 @@ import { registerUserCommands } from './commands/user.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerConfigWriteCommands } from './commands/config.js';
 import { buildServiceContext } from './commands/service-context.js';
-import { renderJson, renderListJson, resolveOutputMode } from './output/index.js';
+import { renderJson, renderJsonDiagnostic, renderListJson, resolveOutputMode } from './output/index.js';
 import {
   assertProviderModelExists,
   buildProviderPatch,
@@ -196,6 +196,13 @@ interface ReplState {
   modelOverride?: string;
   lastUserTask?: string;
   lastSessionId?: string;
+  /**
+   * Workflow id created by the most-recent `executeTask` call. `/budget` slash
+   * uses this to pin "current budget" to the REPL turn rather than reading the
+   * global latest workflow (which on a shared root may be a gateway / external
+   * channel turn). Codex adversarial review 2026-05-02 round 2.
+   */
+  lastWorkflowId?: string;
   continueLatestSession: boolean;
   /**
    * One-shot pin set by `haro chat --session <id>` / `haro session resume
@@ -730,7 +737,11 @@ function registerProviderCommands(program: Command, app: AppContext): void {
           });
           const mode = resolveOutputMode(options, app.stdout);
           if (mode === 'json') {
-            renderJson(report, { stdout: app.stdout });
+            renderJsonDiagnostic(report, { stdout: app.stdout, stderr: app.stderr }, {
+              code: 'PROVIDER_DOCTOR_FAILED',
+              message: `provider doctor ${id} found issues`,
+              remediation: `Run \`haro provider setup ${id}\` and rerun \`haro provider doctor ${id}\`.`,
+            });
           } else {
             app.stdout.write(formatProviderDoctorHuman(report));
           }
@@ -941,7 +952,11 @@ function registerChannelCommands(program: Command, app: AppContext): void {
               : await fallbackChannelDoctor(entry.channel);
           const mode = resolveOutputMode(options, app.stdout);
           if (mode === 'json') {
-            renderJson(report, { stdout: app.stdout });
+            renderJsonDiagnostic(report, { stdout: app.stdout, stderr: app.stderr }, {
+              code: 'CHANNEL_DOCTOR_FAILED',
+              message: `channel doctor ${id} found issues: ${report.message}`,
+              remediation: `Run \`haro channel setup ${id}\` then rerun \`haro channel doctor ${id}\`.`,
+            });
           } else {
             app.stdout.write(`${report.ok ? 'OK' : 'FAIL'}: ${report.message}\n`);
           }
@@ -1281,7 +1296,11 @@ function registerGatewayCommands(program: Command, app: AppContext): void {
           const result = await gatewayDoctor(app);
           const mode = resolveOutputMode(options, app.stdout);
           if (mode === 'json') {
-            renderJson(result.report, { stdout: app.stdout });
+            renderJsonDiagnostic(result.report, { stdout: app.stdout, stderr: app.stderr }, {
+              code: 'GATEWAY_DOCTOR_FAILED',
+              message: 'gateway doctor found issues',
+              remediation: 'Inspect the unhealthy channels listed in the report and run `haro channel doctor <id>` for each.',
+            });
           } else {
             app.stdout.write(result.output);
           }
@@ -1679,6 +1698,7 @@ async function handleCliInbound(app: AppContext, msg: InboundMessage): Promise<v
   );
   replState.lastUserTask = task;
   replState.lastSessionId = result.sessionId;
+  replState.lastWorkflowId = result.workflowId;
   replState.continueLatestSession = true;
   // One-shot resume pin: clear after the first turn so follow-ups continue
   // from the freshly-minted session (now the latest completed one).
@@ -1763,6 +1783,7 @@ async function executeTask(
       });
       return {
         sessionId,
+        workflowId: workflow.workflowId,
         ruleId: 'skill-direct',
         provider: input.provider ?? 'skill-runtime',
         model: input.model ?? 'skill-runtime',
@@ -1806,7 +1827,7 @@ async function executeTask(
               : `ERROR [${teamResult.finalEvent.code}] ${teamResult.finalEvent.message}`,
         },
       });
-      return teamResult;
+      return { ...teamResult, workflowId: workflow.workflowId };
     }
     const checkpointNodeId = workflow.leafSessionRefs[0]?.nodeId ?? 'leaf-1';
     const leafSessionId =
@@ -1903,7 +1924,7 @@ async function executeTask(
       }
     }
 
-    return result;
+    return { ...result, workflowId: workflow.workflowId };
   } finally {
     budgetStore.close();
   }
@@ -2322,22 +2343,26 @@ async function handleSlashCommand(
     }
 
     case '/budget': {
-      // The "current" budget is the most-recently-touched workflow; each
-      // turn mints a fresh workflow id so listing the latest 1 mirrors
-      // what `haro budget show --workflow <id>` would produce for the
-      // active turn.
-      const items = coreServices.budget.listWorkflowBudgets(buildServiceContext(app), { limit: 1 });
-      if (items.length === 0) {
-        channel.writeLine('(no workflows tracked yet)');
+      // Pin to the workflow created by the most-recent REPL turn (Codex
+      // adversarial review 2026-05-02 round 2): on a shared Haro root,
+      // gateway / external-channel turns also touch `workflow_permission_budgets`,
+      // so reading the global latest can show the wrong workflow.
+      const workflowId = replState.lastWorkflowId;
+      if (!workflowId) {
+        channel.writeLine('(no workflow yet — send a message first)');
         return true;
       }
-      const item = items[0]!;
-      const used = item.budget?.usedTotalTokens ?? item.ledger.totalTokens;
-      const limit = item.budget?.limitTokens ?? 0;
-      const state = item.budget?.state ?? '-';
-      channel.writeLine(
-        `workflow=${item.workflowId} state=${state} used=${used}/${limit} denied=${item.permissions.denied}`,
-      );
+      try {
+        const item = coreServices.budget.getWorkflowBudget(buildServiceContext(app), workflowId);
+        const used = item.budget?.usedTotalTokens ?? item.ledger.totalTokens;
+        const limit = item.budget?.limitTokens ?? 0;
+        const state = item.budget?.state ?? '-';
+        channel.writeLine(
+          `workflow=${item.workflowId} state=${state} used=${used}/${limit} denied=${item.permissions.denied}`,
+        );
+      } catch (error) {
+        channel.writeLine(`(budget unavailable for workflow ${workflowId}: ${error instanceof Error ? error.message : String(error)})`);
+      }
       return true;
     }
 

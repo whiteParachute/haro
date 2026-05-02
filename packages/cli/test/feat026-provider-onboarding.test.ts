@@ -284,23 +284,34 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     writeFileSync(envFile, `OPENAI_API_KEY=${JSON.stringify(secret)}\n`, { mode: 0o600 });
     chmodSync(envFile, 0o600);
 
-    const { result, output } = await runWithOutput({
+    const { result, output, stderr } = await runWithOutput({
       argv: ['provider', 'doctor', 'codex', '--json'],
       root,
       setupDeps: { env: { HOME: root, XDG_CONFIG_HOME: configHome }, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
     });
 
-    const envelope = JSON.parse(output) as {
-      ok: true;
-      data: {
-        ok: boolean;
-        secret: { source: string; envFile: { path: string; containsSecret: boolean; readable: boolean } };
-        issues: Array<{ code: string; evidence: string }>;
+    // Codex adversarial review (2026-05-02): a failing doctor must NOT emit an
+    // ok:true record envelope; that lets piped consumers misread the failure.
+    // The renderer now writes a CliErrorEnvelope to stderr instead, and stdout
+    // for --json carries nothing.
+    expect(result.exitCode).toBe(1);
+    expect(output.trim()).toBe('');
+    const envelope = JSON.parse(stderr.trim().split('\n').filter(Boolean).at(-1)!) as {
+      ok: false;
+      error: {
+        code: string;
+        message: string;
+        details?: { report?: {
+          ok: boolean;
+          secret: { source: string; envFile: { path: string; containsSecret: boolean; readable: boolean } };
+          issues: Array<{ code: string; evidence: string }>;
+        } };
       };
     };
-    const json = envelope.data;
-    expect(result.exitCode).toBe(1);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('PROVIDER_DOCTOR_FAILED');
+    const json = envelope.error.details!.report!;
     expect(json.ok).toBe(false);
     expect(json.secret.source).toBe('systemd-env-file');
     expect(json.secret.envFile).toMatchObject({ path: envFile, containsSecret: true, readable: true });

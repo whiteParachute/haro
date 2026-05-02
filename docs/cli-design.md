@@ -374,7 +374,13 @@ haro shit rollback <archive-id>
 
 ## Phase 1.5 命令（FEAT-039）
 
-FEAT-039 已 done（2026-05-02）：批次 1（chat / session / agent）+ 批次 2（memory / logs / workflow / budget / user / skill 单数 / config get-set-unset）+ 批次 3（REPL slash `/sessions` `/memory` `/logs` `/budget` + 全命令 `--json/--human` 统一 + 端到端 lifecycle 测试 + cli-output 类型守门）。详细 spec 见 [`specs/phase-1.5/FEAT-039-cli-feature-parity.md`](../specs/phase-1.5/FEAT-039-cli-feature-parity.md)。所有命令通过 `@haro/core/services` 与 Web API 共用业务逻辑（R5/R13）；`--json` 输出统一 envelope（`CliRecordEnvelope` / `CliListEnvelope`），便于 `jq` 链式消费。
+FEAT-039 已 done（2026-05-02）：批次 1（chat / session / agent）+ 批次 2（memory / logs / workflow / budget / user / skill 单数 / config get-set-unset）+ 批次 3（REPL slash `/sessions` `/memory` `/logs` `/budget` + 全命令 `--json/--human` 统一 + 端到端 lifecycle 测试 + cli-output 类型守门 + Codex review round 2 修复）。详细 spec 见 [`specs/phase-1.5/FEAT-039-cli-feature-parity.md`](../specs/phase-1.5/FEAT-039-cli-feature-parity.md)。所有命令通过 `@haro/core/services` 与 Web API 共用业务逻辑（R5/R13）；`--json` 输出统一 envelope（`CliRecordEnvelope` / `CliListEnvelope`），便于 `jq` 链式消费。
+
+**`--json` 输出契约**：
+
+- 成功：单 record 走 stdout `{ok:true,data:<payload>}`；list 走 NDJSON（每行 `{ok:true,data:<row>}` + 末尾 `{ok:true,summary:{total,...}}`）
+- 业务错误：stderr 一行 `{ok:false,error:{code,message,remediation?,details?}}`，`code` 来自 `@haro/core/errors:HaroErrorCode`
+- **诊断失败**（`provider/channel/gateway doctor --json` 当 `report.ok=false`）：stdout **留空**，stderr 写 `{ok:false,error:{code: PROVIDER_DOCTOR_FAILED|CHANNEL_DOCTOR_FAILED|GATEWAY_DOCTOR_FAILED, message, details:{report:<原报告>}}}` —— 这样下游脚本读 stdout 不会误把 `{ok:true,data:{ok:false}}` 当成功；exit code 仍非零
 
 ### `haro chat`（已实现，批次 1）
 
@@ -523,7 +529,7 @@ haro config unset providers.codex.defaultModel --scope project
 | `/sessions [n]` | 已实现（批次 3） | 列出最近 N 个 session（默认 10），走 `services.sessions.listSessions` |
 | `/memory <query>` | 已实现（批次 3） | FTS5 搜索记忆，走 `services.memory.queryMemory` |
 | `/logs [n]` | 已实现（批次 3） | 当前 session 最近事件（默认 20），走 `services.logs.listSessionEventLogs` |
-| `/budget` | 已实现（批次 3） | 当前 workflow 预算（最近 1 条），走 `services.budget.listWorkflowBudgets` |
+| `/budget` | 已实现（批次 3） | 当前 turn 的 workflow 预算（由 `replState.lastWorkflowId` 锁定，避免共享 root 上其它 channel turn 的污染），走 `services.budget.getWorkflowBudget` |
 
 > 设计约束：slash 命令只在 CLI 本地消费，不透传给其他 Channel。
 

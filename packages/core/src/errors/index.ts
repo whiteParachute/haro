@@ -51,7 +51,13 @@ export type HaroErrorCode =
   | 'CONFIG_INVALID'
   | 'CONFIG_KEY_NOT_FOUND'
   | 'CONFIG_SECRET_REJECTED'
-  | 'CONFIG_SCOPE_INVALID';
+  | 'CONFIG_SCOPE_INVALID'
+  // diagnostics (provider / channel / gateway doctor failures, surfaced via
+  // CliErrorEnvelope so --json consumers see ok:false on stderr rather than
+  // a fake ok:true on stdout)
+  | 'PROVIDER_DOCTOR_FAILED'
+  | 'CHANNEL_DOCTOR_FAILED'
+  | 'GATEWAY_DOCTOR_FAILED';
 
 export interface HaroErrorOptions {
   remediation?: string;

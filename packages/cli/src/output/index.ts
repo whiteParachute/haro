@@ -9,6 +9,7 @@ export {
   resolveOutputMode,
   renderJson,
   renderListJson,
+  renderJsonDiagnostic,
   renderError,
   type OutputMode,
   type OutputModeFlags,

@@ -128,7 +128,7 @@ Phase 1.5 起，Haro 严格遵守三层解耦，便于独立发布与替换：
 
 **前后端解耦原则**：Web 前端不直接 import Web API 内部模块，仅通过 HTTP/JSON 通信。前端可以单独开发、单独发布、甚至被第三方前端替换（hermes-web-ui 风格）。
 
-**服务层共用原则**（FEAT-039 R5/R13）：所有跨入口的业务逻辑必须落在 `@haro/core/services/`，CLI 命令与 Web API 路由都调用同一组 service 函数。错误目录 `@haro/core/errors`（`HaroError` + 共享 code/remediation）、CLI 输出契约 `@haro/core/types/cli-output`（`CliRecordEnvelope` / `CliListEnvelope` / `CliErrorEnvelope`）同样跨入口共用，避免业务实现漂移。CLI `--json` 输出统一走 envelope，由 `packages/cli/test/output-shape.test.ts` 类型守门。
+**服务层共用原则**（FEAT-039 R5/R13）：所有跨入口的业务逻辑必须落在 `@haro/core/services/`，CLI 命令与 Web API 路由都调用同一组 service 函数。错误目录 `@haro/core/errors`（`HaroError` + 共享 code/remediation）、CLI 输出契约 `@haro/core/types/cli-output`（`CliRecordEnvelope` / `CliListEnvelope` / `CliErrorEnvelope`）同样跨入口共用，避免业务实现漂移。CLI `--json` 输出统一走 envelope，由 `packages/cli/test/output-shape.test.ts` 类型守门。诊断类命令（`provider/channel/gateway doctor`）失败时通过 `renderJsonDiagnostic` 把 `CliErrorEnvelope` 写到 stderr（`PROVIDER_DOCTOR_FAILED` / `CHANNEL_DOCTOR_FAILED` / `GATEWAY_DOCTOR_FAILED`），stdout 留空，避免成功 envelope 包裹失败报告。
 
 ---
 

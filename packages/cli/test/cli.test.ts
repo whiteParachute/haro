@@ -728,13 +728,19 @@ describe('runCli [FEAT-006]', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-doctor-'));
     roots.push(root);
     const stdout = new PassThrough();
-    const chunks: string[] = [];
-    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+    const stderr = new PassThrough();
+    const outChunks: string[] = [];
+    const errChunks: string[] = [];
+    stdout.on('data', (chunk) => outChunks.push(String(chunk)));
+    stderr.on('data', (chunk) => errChunks.push(String(chunk)));
 
     const result = await runCli({
-      argv: ['channel', 'doctor', 'feishu'],
+      // --human keeps the stdout reason text the assertion below checks; the
+      // failing-doctor JSON path is covered separately and goes to stderr.
+      argv: ['channel', 'doctor', 'feishu', '--human'],
       root,
       stdout,
+      stderr,
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
@@ -758,7 +764,7 @@ describe('runCli [FEAT-006]', () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(chunks.join('')).toContain('Unauthorized');
+    expect(outChunks.join('')).toContain('Unauthorized');
   });
 
   it('FEAT-008 AC7: cli runtime still works when no external channel package is registered', async () => {
@@ -845,7 +851,7 @@ describe('runCli [FEAT-006]', () => {
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
     const result = await runCli({
-      argv: ['channel', 'doctor', 'telegram'],
+      argv: ['channel', 'doctor', 'telegram', '--human'],
       root,
       stdout,
       createProviderRegistry: async () =>
