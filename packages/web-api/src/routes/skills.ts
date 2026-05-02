@@ -1,15 +1,13 @@
 import { Hono } from 'hono';
 import {
+  HaroError,
   buildHaroPaths,
   createEvolutionAssetRegistry,
-  type EvolutionAsset,
-  type EvolutionAssetEvent,
+  services,
   type EvolutionAssetRegistry,
-  type EvolutionAssetStatus,
-  type EvolutionAssetWithEvents,
 } from '@haro/core';
-import { SkillsManager, type SkillManifestEntry } from '@haro/skills';
-import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
+import { SkillsManager } from '@haro/skills';
+import { readPageQuery } from '../lib/route-query.js';
 import { requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
@@ -17,88 +15,65 @@ import type { WebRuntime } from '../runtime.js';
 const SKILL_SORTS = ['id', 'installedAt', 'lastUsedAt', 'useCount', 'assetStatus', 'source'] as const;
 type SkillSortKey = typeof SKILL_SORTS[number];
 
-interface SkillReadModel {
-  id: string;
-  source: SkillManifestEntry['source'];
-  enabled: boolean;
-  installedAt: string;
-  isPreinstalled: boolean;
-  originalSource: string;
-  pinnedCommit: string;
-  license: string;
-  description?: string;
-  assetStatus: EvolutionAssetStatus | 'missing';
-  assetRef: string;
-  lastUsedAt?: string;
-  useCount: number;
-}
-
-interface SkillDetailReadModel extends SkillReadModel {
-  descriptor: {
-    id: string;
-    description: string;
-    content: string;
-  };
-  asset?: EvolutionAssetWithEvents;
-}
-
-interface SkillMutationReadModel {
-  skill: SkillReadModel;
-  audit?: {
-    asset?: EvolutionAsset | EvolutionAssetWithEvents;
-    event?: EvolutionAssetEvent;
-    status: 'recorded' | 'missing';
-  };
-}
-
 export function createSkillsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
 
-  route.get('/', (c) => withSkills(runtime, (manager, registry) => {
-    const page = parsePageQuery(c, {
+  route.get('/', (c) => {
+    const page = services.normalizePageQuery(readPageQuery(c) as services.PageQuery, {
       allowedSort: SKILL_SORTS,
       defaultSort: 'installedAt',
       defaultOrder: 'desc',
     });
-    const skills = manager.list().map((entry) => summarizeSkill(entry, manager, registry));
-    const filtered = filterSkills(skills, page.q);
-    const sorted = sortSkills(filtered, page.sort, page.order);
-    const total = sorted.length;
-    return c.json({
-      success: true,
-      data: {
-        items: sorted.slice(page.offset, page.offset + page.pageSize),
-        count: total,
-        total,
-        pageInfo: buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
-        limit: page.pageSize,
-        offset: page.offset,
-      },
+    return withSkillsCtx(runtime, (ctx) => {
+      const skills = services.skills.listSkills(ctx);
+      const filtered = filterSkills(skills, page.q);
+      const sorted = sortSkills(filtered, page.sort as SkillSortKey, page.order);
+      const total = sorted.length;
+      const items = sorted.slice(page.offset, page.offset + page.pageSize);
+      return c.json({
+        success: true,
+        data: {
+          items,
+          count: total,
+          total,
+          pageInfo: services.buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
+          limit: page.pageSize,
+          offset: page.offset,
+        },
+      });
     });
-  }));
+  });
 
-  route.get('/:id', (c) => withSkills(runtime, (manager, registry) => {
-    const id = c.req.param('id');
+  route.get('/:id', (c) => withSkillsCtx(runtime, (ctx) => {
     try {
-      const info = manager.info(id);
-      return c.json({ success: true, data: detailSkill(info, manager, registry) });
+      const detail = services.skills.getSkillDetail(ctx, c.req.param('id'));
+      return c.json({ success: true, data: detail });
     } catch (error) {
-      return c.json({ error: errorMessage(error) }, 404);
+      if (error instanceof HaroError && error.code === 'SKILL_NOT_FOUND') {
+        return c.json({ error: error.message }, 404);
+      }
+      throw error;
     }
   }));
 
-  route.post('/:id/enable', requireWebPermission('config-write'), (c) => withSkills(runtime, (manager, registry) => {
-    const id = c.req.param('id');
-    const result = mutateSkill(() => manager.enable(id), manager, registry, id);
-    if (!result.ok) return c.json({ error: result.error }, result.status);
-    return c.json({ success: true, data: result.value });
+  route.post('/:id/enable', requireWebPermission('config-write'), (c) => withSkillsCtx(runtime, (ctx) => {
+    try {
+      return c.json({ success: true, data: services.skills.enableSkill(ctx, c.req.param('id')) });
+    } catch (error) {
+      const mapped = mapSkillError(c, error);
+      if (mapped) return mapped;
+      throw error;
+    }
   }));
 
-  route.post('/:id/disable', requireWebPermission('config-write'), (c) => withSkills(runtime, (manager, registry) => {
-    const id = c.req.param('id');
-    const result = mutateSkill(() => manager.disable(id), manager, registry, id);
-    if (!result.ok) return c.json({ error: result.error }, result.status);
-    return c.json({ success: true, data: result.value });
+  route.post('/:id/disable', requireWebPermission('config-write'), (c) => withSkillsCtx(runtime, (ctx) => {
+    try {
+      return c.json({ success: true, data: services.skills.disableSkill(ctx, c.req.param('id')) });
+    } catch (error) {
+      const mapped = mapSkillError(c, error);
+      if (mapped) return mapped;
+      throw error;
+    }
   }));
 
   route.post('/install', requireWebPermission('config-write'), async (c) => {
@@ -110,13 +85,13 @@ export function createSkillsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     const source = readRequiredString(body.value.source, 'source');
     if (!source.ok) return c.json({ error: source.error }, 400);
     try {
-      return withSkills(runtime, (manager, registry) => {
-        const result = mutateSkill(() => manager.install(source.value), manager, registry);
-        if (!result.ok) return c.json({ error: result.error }, result.status);
-        return c.json({ success: true, data: result.value }, 201);
-      });
+      return withSkillsCtx(runtime, (ctx) =>
+        c.json({ success: true, data: services.skills.installSkill(ctx, source.value) }, 201),
+      );
     } catch (error) {
-      if (isAuditUnavailableError(error)) return c.json(unsupportedAuditPayload(error), 501);
+      if (services.skills.isAssetAuditUnavailableError(error)) return c.json(unsupportedAuditPayload(error), 501);
+      const mapped = mapSkillError(c, error);
+      if (mapped) return mapped;
       throw error;
     }
   });
@@ -126,32 +101,13 @@ export function createSkillsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
       return c.json(unsupportedAuditPayload(), 501);
     }
     try {
-      return withSkills(runtime, (manager, registry) => {
-        const id = c.req.param('id');
-        const entry = manager.list().find((item) => item.id === id);
-        if (!entry) return c.json({ error: `Skill '${id}' not installed` }, 404);
-        if (entry.isPreinstalled) return c.json({ error: 'Preinstalled skills cannot be uninstalled' }, 403);
-        const beforeEvents = registry.listEvents(skillAssetId(id)).length;
-        try {
-          const removed = manager.uninstall(id);
-          const afterEvents = registry.listEvents(skillAssetId(id)).length;
-          const audit = readLatestAudit(registry, removed.id, afterEvents > beforeEvents);
-          return c.json({
-            success: true,
-            data: {
-              skill: {
-                ...summarizeEntryAfterUninstall(removed, registry),
-                enabled: false,
-              },
-              audit,
-            },
-          });
-        } catch (error) {
-          return c.json({ error: errorMessage(error) }, 400);
-        }
-      });
+      return withSkillsCtx(runtime, (ctx) =>
+        c.json({ success: true, data: services.skills.uninstallSkill(ctx, c.req.param('id')) }),
+      );
     } catch (error) {
-      if (isAuditUnavailableError(error)) return c.json(unsupportedAuditPayload(error), 501);
+      if (services.skills.isAssetAuditUnavailableError(error)) return c.json(unsupportedAuditPayload(error), 501);
+      const mapped = mapSkillError(c, error);
+      if (mapped) return mapped;
       throw error;
     }
   });
@@ -159,17 +115,24 @@ export function createSkillsRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   return route;
 }
 
-function withSkills<T>(
-  runtime: WebRuntime,
-  fn: (manager: SkillsManager, registry: EvolutionAssetRegistry) => T,
-): T {
+/** Open the skills service context bound to runtime registries. */
+function withSkillsCtx<T>(runtime: WebRuntime, fn: (ctx: services.skills.SkillsServiceContext) => T): T {
   const registry = resolveRegistry(runtime);
-  const manager = runtime.skillsManager ?? new SkillsManager({ root: buildHaroPaths(runtime.root).root, registry });
+  const ownsRegistry = !runtime.evolutionAssetRegistry;
+  const manager = runtime.skillsManager
+    ?? new SkillsManager({ root: buildHaroPaths(runtime.root).root, registry });
   const ownsManager = runtime.skillsManager === undefined;
-  const ownsRegistry = runtime.evolutionAssetRegistry === undefined;
   try {
-    manager.ensureInitialized();
-    return fn(manager, registry);
+    return fn({
+      ...(runtime.root ? { root: runtime.root } : {}),
+      ...(runtime.dbFile ? { dbFile: runtime.dbFile } : {}),
+      logger: runtime.logger,
+      skillsManager: manager,
+      evolutionAssetRegistry: runtime.evolutionAssetRegistry === false ? false : registry,
+      ...(runtime.skillAssetAuditSupported !== undefined
+        ? { skillAssetAuditSupported: runtime.skillAssetAuditSupported }
+        : {}),
+    });
   } finally {
     if (ownsManager) manager.close();
     if (ownsRegistry) registry.close();
@@ -177,99 +140,22 @@ function withSkills<T>(
 }
 
 function resolveRegistry(runtime: WebRuntime): EvolutionAssetRegistry {
-  if (runtime.evolutionAssetRegistry) return runtime.evolutionAssetRegistry;
-  return createEvolutionAssetRegistry({ root: runtime.root });
-}
-
-function mutateSkill(
-  action: () => SkillManifestEntry,
-  manager: SkillsManager,
-  registry: EvolutionAssetRegistry,
-  knownSkillId?: string,
-): { ok: true; value: SkillMutationReadModel } | { ok: false; status: 400 | 404; error: string } {
-  try {
-    const beforeEvents = knownSkillId ? registry.listEvents(skillAssetId(knownSkillId)).length : registry.listEvents().length;
-    const entry = action();
-    const afterEvents = knownSkillId ? registry.listEvents(skillAssetId(entry.id)).length : registry.listEvents().length;
-    const audit = readLatestAudit(registry, entry.id, afterEvents > beforeEvents);
-    return {
-      ok: true,
-      value: {
-        skill: summarizeSkill(entry, manager, registry),
-        audit,
-      },
-    };
-  } catch (error) {
-    const message = errorMessage(error);
-    return { ok: false, status: message.includes('not installed') ? 404 : 400, error: message };
+  if (runtime.evolutionAssetRegistry) {
+    return runtime.evolutionAssetRegistry;
   }
+  return createEvolutionAssetRegistry({ ...(runtime.root ? { root: runtime.root } : {}) });
 }
 
-function summarizeSkill(entry: SkillManifestEntry, manager: SkillsManager, registry: EvolutionAssetRegistry): SkillReadModel {
-  const usage = manager.getUsage(entry.id);
-  const asset = registry.getAsset(skillAssetId(entry.id));
-  const model: SkillReadModel = {
-    id: entry.id,
-    source: entry.source,
-    enabled: entry.enabled,
-    installedAt: entry.installedAt,
-    isPreinstalled: entry.isPreinstalled,
-    originalSource: entry.originalSource,
-    pinnedCommit: entry.pinnedCommit,
-    license: entry.license,
-    assetStatus: asset?.status ?? 'missing',
-    assetRef: skillAssetId(entry.id),
-    useCount: usage?.useCount ?? 0,
-  };
-  if (entry.description) model.description = entry.description;
-  if (usage?.lastUsedAt) model.lastUsedAt = usage.lastUsedAt;
-  return model;
+function mapSkillError(c: { json(value: unknown, status?: number): Response }, error: unknown): Response | null {
+  if (!(error instanceof HaroError)) return null;
+  if (error.code === 'SKILL_NOT_FOUND') return c.json({ error: error.message }, 404);
+  if (error.code === 'SKILL_PREINSTALLED') return c.json({ error: error.message }, 403);
+  if (error.code === 'SKILL_AUDIT_UNSUPPORTED') return c.json(unsupportedAuditPayload(error), 501);
+  if (error.code === 'INVALID_INPUT') return c.json({ error: error.message }, 400);
+  return null;
 }
 
-function detailSkill(
-  info: SkillManifestEntry & { descriptor: SkillDetailReadModel['descriptor'] },
-  manager: SkillsManager,
-  registry: EvolutionAssetRegistry,
-): SkillDetailReadModel {
-  const asset = registry.getAsset(skillAssetId(info.id), { includeEvents: true });
-  return {
-    ...summarizeSkill(info, manager, registry),
-    descriptor: info.descriptor,
-    ...(asset ? { asset } : {}),
-  };
-}
-
-function summarizeEntryAfterUninstall(entry: SkillManifestEntry, registry: EvolutionAssetRegistry): SkillReadModel {
-  const asset = registry.getAsset(skillAssetId(entry.id));
-  return {
-    id: entry.id,
-    source: entry.source,
-    enabled: false,
-    installedAt: entry.installedAt,
-    isPreinstalled: entry.isPreinstalled,
-    originalSource: entry.originalSource,
-    pinnedCommit: entry.pinnedCommit,
-    license: entry.license,
-    description: entry.description,
-    assetStatus: asset?.status ?? 'archived',
-    assetRef: skillAssetId(entry.id),
-    useCount: 0,
-  };
-}
-
-function readLatestAudit(registry: EvolutionAssetRegistry, skillId: string, didRecord: boolean): SkillMutationReadModel['audit'] {
-  const assetId = skillAssetId(skillId);
-  const events = registry.listEvents(assetId);
-  const event = didRecord ? events.at(-1) : undefined;
-  const asset = registry.getAsset(assetId, { includeEvents: true }) ?? undefined;
-  return {
-    status: didRecord && event ? 'recorded' : 'missing',
-    ...(asset ? { asset } : {}),
-    ...(event ? { event } : {}),
-  };
-}
-
-function filterSkills(items: readonly SkillReadModel[], q: string): SkillReadModel[] {
+function filterSkills(items: readonly services.skills.SkillReadModel[], q: string): services.skills.SkillReadModel[] {
   if (!q) return [...items];
   const needle = q.toLowerCase();
   return items.filter((item) => [
@@ -281,7 +167,11 @@ function filterSkills(items: readonly SkillReadModel[], q: string): SkillReadMod
   ].some((value) => typeof value === 'string' && value.toLowerCase().includes(needle)));
 }
 
-function sortSkills(items: readonly SkillReadModel[], sort: SkillSortKey, order: 'asc' | 'desc'): SkillReadModel[] {
+function sortSkills(
+  items: readonly services.skills.SkillReadModel[],
+  sort: SkillSortKey,
+  order: 'asc' | 'desc',
+): services.skills.SkillReadModel[] {
   return [...items].sort((left, right) => {
     const direction = order === 'asc' ? 1 : -1;
     const primary = compareSkill(left, right, sort) * direction;
@@ -290,20 +180,18 @@ function sortSkills(items: readonly SkillReadModel[], sort: SkillSortKey, order:
   });
 }
 
-function compareSkill(left: SkillReadModel, right: SkillReadModel, sort: SkillSortKey): number {
+function compareSkill(
+  left: services.skills.SkillReadModel,
+  right: services.skills.SkillReadModel,
+  sort: SkillSortKey,
+): number {
   switch (sort) {
-    case 'id':
-      return left.id.localeCompare(right.id);
-    case 'installedAt':
-      return left.installedAt.localeCompare(right.installedAt);
-    case 'lastUsedAt':
-      return compareNullableString(left.lastUsedAt, right.lastUsedAt);
-    case 'useCount':
-      return left.useCount - right.useCount;
-    case 'assetStatus':
-      return left.assetStatus.localeCompare(right.assetStatus);
-    case 'source':
-      return left.source.localeCompare(right.source);
+    case 'id': return left.id.localeCompare(right.id);
+    case 'installedAt': return left.installedAt.localeCompare(right.installedAt);
+    case 'lastUsedAt': return compareNullableString(left.lastUsedAt, right.lastUsedAt);
+    case 'useCount': return left.useCount - right.useCount;
+    case 'assetStatus': return left.assetStatus.localeCompare(right.assetStatus);
+    case 'source': return left.source.localeCompare(right.source);
   }
 }
 
@@ -314,7 +202,10 @@ function compareNullableString(left?: string, right?: string): number {
   return left.localeCompare(right);
 }
 
-async function parseJsonObject(c: { req: { json: () => Promise<unknown> } }): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; error: string }> {
+async function parseJsonObject(c: { req: { json: () => Promise<unknown> } }): Promise<
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; error: string }
+> {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -340,23 +231,6 @@ function unsupportedAuditPayload(error?: unknown) {
     error: 'unsupported',
     code: 'asset-audit-unsupported',
     message: 'Skill install/uninstall requires Evolution Asset Registry audit support',
-    ...(error ? { detail: errorMessage(error) } : {}),
+    ...(error ? { detail: error instanceof Error ? error.message : String(error) } : {}),
   };
-}
-
-function skillAssetId(skillId: string): string {
-  return `skill:${skillId}`;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isAuditUnavailableError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return error.message.includes('EvolutionAssetRegistry') ||
-    error.message.includes('better-sqlite3') ||
-    error.message.includes('SQLITE') ||
-    error.message.includes('read-only file system') ||
-    error.message.includes('EROFS');
 }

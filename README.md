@@ -67,7 +67,7 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **MCP 工具层**（FEAT-032）— 内置 MCP server + 4 个核心工具
 - **定时任务**（FEAT-033）— cron + 一次性
 - **流式 UX 升级**（FEAT-034）— thinking 折叠、tool timeline、Hook 状态
-- **CLI 等价补完**（FEAT-039）— chat / session / agent / skill / memory / logs / workflow / budget 命令族
+- **CLI 等价补完**（FEAT-039）— 批次 1 + 2 已落地：chat / session / agent / memory / logs / workflow / budget / user / skill 单数 / config get-set-unset；批次 3（REPL slash + 全命令 `--json/--human` 统一 + E2E + 类型守门 CI）规划中
 
 ### 远期（Phase 2.0+）
 

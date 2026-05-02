@@ -70,6 +70,13 @@ import {
 import { registerSessionCommands } from './commands/session.js';
 import { registerAgentCommands } from './commands/agent.js';
 import { registerChatCommand } from './commands/chat.js';
+import { registerMemoryCommands } from './commands/memory.js';
+import { registerLogsCommands } from './commands/logs.js';
+import { registerWorkflowCommands } from './commands/workflow.js';
+import { registerBudgetCommands } from './commands/budget.js';
+import { registerUserCommands } from './commands/user.js';
+import { registerSkillCommand } from './commands/skill.js';
+import { registerConfigWriteCommands } from './commands/config.js';
 import {
   assertProviderModelExists,
   buildProviderPatch,
@@ -459,6 +466,7 @@ function buildProgram(app: AppContext): Command {
           `${JSON.stringify({ sources: app.loaded.sources, config: app.loaded.config }, null, 2)}\n`,
         );
       });
+      registerConfigWriteCommands(cmd, app);
     },
     program,
   );
@@ -522,6 +530,12 @@ function buildProgram(app: AppContext): Command {
   registerSessionCommands(program, app, { runRepl });
   registerAgentCommands(program, app);
   registerChatCommand(program, app, { executeTask, runRepl });
+  registerMemoryCommands(program, app);
+  registerLogsCommands(program, app);
+  registerWorkflowCommands(program, app);
+  registerBudgetCommands(program, app);
+  registerUserCommands(program, app);
+  registerSkillCommand(program, app);
 
   return program;
 }

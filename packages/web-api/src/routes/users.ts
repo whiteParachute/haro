@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { services } from '@haro/core';
 import { readWebAuth, requireWebPermission } from '../auth.js';
 import {
   createUser,
@@ -7,9 +8,8 @@ import {
   resetUserPassword,
   updateUser,
   WebAuthError,
-  type WebUserWithAudit,
 } from '../auth-store.js';
-import { buildPageInfo, parsePageQuery } from '../lib/pagination.js';
+import { readPageQuery } from '../lib/route-query.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
@@ -20,18 +20,18 @@ export function createUsersRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
 
   route.get('/', requireWebPermission('read-only'), (c) => {
-    const page = parsePageQuery(c, {
+    const page = services.normalizePageQuery(readPageQuery(c) as services.PageQuery, {
       allowedSort: USER_SORTS,
       defaultSort: 'createdAt',
       defaultOrder: 'asc',
     });
-    const users = sortUsers(filterUsers(listUsers(runtime), page.q), page.sort, page.order);
+    const users = sortUsers(filterUsers(listUsers(runtime), page.q), page.sort as UserSortKey, page.order);
     const total = users.length;
     return c.json({
       success: true,
       data: {
         items: users.slice(page.offset, page.offset + page.pageSize),
-        pageInfo: buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
+        pageInfo: services.buildPageInfo({ page: page.page, pageSize: page.pageSize, total }),
         total,
         limit: page.pageSize,
         offset: page.offset,
@@ -52,13 +52,17 @@ export function createUsersRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     const body = await readJsonObject(c.req.json.bind(c.req));
     if (!body.ok) return c.json({ error: body.error }, 400);
     try {
-      const user = createUser(runtime, {
-        username: body.value.username,
-        displayName: body.value.displayName,
-        password: body.value.password,
-        role: body.value.role,
-        status: body.value.status,
-      }, auth);
+      const user = createUser(
+        runtime,
+        {
+          username: body.value.username,
+          displayName: body.value.displayName,
+          password: body.value.password,
+          role: body.value.role,
+          status: body.value.status,
+        },
+        auth,
+      );
       return c.json({ success: true, data: user }, 201);
     } catch (error) {
       return handleAuthError(c, error);
@@ -71,11 +75,16 @@ export function createUsersRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     const body = await readJsonObject(c.req.json.bind(c.req));
     if (!body.ok) return c.json({ error: body.error }, 400);
     try {
-      const user = updateUser(runtime, c.req.param('id'), {
-        displayName: body.value.displayName,
-        role: body.value.role,
-        status: body.value.status,
-      }, auth);
+      const user = updateUser(
+        runtime,
+        c.req.param('id'),
+        {
+          displayName: body.value.displayName,
+          role: body.value.role,
+          status: body.value.status,
+        },
+        auth,
+      );
       return c.json({ success: true, data: user });
     } catch (error) {
       return handleAuthError(c, error);
@@ -98,7 +107,10 @@ export function createUsersRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   return route;
 }
 
-function filterUsers(items: readonly WebUserWithAudit[], q: string): WebUserWithAudit[] {
+function filterUsers(
+  items: readonly services.users.WebUserWithAudit[],
+  q: string,
+): services.users.WebUserWithAudit[] {
   if (!q) return [...items];
   const needle = q.toLowerCase();
   return items.filter((item) => [
@@ -110,7 +122,11 @@ function filterUsers(items: readonly WebUserWithAudit[], q: string): WebUserWith
   ].some((value) => value.toLowerCase().includes(needle)));
 }
 
-function sortUsers(items: readonly WebUserWithAudit[], sort: UserSortKey, order: 'asc' | 'desc'): WebUserWithAudit[] {
+function sortUsers(
+  items: readonly services.users.WebUserWithAudit[],
+  sort: UserSortKey,
+  order: 'asc' | 'desc',
+): services.users.WebUserWithAudit[] {
   return [...items].sort((left, right) => {
     const direction = order === 'asc' ? 1 : -1;
     const primary = compareUser(left, right, sort) * direction;
@@ -119,22 +135,19 @@ function sortUsers(items: readonly WebUserWithAudit[], sort: UserSortKey, order:
   });
 }
 
-function compareUser(left: WebUserWithAudit, right: WebUserWithAudit, sort: UserSortKey): number {
+function compareUser(
+  left: services.users.WebUserWithAudit,
+  right: services.users.WebUserWithAudit,
+  sort: UserSortKey,
+): number {
   switch (sort) {
-    case 'createdAt':
-      return left.createdAt.localeCompare(right.createdAt);
-    case 'updatedAt':
-      return left.updatedAt.localeCompare(right.updatedAt);
-    case 'lastLoginAt':
-      return compareNullableString(left.lastLoginAt, right.lastLoginAt);
-    case 'username':
-      return left.username.localeCompare(right.username);
-    case 'displayName':
-      return left.displayName.localeCompare(right.displayName);
-    case 'role':
-      return left.role.localeCompare(right.role);
-    case 'status':
-      return left.status.localeCompare(right.status);
+    case 'createdAt': return left.createdAt.localeCompare(right.createdAt);
+    case 'updatedAt': return left.updatedAt.localeCompare(right.updatedAt);
+    case 'lastLoginAt': return compareNullableString(left.lastLoginAt, right.lastLoginAt);
+    case 'username': return left.username.localeCompare(right.username);
+    case 'displayName': return left.displayName.localeCompare(right.displayName);
+    case 'role': return left.role.localeCompare(right.role);
+    case 'status': return left.status.localeCompare(right.status);
   }
 }
 
@@ -145,7 +158,10 @@ function compareNullableString(left: string | null, right: string | null): numbe
   return left.localeCompare(right);
 }
 
-async function readJsonObject(read: () => Promise<unknown>): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; error: string }> {
+async function readJsonObject(read: () => Promise<unknown>): Promise<
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; error: string }
+> {
   let value: unknown;
   try {
     value = await read();

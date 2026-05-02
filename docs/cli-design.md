@@ -51,7 +51,7 @@ pnpm haro run "..."        # 单次任务
 |------|--------|------|------|
 | Bootstrap | `setup` / `onboard` | 已实现 | 首次引导（FEAT-027 staged setup） |
 | Bootstrap | `doctor` | 已实现 | 系统诊断（FEAT-027 结构化 issue + remediation） |
-| Bootstrap | `config` | 已实现（只读） | 查看合并后配置；`config set/get` 仍为 Phase 1.5 规划 |
+| Bootstrap | `config` | 已实现 | 查看合并后配置；`config get/set/unset` 已在批次 2 落地（secret 路径黑名单守门） |
 | Bootstrap | `status` | 已实现 | 当前运行状态摘要 |
 | Bootstrap | `update` | 已实现 | 检查 npm registry 上的新版本 |
 | Provider | `provider` | 已实现（FEAT-026 / FEAT-029） | provider 配置、诊断、模型发现、ChatGPT 订阅认证 |
@@ -59,16 +59,16 @@ pnpm haro run "..."        # 单次任务
 | Channel | `channel` | 已实现 | channel 启用 / 禁用 / 配置 / 诊断 |
 | Channel | `gateway` | 已实现 | 启动 / 停止 / 监控所有 enabled channels |
 | Skills | `skills` | 已实现 | install / list / info / enable |
-| Skills | `skill` (单数详细控制) | **Phase 1.5 规划** | run / disable / uninstall / show events |
+| Skills | `skill` (单数详细控制) | 已实现（批次 2） | run / disable / uninstall / show events / validate |
 | Run | `run` | 已实现 | 单次任务执行 |
-| Run | `chat` | **Phase 1.5 规划** | 聊天会话视图（含历史浏览） |
-| Session | `session` | **Phase 1.5 规划** | list / show / resume / export |
-| Agent | `agent` | **Phase 1.5 规划** | list / show / create / edit / delete / validate |
-| Memory | `memory` | **Phase 1.5 规划** | query / remember / list / export / scope 切换 |
-| Logs | `logs` | **Phase 1.5 规划** | tail / show / filter（按 session / agent / level） |
-| Workflow | `workflow` | **Phase 1.5 规划** | list / show / replay / checkpoint 检查 |
-| Budget | `budget` | **Phase 1.5 规划** | show / set / audit |
-| User | `user` | **Phase 1.5 规划** | list / create / role / disable（FEAT-028 多用户管理） |
+| Run | `chat` | 已实现（批次 1） | 聊天会话视图（含历史浏览，--session 显式 pin 续接） |
+| Session | `session` | 已实现（批次 1） | list / show / resume / export / delete |
+| Agent | `agent` | 已实现（批次 1） | list / show / create / edit / delete / validate / test |
+| Memory | `memory` | 已实现（批次 2） | query / remember / list / show / export |
+| Logs | `logs` | 已实现（批次 2） | tail / show / export（tail 用 (createdAt, id) 复合游标） |
+| Workflow | `workflow` | 已实现（批次 2） | list / show / replay (read-only) / checkpoints |
+| Budget | `budget` | 已实现（批次 2） | show / audit；`set --agent` 仍未实现（无 per-agent budget 表，留 follow-up）|
+| User | `user` | 已实现（批次 2） | list / show / create / role / disable / reset-token（FEAT-028 多用户）|
 | Web | `web` | 已实现 | 启动 Web Dashboard 服务（FEAT-038 已退化为 `@haro/web-api` 的薄启动器；`pnpm -F @haro/web-api start` 可独立启动） |
 | Evolution | `eat` / `shit` | 已实现 | 手动代谢 |
 
@@ -146,7 +146,7 @@ haro config
 3. 全局 `~/.haro/config.yaml`
 4. 内置默认值
 
-> 当前只提供只读配置查看；`config set/get` 子命令在 Phase 1.5 FEAT-039 规划中。修改配置请直接编辑项目级 `.haro/config.yaml` 或全局 `~/.haro/config.yaml`。
+> 批次 2 起 `haro config get/set/unset` 已落地（见下文 [`haro config get/set/unset`](#haro-config-getsetunset已实现批次-2) 段落，secret 路径黑名单递归校验）；交互式编辑也仍然支持直接修改 `.haro/config.yaml`。
 
 ### `haro status`
 
@@ -374,7 +374,7 @@ haro shit rollback <archive-id>
 
 ## Phase 1.5 命令（FEAT-039）
 
-以下命令族在 FEAT-039 批次 1 已落地（chat / session / agent），其余仍在后续批次规划中。详细 spec 见 [`specs/phase-1.5/FEAT-039-cli-feature-parity.md`](../specs/phase-1.5/FEAT-039-cli-feature-parity.md)。所有命令通过 `@haro/core/services` 与 Web API 共用业务逻辑（R5/R13）。
+FEAT-039 批次 1（chat / session / agent）+ 批次 2（memory / logs / workflow / budget / user / skill 单数 / config get-set-unset）已落地。批次 3（REPL slash + 全命令 `--json/--human` 统一 + E2E + 类型守门 CI）仍在规划中。详细 spec 见 [`specs/phase-1.5/FEAT-039-cli-feature-parity.md`](../specs/phase-1.5/FEAT-039-cli-feature-parity.md)。所有命令通过 `@haro/core/services` 与 Web API 共用业务逻辑（R5/R13）。
 
 ### `haro chat`（已实现，批次 1）
 
@@ -422,91 +422,89 @@ haro agent test <id> --task "..."  # sandbox：noMemory + continueLatestSession=
 
 `agent test` 是真正的 sandbox：显式关掉 memory 写入与"latest session 续接"，确保不会读到历史对话上下文，也不会污染下一轮真实会话。
 
-### `haro memory`（规划中）
+### `haro memory`（已实现，批次 2）
 
-记忆查询与写入。等价于 Web Dashboard 的 `/knowledge` 页。
+记忆查询与写入，等价于 Web Dashboard `/knowledge`。所有读写经 `services.memory`。
 
 ```bash
-haro memory query "<query>"                # FTS5 搜索
-haro memory query --scope agent:<id>
-haro memory remember "<text>" --scope shared|agent|platform
+haro memory query "<query>"                       # FTS5 搜索
+haro memory query "<q>" --scope agent --agent <id>
+haro memory remember "<text>" --scope shared      # platform 写入被拒
 haro memory list --scope shared
 haro memory show <memory-id>
-haro memory export --scope shared --output dir/
+haro memory export --scope shared -o entries.json
 ```
 
-### `haro logs`（规划中）
+### `haro logs`（已实现，批次 2）
 
-运行日志与 session 事件。等价于 Web Dashboard 的 `/logs` 页。
+运行日志与 session 事件，等价于 Web Dashboard `/logs`。`tail` 用 `(createdAt, id)` 复合游标 + 单 tick 内连续翻页，避免同时间戳爆发事件被丢。
 
 ```bash
-haro logs tail                    # 跟随主日志
-haro logs tail --session <id>     # 跟随 session 事件流
-haro logs show --since 1h --level warn
-haro logs show --component provider|channel|workflow
-haro logs export --since 24h --output haro-logs-<ts>.jsonl
+haro logs tail                      # 跟随主流，Ctrl+C 退出
+haro logs tail --session <id>
+haro logs show --since <iso> --component provider
+haro logs export --since <iso> -o haro-logs.jsonl
 ```
 
-### `haro workflow`（规划中）
+### `haro workflow`（已实现，批次 2）
 
-编排工作流查询与重放。等价于 Web Dashboard 的 `/dispatch` 与 SessionDetail 编排时间线。
+工作流 checkpoint 查询。`replay` 当前是 read-only 检查器（live replay 待 follow-up）。
 
 ```bash
 haro workflow list
 haro workflow show <id>
-haro workflow show <id> --json
-haro workflow replay <id>         # checkpoint 重放（只读）
-haro workflow checkpoints <id>    # 列出可恢复点
+haro workflow checkpoints <id>
+haro workflow replay <id>            # read-only：只打印 checkpoint chain
 ```
 
-### `haro budget`（规划中）
+### `haro budget`（已实现，批次 2，set 留 follow-up）
 
-Token / 操作权限预算（FEAT-023）的 CLI 视图。
+Token / 权限预算（FEAT-023）的 CLI 视图。当前没有 per-agent budget 表，所以 `set --agent` 直接拒绝并给出说明。
 
 ```bash
-haro budget show                   # 全局总额、已用、剩余
-haro budget show --agent <id>
+haro budget show                              # 列出最近 N 个 workflow 的预算
 haro budget show --workflow <id>
-haro budget set --agent <id> --tokens 100000
-haro budget audit --since 7d       # 查看 denied / needs-approval / exceeded 审计
+haro budget audit --since <iso> --outcome denied --type budget
+haro budget set --agent <id> --tokens 100000  # 留 follow-up：无 per-agent 表
 ```
 
-### `haro user`（规划中）
+### `haro user`（已实现，批次 2）
 
-多用户管理（FEAT-028）。等价于 Web Dashboard 的 `/users` 页。
+本地多用户管理（FEAT-028）。CLI 默认以 owner 身份运行；所有写动作的审计行 `actor_kind='system'` + `metadata.actorSource='cli'`，便于事后区分 CLI 与 bootstrap 来源。
 
 ```bash
 haro user list
 haro user show <username>
-haro user create <username> --role owner|admin|viewer
-haro user role <username> <role>
+haro user create <username> --role admin --password <p>
+haro user role <username> admin
 haro user disable <username>
-haro user reset-token <username>
+haro user reset-token <username> --password <new>   # 撤销该用户所有活跃 session
 ```
 
-### `haro skill <name>`（规划中，单数详细控制）
+### `haro skill <id>`（已实现，批次 2，单数详细控制）
 
-补充 `haro skills` 复数命令族。`haro skills` 偏管理（list / install / info / enable）；`haro skill <name> ...` 偏单技能详细控制。
+补充 `haro skills` 复数命令族。`haro skills` 偏管理（list / install / info / enable）；`haro skill <id>` 偏单技能详细控制。
 
 ```bash
-haro skill <name> run [--input "..."]
-haro skill <name> disable
-haro skill <name> uninstall
-haro skill <name> show events     # 使用统计
-haro skill <name> validate        # 重新跑 metadata 校验
+haro skill <id> run [--input "..."]
+haro skill <id> disable
+haro skill <id> uninstall [--yes]   # preinstalled 受保护
+haro skill <id> show events         # 资产 audit 事件流
+haro skill <id> show detail
+haro skill <id> validate            # 复跑 metadata 校验
 ```
 
-### `haro config set` / `haro config get`（规划中）
+### `haro config get/set/unset`（已实现，批次 2）
 
-补完 `haro config`（当前只读）。
+补完 `haro config`（早先只读）。secret 路径黑名单（`providers.*.apiKey`/`channels.*.appSecret` 等）会**递归校验**写入对象的全部子字段，拒绝把任何 secret 落盘到 YAML——`set channels.feishu '{"appSecret":"..."}'` 这种 parent-object 注入也会被拦下。
 
 ```bash
 haro config get providers.codex.defaultModel
-haro config set providers.codex.defaultModel <model-id> --scope global|project
+haro config set providers.codex.defaultModel <model-id> --scope global
 haro config unset providers.codex.defaultModel --scope project
 ```
 
-> 写入受 `secretRef` 与权限分级守门；任何 secret 字段拒绝直接写明文 YAML。
+> 写入受 `secretRef` 与权限分级守门；任何 secret 字段（包括嵌套字段）拒绝直接写明文 YAML。
 
 ---
 
@@ -537,21 +535,21 @@ haro config unset providers.codex.defaultModel --scope project
 
 | Web Dashboard 页面 / 动作 | CLI 等价命令 | 状态 |
 |--------------------------|--------------|------|
-| `/bootstrap` 首用户创建 | `haro user create <name> --role owner` | Phase 1.5 规划 |
+| `/bootstrap` 首用户创建 | `haro user create <name> --role owner` | 已实现（批次 2） |
 | `/login` 登录 | `haro auth login`（CLI 不强制登录，本地 token 直读） | 自用模式不需要 |
 | `/chat` 对话 | `haro chat` | 已实现（批次 1） |
 | `/sessions` 会话列表 | `haro session list` | 已实现（批次 1） |
 | `/sessions/<id>` 会话详情 | `haro session show <id>` | 已实现（批次 1） |
 | `/agent` Agent 编辑 | `haro agent create/edit/delete/show` | 已实现（批次 1） |
 | `/skills` Skill 管理 | `haro skills *` + `haro skill <name> *` | 部分实现 |
-| `/knowledge` 记忆 | `haro memory query/remember/list/show` | Phase 1.5 规划 |
-| `/logs` 日志 | `haro logs tail/show/export` | Phase 1.5 规划 |
-| `/monitor` 监控 | `haro status` + `haro logs show --component provider` | 已实现（部分） |
-| `/dispatch` 编排 | `haro workflow list/show/replay` | Phase 1.5 规划 |
+| `/knowledge` 记忆 | `haro memory query/remember/list/show/export` | 已实现（批次 2） |
+| `/logs` 日志 | `haro logs tail/show/export` | 已实现（批次 2） |
+| `/monitor` 监控 | `haro status` + `haro logs show --component provider` | 已实现（status 待统一 --json/--human）|
+| `/dispatch` 编排 | `haro workflow list/show/replay/checkpoints` | 已实现（批次 2，replay read-only）|
 | `/channel` Channel 管理 | `haro channel *` + `haro gateway *` | 已实现 |
 | `/gateway` Gateway 控制 | `haro gateway start/stop/status` | 已实现 |
-| `/settings` 系统设置 | `haro config get/set` + `haro provider *` | 部分实现 |
-| `/users` 用户管理 | `haro user *` | Phase 1.5 规划 |
+| `/settings` 系统设置 | `haro config get/set/unset` + `haro provider *` | 已实现（批次 2） |
+| `/users` 用户管理 | `haro user *` | 已实现（批次 2） |
 
 ---
 
