@@ -1,44 +1,27 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { Hono, type Context } from 'hono';
-import { AGENT_ID_MAX_LENGTH, AGENT_ID_PATTERN, buildHaroPaths, DEFAULT_AGENT_ID, loadAgentsFromDir, parseAgentConfig, type AgentConfig, type RunAgentInput } from '@haro/core';
-import { parse as parseYaml } from 'yaml';
-import type { ApiKeyAuthEnv } from '../types.js';
+import {
+  DEFAULT_AGENT_ID,
+  HaroError,
+  loadAgentsFromDir,
+  services,
+  type RunAgentInput,
+} from '@haro/core';
 import { requireWebPermission } from '../auth.js';
 import { getRunner, type WebRuntime } from '../runtime.js';
+import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebSocketManager } from '../websocket/manager.js';
 import { streamAgentRun } from '../websocket/streamer.js';
 
-export interface AgentSummaryReadModel {
-  id: string;
-  name: string;
-  summary: string;
-  defaultProvider?: string;
-  defaultModel?: string;
-}
+export type AgentSummaryReadModel = services.agents.AgentSummary;
+export type AgentDetailReadModel = services.agents.AgentDetail;
+export type AgentYamlResponse = services.agents.AgentYamlResponse;
+export type AgentValidationIssue = services.agents.AgentValidationIssue;
+export type AgentValidationResponse = services.agents.AgentValidationResponse;
 
-export interface AgentDetailReadModel extends AgentSummaryReadModel {
-  systemPrompt: string;
-  tools?: readonly string[];
-}
-
-export interface AgentYamlResponse {
-  id: string;
-  yaml: string;
-  updatedAt?: string;
-}
-
-export interface AgentValidationIssue {
-  path: string;
-  message: string;
-  code?: 'schema' | 'unknown-field' | 'id-mismatch' | 'yaml-parse' | 'conflict';
-}
-
-export type AgentValidationResponse =
-  | { ok: true; id: string; issues: [] }
-  | { ok: false; id?: string; issues: AgentValidationIssue[] };
+export const deriveAgentSummary = services.agents.deriveAgentSummary;
+export const toAgentSummary = services.agents.toAgentSummary;
+export const toAgentDetail = services.agents.toAgentDetail;
 
 type StrictRecord = Record<string, unknown>;
 type RouteContext = Context<ApiKeyAuthEnv>;
@@ -47,122 +30,90 @@ const RUN_KEYS = new Set(['task', 'provider', 'model', 'noMemory']);
 const CHAT_KEYS = new Set(['sessionId', 'content', 'provider', 'model', 'noMemory']);
 const YAML_KEYS = new Set(['yaml']);
 
-export function deriveAgentSummary(agent: Pick<AgentConfig, 'name' | 'systemPrompt'>): string {
-  const firstParagraph = agent.systemPrompt
-    .split(/\n\s*\n/)
-    .map((part) => part.trim())
-    .find((part) => part.length > 0);
-  const normalized = firstParagraph?.replace(/\s+/g, ' ').trim() ?? '';
-  if (normalized.length === 0) return agent.name;
-  return normalized.length > 160 ? normalized.slice(0, 160) : normalized;
-}
-
-export function toAgentSummary(agent: AgentConfig): AgentSummaryReadModel {
-  const summary: AgentSummaryReadModel = {
-    id: agent.id,
-    name: agent.name,
-    summary: deriveAgentSummary(agent),
-  };
-  if (agent.defaultProvider) summary.defaultProvider = agent.defaultProvider;
-  if (agent.defaultModel) summary.defaultModel = agent.defaultModel;
-  return summary;
-}
-
-export function toAgentDetail(agent: AgentConfig): AgentDetailReadModel {
-  const detail: AgentDetailReadModel = {
-    ...toAgentSummary(agent),
-    systemPrompt: agent.systemPrompt,
-  };
-  if (agent.tools) detail.tools = agent.tools;
-  return detail;
-}
-
 export function createAgentsRoute(runtime: WebRuntime, manager?: WebSocketManager): Hono<ApiKeyAuthEnv> {
   const route = new Hono<ApiKeyAuthEnv>();
+  const ctx = (): services.ServiceContext => ({
+    ...(runtime.root ? { root: runtime.root } : {}),
+    ...(runtime.dbFile ? { dbFile: runtime.dbFile } : {}),
+    logger: runtime.logger,
+  });
 
-  route.get('/', (c) => c.json({ success: true, data: runtime.agentRegistry.list().map(toAgentSummary) }));
+  route.get('/', (c) => c.json({ success: true, data: services.agents.listAgents(runtime.agentRegistry) }));
 
   route.post('/', requireWebPermission('config-write'), async (c) => {
     const parsed = await parseStrictJson(c, YAML_KEYS, validateYamlEnvelope);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-    const validation = validateAgentYaml(parsed.value.yaml);
-    if (!validation.ok) {
-      return c.json({ error: 'Agent YAML validation failed', issues: validation.issues }, 400);
+    try {
+      const result = await services.agents.createAgentFromYaml(ctx(), parsed.value.yaml);
+      await reloadAgentRegistry(runtime);
+      return c.json({ success: true, data: result.yaml }, 201);
+    } catch (error) {
+      const handled = handleAgentError(c, error);
+      if (handled) return handled;
+      throw error;
     }
-
-    const file = getAgentYamlFile(runtime, validation.id);
-    if (existsSync(file)) {
-      return c.json({
-        error: `Agent '${validation.id}' already exists`,
-        issues: [createIssue('id', `Agent '${validation.id}' already exists`, 'conflict')],
-      }, 409);
-    }
-
-    await persistAgentYaml(runtime, validation.id, parsed.value.yaml);
-    await reloadAgentRegistry(runtime);
-    return c.json({ success: true, data: await readAgentYamlResponse(runtime, validation.id) }, 201);
   });
 
   route.get('/:id/yaml', async (c) => {
     const id = c.req.param('id');
-    const idError = validateRouteAgentId(id);
-    if (idError) return c.json({ error: idError }, 400);
-
-    const file = getAgentYamlFile(runtime, id);
-    if (!existsSync(file)) return c.json({ error: 'Agent YAML not found' }, 404);
-    return c.json({ success: true, data: await readAgentYamlResponse(runtime, id) });
+    try {
+      const yaml = await services.agents.readAgentYaml(ctx(), id);
+      return c.json({ success: true, data: yaml });
+    } catch (error) {
+      const handled = handleAgentError(c, error);
+      if (handled) return handled;
+      throw error;
+    }
   });
 
   route.put('/:id/yaml', requireWebPermission('config-write'), async (c) => {
     const id = c.req.param('id');
-    const idError = validateRouteAgentId(id);
-    if (idError) return c.json({ error: idError }, 400);
     const parsed = await parseStrictJson(c, YAML_KEYS, validateYamlEnvelope);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-    const validation = validateAgentYaml(parsed.value.yaml, id);
-    if (!validation.ok) {
-      return c.json({ error: 'Agent YAML validation failed', issues: validation.issues }, 400);
+    try {
+      const yaml = await services.agents.updateAgentYaml(ctx(), id, parsed.value.yaml);
+      await reloadAgentRegistry(runtime);
+      return c.json({ success: true, data: yaml });
+    } catch (error) {
+      const handled = handleAgentError(c, error);
+      if (handled) return handled;
+      throw error;
     }
-
-    await persistAgentYaml(runtime, id, parsed.value.yaml);
-    await reloadAgentRegistry(runtime);
-    return c.json({ success: true, data: await readAgentYamlResponse(runtime, id) });
   });
 
   route.post('/:id/validate', async (c) => {
     const id = c.req.param('id');
-    const idError = validateRouteAgentId(id);
+    const idError = services.agents.validateAgentId(id);
     if (idError) return c.json({ error: idError }, 400);
     const parsed = await parseStrictJson(c, YAML_KEYS, validateYamlEnvelope);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    return c.json({ success: true, data: validateAgentYaml(parsed.value.yaml, id) });
+    return c.json({ success: true, data: services.agents.validateAgentYaml(parsed.value.yaml, id) });
   });
 
   route.delete('/:id', requireWebPermission('config-write'), async (c) => {
     const id = c.req.param('id');
-    const idError = validateRouteAgentId(id);
-    if (idError) return c.json({ error: idError }, 400);
-    const defaultAgent = runtime.loaded?.config.defaultAgent ?? DEFAULT_AGENT_ID;
-    if (id === defaultAgent) {
-      return c.json({
-        error: `Cannot delete defaultAgent '${id}'`,
-        issues: [createIssue('id', `Cannot delete defaultAgent '${id}'`, 'conflict')],
-      }, 400);
+    try {
+      const defaultAgentId = runtime.loaded?.config.defaultAgent ?? DEFAULT_AGENT_ID;
+      const result = await services.agents.deleteAgent(ctx(), id, defaultAgentId);
+      await reloadAgentRegistry(runtime);
+      return c.json({ success: true, data: result });
+    } catch (error) {
+      const handled = handleAgentError(c, error);
+      if (handled) return handled;
+      throw error;
     }
-
-    const file = getAgentYamlFile(runtime, id);
-    if (!existsSync(file)) return c.json({ error: 'Agent YAML not found' }, 404);
-    await rm(file);
-    await reloadAgentRegistry(runtime);
-    return c.json({ success: true, data: { id, deleted: true } });
   });
 
   route.get('/:id', (c) => {
-    const agent = runtime.agentRegistry.tryGet(c.req.param('id'));
-    if (!agent) return c.json({ error: 'Agent not found' }, 404);
-    return c.json({ success: true, data: toAgentDetail(agent) });
+    try {
+      const detail = services.agents.getAgent(runtime.agentRegistry, c.req.param('id'));
+      return c.json({ success: true, data: detail });
+    } catch (error) {
+      if (error instanceof HaroError && error.code === 'AGENT_NOT_FOUND') {
+        return c.json({ error: 'Agent not found' }, 404);
+      }
+      throw error;
+    }
   });
 
   route.post('/:id/run', requireWebPermission('local-write'), async (c) => {
@@ -221,6 +172,48 @@ function startBackgroundRun(
     runtime.logger.error?.({ sessionId: preferredSessionId, err: message }, 'web agent run failed');
   });
   return preferredSessionId;
+}
+
+async function reloadAgentRegistry(runtime: WebRuntime): Promise<void> {
+  if (runtime.reloadAgentRegistry) {
+    runtime.agentRegistry = await runtime.reloadAgentRegistry();
+    return;
+  }
+  const report = await loadAgentsFromDir({
+    agentsDir: services.agents.getAgentsDir({
+      ...(runtime.root ? { root: runtime.root } : {}),
+    }),
+    ...(runtime.providerRegistry ? { providerRegistry: runtime.providerRegistry } : {}),
+    bootstrap: false,
+  });
+  runtime.agentRegistry = report.registry;
+}
+
+function handleAgentError(c: RouteContext, error: unknown): Response | null {
+  if (!(error instanceof HaroError)) return null;
+  switch (error.code) {
+    case 'AGENT_ID_INVALID':
+      return c.json({ error: error.message }, 400);
+    case 'AGENT_NOT_FOUND':
+      return c.json({ error: 'Agent YAML not found' }, 404);
+    case 'AGENT_ALREADY_EXISTS': {
+      const issues = (error.details?.issues as services.agents.AgentValidationIssue[] | undefined) ?? [
+        { path: 'id', message: error.message, code: 'conflict' as const },
+      ];
+      return c.json({ error: error.message, issues }, 409);
+    }
+    case 'AGENT_VALIDATION_FAILED': {
+      const issues = (error.details?.issues as services.agents.AgentValidationIssue[] | undefined) ?? [];
+      return c.json({ error: 'Agent YAML validation failed', issues }, 400);
+    }
+    case 'AGENT_DEFAULT_PROTECTED':
+      return c.json({
+        error: error.message,
+        issues: [{ path: 'id', message: error.message, code: 'conflict' as const }],
+      }, 400);
+    default:
+      return null;
+  }
 }
 
 async function parseStrictJson<T>(
@@ -293,87 +286,4 @@ function validateOptionalRouting(body: StrictRecord) {
 
 function isRecord(value: unknown): value is StrictRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function validateRouteAgentId(id: string): string | undefined {
-  if (id.length === 0) return 'Agent id is required';
-  if (id.length > AGENT_ID_MAX_LENGTH) return `Agent id must be ≤ ${AGENT_ID_MAX_LENGTH} chars`;
-  if (!AGENT_ID_PATTERN.test(id)) return "Agent id must be kebab-case: ^[a-z0-9][a-z0-9-]*[a-z0-9]$";
-  return undefined;
-}
-
-function validateAgentYaml(yaml: string, expectedId?: string): AgentValidationResponse {
-  let data: unknown;
-  try {
-    data = parseYaml(yaml);
-  } catch (error) {
-    return {
-      ok: false,
-      issues: [createIssue('<root>', error instanceof Error ? error.message : String(error), 'yaml-parse')],
-    };
-  }
-
-  const parsed = parseAgentConfig(data);
-  if (!parsed.ok) {
-    const issues = parsed.error.issues.map((issue) =>
-      createIssue(
-        issue.path,
-        issue.message,
-        issue.message.startsWith('Unknown field ') ? 'unknown-field' : 'schema',
-      ),
-    );
-    return { ok: false, issues };
-  }
-
-  if (expectedId && parsed.config.id !== expectedId) {
-    return {
-      ok: false,
-      id: parsed.config.id,
-      issues: [createIssue('id', `YAML id '${parsed.config.id}' must match route id '${expectedId}'`, 'id-mismatch')],
-    };
-  }
-
-  return { ok: true, id: parsed.config.id, issues: [] };
-}
-
-function createIssue(path: string, message: string, code: NonNullable<AgentValidationIssue['code']>): AgentValidationIssue {
-  return { path, message, code };
-}
-
-function getAgentsDir(runtime: WebRuntime): string {
-  return buildHaroPaths(runtime.root).dirs.agents;
-}
-
-function getAgentYamlFile(runtime: WebRuntime, id: string): string {
-  return join(getAgentsDir(runtime), `${id}.yaml`);
-}
-
-async function readAgentYamlResponse(runtime: WebRuntime, id: string): Promise<AgentYamlResponse> {
-  const file = getAgentYamlFile(runtime, id);
-  const [yaml, info] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
-  return {
-    id,
-    yaml,
-    updatedAt: info.mtime.toISOString(),
-  };
-}
-
-async function persistAgentYaml(runtime: WebRuntime, id: string, yaml: string): Promise<void> {
-  const agentsDir = getAgentsDir(runtime);
-  await mkdir(agentsDir, { recursive: true });
-  await writeFile(getAgentYamlFile(runtime, id), yaml.endsWith('\n') ? yaml : `${yaml}\n`, 'utf8');
-}
-
-async function reloadAgentRegistry(runtime: WebRuntime): Promise<void> {
-  if (runtime.reloadAgentRegistry) {
-    runtime.agentRegistry = await runtime.reloadAgentRegistry();
-    return;
-  }
-  const report = await loadAgentsFromDir({
-    agentsDir: getAgentsDir(runtime),
-    ...(runtime.providerRegistry ? { providerRegistry: runtime.providerRegistry } : {}),
-    logger: runtime.logger,
-    bootstrap: false,
-  });
-  runtime.agentRegistry = report.registry;
 }

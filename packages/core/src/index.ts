@@ -214,6 +214,17 @@ export {
   resolveSelection,
   SelectionResolutionError,
 } from './runtime/index.js';
+export * as services from './services/index.js';
+export { HaroError, isHaroError, haroErrorToWire } from './errors/index.js';
+export type { HaroErrorCode, HaroErrorOptions } from './errors/index.js';
+export type {
+  CliOutputMode,
+  CliRecordEnvelope,
+  CliListEnvelope,
+  CliErrorEnvelope,
+  CliEnvelope,
+  CliListResult,
+} from './types/cli-output.js';
 export type {
   AgentRunnerOptions,
   ModelSelectionStrategy,

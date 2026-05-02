@@ -51,6 +51,18 @@
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"
+    },
+    "./services": {
+      "types": "./dist/services/index.d.ts",
+      "default": "./dist/services/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors/index.d.ts",
+      "default": "./dist/errors/index.js"
+    },
+    "./types/cli-output": {
+      "types": "./dist/types/cli-output.d.ts",
+      "default": "./dist/types/cli-output.js"
     }
   },
   "files": [

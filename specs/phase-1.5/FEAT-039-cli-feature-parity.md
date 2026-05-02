@@ -181,3 +181,4 @@ CLI 命令通过 `@haro/core/services` 调用业务逻辑；web-api 通过同一
 ## 9. Changelog / 变更记录
 
 - 2026-05-01: whiteParachute — 初稿（Phase 1.5 架构调整批次 1）
+- 2026-05-02: whiteParachute — 批次 0 落地：抽出 `@haro/core/services`（sessions / agents / memory / logs / workflows）+ `@haro/core/errors`（`HaroError` 目录）+ `@haro/core/types/cli-output` 输出契约；同步反向迁移上述 5 个 `@haro/web-api` routes 调用 service（R5/R13 基础就位）；新增 `packages/cli/src/output/`（json / human / confirm 渲染器，R11/R12）+ `packages/web-api/src/lib/route-query.ts`；442 测试全过。批次 1（chat / session / agent 命令族）待动手。

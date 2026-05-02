@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- FEAT-039 batch 0 — service-layer foundation: introduce `@haro/core/services` (sessions / agents / memory / logs / workflows), `@haro/core/errors` (`HaroError` catalog), and `@haro/core/types/cli-output`; reverse-migrate the same five `@haro/web-api` routes to call the shared services so CLI and Web API share one business-logic surface (FEAT-039 R5/R13). Adds `packages/cli/src/output/` (json / human / confirm renderers) for FEAT-039 R11/R12 and 14 new tests (442 passing total).
 - FEAT-018: Web Dashboard Orchestration Debugger adds read-only workflow checkpoint REST APIs and a Dispatch page for fork-and-merge graph, branch ledger, merge envelope, checkpoint debug drawer, and budget/permission intervention summaries (implementation commit `c914dce`).
 - FEAT-017: Web Dashboard System Management adds Status/Doctor/Config REST APIs, Status and Settings pages, project-level config save/validation, and embedded read-only channel summaries while preserving FEAT-019 ownership of `/api/v1/channels*`.
 - FEAT-016: Web Dashboard Agent Interaction is closed as done, covering Chat, Sessions, WebSocket streaming, and Agent/Sessions REST surfaces.

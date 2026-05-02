@@ -101,12 +101,19 @@ Phase 1.5 起，Haro 严格遵守三层解耦，便于独立发布与替换：
 │   认证 / 路由 / WS / 鉴权 / runtime 调度          │
 │        独立 package.json，可独立发布              │
 └──────────────────────────────────────────────────┘
-                   ↑ 直接函数调用
+                   ↑ 调用 services 层
 ┌──────────────────────────────────────────────────┐
 │                     CLI 入口                      │
 │          packages/cli/  commander.js              │
 │   薄启动器：haro web 调用 web-api，               │
-│   其余命令直接调用 core / providers / channels    │
+│   其余命令通过 services 层调用核心                │
+└──────────────────────────────────────────────────┘
+                   ↑ 调用 services 层
+┌──────────────────────────────────────────────────┐
+│                Service Layer（核心暴露面）         │
+│        @haro/core/services（FEAT-039 批次 0）     │
+│   sessions / agents / memory / logs / workflows   │
+│   CLI 与 Web API 共用同一组业务逻辑               │
 └──────────────────────────────────────────────────┘
                    ↑ 直接函数调用
 ┌──────────────────────────────────────────────────┐
@@ -119,6 +126,8 @@ Phase 1.5 起，Haro 严格遵守三层解耦，便于独立发布与替换：
 **CLI 优先原则**：CLI 是"功能等价 Web UI 减去图形化体验"的完整入口。任何 Web Dashboard 上的核心动作，CLI 都必须有等价命令（hermes-agent 风格）。
 
 **前后端解耦原则**：Web 前端不直接 import Web API 内部模块，仅通过 HTTP/JSON 通信。前端可以单独开发、单独发布、甚至被第三方前端替换（hermes-web-ui 风格）。
+
+**服务层共用原则**（FEAT-039 R5/R13）：所有跨入口的业务逻辑必须落在 `@haro/core/services/`，CLI 命令与 Web API 路由都调用同一组 service 函数。错误目录 `@haro/core/errors`（`HaroError` + 共享 code/remediation）、CLI 输出契约 `@haro/core/types/cli-output` 同样跨入口共用，避免业务实现漂移。
 
 ---
 
