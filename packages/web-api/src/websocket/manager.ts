@@ -100,6 +100,22 @@ export class WebSocketManager {
     }
   }
 
+  /**
+   * FEAT-031 — push a Web Channel stream event (inbound message persisted,
+   * outbound agent delta, or session.update) to clients that subscribed to
+   * either the per-session room (`subscribe { channel: 'sessions', sessionId }`)
+   * or the channel-wide room (`subscribe { channel: 'channels:web' }`).
+   */
+  publishWebChannelEvent(sessionId: string, event: unknown): void {
+    const message: ServerMessage = { type: 'channels.web.event', sessionId, event };
+    this.broadcastToSession(sessionId, message);
+    for (const client of this.clients) {
+      if (client.cancelledSessionIds.has(sessionId)) continue;
+      if (!client.authenticated) continue;
+      if (client.channels.has('channels:web')) client.sendMessage(message);
+    }
+  }
+
   systemMetrics(): SystemMetrics {
     return {
       activeSessions: this.activeRuns.size,
@@ -404,7 +420,12 @@ function parseClientMessage(raw: unknown): { ok: true; value: ClientMessage } | 
         ? { ok: true, value: { type: 'chat.cancel', sessionId: raw.sessionId } }
         : { ok: false, error: 'Invalid chat.cancel' };
     case 'subscribe':
-      if (raw.channel !== 'system' && raw.channel !== 'sessions' && raw.channel !== 'gateway') {
+      if (
+        raw.channel !== 'system' &&
+        raw.channel !== 'sessions' &&
+        raw.channel !== 'gateway' &&
+        raw.channel !== 'channels:web'
+      ) {
         return { ok: false, error: 'Invalid subscribe channel' };
       }
       return {

@@ -5,7 +5,11 @@ export type ClientMessage =
   | { type: 'chat.start'; agentId: string; provider?: string; model?: string; content?: string }
   | { type: 'chat.message'; sessionId: string; content: string }
   | { type: 'chat.cancel'; sessionId: string }
-  | { type: 'subscribe'; channel: 'system' | 'sessions' | 'gateway'; sessionId?: string };
+  | {
+      type: 'subscribe';
+      channel: 'system' | 'sessions' | 'gateway' | 'channels:web';
+      sessionId?: string;
+    };
 
 export type ServerMessage =
   | { type: 'authenticated'; ok: boolean }
@@ -13,7 +17,8 @@ export type ServerMessage =
   | { type: 'event.result'; sessionId: string; result: RunAgentResult }
   | { type: 'event.error'; sessionId: string; error: string }
   | { type: 'session.update'; sessionId: string; status: string }
-  | { type: 'system.status'; metrics: SystemMetrics };
+  | { type: 'system.status'; metrics: SystemMetrics }
+  | { type: 'channels.web.event'; sessionId: string; event: unknown };
 
 export interface SystemMetrics {
   activeSessions: number;

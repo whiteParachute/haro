@@ -48,7 +48,7 @@ function providerLabel(id: string): string {
 }
 
 export function ChatPage() {
-  const { messages, status, error, config, connect, disconnect, sendMessage, applySlashCommand, newChat, retryLast, cancelCurrent } = useChatStore();
+  const { messages, status, error, config, channelEnabled, connect, disconnect, sendMessage, applySlashCommand, newChat, retryLast, cancelCurrent } = useChatStore();
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [providers, setProviders] = useState<ProviderListEntry[]>([]);
   const [agentId, setAgentId] = useState(config.agentId ?? '');
@@ -111,7 +111,7 @@ export function ChatPage() {
   function submit(content: string) {
     if (applySlashCommand(content)) return;
     if (!agentId) return;
-    sendMessage({
+    void sendMessage({
       agentId,
       providerId: providerId || undefined,
       modelId: modelId || undefined,
@@ -131,13 +131,15 @@ export function ChatPage() {
   // which call provider.listModels() — and we already know that's empty for
   // chatgpt-mode users without a populated models_cache.json.
   const cannotSubmit =
+    !channelEnabled ||
     !agentId ||
     !providerId ||
     !modelId ||
     (activeProvider?.liveModels.length === 0 && modelOptions.length === 0);
   let disabledReason: string | undefined;
   if (cannotSubmit) {
-    if (!agentId) disabledReason = '请先选择 Agent';
+    if (!channelEnabled) disabledReason = 'Web Channel 已禁用，Dashboard 进入只读模式（可查看历史，无法发送）';
+    else if (!agentId) disabledReason = '请先选择 Agent';
     else if (!providerId) disabledReason = '请先选择 Provider';
     else if (!modelId) disabledReason = '请先选择 Model（展开"运行配置"卡片）';
     else if (activeProvider?.authMode === 'chatgpt')

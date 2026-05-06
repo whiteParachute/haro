@@ -89,6 +89,8 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       expect(res.stdout).toContain('cli\tenabled\tbuiltin');
       expect(res.stdout).toContain('feishu\tdisabled\tpackage');
       expect(res.stdout).toContain('telegram\tdisabled\tpackage');
+      // FEAT-031 — Web Channel must show up as enabled-by-default builtin.
+      expect(res.stdout).toContain('web\tenabled\tbuiltin');
       expect(res.stdout).not.toContain('Created default Agent');
       expect(res.stderr).not.toContain('Created default Agent');
     } finally {

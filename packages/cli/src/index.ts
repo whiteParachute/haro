@@ -1351,6 +1351,10 @@ function registerWebCommand(program: Command, app: AppContext): void {
             import('@haro/web-api'),
             import('./diagnostics.js'),
           ]);
+          // FEAT-031 — Web Channel routes need the channel to be started so
+          // they can dispatch inbound messages to the agent runner. Same
+          // contract as `startEnabledBackgroundChannels` for REPL mode.
+          await startEnabledBackgroundChannels(app);
           const handle = startWebServer(
             createWebApp({
               runtime: {
@@ -1709,13 +1713,34 @@ async function handleCliInbound(app: AppContext, msg: InboundMessage): Promise<v
 
 async function handleExternalInbound(app: AppContext, channel: MessageChannel, msg: InboundMessage): Promise<void> {
   const task = typeof msg.content === 'string' ? msg.content : String(msg.content ?? '');
+  // FEAT-031 — channels (notably Web) carry per-message agent/provider/model
+  // overrides in `meta`. Honor them so Dashboard chat selectors actually
+  // route to the chosen agent instead of always using the CLI defaults.
+  const meta = (msg.meta ?? {}) as Record<string, unknown>;
+  const overrideAgentId = typeof meta.agentId === 'string' ? meta.agentId : undefined;
+  const overrideProvider =
+    typeof meta.providerId === 'string'
+      ? meta.providerId
+      : typeof meta.provider === 'string'
+        ? meta.provider
+        : undefined;
+  const overrideModel =
+    typeof meta.modelId === 'string'
+      ? meta.modelId
+      : typeof meta.model === 'string'
+        ? meta.model
+        : undefined;
   await executeTask(
     app,
     {
       task,
-      agentId: app.cliState.defaultAgentId ?? app.loaded.config.defaultAgent ?? DEFAULT_AGENT_ID,
-      provider: app.cliState.defaultProvider,
-      model: app.cliState.defaultModel,
+      agentId:
+        overrideAgentId ??
+        app.cliState.defaultAgentId ??
+        app.loaded.config.defaultAgent ??
+        DEFAULT_AGENT_ID,
+      provider: overrideProvider ?? app.cliState.defaultProvider,
+      model: overrideModel ?? app.cliState.defaultModel,
       channelSessionId: msg.sessionId,
       channelId: msg.channelId,
     },
@@ -1801,12 +1826,14 @@ async function executeTask(
   }
 
   let liveDispatch = Promise.resolve();
-  const queueLiveEvent = (event: AgentEvent, sessionId: string): void => {
+  const queueLiveEvent = (event: AgentEvent, _sessionId: string): void => {
     if (event.type !== 'text' || event.delta !== true) return;
     if (!outputChannel.capabilities().streaming) return;
     if (outputChannel.id !== 'cli') return;
+    // Same rule as the post-run loop below: dispatch via the channel-side
+    // session ID, not the runner's leaf session ID.
     liveDispatch = liveDispatch.then(() =>
-      outputChannel.send(sessionId, {
+      outputChannel.send(channelSessionId, {
         type: 'text',
         content: event.content,
         delta: true,
@@ -1820,7 +1847,7 @@ async function executeTask(
         workflowId: workflow.workflowId,
         agentId: input.agentId,
         channel: outputChannel,
-        sessionId: teamResult.sessionId,
+        sessionId: channelSessionId,
         message: {
           type: 'text',
           content:
@@ -1894,7 +1921,13 @@ async function executeTask(
           workflowId: workflow.workflowId,
           agentId: input.agentId,
           channel: outputChannel,
-          sessionId: result.sessionId,
+          // Address channels by their channel-side session ID (e.g. Feishu
+          // chat mapping, Web Channel persistence key) so outbound replies
+          // land in the same Dashboard/Feishu/Telegram thread the user
+          // actually started. The agent runner's `result.sessionId` is the
+          // runtime/leaf session — that's the right key for memory and
+          // audit, but the wrong key for IM-side delivery.
+          sessionId: channelSessionId,
           message: {
             type: 'text',
             content: event.content,
@@ -1906,7 +1939,7 @@ async function executeTask(
           workflowId: workflow.workflowId,
           agentId: input.agentId,
           channel: outputChannel,
-          sessionId: result.sessionId,
+          sessionId: channelSessionId,
           message: {
             type: 'text',
             content: event.content,
@@ -1917,7 +1950,7 @@ async function executeTask(
           workflowId: workflow.workflowId,
           agentId: input.agentId,
           channel: outputChannel,
-          sessionId: result.sessionId,
+          sessionId: channelSessionId,
           message: {
             type: 'text',
             content: `ERROR [${event.code}] ${event.message}`,
@@ -2497,6 +2530,32 @@ async function createDefaultAdditionalChannels(input: {
         'Optional channel package @haro/channel-telegram is unavailable; continuing without Telegram',
       );
     }
+  }
+
+  // FEAT-031 — Web Channel is a first-class IM adapter for the Dashboard
+  // chat. Always register it so the channels admin surface and Dashboard
+  // routing can find it, even on the first run before any config exists.
+  // Defaults to enabled unless the operator opts out in config.
+  const webConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'web');
+  try {
+    const { WebChannel } = await import('@haro/channel-web');
+    registrations.push({
+      channel: new WebChannel({
+        root: input.root,
+        logger: input.logger,
+        config: webConfig,
+        ...(input.createSessionId ? { createSessionId: input.createSessionId } : {}),
+      }),
+      enabled: webConfig.enabled !== false,
+      removable: false,
+      source: 'builtin',
+      displayName: 'Web',
+    });
+  } catch (error) {
+    input.logger.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'Built-in channel package @haro/channel-web failed to load; Dashboard chat will be unavailable',
+    );
   }
 
   return registrations;

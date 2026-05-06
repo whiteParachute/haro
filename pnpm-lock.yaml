@@ -105,6 +105,28 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.17)(lightningcss@1.32.0)
 
+  packages/channel-web:
+    dependencies:
+      '@haro/channel':
+        specifier: workspace:*
+        version: link:../channel
+      better-sqlite3:
+        specifier: ^11.7.0
+        version: 11.10.0
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.17)(lightningcss@1.32.0)
+
   packages/cli:
     dependencies:
       '@clack/prompts':
@@ -119,6 +141,9 @@ importers:
       '@haro/channel-telegram':
         specifier: workspace:*
         version: link:../channel-telegram
+      '@haro/channel-web':
+        specifier: workspace:*
+        version: link:../channel-web
       '@haro/core':
         specifier: workspace:*
         version: link:../core
@@ -338,6 +363,9 @@ importers:
       '@haro/channel':
         specifier: workspace:*
         version: link:../channel
+      '@haro/channel-web':
+        specifier: workspace:*
+        version: link:../channel-web
       '@haro/core':
         specifier: workspace:*
         version: link:../core

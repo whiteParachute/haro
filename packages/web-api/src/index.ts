@@ -12,6 +12,7 @@ import type { ApiKeyAuthEnv, WebApp, WebLogger } from './types.js';
 import { createAgentsRoute } from './routes/agents.js';
 import { createAuthRoute } from './routes/auth.js';
 import { createChannelsRoute } from './routes/channels.js';
+import { createChannelsWebRoute } from './routes/channels-web.js';
 import { createConfigRoute } from './routes/config.js';
 import { createCronRoute } from './routes/cron.js';
 import { createDoctorRoute, createStatusRoute } from './routes/status.js';
@@ -141,6 +142,15 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   );
   app.route('/api/v1/auth', createAuthRoute(runtime));
   app.route('/api/v1/agents', createAgentsRoute(runtime, websocketManager));
+  // Mount the more-specific Web Channel route first so Hono routes Dashboard
+  // chat traffic to its handler before falling back to the generic
+  // `/api/v1/channels/:id` admin surface.
+  app.route(
+    '/api/v1/channels/web',
+    createChannelsWebRoute(runtime, {
+      publishStreamEvent: (sessionId, event) => websocketManager.publishWebChannelEvent(sessionId, event),
+    }),
+  );
   app.route('/api/v1/channels', createChannelsRoute(runtime));
   app.route('/api/v1/gateway', createGatewayRoute(runtime));
   app.route('/api/v1/guard', createGuardRoute(runtime));

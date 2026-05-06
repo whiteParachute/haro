@@ -7,20 +7,47 @@ export type AgentEvent =
   | { type: 'result'; content: string; responseId?: string; provider?: string; model?: string; latencyMs?: number; usage?: { inputTokens: number; outputTokens: number } }
   | { type: 'error'; code: string; message: string; retryable: boolean; provider?: string; model?: string; latencyMs?: number; hint?: string };
 
+export type WebChannelStreamEvent =
+  | {
+      kind: 'message';
+      message: {
+        id: string;
+        sessionId: string;
+        role: 'user' | 'assistant' | 'system' | 'tool';
+        content: unknown;
+        attachments?: unknown[];
+        metadata?: Record<string, unknown>;
+        createdAt: number;
+      };
+    }
+  | {
+      kind: 'agent';
+      sessionId: string;
+      delta: string;
+      messageId?: string;
+      replyTo?: string;
+    }
+  | { kind: 'session.update'; sessionId: string; status: string };
+
 export type ServerMessage =
   | { type: 'authenticated'; ok: boolean }
   | { type: 'event.stream'; sessionId: string; event: AgentEvent }
   | { type: 'event.result'; sessionId: string; result: unknown }
   | { type: 'event.error'; sessionId: string; error: string }
   | { type: 'session.update'; sessionId: string; status: string }
-  | { type: 'system.status'; metrics: { activeSessions: number; dbConnections: number; gatewayConnected: boolean; uptimeSeconds: number } };
+  | { type: 'system.status'; metrics: { activeSessions: number; dbConnections: number; gatewayConnected: boolean; uptimeSeconds: number } }
+  | { type: 'channels.web.event'; sessionId: string; event: WebChannelStreamEvent };
 
 export type ClientMessage =
   | { type: 'authenticate'; token?: string }
   | { type: 'chat.start'; agentId: string; provider?: string; model?: string; content?: string }
   | { type: 'chat.message'; sessionId: string; content: string }
   | { type: 'chat.cancel'; sessionId: string }
-  | { type: 'subscribe'; channel: 'system' | 'sessions' | 'gateway'; sessionId?: string };
+  | {
+      type: 'subscribe';
+      channel: 'system' | 'sessions' | 'gateway' | 'channels:web';
+      sessionId?: string;
+    };
 
 type Listener = (message: ServerMessage) => void;
 

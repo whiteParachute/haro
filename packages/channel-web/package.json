@@ -1,0 +1,34 @@
+{
+  "name": "@haro/channel-web",
+  "version": "0.1.0",
+  "description": "Haro Web Channel — browser-as-IM channel adapter (FEAT-031)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@haro/channel": "workspace:*",
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.18.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

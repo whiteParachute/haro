@@ -68,30 +68,92 @@ describe('FEAT-016 web client and stores', () => {
     ]);
   });
 
-  it('chat store persists last config, handles slash commands, and folds text deltas into assistant messages', () => {
+  it('chat store persists last config, handles slash commands, and folds Web Channel deltas [FEAT-031]', async () => {
+    // Web Channel routes back the chat surface — fetch is exercised for both
+    // the channels probe (GET /api/v1/channels) and the inbound POST flow.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/v1/channels')) {
+        return new Response(
+          JSON.stringify({ success: true, data: [{ id: 'web', enabled: true }] }),
+          { headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/api/v1/channels/web/sessions') || url.endsWith('/v1/channels/web/sessions')) {
+        return new Response(
+          JSON.stringify({ success: true, data: { sessionId: 's1', title: null, ownerUserId: null, createdAt: '', updatedAt: '' } }),
+          { headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({ success: true, data: { id: 'm1', sessionId: 's1', role: 'user', content: 'hello', attachments: [], metadata: {}, createdAt: 1 } }),
+        { headers: { 'content-type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
     const client = new DashboardWebSocketClient({ WebSocketImpl: FakeWebSocket as never });
     useChatStore.getState().connect(client);
     FakeWebSocket.instances[0]!.open();
-    useChatStore.getState().sendMessage({ agentId: 'assistant', providerId: 'codex', modelId: 'gpt-test', content: 'hello' });
-    expect(JSON.parse(storage.getItem(LAST_CHAT_CONFIG_STORAGE_KEY)!)).toEqual({ agentId: 'assistant', providerId: 'codex', modelId: 'gpt-test' });
-
-    FakeWebSocket.instances[0]!.message({ type: 'session.update', sessionId: 's1', status: 'running' });
-    FakeWebSocket.instances[0]!.message({ type: 'event.stream', sessionId: 's1', event: { type: 'text', content: 'hi ', delta: true } });
-    FakeWebSocket.instances[0]!.message({ type: 'event.stream', sessionId: 's1', event: { type: 'result', content: 'done' } });
-
+    await useChatStore
+      .getState()
+      .sendMessage({ agentId: 'assistant', providerId: 'codex', modelId: 'gpt-test', content: 'hello' });
+    expect(JSON.parse(storage.getItem(LAST_CHAT_CONFIG_STORAGE_KEY)!)).toEqual({
+      agentId: 'assistant',
+      providerId: 'codex',
+      modelId: 'gpt-test',
+    });
     expect(useChatStore.getState().sessionId).toBe('s1');
+
+    FakeWebSocket.instances[0]!.message({
+      type: 'channels.web.event',
+      sessionId: 's1',
+      event: { kind: 'session.update', sessionId: 's1', status: 'running' },
+    });
+    FakeWebSocket.instances[0]!.message({
+      type: 'channels.web.event',
+      sessionId: 's1',
+      event: { kind: 'agent', sessionId: 's1', delta: 'hi ' },
+    });
+    FakeWebSocket.instances[0]!.message({
+      type: 'channels.web.event',
+      sessionId: 's1',
+      event: { kind: 'agent', sessionId: 's1', delta: 'done' },
+    });
+
+    expect(useChatStore.getState().status).toBe('running');
     expect(useChatStore.getState().messages.at(-1)?.content).toBe('hi done');
+
     useChatStore.getState().cancelCurrent();
     expect(JSON.parse(FakeWebSocket.instances[0]!.sent.at(-1)!)).toEqual({ type: 'chat.cancel', sessionId: 's1' });
     expect(useChatStore.getState().status).toBe('cancelled');
+
     FakeWebSocket.instances[0]!.message({
-      type: 'event.result',
+      type: 'channels.web.event',
       sessionId: 's1',
-      result: { finalEvent: { type: 'result', content: 'late done' } },
+      event: { kind: 'session.update', sessionId: 's1', status: 'completed' },
     });
     expect(useChatStore.getState().status).toBe('cancelled');
+
     expect(useChatStore.getState().applySlashCommand('/agent empty')).toBe(true);
     expect(useChatStore.getState().config.agentId).toBe('empty');
+  });
+
+  it('chat store enters read-only mode when /api/v1/channels reports web disabled [FEAT-031 AC3]', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ success: true, data: [{ id: 'web', enabled: false }] }),
+        { headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new DashboardWebSocketClient({ WebSocketImpl: FakeWebSocket as never });
+    useChatStore.getState().connect(client);
+    FakeWebSocket.instances[0]!.open();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useChatStore.getState().channelEnabled).toBe(false);
+    expect(useChatStore.getState().status).toBe('disabled');
   });
 
   it('sessions store calls REST API and component/page rendering keeps progressive disclosure copy', async () => {

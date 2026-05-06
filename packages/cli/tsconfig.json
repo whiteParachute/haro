@@ -23,6 +23,9 @@
       "@haro/channel-telegram": [
         "../channel-telegram/dist/index.d.ts"
       ],
+      "@haro/channel-web": [
+        "../channel-web/dist/index.d.ts"
+      ],
       "@haro/skills": [
         "../skills/dist/index.d.ts"
       ],
@@ -43,6 +46,9 @@
     },
     {
       "path": "../channel-telegram"
+    },
+    {
+      "path": "../channel-web"
     },
     {
       "path": "../skills"

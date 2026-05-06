@@ -130,15 +130,17 @@ GET /api/v1/sessions?page=1&pageSize=25&sort=createdAt&order=desc&q=keyword
   `chatgptAuth` / provider fallback audit 仍归 sessions/logs read model；Dashboard Web
   登录只保护控制面访问，不修改 Codex provider 的 ChatGPT mode 输出结构。
 
-## Agent Interaction（FEAT-016）
+## Agent Interaction（FEAT-016 → FEAT-031 重写）
 
-FEAT-016 在 foundation 上补齐 Agent 交互层：
+FEAT-016 最初通过 WebSocket `chat.start` / `chat.message` 直接驱动 runtime；FEAT-031（2026-05-06）把 Chat 页改为 Web Channel 客户端，所有 send / receive / upload / history 都走 `/api/v1/channels/web/*`，与飞书 / Telegram 同等公民。
 
-- Chat 页面使用 WebSocket `authenticate`、`chat.start`、`chat.message`、`chat.cancel`、`subscribe` 协议接收实时事件；前端断线后按 1s、2s、4s 指数退避重连，最大 30s，并恢复未完成 session 观察。
-- 服务端推送 `authenticated`、`event.stream`、`event.result`、`event.error`、`session.update`、`system.status`，并通过 `AgentRunner.run({ onEvent })` 旁路推送事件；Dashboard 不修改 Runner 核心执行语义。
+- Chat 入口流程：首次发送时 POST `/api/v1/channels/web/sessions` 创建 session，再 POST `/sessions/:id/messages`（content + 可选 metadata.agentId/providerId/modelId 传给 runtime）；前端再通过 `/ws` 发 `subscribe { channel: 'channels:web' }` + `subscribe { channel: 'sessions', sessionId }` 订阅事件。
+- 服务端推送 `channels.web.event` 消息，载荷 kind 包括 `message`（用户消息已落库，前端用以替换 optimistic 占位）/ `agent`（agent 输出 delta，按顺序拼接到当前 assistant 气泡）/ `session.update`（状态切换）。Cancel 仍走 `chat.cancel` WS，保留兼容路径；旧的 `event.stream` 协议仅用于 cancel 路径。
+- 历史浏览：`useChatStore.loadOlder()` / `loadSession()` 调用 `GET .../sessions/:id/messages?before&beforeId&limit`（cursor 分页，复合 cursor 防同毫秒丢行）。
+- Disabled 模式（AC3）：`useChatStore.connect()` 启动时 `GET /api/v1/channels`，若 web 被 disable，store 把 `status` 切到 `disabled`、`channelEnabled = false`；ChatInput 按钮 disabled 并展示「Web Channel 已禁用，Dashboard 进入只读模式」。读路由（list sessions / 历史 / 文件下载）仍可用。
 - Sessions 列表默认仅展示 `sessionId`、`agentId`、`status`、`createdAt`，详情页将连续 text delta 折叠为消息，tool_call/tool_result 默认收起 JSON。
 - Chat 最近选择持久化到 `localStorage["haro:lastChatConfig"]`，包括 `agentId`、`providerId`、`modelId`。
-- ChatPage 顶部有可折叠的 run-config 卡片（默认收起），provider/model 下拉来自 `/api/v1/providers`；当无可用 (provider, model) 组合时提交按钮禁用并展示原因（FEAT-029 follow-up）。Runner 在 FE pin 住 provider+model 时短路 `resolveSelection`，绕过基于规则的 provider 选择并直接执行用户指定的组合。
+- ChatPage 顶部有可折叠的 run-config 卡片（默认收起），provider/model 下拉来自 `/api/v1/providers`；当无可用 (provider, model) 组合时提交按钮禁用并展示原因（FEAT-029 follow-up）。Runner 在 FE pin 住 provider+model 时短路 `resolveSelection`，绕过基于规则的 provider 选择并直接执行用户指定的组合；这些选择通过 message metadata 传给 runtime（`handleExternalInbound` 消费 `meta.agentId/providerId/modelId`）。
 
 
 ## Orchestration Debugger（FEAT-018）
