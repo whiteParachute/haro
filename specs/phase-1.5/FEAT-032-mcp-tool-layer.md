@@ -5,7 +5,7 @@ status: draft
 phase: phase-1.5
 owner: whiteParachute
 created: 2026-05-01
-updated: 2026-05-01
+updated: 2026-05-06
 related:
   - ../phase-1/FEAT-021-memory-fabric-v1.md
   - ../phase-1/FEAT-022-evolution-asset-registry.md
@@ -42,7 +42,7 @@ happyclaw 通过 11 个内置 MCP 工具解决了这个问题，让 agent 真正
 - 不实现 happyclaw 全部 11 个工具；本 spec 只做核心 4 个。`send_image` / `send_file` / `pause_task` / `resume_task` / `cancel_task` / `register_group` 等留给 Phase 1.5/2.0 后续 spec。
 - 不实现 MCP **client**（agent 端调用对方 MCP server 的能力），只实现 MCP **server**（agent 端调用 Haro 自身能力）。
 - 不实现 MCP server 跨进程暴露给第三方 agent；仅供 Haro 内置 agent runtime 通过 IPC 文件通道调用。
-- 不引入 vector search 工具；`memory_query` 走现有 FTS5。
+- 不引入 vector search 工具；`memory_query` 走 FEAT-035 Memory Fabric v2 的 `searchMemoryFiles`（aria-memory 风格的纯文件搜索），不引 FTS5、不引向量索引。
 - 不做工具版本协商；Phase 1.5 只支持单版本，工具增删通过 release notes 公告。
 
 ## 4. Requirements / 需求项
@@ -51,12 +51,13 @@ happyclaw 通过 11 个内置 MCP 工具解决了这个问题，让 agent 真正
 - R2: MCP server 必须通过 stdio + JSON-RPC（MCP 标准协议）与 agent runtime 通信，不引入额外 HTTP 端口。
 - R3: 工具描述（name / description / inputSchema）必须以 Zod schema 维护，自动转换为 JSON Schema 对外暴露给 agent。
 - R4: `send_message` 工具：参数 `{ channelId, sessionId, content, attachments? }`；调用前必须校验 channelId 已 enabled、sessionId 属于当前调用方、content 非空；跨 channel 发送（即调用方不在 sessionId 所属 channel）需要 FEAT-023 `external-service` 权限。
-- R5: `memory_query` 工具：参数 `{ query, scope?, limit? }`；scope 默认 agent；返回结构化 hits（id / scope / excerpt / score / sourceRef）；FTS5 走 Memory Fabric `read-model`。
-- R6: `memory_remember` 工具：参数 `{ content, scope, dimension?, sourceRef? }`；scope 写 platform / shared 需要 `write-shared` 权限审批；走 Memory Fabric write API + FEAT-022 Evolution Asset Registry 记录 asset。
+- R5: `memory_query` 工具：参数 `{ query, scope?, dimension?, limit? }`；scope 默认 agent；`dimension` 取值同 R6（`user` / `feedback` / `project` / `reference`，缺省即不过滤）；返回结构化 hits（id / scope / dimension / excerpt / score / sourceRef）；底层调用 `MemoryFabric.searchMemoryFiles(query, scope, opts)`（FEAT-035 v2，aria-memory 风格的文件搜索；先扫 MEMORY.md 再读散文件，不引 FTS5）。
+- R6: `memory_remember` 工具：参数 `{ content, scope, dimension?, sourceRef? }`；`dimension` 取 `user` / `feedback` / `project` / `reference`（aria-memory 4 类），缺省时由 Memory Fabric 按 aria-memory 推断规则兜底；scope 写 platform / shared 需要 `write-shared` 权限审批；走 Memory Fabric write API（FEAT-035 v2 frontmatter `type` 字段持有该 dimension）+ FEAT-022 Evolution Asset Registry 记录 asset。
+- R6.1: 工具 timeout 按工具维度声明。每个工具在 registry 注册时必须给出 `timeoutMs`（D2）：建议默认 `send_message: 30_000` / `memory_query: 5_000` / `memory_remember: 5_000` / `schedule_task: 1_000`；超时返回 `TOOL_TIMEOUT`，由 audit 记录 decision = `timeout`。
 - R7: `schedule_task` 工具（工具名保留，对应 happyclaw 兼容契约）：参数 `{ when, taskSpec }`，`when` 支持 ISO timestamp（一次性）或 cron 表达式；`taskSpec` 复用 FEAT-033 cron job DTO；调用前必须校验 cron 合法、when 非过期；内部走 `services.cron.create(...)`。
 - R8: 所有工具调用必须写 `tool_invocation_log`：调用方 / 工具 / 参数 hash / 结果状态 / 耗时；payload 不入日志，避免记录敏感内容。
 - R9: 工具失败必须返回结构化错误 `{ code, message, retryable, remediation? }`，code 取自工具规范的 error catalog。
-- R10: MCP server 必须由 agent runtime 在 session 启动时 spawn / attach，session 终止时 graceful shutdown；不允许 leak 子进程。
+- R10: MCP server 生命周期为 **per-session spawn**（D1）：agent runtime 在每个 session 启动时 spawn 独立的 MCP server 子进程，session 终止时 graceful shutdown；不允许 leak 子进程；不在多 session 之间复用同一个 server 实例。
 
 ## 5. Design / 设计要点
 
@@ -113,8 +114,8 @@ const SendMessageSchema = z.object({
 ### 5.4 与现有模块的接合点
 
 - `send_message` → `ChannelRegistry.get(channelId).send(...)`（FEAT-008 / FEAT-031）
-- `memory_query` → `MemoryFabric.query(...)`（FEAT-021）
-- `memory_remember` → `MemoryFabric.write(...)` → `EvolutionAssetRegistry.recordAsset(...)`（FEAT-022）
+- `memory_query` → `MemoryFabric.searchMemoryFiles(...)`（FEAT-035 v2；FEAT-021 的 SQLite read-model 已下线）
+- `memory_remember` → `MemoryFabric.writeEntry({ type: dimension, ... })` → `EvolutionAssetRegistry.recordAsset(...)`（FEAT-022 + FEAT-035 v2 frontmatter `type` 字段）
 - `schedule_task` → `services.cron.create(...)` → `CronManager.create(...)`（FEAT-033）
 
 ### 5.5 audit 表结构
@@ -137,8 +138,8 @@ CREATE TABLE tool_invocation_log (
 ## 6. Acceptance Criteria / 验收标准
 
 - AC1: agent 在一次 session 中调用 `send_message` 把消息路由到 web channel 另一个 session，消息正确出现在目标 session 流中（对应 R4）。
-- AC2: `memory_query` 对一个已写入的 platform-scope 记忆能返回命中，excerpt 与 score 字段非空（对应 R5）。
-- AC3: `memory_remember` 写 platform-scope 时返回 `needs-approval`，写 agent-scope 直接成功；FEAT-022 asset 表对应记录被创建（对应 R6）。
+- AC2: `memory_query` 对一个已写入的 platform-scope 记忆能返回命中，excerpt / score / dimension 字段非空；用 `dimension: 'feedback'` 过滤后只返回 feedback 类条目（对应 R5、D4）。
+- AC3: `memory_remember` 写 platform-scope 时返回 `needs-approval`，写 agent-scope 直接成功；落到 frontmatter 的 `type` 字段等于调用方传入的 `dimension`，缺省时由 Memory Fabric 按 aria-memory 推断规则兜底；FEAT-022 asset 表对应记录被创建（对应 R6、D4）。
 - AC4: `schedule_task` 注册 `cron: "0 * * * *"` 任务后，FEAT-033 `CronManager` 列表能查到该任务（对应 R7）。
 - AC5: 工具调用失败时返回结构化 `{ code, message, retryable, remediation }`；调用方 retry 逻辑能正确分支（对应 R9）。
 - AC6: 关闭 agent session 后 MCP server 子进程在 5 秒内退出，无 leak（对应 R10）。
@@ -152,13 +153,14 @@ CREATE TABLE tool_invocation_log (
 - 性能：单工具调用 P95 latency 不超过 50ms（不含外部 IM API 调用时间）。
 - 回归：FEAT-021 Memory Fabric / FEAT-022 Asset Registry / FEAT-023 Permission Guard / FEAT-031 Web Channel / FEAT-033 Cron Jobs 已有用例。
 
-## 8. Open Questions / 待定问题
+## 8. Resolved Decisions / 已决议（原 Open Questions）
 
-- Q1: MCP server 是 per-session spawn 还是 long-lived shared？倾向 per-session spawn（隔离强、调试简单），但启动开销可能在密集对话中放大；待 FEAT-040 Self-Monitor 数据后回审。
-- Q2: 工具 timeout 默认值？倾向 30s，但 `schedule_task` cron 注册类应该 < 1s；按工具维度配置。
-- Q3: 是否要支持工具间组合（A → B 链式）？倾向不做，让 agent 自行编排，避免引入 workflow DSL。
-- Q4: `memory_remember` 是否暴露 `dimension`？Memory Fabric 现已有 dimension 概念，但 agent 自动选 dimension 容易乱。倾向 Phase 1.5 只暴露 scope，dimension 由 Memory Fabric 内部规则推断。
+- D1（原 Q1，MCP server 生命周期）：**per-session spawn**。每个 agent session 启动时 spawn 一个独立 MCP server 子进程，session 终止时 graceful shutdown。隔离边界清晰、调试和审计直观，启动开销作为已知成本由 FEAT-040 Self-Monitor 后续观察；如出现性能瓶颈再以独立 spec 评估 long-lived shared 方案。
+- D2（原 Q2，工具 timeout）：**按工具维度配置**。每个工具在 registry 中声明自己的 `timeoutMs`（例如 `send_message: 30_000` / `memory_query: 5_000` / `memory_remember: 5_000` / `schedule_task: 1_000`），不设统一默认值；超时返回 `TOOL_TIMEOUT` 错误码。新增工具时必须显式给出 timeout，registry 拒绝接受省略 `timeoutMs` 的工具描述。
+- D3（原 Q3，工具组合 / 链式调用）：**不做组合层**。让 agent 自行通过多次工具调用编排，平台不提供 workflow DSL 或 A→B 链式包装。避免引入隐式控制流，保持每次工具调用都被 Permission Guard / audit 独立守门。
+- D4（原 Q4，`memory_remember` 是否暴露 `dimension`）：**完全参考 aria-memory 设计**。`memory_remember` 暴露 `dimension` 参数，取值对齐 aria-memory（也即 FEAT-035 Memory Fabric v2 已经落到 frontmatter `type` 的 4 类）：`user` / `feedback` / `project` / `reference`。语义、判定准则与 wrapup / sleep 行为一律照搬 aria-memory 既有约定（参见 `aria-memory:remember` skill 的 type 决策表），Haro 不另立一套。`dimension` 缺省时由 Memory Fabric 按 `aria-memory` 推断规则兜底，保持与 owner 在外部 runtime 使用 `aria-memory:remember` 时**完全一致的写入语义**。
 
 ## 9. Changelog / 变更记录
 
 - 2026-05-01: whiteParachute — 初稿（Phase 1.5 自用底座补完批次 1）
+- 2026-05-06: whiteParachute — 收敛 Open Questions Q1–Q4 为 D1–D4（owner 决策：MCP per-session spawn / timeout 按工具维度配置 / 不做工具组合层让 agent 自行编排 / `memory_remember` 的 `dimension` 完全参考 aria-memory 4 类设计）。
