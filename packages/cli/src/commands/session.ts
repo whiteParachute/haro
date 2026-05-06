@@ -170,16 +170,16 @@ export function registerSessionCommands(program: Command, app: AppContext, hooks
         const events: services.sessions.SessionEvent[] = [];
         const pageSize = 500;
         let offset = 0;
-        // listSessionEvents caps at 500 per call; loop until a short page.
-        while (true) {
+        let more = true;
+        while (more) {
           const page = services.sessions.listSessionEvents(
             buildServiceContext(app),
             id,
             { limit: pageSize, offset },
           );
           events.push(...page.items);
-          if (page.items.length < pageSize) break;
-          offset += pageSize;
+          more = page.items.length === pageSize;
+          if (more) offset += pageSize;
         }
         const format = opts.format === 'md' ? 'md' : 'json';
         const body = format === 'md'

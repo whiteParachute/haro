@@ -131,7 +131,8 @@ export function registerLogsCommands(program: Command, app: AppContext): void {
         const pageSize = 200;
         let page = 1;
         let total = 0;
-        while (true) {
+        let more = true;
+        while (more) {
           const result = services.logs.listSessionEventLogs(buildServiceContext(app), {
             ...(opts.session ? { sessionId: opts.session } : {}),
             ...(opts.since ? { from: opts.since } : {}),
@@ -144,8 +145,8 @@ export function registerLogsCommands(program: Command, app: AppContext): void {
           const lines = result.items.map((event) => `${JSON.stringify(event)}\n`).join('');
           await appendFile(opts.output, lines, 'utf8');
           total += result.items.length;
-          if (result.items.length < pageSize) break;
-          page += 1;
+          more = result.items.length === pageSize;
+          if (more) page += 1;
         }
         app.stdout.write(`exported ${total} event(s) → ${opts.output}\n`);
       } catch (error) {
