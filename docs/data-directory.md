@@ -252,6 +252,40 @@ CREATE TABLE token_budget_ledger (
   estimated_cost REAL,
   created_at TEXT NOT NULL
 );
+
+-- FEAT-033: Cron scheduler (cron + once)
+-- 复用主 DB（不引独立 cron.sqlite），任务持久化 + 跨进程 lease 协调。
+CREATE TABLE cron_jobs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  agent_id TEXT,
+  mode TEXT NOT NULL CHECK(mode IN ('cron','once')),
+  when_expr TEXT NOT NULL,        -- cron expression OR ISO-8601 timestamp
+  task_input TEXT NOT NULL,       -- prompt fed to AgentRunner
+  retry_policy TEXT,              -- JSON {max, backoff: 'exponential'|'linear'|'fixed'}
+  status TEXT NOT NULL,           -- pending / running / done / failed / cancelled / cancelled-forced / missed
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_run_at INTEGER,
+  next_run_at INTEGER,
+  last_status TEXT,               -- ok / error
+  last_error TEXT,
+  last_delivery_error TEXT,
+  created_at INTEGER NOT NULL,
+  cancelled_at INTEGER,
+  metadata TEXT
+);
+CREATE INDEX idx_cron_jobs_session ON cron_jobs(session_id);
+CREATE INDEX idx_cron_jobs_due ON cron_jobs(enabled, next_run_at);
+
+-- 单行哨兵：跨进程 advisory lock，让多个 tick caller（web-api ticker /
+-- haro cron daemon / haro cron tick）不会重复 dispatch 同一 due job。
+-- 持锁期间 tick 后台按 TTL/2 续约；renewal 失败则停止后续派发。
+CREATE TABLE cron_lease (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  holder TEXT NOT NULL,           -- "<host>:<pid>"
+  acquired_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL
+);
 ```
 
 这些表是 SQLite read model / audit model；Markdown skill、prompt、memory 文件仍保留为人工可读 source 或兼容层。
@@ -262,6 +296,13 @@ FEAT-023 的审计边界：
 - `workflow_budgets` 使用固定 token hard limit；`estimated_cost` 只用于展示，不参与阻断。
 - `token_budget_ledger` 按 workflow / branch / agent 记录 provider/model 与 input/output token，Team workflow 汇总所有 branch，不只看 merge session。
 - `session_events.latency_ms` 保存 Runner 观测到的 provider attempt terminal 延迟；Web Provider stats 的 `avgLatencyMs` 基于该落库字段聚合，而不是前端占位或静态 mock。
+
+FEAT-033 的 cron 边界：
+
+- `cron_jobs` 单 session 默认配额 50（`enabled=1 AND next_run_at IS NOT NULL` 计入）；超限走 FEAT-023 Permission Guard 升配。Cron 频率下限 1 分钟（拒绝 6 字段秒级表达式）；once 严格 ISO-8601（必须 Z 或 ±HH:MM offset）。
+- `cron_lease` 单行哨兵；TTL 默认 60s；任意 tick caller（web-api ticker / `haro cron daemon` / `haro cron tick`）任一在跑即可调度，**不强依赖 web-api**。
+- `status='running'` 期间 cancel 走「立即 flip 'cancelled' + abort signal + 30s graceful 等待 → 超时则 force-flip 'cancelled-forced'」；runner 所有 setStatus / advanceNextRun 用 `requireNotCancelled` SQL guard 防写覆盖。
+- 已知限制：跨进程 cancel 不能 force-abort 另一进程的 in-flight；DB 层 cancel 让对端下次 tick 跳过即可（spec §3 / §8 Q2）。
 
 ## Agent 状态文件
 

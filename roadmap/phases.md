@@ -105,7 +105,7 @@
 | FEAT-039 | CLI 功能等价补完（chat / session / agent / skill / memory / logs / workflow / budget / user 命令族） | 1.5–2 周 | P0 |
 | FEAT-031 | Web Channel（Web UI 作为 IM channel：对话、历史、文件） | 1–1.5 周 | P0 |
 | FEAT-032 | MCP 工具层 + 4 核心工具（send_message / memory_query / memory_remember / schedule_task） | 1.5–2 周 | P0 |
-| FEAT-033 | Cron 任务最小版（cron + 一次性，复用现有 session 上下文） — done 2026-05-02 | 1 周 | P1 |
+| FEAT-033 | Cron 任务最小版（cron + 一次性，复用现有 session 上下文） — done 2026-05-06 | 1 周 | P1 |
 | FEAT-034 | 流式 UX 升级（thinking 折叠、tool timeline、Hook 状态、GFM/lightbox） | 1.5–2 周 | P1 |
 
 **预埋钩子**：FEAT-038 / 039 / 031 应在实现时埋好 Self-Monitor 的"被动记录"埋点（session 事件、tool 调用、失败/重试），数据先 buffer，等 Phase 2.0 直接消费。

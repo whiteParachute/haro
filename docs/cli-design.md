@@ -512,6 +512,31 @@ haro config unset providers.codex.defaultModel --scope project
 
 > 写入受 `secretRef` 与权限分级守门；任何 secret 字段（包括嵌套字段）拒绝直接写明文 YAML。
 
+### `haro cron`（FEAT-033，2026-05-06 done）
+
+调度 cron 表达式或一次性 ISO 时间触发的任务，复用现有 session 上下文。CLI 与 web-api / 未来 MCP `schedule_task` 三入口共享 `services.cron.*`，行为一致。三个调度触发源（`web-api` 进程内 60s ticker / `haro cron daemon` / `haro cron tick`）任一在跑即可推进任务，**不强依赖 web-api**。
+
+```bash
+haro cron list [--session <id>] [--status pending|running|done|failed|cancelled]
+haro cron show <id>
+haro cron create --cron "0 9 * * *" --task "..." --session <id> [--agent <id>]
+                                          [--retry-max 3 --retry-backoff exponential|linear|fixed]
+haro cron create --once 2026-05-15T09:00:00+08:00 --task "..." --session <id>
+haro cron cancel <id>          # 立即 flip 'cancelled'，对 in-process 在跑任务发 abort + 30s graceful + 'cancelled-forced'
+haro cron trigger <id>         # 把 next_run_at 设为 now，等下次 tick pick up
+haro cron tick                 # 立即跑一次 tick（CI / debug / 系统 cron 调用）
+haro cron daemon [--interval-ms 60000]  # 前台 60s 循环，SIGINT/SIGTERM graceful 停止
+```
+
+约束与守门：
+
+- Cron 频率下限 1 分钟；6 字段秒级（`* * * * * *`）直接拒绝（`CRON_FREQUENCY_TOO_HIGH`）
+- once 严格 ISO-8601，必须显式 Z 或 ±HH:MM offset；过期拒绝（`CRON_ONCE_IN_PAST`）
+- 单 session 默认配额 50（`CRON_QUOTA_EXCEEDED`），超限走 FEAT-023 升配
+- task input 上限 64KB（`CRON_TASK_INPUT_TOO_LARGE`）
+- 三种 retry backoff（exponential/linear/fixed）统一 5 分钟 cap
+- 跨进程 cancel 仅 flip DB；in-flight job 在另一进程内自然结束（spec §3 / §8 Q2）
+
 ---
 
 ## REPL Slash 命令
@@ -556,6 +581,7 @@ haro config unset providers.codex.defaultModel --scope project
 | `/gateway` Gateway 控制 | `haro gateway start/stop/status` | 已实现 |
 | `/settings` 系统设置 | `haro config get/set/unset` + `haro provider *` | 已实现（批次 2） |
 | `/users` 用户管理 | `haro user *` | 已实现（批次 2） |
+| `/cron` 定时任务（Phase 1.5 待补 UI） | `haro cron list/show/create/cancel/trigger/tick/daemon` | CLI/Web API 已实现（FEAT-033 done）；Web 前端待补 |
 
 ---
 

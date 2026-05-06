@@ -275,7 +275,7 @@ FEAT-018 只负责 **workflow 编排调试的只读可观测面**，避免把后
 |------|------|------|
 | FEAT-031 | Web Channel | 浏览器作为 IM channel（对话 / 历史 / 文件），与飞书 / Telegram 同等公民 |
 | FEAT-032 | MCP 工具层 | 内置 MCP server + 4 核心工具（send_message / memory_query / memory_remember / schedule_task） |
-| FEAT-033 | Cron 任务最小版 | cron + 一次性，复用现有 session 上下文（done 2026-05-02；hermes-agent 风格 `tick()` + 三触发源） |
+| FEAT-033 | Cron 任务最小版 | cron + 一次性，复用现有 session 上下文（done 2026-05-06；hermes-agent 风格 `tick()` + 三触发源 + inflight registry 30s graceful cancel） |
 | FEAT-034 | 流式 UX 升级 | thinking 折叠 / tool timeline / Hook 状态 / GFM / lightbox |
 | FEAT-038 | Web API 解耦 | 新建 `packages/web-api`，从 CLI 剥离；hermes-web-ui 风格前后端解耦 |
 | FEAT-039 | CLI 等价补完 | chat / session / agent / memory / logs / workflow / budget / user / skill / config 命令族 |
