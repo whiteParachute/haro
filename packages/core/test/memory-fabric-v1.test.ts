@@ -1,9 +1,14 @@
-/** FEAT-021 — Memory Fabric v1 layered memory + SQLite FTS5 read model. */
+/**
+ * FEAT-021 — Memory Fabric v1 layered memory; FEAT-035 v2 swaps the read
+ * model from SQLite/FTS5 to file-backed aria-memory storage. The public API
+ * is unchanged so we keep these tests as a regression suite for the v1
+ * contract; AC1 was rewritten to assert file-based persistence instead of
+ * memory_entries / memory_entries_fts rows.
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
 import { createMemoryFabric, type MemoryFabric } from '../src/memory/index.js';
 
 function freshRoot(): string {
@@ -64,34 +69,33 @@ describe('MemoryFabric v1 write/query/context [FEAT-021]', () => {
     expect(entry.contentHash).toHaveLength(16);
   });
 
-  it('AC1 writes persistent Markdown canonical source and indexes memory_entries + FTS5', async () => {
+  it('AC1 (FEAT-035) writes persistent Markdown canonical source and reflects in file-store query results', async () => {
     const entry = await fabric.writeEntry({
       layer: 'persistent',
       scope: 'shared',
-      topic: 'sqlite fts ranking',
-      summary: 'SQLite FTS5 backs memory search',
-      content: 'Memory Fabric v1 uses SQLite FTS5 read model for keyword lookup.',
-      sourceRef: 'spec:FEAT-021',
+      topic: 'aria-memory ranking',
+      summary: 'File-store backs memory search',
+      content: 'Memory Fabric v2 uses aria-memory file storage for keyword lookup.',
+      sourceRef: 'spec:FEAT-035',
       verificationStatus: 'verified',
       confidence: 0.9,
     });
     expect(entry.contentPath).toBeTruthy();
     expect(existsSync(entry.contentPath!)).toBe(true);
-    expect(readFileSync(entry.contentPath!, 'utf8')).toContain('Memory Fabric v1 uses SQLite FTS5');
+    const fileBody = readFileSync(entry.contentPath!, 'utf8');
+    expect(fileBody).toContain('Memory Fabric v2 uses aria-memory file storage');
+    expect(fileBody).toContain(`id: ${entry.id}`);
+    expect(fileBody).toContain('layer: persistent');
+    expect(fileBody).toContain('verification_status: verified');
 
-    const db = new Database(dbFile, { readonly: true });
-    try {
-      const row = db.prepare(`SELECT id FROM memory_entries WHERE id = ?`).get(entry.id) as
-        | { id: string }
-        | undefined;
-      expect(row?.id).toBe(entry.id);
-      const fts = db
-        .prepare(`SELECT entry_id FROM memory_entries_fts WHERE memory_entries_fts MATCH ?`)
-        .all('"fts5"') as Array<{ entry_id: string }>;
-      expect(fts.map((item) => item.entry_id)).toContain(entry.id);
-    } finally {
-      db.close();
-    }
+    // No SQLite memory tables should exist anymore.
+    expect(existsSync(dbFile)).toBe(false);
+
+    // Hits via the public file-store query layer.
+    const hits = fabric.queryEntries({ keyword: 'aria-memory file storage', scope: 'shared', limit: 5 });
+    expect(hits.map((hit) => hit.entry.id)).toContain(entry.id);
+    const fileHits = fabric.searchMemoryFiles('aria-memory file storage', { scopes: ['shared'], limit: 5 });
+    expect(fileHits.map((hit) => hit.entry.id)).toContain(entry.id);
   });
 
   it('AC2 filters by keyword/scope/layer/status and ranks verified shared results above unverified ones', async () => {

@@ -433,7 +433,7 @@ haro agent test <id> --task "..."  # sandbox：noMemory + continueLatestSession=
 记忆查询与写入，等价于 Web Dashboard `/knowledge`。所有读写经 `services.memory`。
 
 ```bash
-haro memory query "<query>"                       # FTS5 搜索
+haro memory query "<query>"                       # 文件存储搜索（FEAT-035 v2）
 haro memory query "<q>" --scope agent --agent <id>
 haro memory remember "<text>" --scope shared      # platform 写入被拒
 haro memory list --scope shared
@@ -552,7 +552,7 @@ haro cron daemon [--interval-ms 60000]  # 前台 60s 循环，SIGINT/SIGTERM gra
 | `/usage` | 已实现 | 查看当前 session 的 token / 事件用量 |
 | `/agent <id>` | 已实现 | 切换当前 Agent |
 | `/sessions [n]` | 已实现（批次 3） | 列出最近 N 个 session（默认 10），走 `services.sessions.listSessions` |
-| `/memory <query>` | 已实现（批次 3） | FTS5 搜索记忆，走 `services.memory.queryMemory` |
+| `/memory <query>` | 已实现（批次 3） | 文件存储搜索（FEAT-035 v2），走 `services.memory.queryMemory` |
 | `/logs [n]` | 已实现（批次 3） | 当前 session 最近事件（默认 20），走 `services.logs.listSessionEventLogs` |
 | `/budget` | 已实现（批次 3） | 当前 turn 的 workflow 预算（由 `replState.lastWorkflowId` 锁定，避免共享 root 上其它 channel turn 的污染），走 `services.budget.getWorkflowBudget` |
 

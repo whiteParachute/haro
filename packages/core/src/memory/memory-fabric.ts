@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { basename, dirname, join, relative } from 'node:path';
+import { existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { buildEntryScopeLayout, buildScopeLayout, legacyScopeToEntryScope, resolveEntryScopeRoot } from './paths.js';
 import {
@@ -14,7 +14,7 @@ import {
   tokenize,
   type IndexRecord,
 } from './index-store.js';
-import { MemoryReadModel } from './read-model.js';
+import { MemoryFileStore, type SearchMemoryFilesOptions } from './file-store.js';
 import {
   serializeFrontmatter,
   splitFrontmatter,
@@ -51,12 +51,51 @@ export interface MemoryFabricOptions {
   root: string;
   /** Optional secondary root (R10 primary/backup). */
   backupRoot?: string;
-  /** SQLite read model path. Defaults to `../haro.db` for `.../memory`, otherwise `<root>/.memory-fabric.sqlite`. */
+  /**
+   * @deprecated FEAT-035 v2 removed the SQLite read model. The option is kept
+   * so legacy callers compile, but the value is no longer used. v1 → v2
+   * migration consumes whatever SQLite snapshot is at this path during
+   * `migrateFromV1`.
+   */
   dbFile?: string;
   /** Clock injection for deterministic tests. */
   now?: () => Date;
   /** Optional debug logger. */
   onEvent?: (event: MemoryFabricEvent) => void;
+}
+
+export interface RunWrapupInput {
+  /** Logical session identifier (matches MemoryWrapupInput.wrapupId). */
+  sessionId: string;
+  /** Memory scope hosting the session. Defaults to 'shared'. */
+  scope?: MemoryScope;
+  /** When scope === 'agent'. */
+  agentId?: string;
+  /** Topic slug under which session content is consolidated. */
+  topic?: string;
+  /** Raw transcript or summary the wrapup wants to persist. */
+  transcript: string;
+  /** Optional one-line summary. */
+  summary?: string;
+  tags?: readonly string[];
+  /** sourceRef tag; defaults to 'aria-memory:memory-wrapup'. */
+  source?: string;
+}
+
+export interface RunSleepInput {
+  scope?: MemoryScope;
+  agentId?: string;
+}
+
+export interface MigrateFromV1Result {
+  /** v1 SQLite path we consumed (renamed to .bak). */
+  consumed?: string;
+  /** Number of v1 rows transformed into v2 files. */
+  rowsImported: number;
+  /** Files already present in v2 form — skipped without rewrite. */
+  rowsSkipped: number;
+  /** Errors encountered during migration. */
+  errors: string[];
 }
 
 export type MemoryFabricEvent =
@@ -104,9 +143,10 @@ export function createMemoryFabric(options: MemoryFabricOptions): MemoryFabric {
 export class MemoryFabric {
   private readonly root: string;
   private readonly backupRoot: string | null;
+  private readonly v1DbFile: string | null;
   private readonly now: () => Date;
   private readonly onEvent: NonNullable<MemoryFabricOptions['onEvent']>;
-  private readonly readModel: MemoryReadModel;
+  private readonly store: MemoryFileStore;
   private readonly writer = new SerialWriter();
   private readonly index = new MemoryIndex();
   private readonly loadedScopes = new Set<string>();
@@ -119,27 +159,39 @@ export class MemoryFabric {
     }
     this.root = options.root;
     this.backupRoot = options.backupRoot ?? null;
+    this.v1DbFile = options.dbFile ?? null;
     this.now = options.now ?? (() => new Date());
     this.onEvent = options.onEvent ?? (() => undefined);
     ensureDir(this.root);
-    this.readModel = new MemoryReadModel(options.dbFile ?? defaultReadModelDbFile(this.root));
+    this.store = new MemoryFileStore(this.root);
+  }
+
+  /** Allow callers (services, tests) to release in-memory state explicitly. */
+  close(): void {
+    this.store.close();
   }
 
   /* --------------------------- FEAT-021 v1 API --------------------------- */
 
   async writeEntry(input: WriteMemoryEntryInput): Promise<MemoryEntry> {
     const normalized = this.validateWriteEntry(input);
-    const existing = this.readModel.findByContentHash(normalized.layer, normalized.scope, normalized.contentHash);
+    this.store.hydrateScope(normalized.scope);
+    // FEAT-035: when caller supplies a contentPath that matches a sparse
+    // legacy file already hydrated under a derived id, evict that ghost
+    // record before conflict detection so we don't flag the entry against
+    // its own pre-hydration shadow.
+    if (normalized.contentPath) this.store.evictByFile(normalized.contentPath);
+    const existing = this.store.findByContentHash(normalized.layer, normalized.scope, normalized.contentHash);
     if (existing) {
       if (normalized.assetRef && existing.assetRef !== normalized.assetRef) {
         const updatedAt = this.now().toISOString();
-        this.readModel.attachAssetRef(existing.id, normalized.assetRef, updatedAt);
-        return { ...existing, assetRef: normalized.assetRef, updatedAt };
+        const updated = this.store.attachAssetRef(existing.id, normalized.assetRef, updatedAt);
+        return updated;
       }
       return existing;
     }
 
-    const conflicts = this.readModel.findTopicConflicts({
+    const conflicts = this.store.findTopicConflicts({
       layer: normalized.layer,
       scope: normalized.scope,
       topic: normalized.topic,
@@ -152,7 +204,7 @@ export class MemoryFabric {
     const timestamp = this.now().toISOString();
     const id = deterministicEntryId(normalized.layer, normalized.scope, normalized.contentHash);
     const contentPath =
-      normalized.layer === 'persistent'
+      normalized.layer === 'persistent' || normalized.layer === 'skill'
         ? await this.writePersistentCanonicalSource({ ...normalized, id, verificationStatus: status, timestamp })
         : normalized.contentPath;
     const entry: MemoryEntry = {
@@ -175,37 +227,55 @@ export class MemoryFabric {
       verificationEvidenceRefs: [],
     };
 
-    this.readModel.insert(entry);
+    const entryFile = contentPath ?? this.fallbackEntryFile(entry);
+    this.store.insert(entry, entryFile);
+    // FEAT-035 v2: keep the on-disk frontmatter in sync with the MemoryEntry
+    // so a fresh fabric re-hydrating the directory recovers every field —
+    // including assetRef / contentHash / verificationStatus that the
+    // legacy write()/deposit() renderers omit.
+    this.store.syncFrontmatter(entry.id);
     if (conflicts.length > 0) {
       const conflictIds = [entry.id, ...conflicts.map((item) => item.id)];
-      this.readModel.markConflicted(conflictIds, [`conflict:${entry.id}`], timestamp);
+      this.store.markConflicted(conflictIds, [`conflict:${entry.id}`], timestamp);
       entry.verificationStatus = 'conflicted';
       entry.verificationEvidenceRefs = [`conflict:${entry.id}`];
     }
     this.indexV1Entry(entry);
+    this.persistMemoryIndex(entry.scope);
     return entry;
   }
 
   queryEntries(query: MemoryQuery): MemorySearchResult[] {
-    return this.readModel.query(query);
+    return this.store.query(query);
+  }
+
+  /**
+   * FEAT-035 R5: aria-memory style file search. Filters in JS, no FTS5.
+   * Returns the same `MemorySearchResult[]` shape so callers (FEAT-031 Web
+   * Channel history, FEAT-032 MCP `memory_query`) get the canonical record.
+   */
+  searchMemoryFiles(query: string, options: SearchMemoryFilesOptions = {}): MemorySearchResult[] {
+    return this.store.search(query, options);
   }
 
   async markVerification(id: string, status: VerificationStatus, evidenceRefs: readonly string[]): Promise<void> {
-    const entry = this.readModel.findById(id);
+    this.store.hydrateAll();
+    const entry = this.store.findById(id);
     if (!entry) throw new Error(`MemoryFabric.markVerification: unknown entry id '${id}'`);
     if (status === 'verified' && requiresDoubleGate(entry.scope) && !hasDoubleGateEvidence(evidenceRefs)) {
       throw new Error(
         'MemoryFabric.markVerification: platform/shared verified status requires reviewer/critic evidence and user/owner confirmation',
       );
     }
-    this.readModel.markVerification(id, status, evidenceRefs, this.now().toISOString());
+    this.store.markVerification(id, status, evidenceRefs, this.now().toISOString());
   }
 
   async archiveEntry(id: string, reason: string): Promise<void> {
     if (!reason || reason.trim().length === 0) {
       throw new Error('MemoryFabric.archiveEntry: reason is required');
     }
-    this.readModel.archive(id, reason, this.now().toISOString());
+    this.store.hydrateAll();
+    this.store.archive(id, reason, this.now().toISOString());
   }
 
   async rebuildIndex(options: RebuildIndexOptions = {}): Promise<RebuildResult> {
@@ -533,6 +603,11 @@ export class MemoryFabric {
     const scope: MemoryScope = opts.scope ?? 'platform';
     const agentId = opts.agentId;
     const layout = buildScopeLayout(this.root, scope, agentId);
+    // codex MUST-FIX #3: hydrate the scope so `mergeAllPending` sees pending
+    // files dropped by external runs (deposit on a previous process exit /
+    // aria-memory:remember writing into .pending). Without this, sleep on a
+    // cold fabric reports ok but never merges anything.
+    this.loadScope({ scope, ...(agentId ? { agentId } : {}) });
     const steps: MemoryMaintenanceStepReport[] = [];
     const ranAt = this.now().toISOString();
 
@@ -568,6 +643,244 @@ export class MemoryFabric {
     return { scope, agentId, steps, ranAt, changelogEntry };
   }
 
+  /* --------------------------- FEAT-035 R10 hooks --------------------------- */
+
+  /**
+   * Hook for `aria-memory:memory-wrapup`. Wraps a session transcript into the
+   * persistent layer (the skill decides the consolidation strategy; we just
+   * persist the requested transcript and append it to the session's memory
+   * file). FEAT-035 D7: two-phase pending → persistent merge belongs to the
+   * skill, not Haro.
+   */
+  async runWrapup(input: RunWrapupInput): Promise<{ file: string; entry: MemoryEntry }> {
+    const scope: MemoryScope = input.scope ?? 'shared';
+    const agentId = input.agentId;
+    const topic = input.topic ?? `wrapup-${input.sessionId}`;
+    const wrapResult = await this.wrapupSession({
+      scope,
+      ...(agentId ? { agentId } : {}),
+      wrapupId: input.sessionId,
+      topic,
+      transcript: input.transcript,
+      ...(input.summary ? { summary: input.summary } : {}),
+      tags: input.tags ?? [],
+      source: input.source ?? 'aria-memory:memory-wrapup',
+      mergePending: true,
+    });
+    // codex SHOULD-FIX: do NOT pass the impression file path as contentPath
+    // here — that would force the persistent entry to share storage with
+    // the session impression file (and `markConflicted` later mutates that
+    // shared file). Let writePersistentCanonicalSource synthesize a fresh
+    // knowledge/<slug>-<hash>.md and reference the impression via sourceRef.
+    const entry = await this.writeEntry({
+      layer: 'persistent',
+      scope: legacyScopeToEntryScope(scope, agentId),
+      ...(agentId ? { agentId } : {}),
+      topic,
+      ...(input.summary ? { summary: input.summary } : {}),
+      content: input.transcript,
+      sourceRef: `${input.source ?? 'aria-memory:memory-wrapup'}#impression=${wrapResult.file}`,
+      tags: input.tags ?? [],
+    });
+    return { file: wrapResult.file, entry };
+  }
+
+  /**
+   * Hook for `aria-memory:memory-sleep`. Delegates to {@link maintenance}
+   * but enforces D7: the skill drives sleep, Haro just exposes the atomic
+   * step pipeline.
+   */
+  async runSleep(input: RunSleepInput = {}): Promise<MemoryMaintenanceReport> {
+    const opts: { scope?: MemoryScope; agentId?: string } = {};
+    if (input.scope) opts.scope = input.scope;
+    if (input.agentId) opts.agentId = input.agentId;
+    return this.maintenance(opts);
+  }
+
+  /**
+   * R7/R12 repair: rescan a scope (or every scope) for files written by
+   * external aria-memory tooling, reconcile the in-memory store, then rewrite
+   * MEMORY.md. Idempotent; safe to run multiple times.
+   */
+  repairScope(scope?: MemoryEntryScope): { scanned: number; recovered: number } {
+    if (scope) {
+      const result = this.store.repair(scope);
+      return result;
+    }
+    return this.store.repair();
+  }
+
+  /**
+   * R7/G5 migrate: read v1 SQLite (`memory_entries`) and synthesize v2 files
+   * for any entries that aren't already on disk. Renames the source SQLite to
+   * `<file>.bak.<timestamp>` afterwards (keeps 30-day rollback per D2). Safe
+   * to call when no SQLite exists — returns rowsImported=0.
+   */
+  async migrateFromV1(opts: { dbFile?: string } = {}): Promise<MigrateFromV1Result> {
+    const dbFile = opts.dbFile ?? this.v1DbFile;
+    const result: MigrateFromV1Result = { rowsImported: 0, rowsSkipped: 0, errors: [] };
+    if (!dbFile || !existsSync(dbFile)) {
+      return result;
+    }
+    // codex SHOULD-FIX: a previously consumed snapshot already carries
+    // `.bak.<timestamp>` suffix. Re-running migrate against it shouldn't
+    // recursively rename it to `.bak.bak.<timestamp>`. Treat the call as
+    // a no-op once we detect the pattern (rows still get re-imported into
+    // the file store if the on-disk records went missing — handled below
+    // by `findById` skipping existing entries).
+    const isAlreadyBackup = /\.bak\.\d{4}/.test(dbFile);
+    let rows: Array<Record<string, unknown>>;
+    try {
+      // Lazy require so non-migration paths don't pay the SQLite cost.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const Database = (await import('better-sqlite3')).default;
+      const db = new Database(dbFile, { readonly: true });
+      try {
+        rows = db
+          .prepare(
+            `SELECT id, layer, scope, agent_id, topic, summary, content, content_path,
+                    content_hash, source_ref, asset_ref, verification_status, confidence,
+                    tags, verification_evidence_refs, created_at, updated_at,
+                    archived_at, archived_reason
+               FROM memory_entries`,
+          )
+          .all() as Array<Record<string, unknown>>;
+      } catch (err) {
+        // If memory_entries doesn't exist (mixed install) we still rename the file.
+        if (err instanceof Error && /no such table/i.test(err.message)) {
+          rows = [];
+        } else {
+          throw err;
+        }
+      } finally {
+        db.close();
+      }
+    } catch (err) {
+      result.errors.push(`open v1 db: ${err instanceof Error ? err.message : String(err)}`);
+      return result;
+    }
+
+    for (const row of rows) {
+      try {
+        const tags = parseJsonArray(row.tags);
+        const evidenceRefs = parseJsonArray(row.verification_evidence_refs);
+        const rawLayer = String(row.layer ?? '');
+        if (rawLayer !== 'session' && rawLayer !== 'persistent' && rawLayer !== 'skill') {
+          result.errors.push(`row ${String(row.id ?? '<unknown>')}: invalid layer '${rawLayer}'`);
+          continue;
+        }
+        const layer = rawLayer as MemoryLayer;
+        const rawScope = String(row.scope ?? '');
+        // codex MUST-FIX #2: validate scope against the canonical pattern
+        // before using it to compute file paths. Path traversal via a
+        // tampered v1 row (`scope='agent:../../etc'`) would otherwise let
+        // the migration write outside the memory tree.
+        if (!isValidEntryScope(rawScope)) {
+          result.errors.push(`row ${String(row.id ?? '<unknown>')}: invalid scope '${rawScope}'`);
+          continue;
+        }
+        const scope = rawScope as MemoryEntryScope;
+        const content = String(row.content ?? '');
+        const contentHash = String(row.content_hash ?? hashContent(content));
+        const sourceRef = String(row.source_ref ?? 'v1-migrate');
+        const verificationStatus =
+          (row.verification_status as VerificationStatus | undefined) ?? 'unverified';
+        const createdAt = String(row.created_at ?? this.now().toISOString());
+        const updatedAt = String(row.updated_at ?? createdAt);
+        this.store.hydrateScope(scope);
+        const existing = this.store.findById(String(row.id));
+        if (existing) {
+          result.rowsSkipped += 1;
+          continue;
+        }
+        const layout = buildEntryScopeLayout(this.root, scope);
+        const slug = `${slugify(String(row.topic ?? 'untitled'))}-${contentHash.slice(0, 8)}`;
+        // codex MUST-FIX #2: ignore legacy content_path entirely — always
+        // synthesize a fresh file under the scope-rooted knowledge dir.
+        // Trusting the v1 column would let an attacker plant a row with
+        // `content_path=/etc/cron.d/whatever` and have us write there.
+        const file = join(layout.knowledge, `${slug}.md`);
+        ensureDir(dirname(file));
+        const fm: Frontmatter = {
+          id: String(row.id),
+          topic: String(row.topic ?? 'untitled'),
+          summary: String(row.summary ?? firstLine(content)),
+          layer,
+          scope,
+          source_ref: sourceRef,
+          content_hash: contentHash,
+          verification_status: verificationStatus,
+          tags,
+          created_at: createdAt,
+          updated_at: updatedAt,
+          date: createdAt.slice(0, 10),
+        };
+        if (row.agent_id) fm.agent_id = String(row.agent_id);
+        if (row.asset_ref) fm.asset_ref = String(row.asset_ref);
+        if (typeof row.confidence === 'number') fm.confidence = row.confidence;
+        if (row.archived_at) fm.archived_at = String(row.archived_at);
+        if (row.archived_reason) fm.archived_reason = String(row.archived_reason);
+        if (evidenceRefs.length > 0) fm.verification_evidence_refs = evidenceRefs;
+        if (!existsSync(file)) {
+          atomicWriteFile(
+            file,
+            `${serializeFrontmatter(fm)}# ${fm.topic}\n\n## Source: ${sourceRef}\n\n${content}\n`,
+          );
+        }
+        const entry: MemoryEntry = {
+          id: String(row.id),
+          layer,
+          scope,
+          topic: String(fm.topic),
+          summary: String(fm.summary),
+          content,
+          contentPath: file,
+          contentHash,
+          sourceRef,
+          verificationStatus,
+          tags,
+          createdAt,
+          updatedAt,
+          verificationEvidenceRefs: evidenceRefs,
+        };
+        if (row.agent_id) entry.agentId = String(row.agent_id);
+        if (row.asset_ref) entry.assetRef = String(row.asset_ref);
+        if (typeof row.confidence === 'number') entry.confidence = row.confidence;
+        if (row.archived_at) entry.archivedAt = String(row.archived_at);
+        if (row.archived_reason) entry.archivedReason = String(row.archived_reason);
+        this.store.upsert(entry, file);
+        result.rowsImported += 1;
+      } catch (err) {
+        result.errors.push(
+          `row ${String(row.id ?? '<unknown>')}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // Rename consumed SQLite to .bak so subsequent boots don't re-process
+    // it. Skip the rename when the source is already a .bak snapshot —
+    // otherwise we'd produce `.bak.<t1>.bak.<t2>` chains (codex SHOULD-FIX).
+    if (!isAlreadyBackup) {
+      const stamp = this.now().toISOString().replace(/[:.]/g, '-');
+      const bakFile = `${dbFile}.bak.${stamp}`;
+      try {
+        renameSync(dbFile, bakFile);
+        result.consumed = bakFile;
+      } catch (err) {
+        result.errors.push(`rename ${dbFile}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      result.consumed = dbFile;
+    }
+
+    // Final rebuild of MEMORY.md per scope so they reflect imported rows.
+    const scopes = new Set<MemoryEntryScope>();
+    for (const row of rows) scopes.add(String(row.scope) as MemoryEntryScope);
+    for (const scope of scopes) this.persistMemoryIndex(scope);
+
+    return result;
+  }
+
   /* --------------------------- R8 stats --------------------------- */
 
   stats(): MemoryStats {
@@ -585,7 +898,7 @@ export class MemoryFabric {
       if (agentId) scopeStats.agentId = agentId;
       scopes.push(scopeStats);
     }
-    const result: MemoryStats = { root: this.root, scopes, ...this.readModel.stats() };
+    const result: MemoryStats = { root: this.root, scopes, ...this.store.stats() };
     if (this.lastMaintenanceAt !== undefined) {
       result.lastMaintenanceAt = this.lastMaintenanceAt;
     }
@@ -965,6 +1278,7 @@ export class MemoryFabric {
       ensureDir(layout.knowledge);
       if (!input.contentPath || !existsSync(file)) {
         const frontmatter: Frontmatter = {
+          id: input.id,
           topic: input.topic,
           summary: input.summary,
           tags: input.tags,
@@ -973,6 +1287,8 @@ export class MemoryFabric {
           layer: input.layer,
           scope: input.scope,
           verification_status: input.verificationStatus,
+          created_at: input.timestamp,
+          updated_at: input.timestamp,
           date: input.timestamp.slice(0, 10),
         };
         if (input.agentId) frontmatter.agent_id = input.agentId;
@@ -983,6 +1299,7 @@ export class MemoryFabric {
           `${serializeFrontmatter(frontmatter)}# ${input.topic}\n\n## Source: ${input.sourceRef}\n\n${input.content}\n`,
         );
       }
+      this.store.recordPath(input.id, file);
       this.upsertV1IndexRecord({
         ...input,
         id: input.id,
@@ -993,6 +1310,17 @@ export class MemoryFabric {
       this.persistIndexForEntryScope(input.scope);
     });
     return file;
+  }
+
+  private fallbackEntryFile(entry: MemoryEntry): string {
+    const layout = buildEntryScopeLayout(this.root, entry.scope);
+    const slug = `${slugify(entry.topic)}-${entry.contentHash.slice(0, 8)}`;
+    if (entry.layer === 'session') return join(layout.pending, `${slug}.md`);
+    return join(layout.knowledge, `${slug}.md`);
+  }
+
+  private persistMemoryIndex(scope: MemoryEntryScope): void {
+    this.store.rewriteIndex(scope, this.lastMaintenanceAt ?? null);
   }
 
   private indexV1Entry(entry: MemoryEntry): void {
@@ -1197,8 +1525,30 @@ interface MarkdownCandidate {
   layer: MemoryLayer;
 }
 
-function defaultReadModelDbFile(root: string): string {
-  return basename(root) === 'memory' ? join(dirname(root), 'haro.db') : join(root, '.memory-fabric.sqlite');
+function isValidEntryScope(scope: string): boolean {
+  if (scope === 'platform' || scope === 'shared') return true;
+  if (scope.startsWith('agent:')) {
+    const id = scope.slice('agent:'.length);
+    return id.length > 0 && /^[A-Za-z0-9_.-]+$/.test(id);
+  }
+  if (scope.startsWith('project:')) {
+    const id = scope.slice('project:'.length);
+    return id.length > 0 && /^[A-Za-z0-9_.-]+$/.test(id);
+  }
+  return false;
+}
+
+function parseJsonArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string');
+  if (typeof value === 'string' && value.length > 0) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string');
+    } catch {
+      /* ignore */
+    }
+  }
+  return [];
 }
 
 function deterministicEntryId(layer: MemoryLayer, scope: MemoryEntryScope, contentHash: string): string {

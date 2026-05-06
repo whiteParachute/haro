@@ -2,7 +2,7 @@
 
 ## 当前设计基线
 
-**2026-05-01 重设计**：Haro 采用双层架构（workbench + 进化）+ 四边界约束（CLI 优先 / 前后端解耦 / 多 provider 抽象 / 多 channel 抽象）；原 Phase 4 Ecosystem 已移除。**Phase 1.5（自用底座补完）进行中**：FEAT-038（Web API 解耦）+ FEAT-039（CLI 等价补完）+ FEAT-033（Cron 任务，2026-05-06 done）已交付，CLI 与 Web 命令面等价、`@haro/core/services` 共享层就位、`packages/core/src/cron/` 三触发源调度器就位；剩余 FEAT-031（Web Channel）/ FEAT-032（MCP 工具层）/ FEAT-034（流式 UX 升级）仍 draft。任何 spec 评审、模块设计、UX 决策都要先过这四条边界。
+**2026-05-01 重设计**：Haro 采用双层架构（workbench + 进化）+ 四边界约束（CLI 优先 / 前后端解耦 / 多 provider 抽象 / 多 channel 抽象）；原 Phase 4 Ecosystem 已移除。**Phase 1.5（自用底座补完）进行中**：FEAT-038（Web API 解耦）+ FEAT-039（CLI 等价补完）+ FEAT-033（Cron 任务，2026-05-06 done）已交付，CLI 与 Web 命令面等价、`@haro/core/services` 共享层就位、`packages/core/src/cron/` 三触发源调度器就位；剩余 FEAT-031（Web Channel）/ FEAT-032（MCP 工具层）/ FEAT-034（流式 UX 升级）/ FEAT-035（Memory Fabric v2 Aria-Memory 对齐）仍 draft。任何 spec 评审、模块设计、UX 决策都要先过这四条边界。
 
 历史决策记录见 [`docs/planning/archive/redesign-2026-05-01.md`](docs/planning/archive/redesign-2026-05-01.md)（已归档）；后续路线以 [`roadmap/phases.md`](roadmap/phases.md) 为准。
 

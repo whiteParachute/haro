@@ -145,40 +145,11 @@ CREATE TABLE component_usage (
 );
 ```
 
-Phase 1 新增的 Memory / Asset / Budget 表由对应 FEAT 落地，原则如下：
+Phase 1 新增的 Asset / Budget 表由对应 FEAT 落地。
+
+> **FEAT-035 v2（2026-05-06）**：Memory Fabric 已删除 SQLite read model（`memory_entries` / `memory_entries_fts`），改为 aria-memory 风格的纯文件存储。记忆数据全部位于 `~/.haro/memory/<scope>/`（详见 [`docs/modules/memory-fabric.md`](modules/memory-fabric.md)）；老的 SQLite 行通过 `MemoryFabric.migrateFromV1({ dbFile })` 迁出，并在原路径写 `dbFile.bak.<timestamp>` 作为 30 天兜底。
 
 ```sql
--- FEAT-021: Memory Fabric v1 read model
-CREATE TABLE memory_entries (
-  id TEXT PRIMARY KEY,
-  layer TEXT NOT NULL,
-  scope TEXT NOT NULL,
-  agent_id TEXT,
-  topic TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  content TEXT NOT NULL,
-  content_path TEXT,
-  content_hash TEXT NOT NULL,
-  source_ref TEXT NOT NULL,
-  asset_ref TEXT,
-  verification_status TEXT NOT NULL DEFAULT 'unverified',
-  confidence REAL,
-  tags TEXT NOT NULL DEFAULT '[]',
-  verification_evidence_refs TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  archived_at TEXT,
-  archived_reason TEXT
-);
-
-CREATE VIRTUAL TABLE memory_entries_fts USING fts5(
-  entry_id UNINDEXED,
-  topic,
-  summary,
-  content,
-  tokenize='unicode61'
-);
-
 -- FEAT-022: Evolution Asset Registry
 CREATE TABLE evolution_assets (
   id TEXT PRIMARY KEY,

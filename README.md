@@ -53,7 +53,7 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **CLI 入口** — `haro` REPL + `haro run` 单次任务 + `haro provider/setup/doctor/skills/status` 等命令族
 - **Codex Provider** — `@openai/codex-sdk` + ChatGPT 订阅认证（device flow，FEAT-029）
 - **Channel 层** — CLI / 飞书 / Telegram adapter 三个 channel
-- **Memory Fabric v1** — 三层记忆 + SQLite FTS5 + scope/verification/assetRef + aria-memory 兼容
+- **Memory Fabric v2**（FEAT-035，2026-05-06）— 三层记忆 + aria-memory 风格散文件存储 + MEMORY.md 索引 + scope/verification/assetRef；SQLite/FTS5 read model 已下线，新增 `searchMemoryFiles` 公开搜索 + `runWrapup` / `runSleep` skill 钩子 + `migrateFromV1` 迁移工具
 - **Skills 子系统** — 15 预装 + 安装/卸载/查询 + 手动 eat/shit
 - **多 Agent 核心** — Scenario Router + Team Orchestrator + 编排调试 timeline
 - **Web Dashboard** — Chat / Session / Agent / Skill / Memory / Logs / Monitor / Settings / Channel / Workflow / Users 页
@@ -69,6 +69,7 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **Web Channel**（FEAT-031）— Web UI 作为 IM channel
 - **MCP 工具层**（FEAT-032）— 内置 MCP server + 4 个核心工具
 - **流式 UX 升级**（FEAT-034）— thinking 折叠、tool timeline、Hook 状态
+- **Memory Fabric v2**（FEAT-035，已实现核心，待落地 FEAT-031/032 集成）— aria-memory 风格文件存储 + searchMemoryFiles + runWrapup/runSleep + migrateFromV1
 
 ### 远期（Phase 2.0+）
 
@@ -237,7 +238,7 @@ Haro 采用 **spec 驱动开发**：
 - Evolution Engine、自动 eat/shit、Industry Intel 仍属于 Phase 2.0+
 - Agent-as-Developer（自改代码、自提 PR）属于 Phase 3.5+
 - 当前形态：**源码运行 + 自用为主**，不是稳定发布版本
-- 不引入：Agent Store / 跨实例协作（Phase 4 已移除）；企业 SSO/OIDC；向量数据库（FTS5 够用到 Phase 2+）
+- 不引入：Agent Store / 跨实例协作（Phase 4 已移除）；企业 SSO/OIDC；向量数据库（FEAT-035 v2 文件搜索够用到 Phase 2+）
 
 ## 路线图
 
@@ -245,7 +246,7 @@ Haro 采用 **spec 驱动开发**：
 | --- | --- | --- |
 | Phase 0 Foundation | 已完成 | CLI + Codex + 单 Agent + Memory + Channel + Skills + 手动 eat/shit |
 | Phase 1 Intelligence & Safety | 已完成 | Scenario Router + Team Orchestrator + Dashboard + Memory Fabric v1 + Asset Registry + 权限预算 |
-| Phase 1.5 Workbench Parity | **进行中**（FEAT-038/039/033 done；FEAT-031/032/034 draft）| Web API 解耦 + CLI 等价补完 + Cron 任务 + Web Channel + MCP 工具层 + 流式 UX |
+| Phase 1.5 Workbench Parity | **进行中**（FEAT-038/039/033 done；FEAT-035 核心实现已完成；FEAT-031/032/034 draft）| Web API 解耦 + CLI 等价补完 + Cron 任务 + Web Channel + MCP 工具层 + 流式 UX + Memory Fabric v2 |
 | Phase 2.0 Evolution Awareness | 规划中 | Self-Monitor + Industry Intel + 自动 eat/shit 触发 |
 | Phase 2.5 Evolution Proposal | 规划中 | Pattern Miner + Evolution Proposal + 用户审批闭环 |
 | Phase 3.0 Controlled Self-Evolution | 规划中 | Auto-Refactorer L0–L1 + 灰度 + 回滚 |

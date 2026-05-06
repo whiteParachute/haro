@@ -7,6 +7,8 @@ import Database from 'better-sqlite3';
 import { initHaroDatabase } from '../src/db/init.js';
 import { HARO_TABLES } from '../src/db/schema.js';
 
+// FEAT-035 v2: memory_entries / memory_entries_fts removed. Memory Fabric
+// now lives entirely in scope-rooted Markdown files.
 const EXPECTED_TABLE_NAMES = [
   'sessions',
   'session_events',
@@ -18,8 +20,6 @@ const EXPECTED_TABLE_NAMES = [
   'component_usage',
   'cron_jobs',
   'cron_lease',
-  'memory_entries',
-  'memory_entries_fts',
   'evolution_assets',
   'evolution_asset_events',
   'web_users',
@@ -69,7 +69,7 @@ describe('initHaroDatabase [FEAT-001]', () => {
     expect(result.fts5Available).toBe(true);
   });
 
-  it('FEAT-021 creates memory_entries + memory_entries_fts for FTS read model', () => {
+  it('FEAT-035 does NOT create memory_entries / memory_entries_fts (file-store v2)', () => {
     initHaroDatabase({ dbFile });
     const db = new Database(dbFile, { readonly: true });
     try {
@@ -79,8 +79,8 @@ describe('initHaroDatabase [FEAT-001]', () => {
       const ftsTable = db
         .prepare(`SELECT name FROM sqlite_master WHERE name = 'memory_entries_fts'`)
         .get() as { name: string } | undefined;
-      expect(memoryTable?.name).toBe('memory_entries');
-      expect(ftsTable?.name).toBe('memory_entries_fts');
+      expect(memoryTable).toBeUndefined();
+      expect(ftsTable).toBeUndefined();
     } finally {
       db.close();
     }
