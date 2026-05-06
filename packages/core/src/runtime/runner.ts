@@ -149,6 +149,11 @@ export class AgentRunner {
       }
 
       for (let index = 0; index < candidates.length; index += 1) {
+        if (input.signal?.aborted) {
+          finalEvent = this.emitAbortEvent(db, sessionId, finalProvider, finalModel);
+          events.push(finalEvent);
+          break;
+        }
         const candidate = candidates[index]!;
         finalProvider = candidate.provider;
         finalModel = candidate.model;
@@ -196,6 +201,7 @@ export class AgentRunner {
               timeoutMs,
               db,
               onEvent: input.onEvent,
+              ...(input.signal ? { signal: input.signal } : {}),
             });
             events.push(...outcome.events);
             finalEvent = outcome.terminal;
@@ -320,6 +326,7 @@ export class AgentRunner {
     timeoutMs: number;
     db: Database.Database;
     onEvent?: (event: AgentEvent, sessionId: string) => void;
+    signal?: AbortSignal;
   }): Promise<QueryAttemptOutcome> {
     const attemptStartedAt = Date.now();
     const iterator = input.provider.query({
@@ -376,7 +383,31 @@ export class AgentRunner {
     })();
 
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let abortListener: (() => void) | null = null;
     try {
+      const abortRace = new Promise<QueryAttemptOutcome>((resolve) => {
+        if (!input.signal) return; // never resolves if no signal
+        const fire = (): void => {
+          if (terminalCommitted) return;
+          const aborted = this.withProviderTelemetry({
+            type: 'error',
+            code: 'aborted',
+            message: 'Task aborted by caller (AbortSignal)',
+            retryable: false,
+          }, input.provider.id, input.model, attemptStartedAt);
+          appendEvent(aborted);
+          void iterator.return?.(undefined).catch(() => {
+            // Best effort — some generators won't implement return().
+          });
+          resolve({ events: [...events], terminal: aborted });
+        };
+        if (input.signal.aborted) {
+          fire();
+          return;
+        }
+        abortListener = fire;
+        input.signal.addEventListener('abort', fire, { once: true });
+      });
       return await Promise.race([
         consume,
         new Promise<QueryAttemptOutcome>((resolve) => {
@@ -396,10 +427,32 @@ export class AgentRunner {
           }, input.timeoutMs);
           timer.unref?.();
         }),
+        abortRace,
       ]);
     } finally {
       if (timer) clearTimeout(timer);
+      if (abortListener && input.signal) {
+        input.signal.removeEventListener('abort', abortListener);
+      }
     }
+  }
+
+  private emitAbortEvent(
+    db: Database.Database,
+    sessionId: string,
+    provider: string,
+    model: string,
+  ): AgentErrorEvent {
+    const aborted: AgentErrorEvent = {
+      type: 'error',
+      code: 'aborted',
+      message: 'Run aborted by caller before next provider attempt',
+      retryable: false,
+      provider,
+      model,
+    };
+    this.insertEvent(db, sessionId, aborted);
+    return aborted;
   }
 
   private loadContinuationContext(

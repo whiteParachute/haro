@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { compress } from 'hono/compress';
 import { cors } from 'hono/cors';
 import type { MiddlewareHandler } from 'hono';
-import { AgentRegistry } from '@haro/core';
+import { AgentRegistry, DEFAULT_AGENT_ID, cron as coreCron } from '@haro/core';
 import { createDashboardAuth, warnIfApiKeyAuthDisabled } from './auth.js';
 import { createWebLogger } from './logger.js';
 import type { ApiKeyAuthEnv, WebApp, WebLogger } from './types.js';
@@ -13,6 +13,7 @@ import { createAgentsRoute } from './routes/agents.js';
 import { createAuthRoute } from './routes/auth.js';
 import { createChannelsRoute } from './routes/channels.js';
 import { createConfigRoute } from './routes/config.js';
+import { createCronRoute } from './routes/cron.js';
 import { createDoctorRoute, createStatusRoute } from './routes/status.js';
 import { createGatewayRoute } from './routes/gateway.js';
 import { createGuardRoute } from './routes/guard.js';
@@ -37,12 +38,29 @@ export interface CreateWebAppOptions {
   logger?: WebLogger;
   staticRoot?: string;
   runtime?: Omit<WebRuntime, 'logger' | 'startedAt'> & Partial<Pick<WebRuntime, 'logger' | 'startedAt'>>;
+  /**
+   * Force-disable the in-process cron tick host (FEAT-033 R12). Defaults to
+   * true when the runtime carries a runner + dbFile so a deployed web server
+   * picks up jobs without an external `haro cron daemon`. Tests opt out by
+   * passing `false`; HTTP route smoke tests don't need ticking.
+   */
+  enableCronTicker?: boolean;
+}
+
+interface CronTickerEntry {
+  host: coreCron.CronTickHost;
+  storage: coreCron.CronStorage;
 }
 
 const websocketManagers = new WeakMap<WebApp, WebSocketManager>();
+const cronTickers = new WeakMap<WebApp, CronTickerEntry>();
 
 export function getWebSocketManager(app: WebApp): WebSocketManager | undefined {
   return websocketManagers.get(app);
+}
+
+export function getCronTicker(app: WebApp): CronTickerEntry | undefined {
+  return cronTickers.get(app);
 }
 
 export function resolveWebDistRoot(cwd = process.cwd()): string {
@@ -136,6 +154,43 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   app.route('/api/v1/status', createStatusRoute(runtime));
   app.route('/api/v1/doctor', createDoctorRoute(runtime));
   app.route('/api/v1/config', createConfigRoute(runtime));
+  app.route('/api/v1/cron', createCronRoute(runtime));
+
+  // FEAT-033 R12: in-process cron tick host. Auto-enabled when the runtime
+  // exposes both a database file and an agent runner (or factory) — tests
+  // that mock just `runtime.root` skip this, since they exercise routes
+  // directly and shouldn't kick off a real timer.
+  const enableCron =
+    options.enableCronTicker ??
+    Boolean(runtime.dbFile && (runtime.runner || runtime.createRunner));
+  if (enableCron && runtime.dbFile) {
+    const agentRunner = runtime.runner ?? runtime.createRunner?.();
+    if (agentRunner) {
+      const storage = new coreCron.CronStorage({
+        dbFile: runtime.dbFile,
+        ...(runtime.root ? { root: runtime.root } : {}),
+      });
+      const host = coreCron.createCronTickHost({
+        storage,
+        agentRunner,
+        defaultAgentId: DEFAULT_AGENT_ID,
+        logger: {
+          debug: (...args) => logger.debug?.(args[0]),
+          info: (...args) => logger.info?.(args[0]),
+          warn: (...args) => logger.warn?.(args[0]),
+          error: (...args) => logger.error?.(args[0]),
+        },
+        onTick: (outcome) => {
+          if (outcome.skipped === 'lease-held') return;
+          if (outcome.ranCount > 0) {
+            logger.info?.({ ran: outcome.ranCount }, 'web-api cron tick dispatched jobs');
+          }
+        },
+      });
+      cronTickers.set(app, { host, storage });
+    }
+  }
+
   app.use('/*', serveStatic({ root: staticRoot }));
   app.get('*', async (c, next) => {
     if (!shouldServeSpaFallback(c.req.method, c.req.path)) {

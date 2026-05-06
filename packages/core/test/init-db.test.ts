@@ -16,6 +16,8 @@ const EXPECTED_TABLE_NAMES = [
   'token_budget_ledger',
   'provider_fallback_log',
   'component_usage',
+  'cron_jobs',
+  'cron_lease',
   'memory_entries',
   'memory_entries_fts',
   'evolution_assets',

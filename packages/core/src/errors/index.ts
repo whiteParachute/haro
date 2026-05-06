@@ -57,7 +57,14 @@ export type HaroErrorCode =
   // a fake ok:true on stdout)
   | 'PROVIDER_DOCTOR_FAILED'
   | 'CHANNEL_DOCTOR_FAILED'
-  | 'GATEWAY_DOCTOR_FAILED';
+  | 'GATEWAY_DOCTOR_FAILED'
+  // cron jobs (FEAT-033)
+  | 'CRON_FREQUENCY_TOO_HIGH'
+  | 'CRON_QUOTA_EXCEEDED'
+  | 'CRON_INVALID_EXPRESSION'
+  | 'CRON_ONCE_IN_PAST'
+  | 'CRON_JOB_NOT_FOUND'
+  | 'CRON_TASK_INPUT_TOO_LARGE';
 
 export interface HaroErrorOptions {
   remediation?: string;

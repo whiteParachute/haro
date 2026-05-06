@@ -215,6 +215,7 @@ export {
   SelectionResolutionError,
 } from './runtime/index.js';
 export * as services from './services/index.js';
+export * as cron from './cron/index.js';
 export { HaroError, isHaroError, haroErrorToWire } from './errors/index.js';
 export type { HaroErrorCode, HaroErrorOptions } from './errors/index.js';
 export type {

@@ -61,7 +61,7 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 │                                                             │
 │   Memory Fabric     │   Skills              │   eat/shit   │
 │                                                             │
-│   MCP 工具层        │   定时任务            │   流式 UX    │
+│   MCP 工具层        │   Cron 任务           │   流式 UX    │
 │                                                             │
 │   Provider Abstract │   Channel Abstract    │   预算守门   │
 └─────────────────────────────────────────────────────────────┘

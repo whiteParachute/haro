@@ -1,5 +1,5 @@
 import { serve, type ServerType } from '@hono/node-server';
-import { getWebSocketManager } from './index.js';
+import { getCronTicker, getWebSocketManager } from './index.js';
 import type { WebApp, WebServerOptions } from './types.js';
 
 export interface WebServerHandle {
@@ -38,6 +38,18 @@ export function startWebServer(app: WebApp, options: WebServerOptions): WebServe
     });
   }
 
+  // FEAT-033 R12: kick off the in-process cron tick host once the HTTP server
+  // is listening. The host is created in createWebApp and only attached to
+  // the WeakMap when the runtime carries enough context to actually run jobs.
+  // Guard against a stop() that lands before the ready promise resolves so
+  // we don't start a host into a torn-down server.
+  const cronTicker = getCronTicker(app);
+  void ready
+    .then(() => {
+      if (!stopped && cronTicker) cronTicker.host.start();
+    })
+    .catch(() => undefined);
+
   server.once('error', onStartupError);
 
   const stop = async (): Promise<void> => {
@@ -45,6 +57,9 @@ export function startWebServer(app: WebApp, options: WebServerOptions): WebServe
     stopped = true;
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
+    // Drain HTTP first so new cron mutations cannot land while the tick host
+    // is quiescing — otherwise a request that opens its own CronManager
+    // could race the host's storage close (codex review #3).
     await new Promise<void>((resolveClose, rejectClose) => {
       server.close((error?: Error) => {
         if (error) {
@@ -54,6 +69,10 @@ export function startWebServer(app: WebApp, options: WebServerOptions): WebServe
         resolveClose();
       });
     });
+    if (cronTicker) {
+      await cronTicker.host.stop().catch(() => undefined);
+      cronTicker.storage.close();
+    }
   };
 
   const onSignal = (): void => {

@@ -78,6 +78,7 @@ import { registerBudgetCommands } from './commands/budget.js';
 import { registerUserCommands } from './commands/user.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerConfigWriteCommands } from './commands/config.js';
+import { registerCronCommands } from './commands/cron.js';
 import { buildServiceContext } from './commands/service-context.js';
 import { renderJson, renderJsonDiagnostic, renderListJson, resolveOutputMode } from './output/index.js';
 import {
@@ -563,6 +564,7 @@ function buildProgram(app: AppContext): Command {
   registerBudgetCommands(program, app);
   registerUserCommands(program, app);
   registerSkillCommand(program, app);
+  registerCronCommands(program, app);
 
   return program;
 }

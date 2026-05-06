@@ -53,7 +53,7 @@ happyclaw 通过 11 个内置 MCP 工具解决了这个问题，让 agent 真正
 - R4: `send_message` 工具：参数 `{ channelId, sessionId, content, attachments? }`；调用前必须校验 channelId 已 enabled、sessionId 属于当前调用方、content 非空；跨 channel 发送（即调用方不在 sessionId 所属 channel）需要 FEAT-023 `external-service` 权限。
 - R5: `memory_query` 工具：参数 `{ query, scope?, limit? }`；scope 默认 agent；返回结构化 hits（id / scope / excerpt / score / sourceRef）；FTS5 走 Memory Fabric `read-model`。
 - R6: `memory_remember` 工具：参数 `{ content, scope, dimension?, sourceRef? }`；scope 写 platform / shared 需要 `write-shared` 权限审批；走 Memory Fabric write API + FEAT-022 Evolution Asset Registry 记录 asset。
-- R7: `schedule_task` 工具：参数 `{ when, taskSpec }`，`when` 支持 ISO timestamp（一次性）或 cron 表达式；`taskSpec` 复用 FEAT-033 task DTO；调用前必须校验 cron 合法、when 非过期。
+- R7: `schedule_task` 工具（工具名保留，对应 happyclaw 兼容契约）：参数 `{ when, taskSpec }`，`when` 支持 ISO timestamp（一次性）或 cron 表达式；`taskSpec` 复用 FEAT-033 cron job DTO；调用前必须校验 cron 合法、when 非过期；内部走 `services.cron.create(...)`。
 - R8: 所有工具调用必须写 `tool_invocation_log`：调用方 / 工具 / 参数 hash / 结果状态 / 耗时；payload 不入日志，避免记录敏感内容。
 - R9: 工具失败必须返回结构化错误 `{ code, message, retryable, remediation? }`，code 取自工具规范的 error catalog。
 - R10: MCP server 必须由 agent runtime 在 session 启动时 spawn / attach，session 终止时 graceful shutdown；不允许 leak 子进程。
@@ -115,7 +115,7 @@ const SendMessageSchema = z.object({
 - `send_message` → `ChannelRegistry.get(channelId).send(...)`（FEAT-008 / FEAT-031）
 - `memory_query` → `MemoryFabric.query(...)`（FEAT-021）
 - `memory_remember` → `MemoryFabric.write(...)` → `EvolutionAssetRegistry.recordAsset(...)`（FEAT-022）
-- `schedule_task` → `ScheduledTaskManager.create(...)`（FEAT-033）
+- `schedule_task` → `services.cron.create(...)` → `CronManager.create(...)`（FEAT-033）
 
 ### 5.5 audit 表结构
 
@@ -139,7 +139,7 @@ CREATE TABLE tool_invocation_log (
 - AC1: agent 在一次 session 中调用 `send_message` 把消息路由到 web channel 另一个 session，消息正确出现在目标 session 流中（对应 R4）。
 - AC2: `memory_query` 对一个已写入的 platform-scope 记忆能返回命中，excerpt 与 score 字段非空（对应 R5）。
 - AC3: `memory_remember` 写 platform-scope 时返回 `needs-approval`，写 agent-scope 直接成功；FEAT-022 asset 表对应记录被创建（对应 R6）。
-- AC4: `schedule_task` 注册 `cron: "0 * * * *"` 任务后，FEAT-033 ScheduledTaskManager 列表能查到该任务（对应 R7）。
+- AC4: `schedule_task` 注册 `cron: "0 * * * *"` 任务后，FEAT-033 `CronManager` 列表能查到该任务（对应 R7）。
 - AC5: 工具调用失败时返回结构化 `{ code, message, retryable, remediation }`；调用方 retry 逻辑能正确分支（对应 R9）。
 - AC6: 关闭 agent session 后 MCP server 子进程在 5 秒内退出，无 leak（对应 R10）。
 - AC7: `tool_invocation_log` 表包含本次会话所有工具调用记录，params 字段是 hash 而非原文（对应 R8）。
@@ -150,7 +150,7 @@ CREATE TABLE tool_invocation_log (
 - 集成测试：MCP server 启动 → agent 走 JSON-RPC 调用 → 守门链 → 实际效果（消息到达 / 记忆写入 / 任务注册）。
 - 安全测试：跨 session 越权调用 / 跨 scope 写记忆 / cron 注入攻击；至少 5 negative case。
 - 性能：单工具调用 P95 latency 不超过 50ms（不含外部 IM API 调用时间）。
-- 回归：FEAT-021 Memory Fabric / FEAT-022 Asset Registry / FEAT-023 Permission Guard / FEAT-031 Web Channel / FEAT-033 Scheduled Tasks 已有用例。
+- 回归：FEAT-021 Memory Fabric / FEAT-022 Asset Registry / FEAT-023 Permission Guard / FEAT-031 Web Channel / FEAT-033 Cron Jobs 已有用例。
 
 ## 8. Open Questions / 待定问题
 

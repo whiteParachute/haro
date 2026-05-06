@@ -160,7 +160,7 @@
 **Haro 差异**：
 - happyclaw 是单 Agent + 多 session 的工作面板；Haro 是**多 Agent 编排 + 进化层**
 - happyclaw 没有：Scenario Router / Team Orchestrator / 进化代谢 / Permission Budget / Evolution Asset Registry
-- Haro 借鉴：Phase 1.5 的 Web Channel（FEAT-031）/ MCP 工具层（FEAT-032）/ 定时任务（FEAT-033）/ 流式 UX（FEAT-034）参考其设计；不照搬 PWA / Web 终端 / QQ channel
+- Haro 借鉴：Phase 1.5 的 Web Channel（FEAT-031）/ MCP 工具层（FEAT-032）/ Cron 任务（FEAT-033，调度模型对齐 hermes-agent 的 `tick()` 设计而非 happyclaw 的常驻调度）/ 流式 UX（FEAT-034）参考其设计；不照搬 PWA / Web 终端 / QQ channel
 
 ### hermes-agent（2026-05-01 新增）
 

@@ -88,7 +88,7 @@
 
 ## Phase 1.5: Workbench Parity — 日用底座补完 + 架构解耦
 
-**状态**：进行中（2026-05-01 启动；FEAT-038 + FEAT-039 已 done，FEAT-031/032/033/034 仍 draft）
+**状态**：进行中（2026-05-01 启动；FEAT-038 + FEAT-039 + FEAT-033 已 done，FEAT-031/032/034 仍 draft）
 
 **目标**：把 Haro workbench 层补完到 happyclaw 级别的"开箱日用"水平，同时完成"CLI 优先 + Web UI 与后端解耦"的架构调整，让 Phase 2.0+ 的进化层有稳定的数据源和接口契约可以寄生。
 
@@ -105,7 +105,7 @@
 | FEAT-039 | CLI 功能等价补完（chat / session / agent / skill / memory / logs / workflow / budget / user 命令族） | 1.5–2 周 | P0 |
 | FEAT-031 | Web Channel（Web UI 作为 IM channel：对话、历史、文件） | 1–1.5 周 | P0 |
 | FEAT-032 | MCP 工具层 + 4 核心工具（send_message / memory_query / memory_remember / schedule_task） | 1.5–2 周 | P0 |
-| FEAT-033 | 定时任务最小版（cron + 一次性，复用现有 session 上下文） | 1 周 | P1 |
+| FEAT-033 | Cron 任务最小版（cron + 一次性，复用现有 session 上下文） — done 2026-05-02 | 1 周 | P1 |
 | FEAT-034 | 流式 UX 升级（thinking 折叠、tool timeline、Hook 状态、GFM/lightbox） | 1.5–2 周 | P1 |
 
 **预埋钩子**：FEAT-038 / 039 / 031 应在实现时埋好 Self-Monitor 的"被动记录"埋点（session 事件、tool 调用、失败/重试），数据先 buffer，等 Phase 2.0 直接消费。
@@ -122,7 +122,7 @@
 - [x] CLI 命令族覆盖 Web Dashboard 所有页面的核心动作（chat/session/agent/skill/memory/logs/workflow/budget/user）（FEAT-039 done，含 REPL slash + `--json/--human` envelope 统一）
 - [ ] Web channel 可在浏览器对话、查看历史、上传/下载文件（FEAT-031 draft）
 - [ ] Agent 可通过 MCP 工具发消息、查/写记忆、调度任务（FEAT-032 draft）
-- [ ] 定时任务支持 cron 表达式 + 一次性触发（FEAT-033 draft）
+- [x] Cron 任务支持 cron 表达式 + 一次性触发（FEAT-033 done，hermes-agent 风格 `tick()` + 三触发源：web-api ticker / `haro cron daemon` / `haro cron tick`）
 - [ ] 流式 UX：thinking 可折叠、tool 调用有 timeline、Markdown 含表格/代码高亮/图片预览（FEAT-034 draft）
 
 ---

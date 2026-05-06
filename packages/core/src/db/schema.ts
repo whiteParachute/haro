@@ -154,6 +154,44 @@ export const CORE_TABLES: readonly TableDefinition[] = [
       PRIMARY KEY (component_type, component_id)
     )`,
   },
+  {
+    name: 'cron_jobs',
+    ddl: `CREATE TABLE IF NOT EXISTS cron_jobs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      agent_id TEXT,
+      mode TEXT NOT NULL CHECK(mode IN ('cron','once')),
+      when_expr TEXT NOT NULL,
+      task_input TEXT NOT NULL,
+      retry_policy TEXT,
+      status TEXT NOT NULL CHECK (status IN (
+        'pending','running','done','failed','cancelled','cancelled-forced','missed'
+      )),
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_run_at INTEGER,
+      next_run_at INTEGER,
+      last_status TEXT,
+      last_error TEXT,
+      last_delivery_error TEXT,
+      created_at INTEGER NOT NULL,
+      cancelled_at INTEGER,
+      metadata TEXT
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_cron_jobs_session ON cron_jobs(session_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_cron_jobs_due ON cron_jobs(enabled, next_run_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_cron_jobs_status ON cron_jobs(status, created_at)`,
+    ],
+  },
+  {
+    name: 'cron_lease',
+    ddl: `CREATE TABLE IF NOT EXISTS cron_lease (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      holder TEXT NOT NULL,
+      acquired_at INTEGER NOT NULL,
+      lease_until INTEGER NOT NULL
+    )`,
+  },
 ];
 
 export const MEMORY_READ_MODEL_TABLES: readonly TableDefinition[] = [

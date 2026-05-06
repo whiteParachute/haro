@@ -49,7 +49,7 @@ Pattern Miner 是 Haro 进化层第三个驱动源（Agent 自判断）的核心
 ## 4. Requirements / 需求项
 
 - R1: 新建 `packages/core/src/pattern-miner/`，含 `service.ts` / `patterns/<id>.ts` / `evidence.ts` / `confidence.ts` / `proposal-bridge.ts`。
-- R2: Pattern Miner 注册为 FEAT-033 scheduled task：默认 cron `0 */12 * * *`（每 12 小时一次）；可通过 `evolution.patternMiner.cron` 覆盖。
+- R2: Pattern Miner 注册为 FEAT-033 cron job：默认 cron `0 */12 * * *`（每 12 小时一次）；可通过 `evolution.patternMiner.cron` 覆盖。
 - R3: 至少实现 4 个模式 detector：
     - **failure-cascade**：同一 session 在 60 分钟内触发同一 errorCode ≥ 5 次，或不同 session 24h 内 ≥ 30 次
     - **external-deprecation**：Industry Intel 24h 内入库标题命中 deprecation 关键词（deprecated / sunset / EOL / removed），且 Self-Monitor 显示该工具 / API 仍被高频调用

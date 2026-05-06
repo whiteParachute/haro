@@ -79,6 +79,13 @@ export interface RunAgentInput {
    */
   continueFromSessionId?: string;
   onEvent?: (event: AgentEvent, sessionId: string) => void;
+  /**
+   * Cooperative cancellation signal (FEAT-033 R10). When aborted, the
+   * runner stops the current provider iterator, emits an `aborted` terminal
+   * event, marks the session `failed`, and returns. Aborting before / between
+   * fallback candidates short-circuits the candidates loop.
+   */
+  signal?: AbortSignal;
 }
 
 export interface RunAgentResult {

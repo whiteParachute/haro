@@ -56,6 +56,10 @@
       "types": "./dist/services/index.d.ts",
       "default": "./dist/services/index.js"
     },
+    "./cron": {
+      "types": "./dist/cron/index.d.ts",
+      "default": "./dist/cron/index.js"
+    },
     "./errors": {
       "types": "./dist/errors/index.d.ts",
       "default": "./dist/errors/index.js"
@@ -75,6 +79,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
+    "cron-parser": "^5.5.0",
     "pino": "^9.5.0",
     "pino-roll": "^3.0.0",
     "yaml": "^2.6.1",

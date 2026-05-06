@@ -47,7 +47,7 @@ Phase 2.0 引入自动触发：基于 FEAT-040 Self-Monitor 与 FEAT-036 Industr
 ## 4. Requirements / 需求项
 
 - R1: 新建 `packages/core/src/auto-metabolism/`，含 `trigger.ts` / `policies.ts` / `dry-run.ts` / `proposal-bridge.ts`。
-- R2: 触发器注册为 FEAT-033 scheduled task：默认 cron `0 */6 * * *`（每 6 小时一次）；可通过 `evolution.autoTrigger.cron` 覆盖。
+- R2: 触发器注册为 FEAT-033 cron job：默认 cron `0 */6 * * *`（每 6 小时一次）；可通过 `evolution.autoTrigger.cron` 覆盖。
 - R3: 每次触发评估 5 类政策（policies），任一命中即启动对应 dry-run：
     - **eat-from-intel**：Industry Intel `pending-review` 队列 ≥ 5 条且最旧 > 24h，触发批量 eat dry-run
     - **shit-stale-skills**：Self-Monitor `skill_hit_rate_by_agent` 中 hit_rate < 5% 且 > 90 天未用，触发 shit dry-run

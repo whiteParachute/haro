@@ -62,12 +62,12 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **多用户支持** — 本地多用户 + RBAC + Bootstrap + Audit Log（FEAT-028，自用为主，欢迎多人使用）
 - **Web API 解耦**（FEAT-038）— `packages/web-api/` 独立服务，CLI `haro web` 是薄启动器；`pnpm -F @haro/web-api start` 也可独立启动
 - **CLI 等价补完**（FEAT-039）— chat / session / agent / memory / logs / workflow / budget / user / skill 单数 / config get-set-unset 全部落地；REPL `/sessions` `/memory` `/logs` `/budget` slash 直连 `services`；所有命令 `--json/--human` 统一（默认按 TTY 推断），`--json` 输出 `CliRecordEnvelope` / `CliListEnvelope`
+- **Cron 任务**（FEAT-033）— cron 表达式 + once ISO 时间触发，hermes-agent 风格 `tick()` 纯函数 + 跨进程 SQLite advisory lease lock；`haro cron list/show/create/cancel/trigger/tick/daemon` 命令族；`/api/v1/cron/jobs` REST；三触发源（web-api ticker / `haro cron daemon` / `haro cron tick`）任一在跑即可调度，**不强依赖 web-api**
 
 ### 进行中（Phase 1.5）
 
 - **Web Channel**（FEAT-031）— Web UI 作为 IM channel
 - **MCP 工具层**（FEAT-032）— 内置 MCP server + 4 个核心工具
-- **定时任务**（FEAT-033）— cron + 一次性
 - **流式 UX 升级**（FEAT-034）— thinking 折叠、tool timeline、Hook 状态
 
 ### 远期（Phase 2.0+）
@@ -245,7 +245,7 @@ Haro 采用 **spec 驱动开发**：
 | --- | --- | --- |
 | Phase 0 Foundation | 已完成 | CLI + Codex + 单 Agent + Memory + Channel + Skills + 手动 eat/shit |
 | Phase 1 Intelligence & Safety | 已完成 | Scenario Router + Team Orchestrator + Dashboard + Memory Fabric v1 + Asset Registry + 权限预算 |
-| Phase 1.5 Workbench Parity | **进行中**（FEAT-038/039 done；FEAT-031/032/033/034 draft）| Web API 解耦 + CLI 等价补完 + Web Channel + MCP 工具层 + 定时任务 + 流式 UX |
+| Phase 1.5 Workbench Parity | **进行中**（FEAT-038/039/033 done；FEAT-031/032/034 draft）| Web API 解耦 + CLI 等价补完 + Cron 任务 + Web Channel + MCP 工具层 + 流式 UX |
 | Phase 2.0 Evolution Awareness | 规划中 | Self-Monitor + Industry Intel + 自动 eat/shit 触发 |
 | Phase 2.5 Evolution Proposal | 规划中 | Pattern Miner + Evolution Proposal + 用户审批闭环 |
 | Phase 3.0 Controlled Self-Evolution | 规划中 | Auto-Refactorer L0–L1 + 灰度 + 回滚 |
