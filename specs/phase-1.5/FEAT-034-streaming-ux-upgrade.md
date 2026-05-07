@@ -5,7 +5,7 @@ status: draft
 phase: phase-1.5
 owner: whiteParachute
 created: 2026-05-01
-updated: 2026-05-01
+updated: 2026-05-07
 related:
   - ../phase-1/FEAT-016-web-dashboard-agent-interaction.md
   - ../phase-1/FEAT-018-web-dashboard-orchestration-observability.md
@@ -36,14 +36,16 @@ happyclaw 在这一层做得很完整：thinking 折叠面板 + 工具调用 tim
 - G4: 流式 SSE / WS 事件协议显式区分 12 类 StreamEvent（thinking_delta / tool_call_start / tool_call_end / hook_pre / hook_post / message_delta / ...），不再用一个混沌的 text stream。
 - G5: 该升级必须同时惠及 Web Channel（FEAT-031）和 Web Dashboard 既有 ChatPage 的两个使用面。
 - G6: 性能：1000 条消息 / 100 个工具调用的 session，前端渲染主流程 P95 < 200ms（virtualized list / pagination）。
+- G7: 移动端浏览器（≥ 375px 视口宽度）核心路径可用：消息流可读、Composer 可输入、ToolTimeline 抽屉可关闭让出主区域。不追求像素级 PWA 体验。
 
 ## 3. Non-Goals / 不做的事
 
-- 不实现 PWA / 离线模式 / 移动端专属适配（自用单机不需要）。
+- 不实现 PWA / 离线模式 / 移动端专属 native shell（自用单机不需要）。**响应式布局**仍在范围内（D1：见 G7 / R11）。
 - 不实现自定义主题 / 模板系统（owner 不要花在这上面）。
 - 不引入富文本编辑器；输入框仍是 plain textarea + Markdown 提示。
 - 不实现实时 collaborative editing（无多用户同时编辑同一 session 的需求）。
 - 不引入新的渲染框架；继续用 React 19 + 既有 Tailwind + shadcn/ui。
+- **不做工具调用聚合统计**（D2）：Tool Timeline 仅展示当前 session 最近 N 个调用的详情；按工具类型 / 跨 session 的频次 / 耗时 / 失败率聚合留给 FEAT-025 Runtime Monitoring 或 Phase 2.0 FEAT-040 Self-Monitor 消费 `tool_invocation_log`（FEAT-032）。
 
 ## 4. Requirements / 需求项
 
@@ -54,9 +56,11 @@ happyclaw 在这一层做得很完整：thinking 折叠面板 + 工具调用 tim
 - R5: Tool Call Timeline 必须支持嵌套展示（agent 调用工具 A，A 内部又调用 B）；至少 3 层嵌套；超出层级折叠。
 - R6: Hook 状态展示：PreToolUse 显示 → 等待 → PostToolUse 完成 / 失败；状态色用 shadcn/ui 既有 token，不引入新色板。
 - R7: GFM 渲染至少覆盖：表格（含对齐）、行内 / 块代码（自动语言识别 + 高亮）、图片（点击 lightbox）、有序 / 无序列表（嵌套）、引用块、horizontal rule、删除线、任务列表 checkbox。
-- R8: 代码块必须支持复制按钮、行号、语言标签；超过 50 行自动折叠。
+- R8: 代码块必须支持复制按钮、行号、语言标签；超过 50 行自动折叠。**语言识别失败时（D3）** fallback 为纯文本展示，保留复制按钮，**移除**行号与语言标签（避免显示假信息），不阻塞渲染。
 - R9: 1000 条消息 session 用 virtualized list 渲染，向上滚动按页加载历史，不阻塞主线程超过 50ms。
 - R10: Web Channel（FEAT-031）的 history 加载与 streaming 推送共享同一套渲染管线。
+- R11: 响应式布局（D1）：viewport ≥ 375px 时，ChatPage 主消息流占满主区，ToolTimeline 在 < 768px 时降级为可关闭抽屉（默认收起）；MessageBubble / Composer 不出现横向滚动。Tailwind responsive utilities 即可，不引入额外依赖。
+- R12: Image lightbox（D4）支持**多图轮播**：当一条消息含 ≥ 2 张图片时，点开任一张进入 lightbox 后可用方向键 / 移动端左右滑动切换、显示当前序号 / 总数（如 `2 / 5`），ESC / 背景点击关闭。**自实现**轻量组件，不引入 `react-photo-view` / `swiper` 等新前端依赖（与 5.3 节渲染依赖保持一致）。
 
 ## 5. Design / 设计要点
 
@@ -97,9 +101,10 @@ ChatPage
 
 ### 5.3 渲染依赖
 
-- `react-markdown` + `remark-gfm` + `rehype-highlight`（语言高亮，使用 `highlight.js` 全量包过大 → 按需注册常用语言）
-- `react-window` 做 virtualized list；自实现 image lightbox（避免引入 react-photo-view 等大依赖）
+- `react-markdown` + `remark-gfm` + `rehype-highlight`（语言高亮，使用 `highlight.js` 全量包过大 → 按需注册常用语言；自动检测失败时按 R8 fallback 为纯文本）
+- `react-window` 做 virtualized list；**自实现多图 lightbox**（D4 / R12：键盘左右、touchmove swipe、序号显示、ESC 关闭；约 150–200 行 React，避免引入 react-photo-view / swiper 等依赖）
 - 折叠 / 展开使用 shadcn/ui `Collapsible` 组件
+- 响应式（D1 / R11）只用 Tailwind `sm: md: lg:` 断点；ToolTimeline 在 `< md` 用 shadcn/ui `Sheet` 抽屉，已在 Web 既有依赖里
 
 ### 5.4 后端事件源改造
 
@@ -112,10 +117,12 @@ ChatPage
 - AC1: 一次包含 thinking 的对话，ChatPage 主流只显示 message，不再混入 reasoning；thinking 在折叠面板里完整可读（对应 R2、R3、R4）。
 - AC2: agent 一次调用工具 A，A 调用 B，B 调用 C，timeline 显示三层嵌套并正确折叠（对应 R5）。
 - AC3: agent 触发 PreToolUse hook 后阻塞 0.5s 才放行，timeline 显示 "pending → allowed" 状态变更（对应 R6）。
-- AC4: 一段含表格 / 代码块 / 图片的 Markdown，渲染后表格对齐、代码块高亮、图片点击弹 lightbox（对应 R7、R8）。
+- AC4: 一段含表格 / 代码块 / 图片的 Markdown，渲染后表格对齐、代码块高亮、图片点击弹 lightbox；**含 ≥ 2 张图片时 lightbox 支持方向键 / 触屏滑动切换并显示 `n / total`**（对应 R7、R8、R12 / D4）。
 - AC5: 1000 条历史消息 session 加载完成总耗时 < 1s，初始渲染 P95 < 200ms（对应 R9）。
 - AC6: Web Channel session 进入后历史与 ChatPage 体验一致，无渲染差异（对应 R10）。
 - AC7: 后端事件协议 12 类 StreamEvent 单测覆盖 ≥ 95%（对应 R1）。
+- AC8: 在 375 × 667 viewport（iPhone SE 等价）下打开 ChatPage，消息流可读、ToolTimeline 默认收起为抽屉、Composer 输入不出现横向滚动；Playwright 截图回归通过（对应 R11 / D1 / G7）。
+- AC9: 一段未知语言的 ```` ``` ```` 代码块渲染时 fallback 为纯文本背景 + 复制按钮，不显示语言标签 / 行号，且不影响后续 Markdown 块渲染（对应 R8 / D3）。
 
 ## 7. Test Plan / 测试计划
 
@@ -125,13 +132,14 @@ ChatPage
 - 视觉回归：Playwright 截图对比 8 个典型场景（plain msg / thinking / tool / nested tool / hook / table / code / image）。
 - 兼容性：Chrome / Safari / Firefox 最新两个版本。
 
-## 8. Open Questions / 待定问题
+## 8. Resolved Decisions / 已决议（原 Open Questions）
 
-- Q1: 移动端浏览器是否完全不优化？倾向是，但 Tailwind 默认 responsive class 不会成本太高，可顺手保留。
-- Q2: Tool timeline 是否需要按工具类型聚合统计（"今天调用 send_message 30 次"）？倾向 Phase 1.5 不做，留给 FEAT-025 Runtime Monitoring 或 Phase 2.0 Self-Monitor。
-- Q3: 代码块语言识别失败时 fallback？倾向纯文本展示 + 保留复制按钮。
-- Q4: Image lightbox 是否需要支持多图轮播？倾向单图够用，避免引入新依赖。
+- D1（原 Q1，移动端是否优化）：**做响应式布局**。viewport ≥ 375px 核心路径必须可用（G7 / R11 / AC8）。仍**不做** PWA / 离线 / native shell。Tailwind 既有断点 + shadcn/ui `Sheet` 即可，不引入新前端依赖。
+- D2（原 Q2，Tool Timeline 是否做聚合统计）：**不做**。本 spec 只展示当前 session 最近 N 个调用的详情；跨 session / 跨工具类型的频次 / 失败率 / 耗时聚合归属 FEAT-025 Runtime Monitoring 与 Phase 2.0 FEAT-040 Self-Monitor，二者消费 FEAT-032 落地的 `tool_invocation_log` 表。
+- D3（原 Q3，代码块语言识别失败 fallback）：**fallback 为纯文本** + **保留复制按钮**，不展示语言标签与行号（避免假信息），不阻塞渲染（R8 / AC9）。
+- D4（原 Q4，Image lightbox 是否支持多图轮播）：**支持多图轮播**。≥ 2 张图时方向键 / touch swipe 切换、显示当前序号 / 总数、ESC / 背景点击关闭。仍坚持**自实现**（约 150–200 行 React），不引入 `react-photo-view` / `swiper` 等新依赖（R12 / AC4 / 5.3）。
 
 ## 9. Changelog / 变更记录
 
-- 2026-05-01: whiteParachute — 初稿（Phase 1.5 自用底座补完批次 1）
+- 2026-05-01: whiteParachute — 初稿（Phase 1.5 自用底座补完批次 1）。
+- 2026-05-07: whiteParachute — 收敛 Open Questions Q1–Q4 为 D1–D4（owner 决策：移动端做响应式布局 / Tool Timeline 不做聚合 / 代码块识别失败 fallback 纯文本 + 复制按钮 / Image lightbox 支持多图轮播且自实现不引依赖）。Goals 加 G7、Requirements 加 R11 / R12、扩 R8 / AC4、加 AC8 / AC9，Non-Goals 同步加聚合统计排除项；5.3 渲染依赖明确多图 lightbox 自实现 + 响应式 Sheet 抽屉。
