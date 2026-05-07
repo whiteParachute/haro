@@ -1,0 +1,41 @@
+{
+  "name": "@haro/mcp-tools",
+  "version": "0.1.0",
+  "description": "Haro MCP tools — JSON-RPC over stdio, 4 builtin tools (send_message / memory_query / memory_remember / schedule_task) (FEAT-032)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./bin": {
+      "types": "./dist/bin/server-entry.d.ts",
+      "default": "./dist/bin/server-entry.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@haro/channel": "workspace:*",
+    "@haro/core": "workspace:*",
+    "better-sqlite3": "^11.7.0",
+    "cron-parser": "^5.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.18.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

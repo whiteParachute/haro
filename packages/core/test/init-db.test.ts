@@ -20,6 +20,7 @@ const EXPECTED_TABLE_NAMES = [
   'component_usage',
   'cron_jobs',
   'cron_lease',
+  'tool_invocation_log',
   'evolution_assets',
   'evolution_asset_events',
   'web_users',

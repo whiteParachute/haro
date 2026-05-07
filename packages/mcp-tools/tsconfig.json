@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "composite": true,
+    "paths": {
+      "@haro/channel": ["../channel/dist/index.d.ts"],
+      "@haro/core": ["../core/dist/index.d.ts"],
+      "@haro/core/services": ["../core/dist/services/index.d.ts"],
+      "@haro/core/memory": ["../core/dist/memory/index.d.ts"],
+      "@haro/core/cron": ["../core/dist/cron/index.d.ts"],
+      "@haro/core/evolution": ["../core/dist/evolution/index.d.ts"],
+      "@haro/core/paths": ["../core/dist/paths.d.ts"]
+    }
+  },
+  "references": [
+    { "path": "../channel" },
+    { "path": "../core" }
+  ],
+  "include": ["src/**/*.ts"],
+  "exclude": ["test/**/*", "dist", "node_modules"]
+}

@@ -192,6 +192,25 @@ export const CORE_TABLES: readonly TableDefinition[] = [
       lease_until INTEGER NOT NULL
     )`,
   },
+  {
+    name: 'tool_invocation_log',
+    ddl: `CREATE TABLE IF NOT EXISTS tool_invocation_log (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      params_hash TEXT NOT NULL,
+      decision TEXT NOT NULL CHECK (decision IN ('allowed','denied','needs-approval')),
+      result_status TEXT NOT NULL CHECK (result_status IN ('success','error','pending')),
+      latency_ms INTEGER,
+      error_code TEXT,
+      invoked_at INTEGER NOT NULL
+    )`,
+    supportingDdl: [
+      `CREATE INDEX IF NOT EXISTS idx_tool_invocation_log_session ON tool_invocation_log(session_id, invoked_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_tool_invocation_log_tool ON tool_invocation_log(tool_name, invoked_at)`,
+    ],
+  },
 ];
 
 /**

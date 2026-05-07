@@ -16,6 +16,7 @@ import type {
   ProviderRegistry,
 } from '../provider/index.js';
 import { resolveSelection } from './selection.js';
+import type { McpSessionFactory, McpSessionHandle } from './mcp-session.js';
 import type {
   ResolvedSelection,
   ResolvedSelectionCandidate,
@@ -53,6 +54,15 @@ export interface AgentRunnerOptions {
   taskTimeoutMs?: number;
   memoryWrapupHook?: MemoryWrapupHook;
   memoryFabric?: MemoryRuntime;
+  /**
+   * FEAT-032 D1: per-session MCP server factory. When provided, the runner
+   * spawns one MCP session at the start of `run()` and shuts it down (with a
+   * 5 s SIGTERM grace) in the finally block. Default `undefined` keeps the
+   * behaviour bit-identical for installs that don't use the MCP tool layer.
+   */
+  mcpSessionFactory?: McpSessionFactory;
+  /** Optional shutdown timeout override (ms); default 5000 per FEAT-032 R10. */
+  mcpSessionShutdownTimeoutMs?: number;
 }
 
 interface SessionStateRecord {
@@ -125,6 +135,7 @@ export class AgentRunner {
     const db = opened.database!;
     const sessionId = this.createSessionId();
     const timeoutMs = this.resolveTimeoutMs(config);
+    const mcpHandle = await this.startMcpSession(sessionId, agent.id, input);
     const candidates = [
       applyInputOverrides(selection.primary, input),
       ...selection.fallbacks,
@@ -311,7 +322,48 @@ export class AgentRunner {
         finalEvent,
       };
     } finally {
+      await this.stopMcpSession(mcpHandle);
       db.close();
+    }
+  }
+
+  private async startMcpSession(
+    sessionId: string,
+    agentId: string,
+    input: RunAgentInput,
+  ): Promise<McpSessionHandle | null> {
+    if (!this.options.mcpSessionFactory) return null;
+    try {
+      const handle = await this.options.mcpSessionFactory({
+        session: {
+          sessionId,
+          agentId,
+          ...(input.channelId ? { channelId: input.channelId } : {}),
+          ...(input.userId ? { userId: input.userId } : {}),
+        },
+        ...(this.options.root ? { root: this.options.root } : {}),
+        ...(this.options.dbFile ? { dbFile: this.options.dbFile } : {}),
+      });
+      return handle;
+    } catch (err) {
+      this.logger.warn?.(
+        { sessionId, err: err instanceof Error ? err.message : String(err) },
+        'mcp-tools session factory failed; continuing without MCP',
+      );
+      return null;
+    }
+  }
+
+  private async stopMcpSession(handle: McpSessionHandle | null): Promise<void> {
+    if (!handle) return;
+    const timeoutMs = this.options.mcpSessionShutdownTimeoutMs ?? 5_000;
+    try {
+      await handle.stop({ timeoutMs });
+    } catch (err) {
+      this.logger.warn?.(
+        { err: err instanceof Error ? err.message : String(err) },
+        'mcp-tools session shutdown raised',
+      );
     }
   }
 

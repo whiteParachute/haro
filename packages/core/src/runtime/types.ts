@@ -86,6 +86,14 @@ export interface RunAgentInput {
    * fallback candidates short-circuits the candidates loop.
    */
   signal?: AbortSignal;
+  /**
+   * Optional channel that triggered this run (FEAT-032 SessionContext.channelId).
+   * Forwarded to the per-session MCP server so `send_message` can detect
+   * cross-channel sends and gate them behind operator approval.
+   */
+  channelId?: string;
+  /** Optional caller user id, mirrors channelId for permission/audit context. */
+  userId?: string;
 }
 
 export interface RunAgentResult {

@@ -41,7 +41,7 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 
 - Phase 0 验收闭环已完成（见 [`docs/reviews/phase-0-audit-2026-04-19.md`](docs/reviews/phase-0-audit-2026-04-19.md)）
 - Phase 1 18 个 spec 中 17 个已 done，FEAT-030（ChatGPT 订阅认证 Dashboard UI）draft
-- Phase 1.5：FEAT-038 Web API 解耦 + FEAT-039 CLI 等价补完 + FEAT-033 Cron + FEAT-035 Memory Fabric v2 + FEAT-031 Web Channel 实现交付；FEAT-032 / 034 仍 draft（FEAT-031 spec 也保持 draft 等 FEAT-032 集成）
+- Phase 1.5：FEAT-038 Web API 解耦 + FEAT-039 CLI 等价补完 + FEAT-033 Cron + FEAT-035 Memory Fabric v2 + FEAT-031 Web Channel + FEAT-032 MCP 工具层（4 工具 + per-session subprocess 生命周期）实现交付；FEAT-034 仍 draft（FEAT-031/032 spec 已落地代码；FEAT-035 v2 核心实现已落地，spec 待最终签署）
 - 历史规划记录：[`docs/planning/archive/redesign-2026-05-01.md`](docs/planning/archive/redesign-2026-05-01.md)（已归档）
 - 当前仓库版本：`0.1.0`
 - 当前形态：**源码运行 + 自用为主**，欢迎多人使用但不是对外发布的稳定产品版本
@@ -63,12 +63,11 @@ Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 wor
 - **Web API 解耦**（FEAT-038）— `packages/web-api/` 独立服务，CLI `haro web` 是薄启动器；`pnpm -F @haro/web-api start` 也可独立启动
 - **CLI 等价补完**（FEAT-039）— chat / session / agent / memory / logs / workflow / budget / user / skill 单数 / config get-set-unset 全部落地；REPL `/sessions` `/memory` `/logs` `/budget` slash 直连 `services`；所有命令 `--json/--human` 统一（默认按 TTY 推断），`--json` 输出 `CliRecordEnvelope` / `CliListEnvelope`
 - **Cron 任务**（FEAT-033）— cron 表达式 + once ISO 时间触发，hermes-agent 风格 `tick()` 纯函数 + 跨进程 SQLite advisory lease lock；`haro cron list/show/create/cancel/trigger/tick/daemon` 命令族；`/api/v1/cron/jobs` REST；三触发源（web-api ticker / `haro cron daemon` / `haro cron tick`）任一在跑即可调度，**不强依赖 web-api**
+- **MCP 工具层**（FEAT-032）— `@haro/mcp-tools` 包：MCP stdio + JSON-RPC server + 4 工具（`send_message` / `memory_query` / `memory_remember` / `schedule_task`）；per-tool timeout（D2）+ per-session subprocess 生命周期（D1，SIGTERM 5 s 后 SIGKILL）+ permission 守门（跨 channel / 跨 scope 触发审批）+ `tool_invocation_log` 审计表（params 仅落 sha256 hash）；CLI / Web 通过 `services.mcp.listInvocations` 看历史
 
 ### 进行中（Phase 1.5）
-
-- **MCP 工具层**（FEAT-032）— 内置 MCP server + 4 个核心工具（含 send_message 路由 Web Channel session，回填 FEAT-031 AC4）
 - **流式 UX 升级**（FEAT-034）— thinking 折叠、tool timeline、Hook 状态
-- **Memory Fabric v2**（FEAT-035，已实现核心，待落地 FEAT-032 集成）— aria-memory 风格文件存储 + searchMemoryFiles + runWrapup/runSleep + migrateFromV1
+- **Memory Fabric v2**（FEAT-035，核心已实现 + FEAT-032 已通过 `searchMemoryFiles` / `writeEntry` 集成；spec 待最终签署）— aria-memory 风格文件存储 + searchMemoryFiles + runWrapup/runSleep + migrateFromV1
 
 ### 远期（Phase 2.0+）
 
@@ -246,7 +245,7 @@ Haro 采用 **spec 驱动开发**：
 | --- | --- | --- |
 | Phase 0 Foundation | 已完成 | CLI + Codex + 单 Agent + Memory + Channel + Skills + 手动 eat/shit |
 | Phase 1 Intelligence & Safety | 已完成 | Scenario Router + Team Orchestrator + Dashboard + Memory Fabric v1 + Asset Registry + 权限预算 |
-| Phase 1.5 Workbench Parity | **进行中**（FEAT-038/039/033 done；FEAT-031/035 核心实现已完成；FEAT-032/034 draft）| Web API 解耦 + CLI 等价补完 + Cron 任务 + Web Channel + MCP 工具层 + 流式 UX + Memory Fabric v2 |
+| Phase 1.5 Workbench Parity | **进行中**（FEAT-038/039/033/032 done；FEAT-031/035 核心实现已完成；FEAT-034 draft）| Web API 解耦 + CLI 等价补完 + Cron 任务 + Web Channel + MCP 工具层 + 流式 UX + Memory Fabric v2 |
 | Phase 2.0 Evolution Awareness | 规划中 | Self-Monitor + Industry Intel + 自动 eat/shit 触发 |
 | Phase 2.5 Evolution Proposal | 规划中 | Pattern Miner + Evolution Proposal + 用户审批闭环 |
 | Phase 3.0 Controlled Self-Evolution | 规划中 | Auto-Refactorer L0–L1 + 灰度 + 回滚 |

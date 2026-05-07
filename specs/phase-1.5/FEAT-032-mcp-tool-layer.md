@@ -1,7 +1,7 @@
 ---
 id: FEAT-032
 title: MCP 工具层 + 4 个核心工具
-status: draft
+status: done
 phase: phase-1.5
 owner: whiteParachute
 created: 2026-05-01
@@ -164,3 +164,15 @@ CREATE TABLE tool_invocation_log (
 
 - 2026-05-01: whiteParachute — 初稿（Phase 1.5 自用底座补完批次 1）
 - 2026-05-06: whiteParachute — 收敛 Open Questions Q1–Q4 为 D1–D4（owner 决策：MCP per-session spawn / timeout 按工具维度配置 / 不做工具组合层让 agent 自行编排 / `memory_remember` 的 `dimension` 完全参考 aria-memory 4 类设计）。
+- 2026-05-06: whiteParachute — **实现交付**。新建 `packages/mcp-tools/` 包：`McpServer`（stdio + JSON-RPC，无新依赖）+ `ToolRegistry`（per-tool `timeoutMs` 强制、permission/audit 守门链）+ 4 个工具（`send_message` / `memory_query` / `memory_remember` / `schedule_task`）；新增 `tool_invocation_log` 表（`packages/core/src/db/schema.ts`，仅 sha256 hash params）+ `services.mcp.listInvocations` 只读视图 + AgentRunner `mcpSessionFactory` 钩子（`packages/core/src/runtime/mcp-session.ts`，per-session subprocess SIGTERM 5 s → SIGKILL）。验证：`pnpm lint` 全绿、`pnpm test` 12 个包 683 用例全绿（含 `@haro/mcp-tools` 56 用例 + `@haro/core` `mcp-session.test.ts` 3 用例）、`pnpm build` 全部包 dist 产出、`pnpm smoke` ok（5 项 AC）。AC 覆盖：AC1（send_message 通过 ChannelRegistry 投递并记录）、AC2（memory_query dimension 过滤）、AC3（memory_remember 写入 + 4 类 dimension + EvolutionAssetRegistry 事件）、AC4（schedule_task 走 services.cron.createJob）、AC5（结构化错误码 + retryable 矩阵）、AC6（subprocess 5 s graceful shutdown）、AC7（params_hash 不入原文）。
+- 2026-05-06: whiteParachute — Codex fresh-context review 修复：
+  - registry 调度顺序改为 parse → permission → execute（避免畸形 params 被记为 NEEDS_APPROVAL 污染审批队列）；
+  - `runWithTimeout` 在超时分支调 `AbortController.abort()`，`ToolExecutionContext.signal` 暴露给工具做协作式取消（best-effort，参见 `docs/modules/mcp-tools.md` "已知缺口"）；
+  - `schedule_task` 用与 `cron/manager.ts` 同样的 `ISO8601_STRICT` 正则前置校验；`createJob` 抛 `HaroError` 时映射为 `INVALID_PARAMS` / `PERMISSION_DENIED`，避免泄漏 `INTERNAL_ERROR`；
+  - `memory_remember` 移除"缺省 dimension='project'"硬编码，省略时让 fabric 推断，并把 `EvolutionAssetRegistry.recordEvent` 失败降级为 stderr warn（不再静默吞）；
+  - `transport.ts` 解析失败发 JSON-RPC `-32700` parse-error 而非抛错终止 `run()`；
+  - `audit.hashParams` 改用完整 SHA-256 + 可选 `HARO_TOOL_AUDIT_SALT` env 加盐；
+  - `server.ts` `parseToolCallParams` 错误分支补 `remediation` 字段，AC5 错误结构对齐；
+  - `bin/server-entry.ts` 注册 SIGTERM/SIGINT 后 `process.exit(0)`（避免 5 s SIGKILL 兜底），并显式 stderr 警告 ChannelRegistry 在子进程内为空；
+  - `McpSessionHandle.child` 暴露 `ChildProcess` 句柄，为后续 provider wiring 留接口；
+  - 已知缺口（仍待后续 FEAT 跟进）：provider SDK `mcpServers` 配置尚未把 spawn 的子进程接通到 `agent.query` 上，agent 当前用法仍以 in-process 嵌入 `McpServer` 为主；subprocess 内 ChannelRegistry 留空；详见 `docs/modules/mcp-tools.md` "已知缺口"。

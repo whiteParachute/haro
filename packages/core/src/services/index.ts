@@ -25,6 +25,7 @@ export * as budget from './budget.js';
 export * as config from './config.js';
 export * as skills from './skills.js';
 export * as cron from './cron.js';
+export * as mcp from './mcp.js';
 
 // Re-export commonly-imported users symbols at the namespace root for
 // drop-in compatibility with the legacy `@haro/web-api/auth-store`
