@@ -361,6 +361,17 @@ export class WebChannel implements ManagedChannel {
     return () => this.subscribers.delete(subscriber);
   }
 
+  /**
+   * FEAT-034 — broadcast a structured `StreamEvent` to subscribers wrapped in
+   * the `kind: 'stream'` envelope. Used by the runtime/executor to forward
+   * thinking / tool / hook / usage signals alongside the legacy `agent`
+   * deltas. The event is broadcast as-is; subscribers (web-api → WebSocket)
+   * filter by sessionId.
+   */
+  publishStreamEvent(sessionId: string, event: WebChannelStreamEvent): void {
+    this.broadcast(sessionId, event);
+  }
+
   // --- internals -----------------------------------------------------------
 
   private broadcast(sessionId: string, event: WebChannelStreamEvent): void {

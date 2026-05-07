@@ -60,6 +60,10 @@
       "types": "./dist/cron/index.d.ts",
       "default": "./dist/cron/index.js"
     },
+    "./stream": {
+      "types": "./dist/stream/index.d.ts",
+      "default": "./dist/stream/index.js"
+    },
     "./errors": {
       "types": "./dist/errors/index.d.ts",
       "default": "./dist/errors/index.js"

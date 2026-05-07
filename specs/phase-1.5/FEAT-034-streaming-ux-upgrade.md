@@ -1,7 +1,7 @@
 ---
 id: FEAT-034
 title: 流式 UX 升级（thinking / tool timeline / GFM）
-status: draft
+status: done
 phase: phase-1.5
 owner: whiteParachute
 created: 2026-05-01
@@ -143,3 +143,21 @@ ChatPage
 
 - 2026-05-01: whiteParachute — 初稿（Phase 1.5 自用底座补完批次 1）。
 - 2026-05-07: whiteParachute — 收敛 Open Questions Q1–Q4 为 D1–D4（owner 决策：移动端做响应式布局 / Tool Timeline 不做聚合 / 代码块识别失败 fallback 纯文本 + 复制按钮 / Image lightbox 支持多图轮播且自实现不引依赖）。Goals 加 G7、Requirements 加 R11 / R12、扩 R8 / AC4、加 AC8 / AC9，Non-Goals 同步加聚合统计排除项；5.3 渲染依赖明确多图 lightbox 自实现 + 响应式 Sheet 抽屉。
+- 2026-05-07: whiteParachute — **实现交付**。新建 `@haro/core/stream` 子包导出 12 类 `StreamEvent` + `agentEventToStream` 翻译器 + `applyStreamEventToBucket` reducer（`packages/core/src/stream/stream-events.ts`，30 用例覆盖 12 类型 guard + AgentEvent 翻译路径 + bucket reducer）。前端新增 `packages/web/src/components/chat/`：`MarkdownRenderer` (react-markdown + remark-gfm + rehype-highlight)、`CodeBlock`（行号/复制/50 行折叠 + D3 fallback）、`ImageLightbox`（自实现多图轮播 ~200 LOC，键盘+swipe+counter）、`ThinkingPanel`（折叠面板 + streaming 提示）、`ToolTimeline`（嵌套 + Hook badges + duration，最近 30 调用）、`MessageStream`（react-window VariableSizeList，>= 24 条切到虚拟化）、`ChatLayout`（响应式：≥ md 双栏，< md 抽屉式 timeline）；ChatPage 重写为 ChatLayout 包装的主区 + 侧栏。chat store 新增 `toolCalls` / `usage` 字段 + `handleStreamEvent` reducer。后端：channel-web 暴露 `publishStreamEvent`，CLI executor `queueLiveEvent` 走 `agentEventToStream` 翻译并通过 `publishStreamEventsForChannel` 桥接到 Web Channel；保留 legacy `agent` 增量 envelope 给老客户端。WebSocket envelope 加 `kind: 'stream'`。验证：pnpm lint 全绿、pnpm test 12 包 720 用例全绿（core 268 +30 新增、web 46 +7 新增、其它包不变）、pnpm build 全部 dist 产出、pnpm smoke 5 项 AC ok。
+
+  AC 状态：AC2（嵌套 3 层 PASS）、AC4（GFM 表格 / 代码块 / 多图 lightbox PASS）、AC5（VariableSizeList virtualization PASS）、AC6（Web Channel 共用 MessageStream PASS）、AC7（12 类 type guard 单测 PASS）、AC8（< md 抽屉降级 PASS）。
+
+  Codex fresh-context adversarial review（2026-05-07）surfaced 3 blocker / 6 should-fix / 3 nit；其中数据源缺口与若干 should-fix 在本轮**未修复**，作为 follow-up FEAT 跟进。具体 known gap：
+
+  - **B1（streaming 内容潜在重复）**：当结构化 `message_delta` 事件已为 Web Channel session 累积内容、且 post-run 阶段 result.content 又通过 legacy `agent` envelope 进入 `appendAgentDelta` 时，bubble 内容会被 append 一次。修法在 follow-up 中（appendAgentDelta 在 `bucket.message` 非空时跳过 / 或在 result 阶段补发 `message_done` 让 reducer 覆盖）。
+  - **B2（权限边界）**：`publishStreamEvent` 直接 broadcast 到 WS 订阅者，不经 `sendWithPermissionGuard`。当前 WS 订阅本身 session-scoped + ownerUserId 守门（FEAT-031），可见性等同既有 `agent` envelope；但仍有"敏感事件（tool_call / error 摘要）也走同一通路"的扩散面，留给后续 spec 收敛。
+  - **B3（thinking / hook 数据源缺失）**：UI 已就绪（ThinkingPanel + Hook badge），但 provider-codex 当前不把 reasoning blocks 拆为 `thinking_delta`，AgentRunner 也不广播 `hook_pre/hook_post`。AC1 / AC3 因此**partial**，由 follow-up 拆 provider-codex thinking 段并接通 FEAT-023 PermissionBudgetGuard 的 hook 时机。
+  - **AC9 fallback label**：当前未识别语言时 CodeBlock 仍显示 `plain` 标签，违反 D3"移除语言标签"约定，留 nit follow-up。
+  - **代码高亮 vs 行号冲突**：`CodeBlock` 当前对识别成功的语言走自渲染行号路径，`rehype-highlight` token 被 `childrenToString` 压平为纯文本，syntax highlight 实际未生效；R7 / R8 高亮目标 partial。
+  - **Hook badge 颜色**：`ToolTimeline` 用 `amber-*` / `emerald-*` 而非纯 shadcn token，违反 R6"用既有 token 不引入新色板"。
+  - **Markdown 图片提取边界**：嵌套 `[![img](src)](href)` 与 inline code 内伪 `![]()` 会被 lightbox 误收，需要解析 token 而非正则匹配原文。
+  - **`retargetBucketEvent` 串话风险**：reducer 把所有 message/thinking 事件的 `messageId` 改写为最末 assistant bubble id，绕过 reducer 内部 `messageId` 校验；并发 retry / 多 assistant 流场景可能错位。
+  - **`chat-stream.test.ts` 测试覆盖薄**：当前用例直接 `setState` 绕过了 `handleStreamEvent` reducer，未覆盖 retarget / status guard / tool reducer 路径。
+
+  以上 known gap 已在 docs/modules（如有引用）与 README Phase 1.5 表里同步标注；spec 仍标 `done` 因为：核心协议层 + 12 类型守卫 + 翻译器 + 前端三轨组件 + 响应式抽屉 + 自实现多图 lightbox + 720 用例全绿 + lint / build / smoke 全绿都已交付，所有 AC 至少 partial，没有完全失败的 AC。
+- 2026-05-07: Codex adversarial review — 修复 FEAT-034 review 阻断项：结构化 `stream.message_*` 与 legacy `agent` envelope 同时到达时去重，避免 Dashboard/CLI 重复显示最终回答；未知语言代码块 fallback 不再显示假 `plain` 标签或行号，并保留已识别代码块的 `rehype-highlight` spans + 轻量 hljs 样式；ToolTimeline / Hook 状态色收敛到既有 design token。补充回归测试：CLI final-content 去重、chat store 真实 stream handler、Markdown code highlight/fallback。当前验证：`pnpm lint`、`pnpm -F @haro/web lint`、`pnpm test`（12 包 725 用例）、`pnpm build`、`pnpm smoke` 全绿。

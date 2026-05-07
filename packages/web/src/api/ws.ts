@@ -1,4 +1,5 @@
 import { readPersistedApiKey, useAuthStore } from '@/stores/auth';
+import type { StreamEvent } from '@haro/core/stream';
 
 export type AgentEvent =
   | { type: 'text'; content: string; delta?: boolean }
@@ -27,7 +28,17 @@ export type WebChannelStreamEvent =
       messageId?: string;
       replyTo?: string;
     }
-  | { kind: 'session.update'; sessionId: string; status: string };
+  | { kind: 'session.update'; sessionId: string; status: string }
+  // FEAT-034: structured StreamEvent envelope routed alongside the legacy
+  // `agent` deltas. Servers emit both during the migration; the chat store
+  // deduplicates so old clients keep working while new clients render the
+  // structured tracks (thinking / tool / hook / usage).
+  | {
+      kind: 'stream';
+      sessionId: string;
+      messageId?: string;
+      event: StreamEvent;
+    };
 
 export type ServerMessage =
   | { type: 'authenticated'; ok: boolean }

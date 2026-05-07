@@ -1,5 +1,12 @@
 import { create } from 'zustand';
 import {
+  applyStreamEventToBucket,
+  emptyBucket,
+  type MessageBucket,
+  type StreamEvent,
+  type ToolCallNode,
+} from '@haro/core/stream';
+import {
   DashboardWebSocketClient,
   type AgentEvent,
   type ServerMessage,
@@ -15,12 +22,23 @@ export interface LastChatConfig {
   modelId?: string;
 }
 
+/**
+ * Chat-side enrichment of a {@link MessageBucket}: the protocol bucket only
+ * carries the structured tracks; we tack on UI-only flags (`streaming`)
+ * here so MessageBubble doesn't need to peek at session-level state.
+ */
+export interface ChatMessageBucket extends MessageBucket {
+  streaming: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   events: AgentEvent[];
   collapsed?: boolean;
+  /** FEAT-034: structured tracks (thinking, tool calls) bucketed per message. */
+  bucket?: ChatMessageBucket;
 }
 
 interface WebChannelSession {
@@ -33,8 +51,21 @@ interface WebChannelSession {
 
 interface ChatState {
   sessionId: string | null;
-  status: 'idle' | 'creating-session' | 'sending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'disabled';
+  status:
+    | 'idle'
+    | 'creating-session'
+    | 'sending'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'disabled';
   messages: ChatMessage[];
+  /** FEAT-034: tool calls aggregated across the current session for the
+   *  side-rail timeline. Newest at the end. */
+  toolCalls: ToolCallNode[];
+  /** FEAT-034: latest usage summary surfaced from `usage_update` events. */
+  usage: { input: number; output: number; total: number } | null;
   error: string | null;
   config: LastChatConfig;
   ws: DashboardWebSocketClient | null;
@@ -44,7 +75,12 @@ interface ChatState {
   hasMoreHistory: boolean;
   connect: (client?: DashboardWebSocketClient) => void;
   disconnect: () => void;
-  sendMessage: (input: { agentId: string; providerId?: string; modelId?: string; content: string }) => Promise<void>;
+  sendMessage: (input: {
+    agentId: string;
+    providerId?: string;
+    modelId?: string;
+    content: string;
+  }) => Promise<void>;
   cancelCurrent: () => void;
   retryLast: () => void;
   newChat: () => void;
@@ -98,6 +134,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessionId: null,
   status: 'idle',
   messages: [],
+  toolCalls: [],
+  usage: null,
   error: null,
   config: initialConfig,
   ws: null,
@@ -187,6 +225,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionId: null,
       status: 'idle',
       messages: [],
+      toolCalls: [],
+      usage: null,
       error: null,
       historyCursor: null,
       historyCursorId: null,
@@ -222,6 +262,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionId,
       status: 'idle',
       messages: [],
+      toolCalls: [],
+      usage: null,
       error: null,
       historyCursor: null,
       historyCursorId: null,
@@ -329,6 +371,10 @@ function handleWebChannelEvent(
     }
     return;
   }
+  if (event.kind === 'stream') {
+    handleStreamEvent(event.event, set, get);
+    return;
+  }
   if (event.kind === 'session.update') {
     if (event.sessionId !== get().sessionId) return;
     // Once the user cancels, ignore any later session.update that would
@@ -336,6 +382,176 @@ function handleWebChannelEvent(
     if (get().status === 'cancelled' && event.status !== 'cancelled') return;
     set({ status: mapSessionStatus(event.status, get().status) });
   }
+}
+
+/**
+ * Apply a structured FEAT-034 StreamEvent to the chat store. Each event maps
+ * onto one of three update planes: per-message bucket (thinking / message
+ * deltas), session-wide tool list (timeline), or session metadata (usage /
+ * status / errors). We keep the message list immutable per delta — applying
+ * the bucket reducer pure-functionally so the existing `replaceLastPending*`
+ * helpers continue to work alongside.
+ */
+function handleStreamEvent(
+  event: StreamEvent,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+  get: () => ChatState,
+): void {
+  // Tool / hook events update the session-wide timeline. We track them in a
+  // dedicated array so the side panel can render without scanning every
+  // message bucket.
+  if (
+    event.kind === 'tool_call_start' ||
+    event.kind === 'tool_call_end' ||
+    event.kind === 'tool_call_error' ||
+    event.kind === 'hook_pre' ||
+    event.kind === 'hook_post'
+  ) {
+    set((state) => ({
+      toolCalls: applyToolEventToList(state.toolCalls, event),
+    }));
+    return;
+  }
+  if (event.kind === 'usage_update') {
+    set({ usage: event.tokens });
+    return;
+  }
+  if (event.kind === 'session_status') {
+    if (event.sessionId !== get().sessionId) return;
+    if (get().status === 'cancelled' && event.status !== 'errored') return;
+    set({ status: mapStreamStatus(event.status, get().status) });
+    return;
+  }
+  if (event.kind === 'error') {
+    if (get().status === 'cancelled') return;
+    set({ status: 'failed', error: `${event.code}: ${event.message}` });
+    return;
+  }
+  // Remaining: message_delta / message_done / thinking_delta / thinking_done
+  // — they target per-message buckets.
+  set((state) => ({ messages: applyStreamEventToMessages(state.messages, event) }));
+  if (event.kind === 'message_delta' || event.kind === 'thinking_delta') {
+    if (get().status === 'sending' || get().status === 'creating-session') {
+      set({ status: 'running' });
+    }
+  }
+}
+
+function applyStreamEventToMessages(messages: ChatMessage[], event: StreamEvent): ChatMessage[] {
+  const target = pickAssistantBubble(messages);
+  if (target.index < 0) return messages;
+  const next = messages.slice();
+  const current = next[target.index]!;
+  const baseBucket: ChatMessageBucket = current.bucket ?? {
+    ...emptyBucket(current.id),
+    streaming: true,
+  };
+  const updatedBucket = applyStreamEventToBucket(
+    baseBucket,
+    retargetBucketEvent(event, current.id),
+  ) as MessageBucket;
+  const streaming = event.kind === 'message_done' || event.kind === 'thinking_done' ? false : true;
+  const merged: ChatMessageBucket = { ...updatedBucket, streaming };
+  next[target.index] = {
+    ...current,
+    content:
+      event.kind === 'message_delta' || event.kind === 'message_done'
+        ? merged.message
+        : current.content,
+    bucket: merged,
+  };
+  return next;
+}
+
+function pickAssistantBubble(messages: ChatMessage[]): { index: number } {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]!.role === 'assistant') return { index };
+  }
+  return { index: -1 };
+}
+
+/** Translate the event's `messageId` to the bubble's id so the bucket reducer
+ *  applies the delta even when the wire-side messageId is the channel session
+ *  id (web channel agent stream) rather than the per-bubble id. */
+function retargetBucketEvent(event: StreamEvent, bubbleId: string): StreamEvent {
+  if (
+    event.kind === 'message_delta' ||
+    event.kind === 'message_done' ||
+    event.kind === 'thinking_delta' ||
+    event.kind === 'thinking_done'
+  ) {
+    return { ...event, messageId: bubbleId };
+  }
+  return event;
+}
+
+function applyToolEventToList(
+  list: ToolCallNode[],
+  event: Extract<
+    StreamEvent,
+    { kind: 'tool_call_start' | 'tool_call_end' | 'tool_call_error' | 'hook_pre' | 'hook_post' }
+  >,
+): ToolCallNode[] {
+  if (event.kind === 'tool_call_start') {
+    if (list.some((node) => node.callId === event.callId)) return list;
+    return [
+      ...list,
+      {
+        callId: event.callId,
+        ...(event.parentCallId ? { parentCallId: event.parentCallId } : {}),
+        tool: event.tool,
+        paramsSummary: event.paramsSummary,
+        status: 'pending',
+        startedAt: Date.now(),
+      },
+    ];
+  }
+  if (event.kind === 'tool_call_end') {
+    return list.map((node) =>
+      node.callId === event.callId
+        ? {
+            ...node,
+            status: event.status,
+            durationMs: event.durationMs,
+            ...(event.resultSummary !== undefined ? { resultSummary: event.resultSummary } : {}),
+            ...(event.errorCode !== undefined ? { errorCode: event.errorCode } : {}),
+          }
+        : node,
+    );
+  }
+  if (event.kind === 'tool_call_error') {
+    return list.map((node) =>
+      node.callId === event.callId
+        ? {
+            ...node,
+            status: 'error' as const,
+            errorCode: event.errorCode,
+            errorMessage: event.message,
+          }
+        : node,
+    );
+  }
+  if (event.kind === 'hook_pre') {
+    return list.map((node) =>
+      node.callId === event.callId
+        ? { ...node, hookName: event.hook, hookPre: event.status }
+        : node,
+    );
+  }
+  // hook_post
+  return list.map((node) =>
+    node.callId === event.callId ? { ...node, hookName: event.hook, hookPost: event.status } : node,
+  );
+}
+
+function mapStreamStatus(
+  raw: 'idle' | 'running' | 'completed' | 'errored',
+  current: ChatState['status'],
+): ChatState['status'] {
+  if (raw === 'completed') return 'completed';
+  if (raw === 'errored') return 'failed';
+  if (raw === 'running') return 'running';
+  return current;
 }
 
 function mapSessionStatus(raw: string, current: ChatState['status']): ChatState['status'] {
@@ -357,7 +573,8 @@ function replaceLastPendingUser(
       next[index] = {
         ...candidate,
         id: message.id,
-        content: typeof message.content === 'string' ? message.content : JSON.stringify(message.content),
+        content:
+          typeof message.content === 'string' ? message.content : JSON.stringify(message.content),
       };
       return next;
     }
@@ -369,7 +586,8 @@ function appendOrReplaceAssistant(
   messages: ChatMessage[],
   message: { id: string; content: unknown },
 ): ChatMessage[] {
-  const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+  const content =
+    typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
   const last = messages[messages.length - 1];
   if (last?.role === 'assistant' && last.id.startsWith('assistant-pending-')) {
     const next = messages.slice();
@@ -398,7 +616,34 @@ function appendAgentDelta(messages: ChatMessage[], delta: string): ChatMessage[]
   if (!target || target.role !== 'assistant') {
     target = { id: `assistant-${Date.now()}`, role: 'assistant', content: '', events: [] };
     next.push(target);
+  } else if (target.bucket?.message) {
+    // During FEAT-034 migration the server emits both the structured
+    // `stream.message_*` events and a legacy `agent` envelope for old
+    // clients. Prefer the structured bucket and ignore/replace the legacy
+    // cumulative payload instead of appending the same final answer again.
+    if (delta === target.content || delta === target.bucket.message) return messages;
+    if (delta.startsWith(target.content)) {
+      next[next.length - 1] = {
+        ...target,
+        content: delta,
+        bucket: {
+          ...target.bucket,
+          message: delta,
+          streaming: false,
+        },
+      };
+      return next;
+    }
   }
   next[next.length - 1] = { ...target, content: target.content + delta };
   return next;
 }
+
+export const __test__ = {
+  handleWebChannelEventForTest(event: WebChannelStreamEvent): void {
+    handleWebChannelEvent(event, useChatStore.setState, useChatStore.getState);
+  },
+  handleStreamEventForTest(event: StreamEvent): void {
+    handleStreamEvent(event, useChatStore.setState, useChatStore.getState);
+  },
+};

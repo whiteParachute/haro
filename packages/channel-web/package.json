@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@haro/channel": "workspace:*",
+    "@haro/core": "workspace:*",
     "better-sqlite3": "^11.7.0"
   },
   "devDependencies": {

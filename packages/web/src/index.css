@@ -108,3 +108,26 @@ body {
   color: var(--foreground);
   font-family: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-title.function_ {
+  color: #93c5fd;
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol {
+  color: #86efac;
+}
+
+.hljs-number,
+.hljs-literal {
+  color: #fca5a5;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #94a3b8;
+  font-style: italic;
+}

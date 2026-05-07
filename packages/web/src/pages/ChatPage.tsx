@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { get } from '@/api/client';
-import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
+import { ChatLayout } from '@/components/chat/ChatLayout';
+import { MessageStream } from '@/components/chat/MessageStream';
+import { ToolTimeline } from '@/components/chat/ToolTimeline';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardTitle } from '@/components/ui/Card';
 import { useChatStore } from '@/stores/chat';
@@ -48,7 +50,22 @@ function providerLabel(id: string): string {
 }
 
 export function ChatPage() {
-  const { messages, status, error, config, channelEnabled, connect, disconnect, sendMessage, applySlashCommand, newChat, retryLast, cancelCurrent } = useChatStore();
+  const {
+    messages,
+    status,
+    error,
+    config,
+    channelEnabled,
+    toolCalls,
+    usage,
+    connect,
+    disconnect,
+    sendMessage,
+    applySlashCommand,
+    newChat,
+    retryLast,
+    cancelCurrent,
+  } = useChatStore();
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [providers, setProviders] = useState<ProviderListEntry[]>([]);
   const [agentId, setAgentId] = useState(config.agentId ?? '');
@@ -147,86 +164,107 @@ export function ChatPage() {
     else disabledReason = '未检测到可用模型';
   }
 
-  return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
-      <Card>
-        <button
-          type="button"
-          onClick={() => setConfigOpen((open) => !open)}
-          className="flex w-full items-center justify-between gap-3 px-6 py-3 text-left"
-          aria-expanded={configOpen}
-        >
-          <div className="flex flex-col">
-            <CardTitle className="text-base">运行配置</CardTitle>
-            <span className="mt-0.5 text-xs text-muted-foreground">
-              {summaryParts.length > 0 ? summaryParts.join(' · ') : '尚未选择 Agent / Provider / 模型'}
-              {authModeBadge ? `  •  ${authModeBadge}` : ''}
-            </span>
+  const header = (
+    <Card>
+      <button
+        type="button"
+        onClick={() => setConfigOpen((open) => !open)}
+        className="flex w-full items-center justify-between gap-3 px-6 py-3 text-left"
+        aria-expanded={configOpen}
+      >
+        <div className="flex flex-col">
+          <CardTitle className="text-base">运行配置</CardTitle>
+          <span className="mt-0.5 text-xs text-muted-foreground">
+            {summaryParts.length > 0 ? summaryParts.join(' · ') : '尚未选择 Agent / Provider / 模型'}
+            {authModeBadge ? `  •  ${authModeBadge}` : ''}
+          </span>
+        </div>
+        <span className="text-xs text-muted-foreground">{configOpen ? '收起 ▴' : '展开 ▾'}</span>
+      </button>
+      {configOpen ? (
+        <CardContent className="space-y-3 border-t border-border pt-4 text-sm">
+          <label className="block space-y-1">
+            <span className="text-muted-foreground">Agent</span>
+            <select className="w-full rounded-md border border-input bg-background px-2 py-2" value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+              <option value="">选择 Agent</option>
+              {agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>{agent.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-muted-foreground">Provider</span>
+            <select className="w-full rounded-md border border-input bg-background px-2 py-2" value={providerId} onChange={(event) => {
+              const next = event.target.value;
+              setProviderId(next);
+              const entry = providers.find((p) => p.id === next);
+              const fallback = entry?.defaultModel ?? entry?.liveModels[0]?.id;
+              if (fallback) setModelId(fallback);
+            }}>
+              <option value="">选择 Provider</option>
+              {providerOptions.map((entry) => (
+                <option key={entry.id} value={entry.id}>{providerLabel(entry.id)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-muted-foreground">Model</span>
+            <select className="w-full rounded-md border border-input bg-background px-2 py-2" value={modelId} onChange={(event) => setModelId(event.target.value)}>
+              <option value="">默认模型</option>
+              {modelOptions.map((id) => (
+                <option key={id} value={id}>{id}</option>
+              ))}
+            </select>
+            {activeProvider?.liveModels.length === 0 ? (
+              <span className="text-xs text-muted-foreground">
+                Provider 暂无可用模型；如已 <code>codex login</code>，请确认 <code>~/.codex/models_cache.json</code> 已生成（运行一次 <code>codex</code> 即可触发）。
+              </span>
+            ) : null}
+          </label>
+          <div className="flex gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={newChat}>/new</Button>
+            <Button variant="outline" size="sm" onClick={retryLast}>/retry</Button>
           </div>
-          <span className="text-xs text-muted-foreground">{configOpen ? '收起 ▴' : '展开 ▾'}</span>
-        </button>
-        {configOpen ? (
-          <CardContent className="space-y-3 border-t border-border pt-4 text-sm">
-            <label className="block space-y-1">
-              <span className="text-muted-foreground">Agent</span>
-              <select className="w-full rounded-md border border-input bg-background px-2 py-2" value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-                <option value="">选择 Agent</option>
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>{agent.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="block space-y-1">
-              <span className="text-muted-foreground">Provider</span>
-              <select className="w-full rounded-md border border-input bg-background px-2 py-2" value={providerId} onChange={(event) => {
-                const next = event.target.value;
-                setProviderId(next);
-                const entry = providers.find((p) => p.id === next);
-                const fallback = entry?.defaultModel ?? entry?.liveModels[0]?.id;
-                if (fallback) setModelId(fallback);
-              }}>
-                <option value="">选择 Provider</option>
-                {providerOptions.map((entry) => (
-                  <option key={entry.id} value={entry.id}>{providerLabel(entry.id)}</option>
-                ))}
-              </select>
-            </label>
-            <label className="block space-y-1">
-              <span className="text-muted-foreground">Model</span>
-              <select className="w-full rounded-md border border-input bg-background px-2 py-2" value={modelId} onChange={(event) => setModelId(event.target.value)}>
-                <option value="">默认模型</option>
-                {modelOptions.map((id) => (
-                  <option key={id} value={id}>{id}</option>
-                ))}
-              </select>
-              {activeProvider?.liveModels.length === 0 ? (
-                <span className="text-xs text-muted-foreground">
-                  Provider 暂无可用模型；如已 <code>codex login</code>，请确认 <code>~/.codex/models_cache.json</code> 已生成（运行一次 <code>codex</code> 即可触发）。
-                </span>
-              ) : null}
-            </label>
-            <div className="flex gap-2 pt-1">
-              <Button variant="outline" size="sm" onClick={newChat}>/new</Button>
-              <Button variant="outline" size="sm" onClick={retryLast}>/retry</Button>
-            </div>
-            <p className="text-xs text-muted-foreground">最近选择会保存到 localStorage：haro:lastChatConfig。</p>
-          </CardContent>
-        ) : null}
-      </Card>
-      <div className="space-y-3">
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>状态：{status}</span>
+          <p className="text-xs text-muted-foreground">最近选择会保存到 localStorage：haro:lastChatConfig。</p>
+        </CardContent>
+      ) : null}
+    </Card>
+  );
+
+  const main = (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+        <span>状态：{status}</span>
+        <div className="flex items-center gap-3">
+          {usage ? (
+            <span className="text-xs">
+              tokens: in {usage.input} · out {usage.output} · total {usage.total}
+            </span>
+          ) : null}
           {error ? <span className="text-destructive">{error}</span> : null}
         </div>
-        <ChatContainer messages={messages} />
-        <ChatInput
-          onSubmit={submit}
-          onCancel={cancelCurrent}
-          running={status === 'running'}
-          disabled={cannotSubmit}
-          {...(disabledReason ? { disabledReason } : {})}
-        />
       </div>
+      <MessageStream messages={messages} />
+      <ChatInput
+        onSubmit={submit}
+        onCancel={cancelCurrent}
+        running={status === 'running'}
+        disabled={cannotSubmit}
+        {...(disabledReason ? { disabledReason } : {})}
+      />
+    </div>
+  );
+
+  const side = (
+    <div className="rounded-xl border border-border bg-background p-3">
+      <div className="mb-2 text-sm font-medium">Tool Timeline</div>
+      <ToolTimeline nodes={toolCalls} />
+    </div>
+  );
+
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
+      <ChatLayout header={header} main={main} side={side} />
     </div>
   );
 }

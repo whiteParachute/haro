@@ -1,29 +1,32 @@
-import { useState } from 'react';
+import { useMemo } from 'react';
 import type { ChatMessage } from '@/stores/chat';
 import { cn } from '@/lib/utils';
-import { StreamingText } from './StreamingText';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { ThinkingPanel } from './ThinkingPanel';
 
+/**
+ * Single message rendered with the FEAT-034 GFM Markdown pipeline + collapsible
+ * thinking panel. Tool calls now live in the side timeline (ToolTimeline) so
+ * they don't crowd the main flow; legacy bubbles that still carry inline tool
+ * events are degraded gracefully through the bucket data on the message.
+ */
 export function MessageBubble({ message }: { message: ChatMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const toolEvents = message.events.filter((event) => event.type === 'tool_call' || event.type === 'tool_result');
   const isUser = message.role === 'user';
+  const thinking = message.bucket?.thinking ?? '';
+  const streaming = message.bucket?.streaming ?? false;
+
+  const renderedContent = useMemo(() => message.content || (streaming ? ' ' : ''), [message.content, streaming]);
 
   return (
-    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
-      <div className={cn('max-w-[78%] rounded-xl border px-4 py-3', isUser ? 'bg-primary text-primary-foreground' : 'bg-card')}>
-        <StreamingText content={message.content} />
-        {toolEvents.length > 0 ? (
-          <div className="mt-3 border-t border-border pt-2 text-xs">
-            <button className="text-muted-foreground underline" onClick={() => setExpanded((value) => !value)}>
-              {expanded ? '收起 tool 事件' : `展开 ${toolEvents.length} 条 tool 事件`}
-            </button>
-            {expanded ? (
-              <pre className="mt-2 max-h-72 overflow-auto rounded-md bg-muted p-2 text-muted-foreground">
-                {JSON.stringify(toolEvents, null, 2)}
-              </pre>
-            ) : null}
-          </div>
-        ) : null}
+    <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
+      <div
+        className={cn(
+          'max-w-[88%] rounded-xl border px-4 py-3 sm:max-w-[78%]',
+          isUser ? 'bg-primary text-primary-foreground' : 'bg-card text-card-foreground',
+        )}
+      >
+        <MarkdownRenderer content={renderedContent} />
+        {!isUser && thinking ? <ThinkingPanel content={thinking} streaming={streaming} /> : null}
       </div>
     </div>
   );

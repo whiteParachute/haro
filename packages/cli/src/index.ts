@@ -46,6 +46,7 @@ import {
 import * as haroConfig from '@haro/core/config';
 import type { HaroConfig, LoadedConfig } from '@haro/core/config';
 import type { AgentEvent, AgentProvider } from '@haro/core/provider';
+import { agentEventToStream, type StreamEvent } from '@haro/core/stream';
 import {
   ChannelRegistry,
   CliChannel,
@@ -1826,7 +1827,21 @@ async function executeTask(
   }
 
   let liveDispatch = Promise.resolve();
+  // FEAT-034: shared map of tool_call_start timestamps so the
+  // tool_call_end translation can compute durationMs without touching
+  // module-level state.
+  const streamCtx = {
+    sessionId: channelSessionId,
+    messageId: channelSessionId,
+    toolStartedAt: new Map<string, number>(),
+  };
   const queueLiveEvent = (event: AgentEvent, _sessionId: string): void => {
+    // FEAT-034: regardless of channel.id, fan out structured StreamEvents to
+    // any channel that exposes a `publishStreamEvent` hook (e.g. WebChannel).
+    // Old clients keep getting the legacy `agent` deltas via the existing
+    // `outputChannel.send` path further down, so this is purely additive.
+    publishStreamEventsForChannel(outputChannel, channelSessionId, event, streamCtx);
+
     if (event.type !== 'text' || event.delta !== true) return;
     if (!outputChannel.capabilities().streaming) return;
     if (outputChannel.id !== 'cli') return;
@@ -1912,12 +1927,13 @@ async function executeTask(
       },
     });
 
+    let lastNonDeltaTextContent: string | null = null;
     for (const event of result.events) {
       if (event.type === 'text') {
         if (event.delta === true && outputChannel.capabilities().streaming) {
           continue;
         }
-        await sendWithPermissionGuard(app, budgetStore, {
+        const sent = await sendWithPermissionGuard(app, budgetStore, {
           workflowId: workflow.workflowId,
           agentId: input.agentId,
           channel: outputChannel,
@@ -1934,7 +1950,9 @@ async function executeTask(
             delta: event.delta,
           },
         });
+        if (sent && event.delta !== true) lastNonDeltaTextContent = event.content;
       } else if (event.type === 'result') {
+        if (lastNonDeltaTextContent === event.content) continue;
         await sendWithPermissionGuard(app, budgetStore, {
           workflowId: workflow.workflowId,
           agentId: input.agentId,
@@ -1962,6 +1980,54 @@ async function executeTask(
     return { ...result, workflowId: workflow.workflowId };
   } finally {
     budgetStore.close();
+  }
+}
+
+/**
+ * FEAT-034 bridge: translate the legacy `AgentEvent` callback into the
+ * structured `StreamEvent` envelope and forward it to channels that opt-in
+ * via a `publishStreamEvent` method. Channels without the method are simply
+ * skipped — keeps CLI / Feishu / Telegram unchanged while the Web Channel
+ * picks up the new feed alongside its existing `agent` deltas.
+ */
+interface StreamPublishingChannel {
+  publishStreamEvent?: (sessionId: string, event: { kind: 'stream'; sessionId: string; event: StreamEvent }) => void;
+}
+
+interface StreamBridgeContext {
+  sessionId: string;
+  messageId: string;
+  toolStartedAt: Map<string, number>;
+}
+
+function publishStreamEventsForChannel(
+  channel: unknown,
+  channelSessionId: string,
+  event: AgentEvent,
+  ctx: StreamBridgeContext,
+): void {
+  const publisher = (channel as StreamPublishingChannel | undefined)?.publishStreamEvent;
+  if (typeof publisher !== 'function') return;
+  let stream: StreamEvent[];
+  try {
+    stream = agentEventToStream(event, {
+      sessionId: ctx.sessionId,
+      messageId: ctx.messageId,
+      toolStartedAt: ctx.toolStartedAt,
+    });
+  } catch {
+    return;
+  }
+  for (const single of stream) {
+    try {
+      publisher.call(channel, channelSessionId, {
+        kind: 'stream',
+        sessionId: channelSessionId,
+        event: single,
+      });
+    } catch {
+      // Best-effort fan-out — never break the executor on subscriber errors.
+    }
   }
 }
 

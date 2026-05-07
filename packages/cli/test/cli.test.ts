@@ -105,6 +105,33 @@ describe('runCli [FEAT-006]', () => {
     expect(chunks.join('')).toContain('src/index.ts');
   });
 
+  it('FEAT-034: does not print duplicate final content when text and result match', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-run-dedupe-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['run', 'say once'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'text', content: 'same final' };
+              yield { type: 'result', content: 'same final', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(chunks.join('').match(/same final/g)).toHaveLength(1);
+  });
+
   it('FEAT-013: haro run routes through ScenarioRouter before reaching Runner', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-run-'));
     roots.push(root);

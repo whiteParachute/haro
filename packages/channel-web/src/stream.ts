@@ -1,4 +1,5 @@
 import type { OutboundMessage } from '@haro/channel';
+import type { StreamEvent } from '@haro/core/stream';
 import type { WebMessageRecord } from './persistence/messages.js';
 
 /**
@@ -24,6 +25,15 @@ export type WebChannelStreamEvent =
       kind: 'session.update';
       sessionId: string;
       status: string;
+    }
+  // FEAT-034: structured envelope alongside `agent` deltas. New clients prefer
+  // the structured event; old clients still work because legacy `agent`
+  // deltas are emitted in parallel during the migration window.
+  | {
+      kind: 'stream';
+      sessionId: string;
+      messageId?: string;
+      event: StreamEvent;
     };
 
 export function outboundToStreamEvent(

@@ -8,7 +8,7 @@ Web Dashboard 是 Haro 的可视化呈现层。FEAT-015 交付的是基础框架
 
 | 层 | 路径 | 职责 |
 | --- | --- | --- |
-| 前端 | `packages/web/` | React 19 + Vite 8 + Tailwind 4 + shadcn/ui 风格组件，提供 Dashboard shell、bootstrap/login、Chat、Sessions、Users、Logs、Knowledge、Skills、主题切换、轻量 i18n、API/WS client 与 auth/list stores。 |
+| 前端 | `packages/web/` | React 19 + Vite 8 + Tailwind 4 + shadcn/ui 风格组件，提供 Dashboard shell、bootstrap/login、Chat、Sessions、Users、Logs、Knowledge、Skills、主题切换、轻量 i18n、API/WS client、auth/list stores，以及 FEAT-034 的 `MessageStream` / `MarkdownRenderer` / `ThinkingPanel` / `ToolTimeline` / `ImageLightbox` Chat UX 管线。 |
 | 后端 | `packages/cli/src/web/` | Hono app factory、本地用户/session + legacy API key 认证、RBAC middleware、统一分页 REST、`/ws` WebSocket 协议、HTTP server 启停、生产静态文件服务。 |
 | CLI | `packages/cli/src/index.ts` | 通过 `registerCommand()` 注册 `haro web`，支持 `--port` 与 `--host`。 |
 | 根脚本 | `package.json` | `pnpm dev:web` 同时启动 Vite dev server 与 Hono API server。 |
@@ -135,12 +135,24 @@ GET /api/v1/sessions?page=1&pageSize=25&sort=createdAt&order=desc&q=keyword
 FEAT-016 最初通过 WebSocket `chat.start` / `chat.message` 直接驱动 runtime；FEAT-031（2026-05-06）把 Chat 页改为 Web Channel 客户端，所有 send / receive / upload / history 都走 `/api/v1/channels/web/*`，与飞书 / Telegram 同等公民。
 
 - Chat 入口流程：首次发送时 POST `/api/v1/channels/web/sessions` 创建 session，再 POST `/sessions/:id/messages`（content + 可选 metadata.agentId/providerId/modelId 传给 runtime）；前端再通过 `/ws` 发 `subscribe { channel: 'channels:web' }` + `subscribe { channel: 'sessions', sessionId }` 订阅事件。
-- 服务端推送 `channels.web.event` 消息，载荷 kind 包括 `message`（用户消息已落库，前端用以替换 optimistic 占位）/ `agent`（agent 输出 delta，按顺序拼接到当前 assistant 气泡）/ `session.update`（状态切换）。Cancel 仍走 `chat.cancel` WS，保留兼容路径；旧的 `event.stream` 协议仅用于 cancel 路径。
+- 服务端推送 `channels.web.event` 消息，载荷 kind 包括 `message`（用户消息已落库，前端用以替换 optimistic 占位）/ `agent`（legacy agent 输出 delta，给旧客户端迁移窗口）/ `stream`（FEAT-034 structured `StreamEvent`，新 Chat store 优先消费）/ `session.update`（状态切换）。Cancel 仍走 `chat.cancel` WS，保留兼容路径；旧的 `event.stream` 协议仅用于 cancel 路径。
 - 历史浏览：`useChatStore.loadOlder()` / `loadSession()` 调用 `GET .../sessions/:id/messages?before&beforeId&limit`（cursor 分页，复合 cursor 防同毫秒丢行）。
 - Disabled 模式（AC3）：`useChatStore.connect()` 启动时 `GET /api/v1/channels`，若 web 被 disable，store 把 `status` 切到 `disabled`、`channelEnabled = false`；ChatInput 按钮 disabled 并展示「Web Channel 已禁用，Dashboard 进入只读模式」。读路由（list sessions / 历史 / 文件下载）仍可用。
 - Sessions 列表默认仅展示 `sessionId`、`agentId`、`status`、`createdAt`，详情页将连续 text delta 折叠为消息，tool_call/tool_result 默认收起 JSON。
 - Chat 最近选择持久化到 `localStorage["haro:lastChatConfig"]`，包括 `agentId`、`providerId`、`modelId`。
 - ChatPage 顶部有可折叠的 run-config 卡片（默认收起），provider/model 下拉来自 `/api/v1/providers`；当无可用 (provider, model) 组合时提交按钮禁用并展示原因（FEAT-029 follow-up）。Runner 在 FE pin 住 provider+model 时短路 `resolveSelection`，绕过基于规则的 provider 选择并直接执行用户指定的组合；这些选择通过 message metadata 传给 runtime（`handleExternalInbound` 消费 `meta.agentId/providerId/modelId`）。
+
+## Chat Streaming UX（FEAT-034）
+
+FEAT-034（2026-05-07 done）把 Chat 页从单一 text delta 升级为分轨流式体验，但保持 FEAT-031 的 Web Channel 边界：history 加载和实时推送都进入同一套前端渲染管线，不绕过 Channel 抽象。
+
+- 协议：`@haro/core/stream` 定义 12 类 `StreamEvent`（message / thinking / tool / hook / usage / status / error）。CLI executor 将 legacy `AgentEvent` 通过 `agentEventToStream()` 翻译后调用 Web Channel `publishStreamEvent()`；WebSocket envelope 为 `channels.web.event` + `kind: 'stream'`。
+- 兼容：迁移窗口内服务端仍会并行发送 legacy `kind: 'agent'`。`useChatStore` 以 structured stream 为准，对相同 `messageId` / 相同最终内容的 legacy payload 做 ignore 或 replace，避免 UI 和 CLI 重复显示最终回答。
+- 渲染：Chat 主区使用 `MessageStream`，消息内容统一走 `MarkdownRenderer` + `CodeBlock` + `ImageLightbox`。GFM 覆盖表格、任务列表、引用、删除线；已识别代码块保留 `rehype-highlight` spans，未知语言 fallback 为纯文本 + copy 按钮，不显示假语言标签或行号。
+- 过程可见性：`ThinkingPanel` 按消息折叠展示 thinking；`ToolTimeline` 展示当前 session 最近 30 个 tool/hook 事件，状态色只用 shadcn/ui 既有 token。桌面为右侧栏，`< 768px` 降级为可关闭抽屉。
+- 性能：`MessageStream` 在长会话下使用 `react-window` 虚拟化，保留 Web Channel cursor 分页加载历史；多图消息 lightbox 支持方向键、触屏滑动、序号和 ESC/背景关闭。
+
+已知后续：provider-codex 尚未把 reasoning 原生拆成 `thinking_delta`；runtime hook pre/post 的真实事件源也等待后续 hook 流接通。FEAT-034 先提供协议和 UI 消费面，保证后续事件源接入时不再改 Chat 渲染边界。
 
 
 ## Orchestration Debugger（FEAT-018）
