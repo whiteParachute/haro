@@ -9,9 +9,11 @@
  */
 
 import { writeFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import type { Command } from 'commander';
 import { DEFAULT_AGENT_ID, services } from '@haro/core';
 import {
+  confirmDestructive,
   renderError,
   renderHumanRecord,
   renderHumanTable,
@@ -181,6 +183,56 @@ export function registerMemoryCommands(program: Command, app: AppContext): void 
       } catch (error) {
         if (error instanceof CommanderExit) throw error;
         renderError(error, { stderr: app.stderr }, { mode });
+        throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+  memory
+    .command('recover-snapshot')
+    .description('Copy a v1 SQLite snapshot to a side path for forensic inspection (FEAT-035 D2)')
+    .option('--db <path>', 'override v1 db path (defaults to <haro root>/haro.db)')
+    .option('--from <bak>', 'explicit .bak.<ISO> snapshot (must be next to --db; default: newest)')
+    .option('-y, --yes', 'skip confirmation')
+    .option('--quiet', 'skip preview banner')
+    .action(async (opts: { db?: string; from?: string; yes?: boolean; quiet?: boolean }) => {
+      try {
+        const target = opts.db ?? app.paths.dbFile;
+        const previewLines = [
+          `Will COPY a v1 SQLite snapshot to ${target}.recovered.<timestamp>.`,
+          opts.from
+            ? `Source snapshot: ${opts.from}`
+            : `Source snapshot: newest ${basename(target)}.bak.<ISO> in ${target.replace(/[^/]+$/, '')}`,
+          'Note: v2 reads no longer consume memory_entries; this snapshot is for forensic',
+          'inspection (open with sqlite3) or selective re-import. The active haro.db and the v2',
+          'file store under <haro root>/memory/ are NOT touched.',
+        ];
+        const confirm = await confirmDestructive(
+          {
+            action: 'copy snapshot',
+            target: `memory v1 snapshot beside ${target}`,
+            preview: previewLines.join('\n'),
+            ...(opts.yes ? { yes: true } : {}),
+            ...(opts.quiet ? { quiet: true } : {}),
+          },
+          { stdin: app.stdin, stdout: app.stdout, stderr: app.stderr },
+        );
+        if (!confirm.confirmed) {
+          app.stdout.write(`recover-snapshot cancelled: ${confirm.reason}\n`);
+          return;
+        }
+        const result = services.memory.recoverMemoryV1Snapshot(buildServiceContext(app), {
+          ...(opts.db ? { dbFile: opts.db } : {}),
+          ...(opts.from ? { bakFile: opts.from } : {}),
+        });
+        app.stdout.write(`copied: ${result.source} → ${result.recoveredTo}\n`);
+        if (result.candidates.length > 1) {
+          app.stdout.write(`  ${result.candidates.length - 1} other snapshot(s) available\n`);
+        }
+        app.stdout.write(
+          'inspect with: sqlite3 ' + result.recoveredTo + ' "SELECT id, topic FROM memory_entries"\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr });
         throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
       }
     });

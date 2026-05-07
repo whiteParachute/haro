@@ -1,11 +1,11 @@
 ---
 id: FEAT-035
 title: Memory Fabric v2 — Aria-Memory 文件存储对齐
-status: draft
+status: done
 phase: phase-1.5
 owner: whiteParachute
 created: 2026-05-06
-updated: 2026-05-06
+updated: 2026-05-07
 related:
   - ../phase-0/FEAT-007-memory-fabric-independent.md
   - ../phase-1/FEAT-021-memory-fabric-v1.md
@@ -170,7 +170,7 @@ async function searchMemoryFiles(query, scope, opts = {}) {
 - AC1: `~/.haro/memory/<scope>/MEMORY.md` 存在且与对应散文件目录最终一致；`repair()` 重跑无变更（对应 R6、R7）。
 - AC2: `searchMemoryFiles("FEAT-031", "project:haro")` 命中 D4 决策记录，返回值包含 frontmatter 全部必须字段（对应 R5、R2）。
 - AC3: v1 → v2 迁移工具对包含 N 条 SQLite 记忆 + 已存在 aria-memory 目录的混合环境，迁移后散文件数 = N，MEMORY.md 索引行数 = N，无丢条目；重跑迁移幂等（对应 R7、G5）。
-- AC4: 删除 v1 SQLite 表后，FEAT-018 KnowledgePage / FEAT-022 / FEAT-024 / FEAT-031 / FEAT-032 调用 Memory Fabric API 全部通过既有契约返回数据（对应 R9）。
+- AC4: 删除 v1 SQLite 表后，FEAT-018 KnowledgePage / FEAT-022 / FEAT-024 / FEAT-031（仅长时记忆通路，会话历史另走 sessions.sqlite — 见 D8）/ FEAT-032 调用 Memory Fabric API 全部通过既有契约返回数据（对应 R9）。
 - AC5: 性能基线测试：1000 条散文件、单 query "session" 关键词，P99 < 300ms（对应 R11）。
 - AC6: owner 用 `aria-memory:remember` skill 在 Haro 外写入新条目后，下次 `haro memory query` 能查到，且 MEMORY.md 经过一次 `repair()` 后包含该条目（对应 R12）。
 - AC7: `aria-memory:memory-wrapup` 调用 Haro 暴露的 `runWrapup` 钩子，session 散文件被压缩进 persistent scope，不重复，且 verificationStatus 字段被保留（对应 R10）。
@@ -181,7 +181,7 @@ async function searchMemoryFiles(query, scope, opts = {}) {
 - 集成测试：FEAT-018 / FEAT-022 / FEAT-024 / FEAT-031 / FEAT-032 各自调用 Memory Fabric API 的回归套件全部通过。
 - 性能测试：构造 100 / 500 / 1000 / 5000 散文件四档，跑 P50 / P99 搜索延迟。
 - 端到端：与 `aria-memory:remember` / `memory-wrapup` / `memory-sleep` skill 协同测试，覆盖 wrapup / sleep / repair 三个 lifecycle。
-- 回滚测试：v1 → v2 迁移后保留 30 天 .bak，`haro memory rollback --to v1` 可恢复（对应 R7 兜底）。
+- 兜底回滚测试：v1 → v2 迁移后保留 30 天 `<haro.db>.bak.<ISO>` 快照，`haro memory recover-snapshot` 把指定（默认最新）快照 **copy** 到 `<haro.db>.recovered.<ISO>` 侧路径供 owner 用 sqlite3 取回 v1 memory 行（对应 R7 兜底，2026-05-07 落地）。**不**支持把 v1 db 改名回 active 路径——bootstrap 永远先 initHaroDatabase，且 v2 已不再读 SQLite 后端；保留快照只是为了 forensic / selective re-import。
 
 ## 8. Resolved Decisions / 已决议
 
@@ -192,9 +192,13 @@ async function searchMemoryFiles(query, scope, opts = {}) {
 - D5（原 Q1，索引行字段）：MEMORY.md 索引行只保留极简 `- [Title](file.md) — one-line hook`。`assetRef` / `confidence` / `verificationStatus` 等元数据**只**写散文件 frontmatter，索引行不冗余携带；让 MEMORY.md 保持高密度可扫的全人类视图。
 - D6（原 Q2，低层批量读 API）：**不开放**直接读散文件 / 列目录的低层 API。Phase 2.0 Self-Monitor / Pattern Miner 等下游消费方一律走 `queryEntries / searchMemoryFiles`；防止回退到"绕过 Memory Fabric API 直接 fs 读"的反模式。
 - D7（原 Q3，session → persistent wrapup）：是，由 `aria-memory:memory-wrapup` 自动接管。"先暂存 session/、wrapup 后合并到 persistent/" 的两阶段细节**对齐 aria-memory 当前做法**，不在 Haro 内重新设计；Haro 只暴露 `runWrapup(sessionId)` 钩子和"读散文件 → 合并 → 写新散文件 → 删旧散文件"的原子语义，具体策略归 skill。
+- D8（FEAT-031 历史检索路径修正，2026-05-07）：FEAT-031 Web Channel 的"历史会话拉取"实际**不**消费 `searchMemoryFiles`，改走 web channel 自己的 `sessions.sqlite`（当前实现：`created_at` cursor + tie-breaker 分页；关键字过滤未在本期实现，需要时由调用方在结果上自行 filter 或后续单独 spec 落地）。原因：D4 立项时把"会话 transcript 历史"与"长时记忆历史"混在一起；FEAT-031 落地时区分清楚 — 会话级 transcript 属 session store（短期、追加写、按 channelSessionId 隔离），长时记忆才属 Memory Fabric。所以 spec AC4 中关于 FEAT-031 的契约改为："Web Channel 的 `/api/v1/channels/web/sessions/:id/messages` 走 sessions.sqlite；Web Channel 在需要长时记忆时（例如 dashboard knowledge tab）仍调 `searchMemoryFiles`。"FEAT-032 仍按原 D4 走 `searchMemoryFiles` + `writeEntry`，未受影响。
 
 ## 9. Changelog / 变更记录
 
 - 2026-05-06: whiteParachute — 初稿；从 FEAT-031 D4 决策衍生，定位为 Memory Fabric v2，承担 SQLite/FTS5 → aria-memory 文件存储的整体切换。
 - 2026-05-06: whiteParachute — 收敛 Open Questions Q1–Q3 为 D5–D7（owner 决策：MEMORY.md 索引保持极简 / 不开低层批量读 API / wrapup 对齐 aria-memory 既有两阶段做法）。
 - 2026-05-06: whiteParachute — 实现交付 + Codex 对抗性评审修复批次 1：`MemoryFileStore` + `searchMemoryFiles` + `runWrapup` / `runSleep` + `migrateFromV1`（scope 白名单 + 忽略 v1 `content_path` + .bak 幂等）+ `syncFrontmatter` 保留非规范字段（wrapup_id/hash/topic_slug）+ maintenance 冷启动 `loadScope` + `impressions/archived/` 目录默认过滤 + 同路径冲突检测仅淘汰 sparse hydration。状态：status 仍 `draft`，待落地后续调用方对接（FEAT-031 / FEAT-032 集成）后改 `done`。
+- 2026-05-07: whiteParachute — 收敛 FEAT-031 D4 隐式偏离为 D8（Web Channel 会话历史走 sessions.sqlite，长时记忆才走 `searchMemoryFiles`）；FEAT-032 `memory_query` / `memory_remember` 已通过 56 用例对接，AC4 契约更新为"会话历史 ≠ 长时记忆历史"。
+- 2026-05-07: whiteParachute — 补 AC5（1000-entry 性能 envelope，CI 走 5× 包络抗 O(n²) 退化、HARO_PERF_STRICT=1 跑 spec R11 严格 300ms 门控）/ AC6（canonical aria-memory frontmatter sparse hydration）/ AC7+D7（deposit→runWrapup→pending 合并 lifecycle）测试；新增 `MemoryFabric.recoverV1Snapshot` + `services.memory.recoverMemoryV1Snapshot` + `haro memory recover-snapshot` CLI（D2 30 天兜底真实落地为"copy 到 `<dbFile>.recovered.<ISO>` 侧路径"，不动 active haro.db / v2 文件存储 — 避免 rename-back 与 bootstrap initHaroDatabase 冲突，也避免 rename 整 db 文件覆盖 sessions/cron 等非 memory 数据）；同步把 `mergePendingForWrapup` / `mergeAllPending` 改为 wrapup/sleep 时**重新从磁盘读 .pending body**，让 deposit 与 wrapup 之间的外部编辑能被合入 knowledge，不再静默丢失（codex 对抗性评审 must-fix 落地）。
+- 2026-05-07: whiteParachute — close to done。AC1-AC7 由测试覆盖（AC7 在 fabric API 层验证 deposit→runWrapup→pending 合并 lifecycle，runSleep 钩子由单元测试调；与 `aria-memory:memory-auto-maintain` 的 `/loop` 端到端联动属 skill 域，未在本仓回归 — 不影响 R10 钩子契约）。AC4 实证验收：web-api 72/72（含 FEAT-018/024/031）+ core 273/273（含 FEAT-022 evolution-asset-registry + FEAT-032 mcp-tools 56 用例 + memory-fabric-v2 v2 用例集）+ cli 151/151，全仓 lint clean，`pnpm -F @haro/{core,cli,web-api} build` clean。status: draft → done。

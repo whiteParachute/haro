@@ -159,7 +159,7 @@ CREATE TABLE component_usage (
 
 Phase 1 新增的 Asset / Budget 表由对应 FEAT 落地。
 
-> **FEAT-035 v2（2026-05-06）**：Memory Fabric 已删除 SQLite read model（`memory_entries` / `memory_entries_fts`），改为 aria-memory 风格的纯文件存储。记忆数据全部位于 `~/.haro/memory/<scope>/`（详见 [`docs/modules/memory-fabric.md`](modules/memory-fabric.md)）；老的 SQLite 行通过 `MemoryFabric.migrateFromV1({ dbFile })` 迁出，并在原路径写 `dbFile.bak.<timestamp>` 作为 30 天兜底。
+> **FEAT-035 v2（done 2026-05-07）**：Memory Fabric 已删除 SQLite read model（`memory_entries` / `memory_entries_fts`），改为 aria-memory 风格的纯文件存储。记忆数据全部位于 `~/.haro/memory/<scope>/`（详见 [`docs/modules/memory-fabric.md`](modules/memory-fabric.md)）；老的 SQLite 行通过 `MemoryFabric.migrateFromV1({ dbFile })` 迁出，并在原路径写 `<dbFile>.bak.<UTC ISO>` 作为 30 天兜底（幂等可重跑）。需要从兜底快照取回 v1 memory 行时，用 `haro memory recover-snapshot`（或编程 `MemoryFabric.recoverV1Snapshot`）把指定快照 **copy** 到 `<dbFile>.recovered.<ISO>` 侧路径，再用 `sqlite3` 打开做 forensic 检查或 selective re-import；**不**支持改名回 active 路径——bootstrap 永远先 `initHaroDatabase`，且 v2 已不再读 SQLite 后端。
 
 ```sql
 -- FEAT-022: Evolution Asset Registry

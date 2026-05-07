@@ -5,6 +5,8 @@ export {
 export type {
   MemoryFabricOptions,
   MemoryFabricEvent,
+  MigrateFromV1Result,
+  RecoverV1SnapshotResult,
 } from './memory-fabric.js';
 export type {
   MemoryScope,

@@ -139,6 +139,7 @@ API：
 - `runWrapup(input)` / `runSleep(input)`：FEAT-035 R10 给 `aria-memory:memory-wrapup` / `memory-sleep` skill 用的钩子；Haro 暴露原子语义，具体策略归 skill。
 - `repairScope(scope?)`：扫描散文件、重建内存索引并刷新 MEMORY.md；幂等。
 - `migrateFromV1({ dbFile })`：把旧 SQLite memory_entries 行转写成 v2 散文件并重命名 .bak（详见前面"v1 → v2 迁移"）。
+- `recoverV1Snapshot({ dbFile?, bakFile? })`：D2 30 天兜底——把最新（或显式指定的）`<dbFile>.bak.<ISO>` 快照 **copy** 到 `<dbFile>.recovered.<ISO>` 侧路径，供 owner 用 sqlite3 forensic 检查或 selective re-import v1 memory 行。**不**改名回 active 路径（bootstrap 永远先 initHaroDatabase + v2 已不读 SQLite）。`bakFile` 必须与 `dbFile` 同目录、且后缀符合 `.bak.<UTC ISO>` 规范，否则拒绝。CLI 入口：`haro memory recover-snapshot [--db <path>] [--from <bak>] [-y]`。
 
 以上能力均为 Haro 原生实现；"目录布局"层兼容 aria-memory，使用户已有目录可直接挂载。
 

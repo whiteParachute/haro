@@ -9,6 +9,7 @@ import {
   type MemoryScope,
   type MemorySearchResult,
   type MemoryStats,
+  type RecoverV1SnapshotResult,
   type VerificationStatus,
 } from '../memory/index.js';
 import { buildHaroPaths } from '../paths.js';
@@ -164,6 +165,28 @@ export function memoryStats(ctx: ServiceContext): MemoryStats {
   const fabric = openFabric(ctx);
   try {
     return fabric.stats();
+  } finally {
+    closeFabric(fabric);
+  }
+}
+
+export interface RecoverV1SnapshotRequest {
+  /** Override the v1 db path; defaults to `<haro root>/haro.db`. */
+  dbFile?: string;
+  /** Explicit `.bak.<ISO>` snapshot (must live next to dbFile). Defaults to newest. */
+  bakFile?: string;
+}
+
+export function recoverMemoryV1Snapshot(
+  ctx: ServiceContext,
+  request: RecoverV1SnapshotRequest = {},
+): RecoverV1SnapshotResult {
+  const fabric = openFabric(ctx);
+  try {
+    const opts: { dbFile?: string; bakFile?: string } = {};
+    if (request.dbFile) opts.dbFile = request.dbFile;
+    if (request.bakFile) opts.bakFile = request.bakFile;
+    return fabric.recoverV1Snapshot(opts);
   } finally {
     closeFabric(fabric);
   }

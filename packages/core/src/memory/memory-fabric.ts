@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { buildEntryScopeLayout, buildScopeLayout, legacyScopeToEntryScope, resolveEntryScopeRoot } from './paths.js';
 import {
@@ -97,6 +97,19 @@ export interface MigrateFromV1Result {
   /** Errors encountered during migration. */
   errors: string[];
 }
+
+export interface RecoverV1SnapshotResult {
+  /** Snapshot we copied (untouched in place). */
+  source: string;
+  /** Side path the snapshot was copied to: `<dbFile>.recovered.<ISO>`. */
+  recoveredTo: string;
+  /** All matching `.bak.<ISO>` candidates (newest first). */
+  candidates: string[];
+}
+
+/** Snapshots are produced by `migrateFromV1` as `<dbFile>.bak.<UTC ISO>` with
+ *  `:` and `.` replaced by `-`, e.g. `haro.db.bak.2026-05-07T03-12-45-678Z`. */
+const V1_SNAPSHOT_SUFFIX_RE = /^\.bak\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
 export type MemoryFabricEvent =
   | { kind: 'write'; scope: MemoryScope; agentId?: string; file: string }
@@ -881,6 +894,98 @@ export class MemoryFabric {
     return result;
   }
 
+  /**
+   * D2 snapshot recovery (FEAT-035 §5.5 / §7 Test Plan): copy the newest (or
+   * an explicit) `<dbFile>.bak.<ISO>` snapshot to a side path
+   * `<dbFile>.recovered.<ISO>` so an owner can inspect or selectively re-import
+   * v1 rows with sqlite3.
+   *
+   * Why **copy out**, not rename back:
+   *   1. Bootstrap initializes a fresh `haro.db` for sessions/cron/... before
+   *      any subcommand runs (packages/cli/src/index.ts:bootstrapApp →
+   *      initHaroDatabase). A rename-back would either be refused or clobber
+   *      live non-memory tables produced post-migrate.
+   *   2. v2 read paths no longer touch `memory_entries` at all (FEAT-035
+   *      deleted MEMORY_READ_MODEL_TABLES from the schema). Restoring the
+   *      SQLite artifact wouldn't switch behavior — the artifact is forensic.
+   *
+   * The 30-day retention promise from D2 holds; this method just makes the
+   * forensic snapshot conveniently accessible without putting it in a place
+   * Haro itself reads.
+   */
+  recoverV1Snapshot(opts: { dbFile?: string; bakFile?: string } = {}): RecoverV1SnapshotResult {
+    const dbFile = opts.dbFile ?? this.v1DbFile;
+    if (!dbFile || dbFile.length === 0) {
+      throw new Error('MemoryFabric.recoverV1Snapshot: dbFile is required (no v1DbFile configured)');
+    }
+    const dir = dirname(dbFile);
+    const base = basename(dbFile);
+    let candidates: string[];
+    try {
+      candidates = readdirSync(dir)
+        .filter((name) => {
+          if (!name.startsWith(`${base}.`)) return false;
+          const suffix = name.slice(base.length);
+          if (!V1_SNAPSHOT_SUFFIX_RE.test(suffix)) return false;
+          // Ensure it's a regular file, not a symlink / dir.
+          try {
+            return statSync(join(dir, name)).isFile();
+          } catch {
+            return false;
+          }
+        })
+        .map((name) => join(dir, name))
+        // ISO timestamp suffix is fixed-width UTC, so lexical order equals
+        // chronological order; descending = newest first.
+        .sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+    } catch {
+      candidates = [];
+    }
+    let pick: string;
+    if (opts.bakFile) {
+      if (!existsSync(opts.bakFile)) {
+        throw new Error(`MemoryFabric.recoverV1Snapshot: ${opts.bakFile} not found`);
+      }
+      // Enforce same-dir and canonical suffix so a stray --from path can't
+      // turn this into "copy any file the caller can read".
+      const bakDir = dirname(opts.bakFile);
+      const bakBase = basename(opts.bakFile);
+      if (bakDir !== dir) {
+        throw new Error(
+          `MemoryFabric.recoverV1Snapshot: --from must be in the same directory as ${dbFile}`,
+        );
+      }
+      if (!bakBase.startsWith(`${base}.`) || !V1_SNAPSHOT_SUFFIX_RE.test(bakBase.slice(base.length))) {
+        throw new Error(
+          `MemoryFabric.recoverV1Snapshot: ${opts.bakFile} is not a valid ${base}.bak.<ISO> snapshot`,
+        );
+      }
+      try {
+        if (!statSync(opts.bakFile).isFile()) {
+          throw new Error(`MemoryFabric.recoverV1Snapshot: ${opts.bakFile} is not a regular file`);
+        }
+      } catch (err) {
+        if (err instanceof Error && /not a regular file/.test(err.message)) throw err;
+        throw new Error(
+          `MemoryFabric.recoverV1Snapshot: cannot stat ${opts.bakFile}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      pick = opts.bakFile;
+      if (!candidates.includes(pick)) candidates = [pick, ...candidates];
+    } else {
+      if (candidates.length === 0) {
+        throw new Error(
+          `MemoryFabric.recoverV1Snapshot: no ${base}.bak.<ISO> snapshot found in ${dir}`,
+        );
+      }
+      pick = candidates[0]!;
+    }
+    const stamp = this.now().toISOString().replace(/[:.]/g, '-');
+    const recoveredTo = `${dbFile}.recovered.${stamp}`;
+    copyFileSync(pick, recoveredTo);
+    return { source: pick, recoveredTo, candidates };
+  }
+
   /* --------------------------- R8 stats --------------------------- */
 
   stats(): MemoryStats {
@@ -1054,11 +1159,32 @@ export class MemoryFabric {
   private mergeAllPending(layout: ReturnType<typeof buildScopeLayout>, scope: MemoryScope, agentId?: string): void {
     const grouped = this.groupPendingByTopic(layout);
     for (const [topicSlug, records] of grouped.entries()) {
+      // codex MUST-FIX: re-read each pending file's body and summary from
+      // disk. Index record's .content / .summary were captured at deposit()
+      // time; if the body's live hash differs from frontmatter.hash, we know
+      // the user edited the file, so re-derive summary from firstLine(body)
+      // rather than carrying the stale deposit-time summary into the merge.
+      const fresh: IndexRecord[] = [];
+      for (const rec of records) {
+        const text = readFileIfExists(rec.sourceFile);
+        if (!text) continue;
+        const { frontmatter, body: liveBody } = splitFrontmatter(text);
+        const liveContent = liveBody.replace(/\n+$/, '');
+        const liveHash = hashContent(liveContent);
+        const depositHash = typeof frontmatter.hash === 'string' ? frontmatter.hash : null;
+        const bodyChanged = depositHash !== null && depositHash !== liveHash;
+        const fmSummary = typeof frontmatter.summary === 'string' ? frontmatter.summary : '';
+        const liveSummary = bodyChanged
+          ? firstLine(liveContent) || fmSummary || rec.summary
+          : fmSummary || rec.summary;
+        fresh.push({ ...rec, content: liveContent, summary: liveSummary });
+      }
+      if (fresh.length === 0) continue;
       const file = join(layout.knowledge, `${topicSlug}.md`);
       const existing = readFileIfExists(file);
-      const body = mergeKnowledgeFromPending(existing, records);
+      const body = mergeKnowledgeFromPending(existing, fresh);
       atomicWriteFile(file, body);
-      for (const rec of records) {
+      for (const rec of fresh) {
         try {
           unlinkSync(rec.sourceFile);
         } catch {
@@ -1067,7 +1193,7 @@ export class MemoryFabric {
         this.index.remove(rec.key);
       }
       this.index.upsert({
-        ...records[0]!,
+        ...fresh[0]!,
         key: `k:${scope}:${agentId ?? ''}:${topicSlug}`,
         tier: 'knowledge',
         sourceFile: file,
@@ -1109,15 +1235,30 @@ export class MemoryFabric {
     await this.writer.run(async () => {
       const layout = buildScopeLayout(this.root, scope, agentId);
       const relevant = this.index.list().filter((r) => r.tier === 'pending' && r.scope === scope && (r.agentId ?? '') === (agentId ?? ''));
+      // codex MUST-FIX: deposit() snapshots `rec.content` and `rec.summary`
+      // at write time. If the user (or aria-memory:remember skill) edits the
+      // .pending file on disk between deposit and wrapup, those edits must
+      // NOT be silently dropped. Re-read frontmatter AND body fresh; when the
+      // live body's hash differs from `frontmatter.hash` (deposit-time hash),
+      // also re-derive summary so mergeKnowledgeFromPending — which builds
+      // the merged file's frontmatter / H1 from `records[0].summary` — sees
+      // the live first line rather than a stale auto-derived snapshot.
       const deduped = new Map<string, IndexRecord>();
       for (const rec of relevant) {
         const text = readFileIfExists(rec.sourceFile);
         if (!text) continue;
-        const { frontmatter } = splitFrontmatter(text);
-        if (frontmatter.wrapup_id === wrapupId) {
-          const hash = (frontmatter.hash as string | undefined) ?? hashContent(rec.content);
-          if (!deduped.has(hash)) deduped.set(hash, rec);
-        }
+        const { frontmatter, body: liveBody } = splitFrontmatter(text);
+        if (frontmatter.wrapup_id !== wrapupId) continue;
+        const liveContent = liveBody.replace(/\n+$/, '');
+        const liveHash = hashContent(liveContent);
+        if (deduped.has(liveHash)) continue;
+        const depositHash = typeof frontmatter.hash === 'string' ? frontmatter.hash : null;
+        const bodyChanged = depositHash !== null && depositHash !== liveHash;
+        const fmSummary = typeof frontmatter.summary === 'string' ? frontmatter.summary : '';
+        const liveSummary = bodyChanged
+          ? firstLine(liveContent) || fmSummary || rec.summary
+          : fmSummary || rec.summary;
+        deduped.set(liveHash, { ...rec, content: liveContent, summary: liveSummary });
       }
       if (deduped.size === 0) return;
       const byTopic = new Map<string, IndexRecord[]>();

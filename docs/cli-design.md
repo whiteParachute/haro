@@ -439,6 +439,8 @@ haro memory remember "<text>" --scope shared      # platform 写入被拒
 haro memory list --scope shared
 haro memory show <memory-id>
 haro memory export --scope shared -o entries.json
+haro memory recover-snapshot                      # FEAT-035 D2 30 天兜底：copy 最新 .bak.<ISO> 到 <dbFile>.recovered.<ISO> 供 sqlite3 forensic 检查
+haro memory recover-snapshot --from <bak> -y      # 显式指定快照（必须与 --db 同目录、后缀 .bak.<UTC ISO>）
 ```
 
 ### `haro logs`（已实现，批次 2）

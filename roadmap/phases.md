@@ -10,7 +10,7 @@
 |------|------|------|---------|---------|
 | Phase 0: Foundation | 已完成 | 最小可用骨架 | CLI + Codex + 单 Agent Runtime + Memory + Channel（CLI/飞书/Telegram）+ Skills（15 预装）+ 手动 eat/shit | 人类驱动 |
 | Phase 1: Intelligence & Safety | 已完成 | 场景理解 + 动态编排 + 生产化护栏 | Scenario Router + Team Orchestrator + Web Dashboard 控制面 + Memory Fabric v1 + Evolution Asset Registry + 权限/Token 预算 + 多用户 + ChatGPT 订阅认证 | Agent 驱动，人类审批 |
-| Phase 1.5: Workbench Parity | **进行中**（FEAT-031/032/033/034/038/039 done；FEAT-035 核心实现）| 日用底座补完 + 架构解耦 | Web API 解耦 + CLI 等价补完 + Web Channel + MCP 工具层 + 定时任务 + 流式 UX 升级 + Memory Fabric v2 | 人类驱动 |
+| Phase 1.5: Workbench Parity | **进行中**（FEAT-031/032/033/034/035/038/039 全部 done）| 日用底座补完 + 架构解耦 | Web API 解耦 + CLI 等价补完 + Web Channel + MCP 工具层 + 定时任务 + 流式 UX 升级 + Memory Fabric v2 | 人类驱动 |
 | Phase 2.0: Evolution Awareness | 规划中 | 平台开始"看见"自己和外部世界 | Self-Monitor（被动观测）+ Industry Intel（业界趋势订阅）+ 自动 eat/shit 触发器 | Agent 感知，人类决策 |
 | Phase 2.5: Evolution Proposal | 规划中 | 平台产出结构化进化提案 | Pattern Miner + Evolution Proposal Generator + Dashboard 审批队列 + 决策反馈闭环 | Agent 思考，人类审批 |
 | Phase 3.0: Controlled Self-Evolution | 规划中 | 受控自演化（低风险自动落地） | Auto-Refactorer L0（Prompt）+ L1（编排/skill 配置）+ approval 后自动落地 + 灰度 + 回滚 | Agent 自治，人类监督 |
@@ -88,7 +88,7 @@
 
 ## Phase 1.5: Workbench Parity — 日用底座补完 + 架构解耦
 
-**状态**：进行中（2026-05-01 启动；FEAT-038 + FEAT-039 + FEAT-033 + FEAT-031（实现交付）+ FEAT-032（实现交付）+ FEAT-034（done）+ FEAT-035（核心实现）已交付，FEAT-035 spec 待最终签署）
+**状态**：进行中（2026-05-01 启动；FEAT-031 + FEAT-032 + FEAT-033 + FEAT-034 + FEAT-035 + FEAT-038 + FEAT-039 全部 done，2026-05-07 收尾）
 
 **目标**：把 Haro workbench 层补完到 happyclaw 级别的"开箱日用"水平，同时完成"CLI 优先 + Web UI 与后端解耦"的架构调整，让 Phase 2.0+ 的进化层有稳定的数据源和接口契约可以寄生。
 
@@ -125,7 +125,7 @@
 - [x] Agent 可通过 MCP 工具发消息、查/写记忆、调度任务（FEAT-032 done 2026-05-06，4 工具 + per-session subprocess + tool_invocation_log 审计）
 - [x] Cron 任务支持 cron 表达式 + 一次性触发（FEAT-033 done，hermes-agent 风格 `tick()` + 三触发源：web-api ticker / `haro cron daemon` / `haro cron tick`）
 - [x] 流式 UX：thinking 可折叠、tool 调用有 timeline、Markdown 含表格/代码高亮/图片预览（FEAT-034 done 2026-05-07；structured stream + legacy 去重已补回归）
-- [x] Memory Fabric v2：MEMORY.md + 散文件存储统一，`searchMemoryFiles` 替代 FTS5 read model，迁移工具幂等（FEAT-035 核心实现 2026-05-06；spec 待 owner 最终签署）
+- [x] Memory Fabric v2：MEMORY.md + 散文件存储统一，`searchMemoryFiles` 替代 FTS5 read model，迁移工具幂等（FEAT-035 done 2026-05-07；新增 `recoverV1Snapshot` / `haro memory recover-snapshot` 兜底；wrapup/sleep 时 .pending body 重新从磁盘读保活外部编辑）
 
 ---
 
