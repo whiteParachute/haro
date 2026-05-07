@@ -21,7 +21,14 @@ describe('send_message tool [FEAT-032 R4 / AC1]', () => {
     if (!out.result.ok) throw new Error('expected success');
     expect(out.result.value.channelId).toBe('fake-im');
     expect(e.fakeChannel.outbound).toHaveLength(1);
-    expect(e.fakeChannel.outbound[0]!.sessionId).toBe('sess-A');
+    // codex review should-fix: lock down the OutboundMessage payload too —
+    // without these assertions, a silent type-shape drift between MCP and
+    // any concrete channel adapter could pass the routing test but break
+    // delivery in production.
+    const captured = e.fakeChannel.outbound[0]!;
+    expect(captured.sessionId).toBe('sess-A');
+    expect(captured.msg.type).toBe('text');
+    expect(captured.msg.content).toBe('hi');
   });
 
   it('returns NEEDS_APPROVAL on cross-channel send', async () => {

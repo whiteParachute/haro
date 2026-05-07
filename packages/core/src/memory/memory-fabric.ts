@@ -264,8 +264,12 @@ export class MemoryFabric {
 
   /**
    * FEAT-035 R5: aria-memory style file search. Filters in JS, no FTS5.
-   * Returns the same `MemorySearchResult[]` shape so callers (FEAT-031 Web
-   * Channel history, FEAT-032 MCP `memory_query`) get the canonical record.
+   * Returns the same `MemorySearchResult[]` shape so callers (FEAT-032 MCP
+   * `memory_query`, future Dashboard knowledge-tab long-term lookups) get
+   * the canonical record. Note: FEAT-031 Web Channel **session transcript**
+   * history does NOT consume this entrypoint — it walks the channel's own
+   * `web_messages` table with `(before, beforeId)` cursor pagination
+   * (FEAT-035 D8 / FEAT-031 D4 boundary).
    */
   searchMemoryFiles(query: string, options: SearchMemoryFilesOptions = {}): MemorySearchResult[] {
     return this.store.search(query, options);

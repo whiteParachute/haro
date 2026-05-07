@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChannelRegistry, type ChannelLogger } from '@haro/channel';
 import { WebChannel } from '@haro/channel-web';
-import { createWebApp } from '../src/index.js';
+import { createWebApp, getWebSocketManager } from '../src/index.js';
 import type { WebLogger } from '../src/types.js';
 
 function createMockLogger(): WebLogger {
@@ -222,6 +222,73 @@ describe('web channel REST [FEAT-031]', () => {
     const download = await app.request(`/api/v1/channels/web/files/${uploadBody.data.id}`);
     expect(download.status).toBe(200);
     expect(await download.text()).toBe('payload');
+  });
+
+  it('forwards WebChannel outbound stream events to WS publish [AC4 binding]', async () => {
+    // Codex review must-fix: AC4's "agent reply 通过 Web Channel 出现在
+    // Dashboard" was previously only verified at the channel-side subscriber
+    // layer. This regression locks down the web-api ↔ WebChannel binding —
+    // when channel.send() emits a stream event, publishWebChannelEvent on
+    // the WebSocket manager must be invoked with the same sessionId / event
+    // payload (which it then broadcasts to clients subscribed to
+    // `channels:web`; broadcast itself is covered by manager unit tests).
+    const { app, channel } = await setup();
+    const ws = getWebSocketManager(app);
+    expect(ws).toBeTruthy();
+    const publishSpy = vi.spyOn(ws!, 'publishWebChannelEvent');
+
+    // Trigger any read on the channels-web subtree so tryWebChannel()
+    // installs the channel.onStream → publishStreamEvent bridge.
+    const list = await app.request('/api/v1/channels/web/sessions');
+    expect(list.status).toBe(200);
+
+    const session = channel.createSession({ ownerUserId: 'u-1' });
+    await channel.send(session.sessionId, { type: 'text', content: 'agent reply' });
+
+    expect(publishSpy).toHaveBeenCalled();
+    const calls = publishSpy.mock.calls;
+    expect(calls.some(([sid]) => sid === session.sessionId)).toBe(true);
+    const matched = calls.find(([sid]) => sid === session.sessionId)!;
+    expect(matched[1]).toBeTruthy();
+  });
+
+  it('respects beforeId tie-breaker when same-millisecond messages straddle a page boundary [AC6 / Codex review §pagination]', async () => {
+    // Codex review should-fix: API-level pagination test only used `before=`,
+    // so the composite cursor's `beforeId` branch — the protection against
+    // dropping/duplicating same-ms messages — was only exercised in
+    // persistence unit tests. Here we exercise it through the REST surface.
+    const { app } = await setup();
+    const create = await (
+      await app.request('/api/v1/channels/web/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+    ).json() as { data: { sessionId: string } };
+    const sessionId = create.data.sessionId;
+    for (let i = 0; i < 6; i += 1) {
+      await app.request(`/api/v1/channels/web/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: `msg-${i}` }),
+      });
+    }
+    const page1 = (await (
+      await app.request(`/api/v1/channels/web/sessions/${sessionId}/messages?limit=3`)
+    ).json()) as { data: { items: Array<{ id: string; createdAt: number }>; nextCursor: number | null; nextCursorId: string | null } };
+    expect(page1.data.items).toHaveLength(3);
+    expect(page1.data.nextCursor).not.toBeNull();
+    expect(page1.data.nextCursorId).not.toBeNull();
+    const before = page1.data.nextCursor!;
+    const beforeId = page1.data.nextCursorId!;
+    const page2 = (await (
+      await app.request(
+        `/api/v1/channels/web/sessions/${sessionId}/messages?limit=10&before=${before}&beforeId=${encodeURIComponent(beforeId)}`,
+      )
+    ).json()) as { data: { items: Array<{ id: string }>; nextCursor: number | null } };
+    const page1Ids = new Set(page1.data.items.map((m) => m.id));
+    expect(page2.data.items.length).toBeGreaterThan(0);
+    for (const m of page2.data.items) expect(page1Ids.has(m.id)).toBe(false);
   });
 
   it('paginates 100 messages by 50 without duplication [AC6]', async () => {
