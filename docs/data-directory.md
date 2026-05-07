@@ -269,6 +269,24 @@ CREATE TABLE cron_lease (
   acquired_at INTEGER NOT NULL,
   lease_until INTEGER NOT NULL
 );
+
+-- FEAT-032: MCP 工具调用审计。每次 agent 通过 @haro/mcp-tools 调工具都会写一行；
+-- params 字段绝不存原文，仅 SHA-256(salt|stableJson(params)) 用于关联同 payload 调用。
+-- 通过 services.mcp.listInvocations(ctx, {sessionId?, toolName?, limit?}) 读取。
+CREATE TABLE tool_invocation_log (
+  id            TEXT PRIMARY KEY,
+  session_id    TEXT NOT NULL,
+  agent_id      TEXT NOT NULL,
+  tool_name     TEXT NOT NULL,           -- send_message / memory_query / memory_remember / schedule_task / 第三方
+  params_hash   TEXT NOT NULL,           -- sha256 hex（可选 HARO_TOOL_AUDIT_SALT 加盐）
+  decision      TEXT NOT NULL,           -- allowed / denied / needs-approval
+  result_status TEXT NOT NULL,           -- success / error / pending
+  latency_ms    INTEGER,
+  error_code    TEXT,                    -- INVALID_PARAMS / PERMISSION_DENIED / NEEDS_APPROVAL / TARGET_NOT_FOUND / TARGET_DISABLED / TOOL_TIMEOUT / INTERNAL_ERROR
+  invoked_at    INTEGER NOT NULL
+);
+CREATE INDEX idx_tool_invocation_log_session ON tool_invocation_log(session_id, invoked_at);
+CREATE INDEX idx_tool_invocation_log_tool ON tool_invocation_log(tool_name, invoked_at);
 ```
 
 这些表是 SQLite read model / audit model；Markdown skill、prompt、memory 文件仍保留为人工可读 source 或兼容层。
@@ -327,6 +345,12 @@ FEAT-033 的 cron 边界：
 
 - `cron_jobs` 单 session 默认配额 50（`enabled=1 AND next_run_at IS NOT NULL` 计入）；超限走 FEAT-023 Permission Guard 升配。Cron 频率下限 1 分钟（拒绝 6 字段秒级表达式）；once 严格 ISO-8601（必须 Z 或 ±HH:MM offset）。
 - `cron_lease` 单行哨兵；TTL 默认 60s；任意 tick caller（web-api ticker / `haro cron daemon` / `haro cron tick`）任一在跑即可调度，**不强依赖 web-api**。
+
+FEAT-032 的 MCP 工具层边界：
+
+- `tool_invocation_log` 仅 audit；所有写入由 `@haro/mcp-tools` 的 `ToolInvocationAuditWriter` 统一控制，**绝不**记录原始 params；只读视图通过 `services.mcp.listInvocations` 暴露。
+- `params_hash` 默认是 sha256 完整 hex；运维可设 `HARO_TOOL_AUDIT_SALT` 环境变量加盐，缓解低熵 params（固定 channelId / topic）的离线字典攻击。
+- per-tool 超时由 registry 在注册时强制声明（`send_message: 30_000` / `memory_query: 5_000` / `memory_remember: 5_000` / `schedule_task: 1_000`）；超时返回 `TOOL_TIMEOUT` 并触发 `AbortSignal` 给工具做协作式取消。
 - `status='running'` 期间 cancel 走「立即 flip 'cancelled' + abort signal + 30s graceful 等待 → 超时则 force-flip 'cancelled-forced'」；runner 所有 setStatus / advanceNextRun 用 `requireNotCancelled` SQL guard 防写覆盖。
 - 已知限制：跨进程 cancel 不能 force-abort 另一进程的 in-flight；DB 层 cancel 让对端下次 tick 跳过即可（spec §3 / §8 Q2）。
 
