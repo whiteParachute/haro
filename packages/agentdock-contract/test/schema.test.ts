@@ -106,4 +106,25 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
   it('accepts a valid dry-run proposal fixture', () => {
     expect(EvolutionProposalSchema.parse(validProposal).id).toBe('proposal-001');
   });
+
+  it('rejects memory as a Haro-owned proposal target', () => {
+    const result = EvolutionProposalSchema.safeParse({
+      ...validProposal,
+      targetKind: 'memory',
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'memory-entry-001', kind: 'memory' },
+          contentRef: 'agentdock://memory/entry-001',
+          contentHash: 'sha256:memory',
+          summary: 'Attempt to mutate AgentDock-owned memory',
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === 'targetKind')).toBe(true);
+    }
+  });
 });

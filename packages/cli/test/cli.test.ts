@@ -940,7 +940,7 @@ describe('runCli [FEAT-006]', () => {
     expect(chunks.join('')).not.toContain('telegram');
   });
 
-  it('FEAT-010 AC1/AC3: skills list shows preinstalled skills and uninstall protects memory', async () => {
+  it('FEAT-010 AC1/AC3: skills list shows sidecar-era preinstalled skills and protects them from uninstall', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-skills-'));
     roots.push(root);
     const stdout = new PassThrough();
@@ -963,11 +963,11 @@ describe('runCli [FEAT-006]', () => {
     });
 
     expect(listResult.exitCode).toBe(0);
-    expect(chunks.join('')).toContain('memory\tenabled\tpreinstalled');
+    expect(chunks.join('')).not.toContain('memory\tenabled\tpreinstalled');
     expect(chunks.join('')).toContain('eat\tenabled\tpreinstalled');
 
     const uninstall = await runCli({
-      argv: ['skills', 'uninstall', 'memory'],
+      argv: ['skills', 'uninstall', 'eat'],
       root,
       stderr: new PassThrough(),
       createProviderRegistry: async () =>
@@ -1068,26 +1068,22 @@ describe('runCli [FEAT-006]', () => {
     expect(output).toContain('Target skill differs from canonical source: SKILL.md');
   });
 
-  it('FEAT-010 AC4: explicit /memory prefix on `haro run` triggers the skill and writes usage', async () => {
-    // FEAT-039 R15 reclaimed `/memory` as a REPL slash that hits the FTS5
-    // service directly. The skills runtime still owns the `/memory` task
-    // prefix on the non-REPL `haro run` path (and any external channel
-    // input), which is what AC4 actually verifies.
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-memory-skill-'));
+  it('FEAT-010 AC4: explicit /eat prefix on `haro run` triggers the prompt skill and writes usage', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-eat-skill-'));
     roots.push(root);
     const stdout = new PassThrough();
     const chunks: string[] = [];
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
     const result = await runCli({
-      argv: ['run', '/memory 查一下 xxx'],
+      argv: ['run', '/eat Principle: Keep interfaces narrow'],
       root,
       stdout,
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
             query: async function* () {
-              yield { type: 'result', content: 'provider should not run', responseId: 'resp-1' };
+              yield { type: 'result', content: 'provider ok', responseId: 'resp-1' };
             },
           }),
         ),
@@ -1097,27 +1093,27 @@ describe('runCli [FEAT-006]', () => {
     expect(result.exitCode).toBe(0);
     const usageDb = require('better-sqlite3')(join(root, 'skills', 'usage.sqlite'));
     try {
-      const row = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('memory') as { use_count: number };
+      const row = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('eat') as { use_count: number };
       expect(row.use_count).toBe(1);
     } finally {
       usageDb.close();
     }
-    expect(chunks.join('')).not.toContain('provider should not run');
+    expect(chunks.join('')).toContain('provider ok');
   });
 
-  it('FEAT-010 AC8: description matching picks remember before eat', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-remember-auto-'));
+  it('FEAT-010 AC8: description matching picks eat for knowledge ingestion requests', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-eat-auto-'));
     roots.push(root);
     const stdout = new PassThrough();
     const result = await runCli({
-      argv: ['run', '记住这个偏好：以后默认中文回答'],
+      argv: ['run', '请吸收这个经验：接口要保持窄边界'],
       root,
       stdout,
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
             query: async function* () {
-              yield { type: 'result', content: 'provider should not run', responseId: 'resp-1' };
+              yield { type: 'result', content: 'provider ok', responseId: 'resp-1' };
             },
           }),
         ),
@@ -1127,16 +1123,14 @@ describe('runCli [FEAT-006]', () => {
     expect(result.exitCode).toBe(0);
     const usageDb = require('better-sqlite3')(join(root, 'skills', 'usage.sqlite'));
     try {
-      const remember = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('remember') as { use_count: number };
-      const eat = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('eat') as { use_count?: number } | undefined;
-      expect(remember.use_count).toBe(1);
-      expect(eat?.use_count ?? 0).toBe(0);
+      const eat = usageDb.prepare('SELECT use_count FROM skill_usage WHERE skill_id = ?').get('eat') as { use_count: number };
+      expect(eat.use_count).toBe(1);
     } finally {
       usageDb.close();
     }
   });
 
-  it('FEAT-011 AC12: haro eat bridges into the skills runtime and writes archives/memory', async () => {
+  it('FEAT-011 AC12: haro eat bridges into the skills runtime and writes sidecar proposal archives', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-eat-'));
     roots.push(root);
     const stdout = new PassThrough();
@@ -1164,7 +1158,9 @@ describe('runCli [FEAT-006]', () => {
 
     expect(result.exitCode).toBe(0);
     expect(existsSync(join(root, 'archive', 'eat-proposals'))).toBe(true);
-    expect(existsSync(join(root, 'memory', 'agents', 'haro-assistant', 'index.md'))).toBe(true);
+    const bundles = readdirSync(join(root, 'archive', 'eat-proposals'));
+    expect(bundles).toHaveLength(1);
+    expect(existsSync(join(root, 'archive', 'eat-proposals', bundles[0]!, 'observation-preview.md'))).toBe(true);
   });
 
   it('FEAT-011 AC7/AC9: haro shit dry-run and rollback bridge into the skills runtime', async () => {
@@ -1499,7 +1495,7 @@ describe('runCli [FEAT-006]', () => {
     expect(wrapup).not.toHaveBeenCalled();
   });
 
-  it('haro run wires the default memoryWrapupHook and writes an impression file on success', async () => {
+  it('haro run skips the default memoryWrapupHook when the memory-wrapup skill is absent', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-memory-wrapup-'));
     roots.push(root);
 
@@ -1521,11 +1517,7 @@ describe('runCli [FEAT-006]', () => {
 
     expect(result.exitCode).toBe(0);
     const impressionsDir = join(root, 'memory', 'agents', 'haro-assistant', 'impressions');
-    const impressionFiles = readdirSync(impressionsDir).filter((file) => file.endsWith('.md'));
-    expect(impressionFiles).toHaveLength(1);
-    const impression = readFileSync(join(impressionsDir, impressionFiles[0]!), 'utf8');
-    expect(impression).toContain('记录这次 CLI 执行');
-    expect(impression).toContain('本轮执行已完成');
+    expect(existsSync(impressionsDir)).toBe(false);
   });
 
   it('config validation errors still exit non-zero and surface the offending path', async () => {

@@ -6,7 +6,6 @@ export const ProposalTargetKindSchema = z.enum([
   'skill',
   'runner-profile',
   'routing-rule',
-  'memory',
   'mcp-tool-config',
   'schedule-config',
   'haro-code',
