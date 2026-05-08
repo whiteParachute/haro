@@ -6,7 +6,7 @@ import type { AgentRegistry } from '../agent/registry.js';
 import { loadHaroConfig, type LoadedConfig } from '../config/loader.js';
 import { initHaroDatabase } from '../db/init.js';
 import { createLogger, type HaroLogger } from '../logger/index.js';
-import { createMemoryFabric, type MemoryFabric } from '../memory/index.js';
+import type { MemoryFabric } from '../memory/index.js';
 import { buildHaroPaths } from '../paths.js';
 import type {
   AgentErrorEvent,
@@ -53,6 +53,13 @@ export interface AgentRunnerOptions {
   loadConfig?: () => LoadedConfig;
   taskTimeoutMs?: number;
   memoryWrapupHook?: MemoryWrapupHook;
+  /**
+   * Historical Haro-owned MemoryFabric runtime.
+   *
+   * Sidecar-era default is AgentDock-owned memory. The runner never creates a
+   * MemoryFabric on its own; callers that need legacy behavior must inject one
+   * and set RunAgentInput.legacyMemory=true.
+   */
   memoryFabric?: MemoryRuntime;
   /**
    * FEAT-032 D1: per-session MCP server factory. When provided, the runner
@@ -98,8 +105,6 @@ export class AgentRunner {
   private readonly now: () => Date;
   private readonly createSessionId: () => string;
   private readonly logger: Pick<HaroLogger, 'debug' | 'info' | 'warn' | 'error'>;
-  private memoryFabric: MemoryRuntime | null | undefined;
-  private memoryFabricKey?: string;
 
   constructor(options: AgentRunnerOptions) {
     this.options = options;
@@ -204,7 +209,7 @@ export class AgentRunner {
                 basePrompt: agent.systemPrompt,
                 task: input.task,
                 noMemory: input.noMemory === true,
-                config,
+                legacyMemory: input.legacyMemory === true,
               }),
               model: candidate.model,
               tools: agent.tools,
@@ -225,7 +230,6 @@ export class AgentRunner {
             ) {
               contextResetRetried = true;
               await this.handleSaveAndClear({
-                config,
                 sessionId,
                 agentId: agent.id,
                 task: input.task,
@@ -233,6 +237,7 @@ export class AgentRunner {
                 provider: candidate.provider,
                 events: outcome.events,
                 noMemory: input.noMemory === true,
+                legacyMemory: input.legacyMemory === true,
               });
               sessionContext = { sessionId };
               continue;
@@ -753,6 +758,10 @@ export class AgentRunner {
       this.logger.debug?.({ sessionId: wrapup.sessionId }, 'memory-wrapup hook skipped (no-memory override)');
       return;
     }
+    if (!input.legacyMemory) {
+      this.logger.debug?.({ sessionId: wrapup.sessionId }, 'legacy Haro memory disabled; skipping memory-wrapup hook');
+      return;
+    }
     if (!this.options.memoryWrapupHook) {
       this.logger.debug?.({ sessionId: wrapup.sessionId }, 'memory-wrapup hook skipped');
       return;
@@ -765,10 +774,11 @@ export class AgentRunner {
     basePrompt: string;
     task: string;
     noMemory: boolean;
-    config: LoadedConfig;
+    legacyMemory: boolean;
   }): string {
     if (input.noMemory) return input.basePrompt;
-    const memoryFabric = this.resolveMemoryFabric(input.config);
+    if (!input.legacyMemory) return input.basePrompt;
+    const memoryFabric = this.resolveMemoryFabric();
     if (!memoryFabric) return input.basePrompt;
 
     const context = memoryFabric.contextFor({
@@ -794,7 +804,6 @@ export class AgentRunner {
   }
 
   private async handleSaveAndClear(input: {
-    config: LoadedConfig;
     sessionId: string;
     agentId: string;
     task: string;
@@ -802,6 +811,7 @@ export class AgentRunner {
     model: string;
     events: readonly AgentEvent[];
     noMemory: boolean;
+    legacyMemory: boolean;
   }): Promise<void> {
     if (input.noMemory) {
       this.logger.warn?.(
@@ -811,7 +821,15 @@ export class AgentRunner {
       return;
     }
 
-    const memoryFabric = this.resolveMemoryFabric(input.config);
+    if (!input.legacyMemory) {
+      this.logger.warn?.(
+        { sessionId: input.sessionId, provider: input.provider, model: input.model },
+        'context_too_long received with legacy Haro memory disabled; retrying with cleared continuation only',
+      );
+      return;
+    }
+
+    const memoryFabric = this.resolveMemoryFabric();
     if (!memoryFabric) {
       this.logger.warn?.(
         { sessionId: input.sessionId, provider: input.provider, model: input.model },
@@ -831,25 +849,8 @@ export class AgentRunner {
     });
   }
 
-  private resolveMemoryFabric(config: LoadedConfig): MemoryRuntime | null {
-    if (this.options.memoryFabric) return this.options.memoryFabric;
-    if (this.memoryFabric !== undefined) return this.memoryFabric;
-
-    const paths = buildHaroPaths(this.options.root);
-    const primaryRoot =
-      config.config.memory?.primary?.path ??
-      config.config.memory?.path ??
-      paths.dirs.memory;
-    const backupRoot = config.config.memory?.backup?.path;
-    const key = `${primaryRoot}::${backupRoot ?? ''}`;
-
-    if (this.memoryFabric && this.memoryFabricKey === key) return this.memoryFabric;
-    this.memoryFabricKey = key;
-    this.memoryFabric = createMemoryFabric({
-      root: primaryRoot,
-      ...(backupRoot ? { backupRoot } : {}),
-    });
-    return this.memoryFabric;
+  private resolveMemoryFabric(): MemoryRuntime | null {
+    return this.options.memoryFabric ?? null;
   }
 
   private resolveTimeoutMs(config: LoadedConfig): number {

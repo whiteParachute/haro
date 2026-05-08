@@ -160,7 +160,7 @@ CREATE TABLE component_usage (
 
 Phase 1 新增的 Asset / Budget 表由对应 FEAT 落地。
 
-> **Sidecar 修订（2026-05-08）**：Haro-owned Memory Fabric 不再进入 AgentDock sidecar 基线。记忆由 AgentDock Memory Agent / memory MCP / 任务上下文提供；`~/.haro/memory` 仅作为历史 workbench 兼容目录，不作为新资产、索引或 write target；`haro mcp` read-only sidecar 启动时不得创建该目录。
+> **Sidecar 修订（2026-05-08）**：Haro-owned Memory Fabric 不再进入 AgentDock sidecar 基线。记忆由 AgentDock Memory Agent / memory MCP / 任务上下文提供；`~/.haro/memory` 仅作为历史 workbench 兼容目录，不作为新资产、索引或 write target；`haro mcp` read-only sidecar 和默认 `haro run` 启动时不得创建该目录；只有显式 legacy memory 路径（例如 `haro run --legacy-memory` 或 `haro memory ...`）才可使用它。
 
 ```sql
 -- FEAT-022: Evolution Asset Registry

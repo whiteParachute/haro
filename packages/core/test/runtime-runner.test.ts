@@ -148,10 +148,12 @@ describe('AgentRunner [FEAT-005]', () => {
     const first = await runner.run({
       agentId: 'haro-assistant',
       task: '列出当前目录下的 TypeScript 文件',
+      legacyMemory: true,
     });
     const second = await runner.run({
       agentId: 'haro-assistant',
       task: '继续上一轮并总结',
+      legacyMemory: true,
     });
 
     expect(first.finalEvent).toMatchObject({ type: 'result', responseId: 'resp-1' });

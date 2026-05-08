@@ -224,6 +224,7 @@ export interface ExecutionOptions {
   provider?: string;
   model?: string;
   noMemory?: boolean;
+  legacyMemory?: boolean;
   retryOfSessionId?: string;
   continueLatestSession?: boolean;
   /**
@@ -370,11 +371,19 @@ function buildProgram(app: AppContext): Command {
         .option('--agent <id>', 'agent id')
         .option('--provider <id>', 'provider override')
         .option('--model <id>', 'model override')
-        .option('--no-memory', 'disable memory read/write and wrapup for this session')
+        .option('--no-memory', 'legacy alias: keep Haro-owned memory disabled for this session')
+        .option('--legacy-memory', 'enable historical Haro-owned MemoryFabric context/wrapup for this session')
         .action(
           async (
             task: string,
-            options: { agent?: string; provider?: string; model?: string; noMemory?: boolean; memory?: boolean },
+            options: {
+              agent?: string;
+              provider?: string;
+              model?: string;
+              noMemory?: boolean;
+              memory?: boolean;
+              legacyMemory?: boolean;
+            },
           ) => {
             const agentId =
               options.agent ??
@@ -387,6 +396,7 @@ function buildProgram(app: AppContext): Command {
               provider: options.provider ?? app.cliState.defaultProvider,
               model: options.model ?? app.cliState.defaultModel,
               noMemory: options.noMemory ?? options.memory === false,
+              legacyMemory: options.legacyMemory === true,
             });
             if (result.finalEvent.type !== 'result') {
               throw new CommanderExit(1, result.finalEvent.message);
@@ -1589,13 +1599,23 @@ async function bootstrapApp(
   }
 
   const sidecarOnly = input.argv?.[0] === 'mcp';
+  const legacyRunMemory =
+    input.argv?.[0] === 'run' && input.argv.includes('--legacy-memory') && !input.argv.includes('--no-memory');
+  const legacyMemoryRoots = resolveLegacyMemoryRoots(loaded.config, paths);
   const dirResult = haroFs.ensureHaroDirectories(input.root, {
-    skip: sidecarOnly ? ['memory'] : [],
+    skip:
+      sidecarOnly ||
+      (input.argv?.[0] === 'run' && (!legacyRunMemory || legacyMemoryRoots.root !== paths.dirs.memory))
+        ? ['memory']
+        : [],
   });
   haroDb.initHaroDatabase({ root: input.root });
   const skills = new SkillsManager({ root: paths.root });
   skills.ensureInitialized();
-  const memoryWrapupHook = createCliMemoryWrapupHook(skills, logger);
+  let legacyMemoryFabric: ReturnType<typeof createMemoryFabric> | undefined;
+  const getLegacyMemoryFabric = () =>
+    (legacyMemoryFabric ??= createLegacyMemoryFabric(loaded.config, paths));
+  const memoryWrapupHook = createCliMemoryWrapupHook(skills, logger, getLegacyMemoryFabric);
 
   const providerRegistry = input.createProviderRegistry
     ? await input.createProviderRegistry({ config: loaded.config })
@@ -1635,6 +1655,7 @@ async function bootstrapApp(
           createSessionId,
           logger,
           memoryWrapupHook,
+          ...(legacyRunMemory ? { memoryFabric: getLegacyMemoryFabric() } : {}),
         });
   const runner = createRunner();
   const router = new ScenarioRouter({
@@ -1948,6 +1969,7 @@ async function executeTask(
       ...(input.provider ? { provider: input.provider } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.noMemory ? { noMemory: true } : {}),
+      ...(input.legacyMemory ? { legacyMemory: true } : {}),
       ...(input.retryOfSessionId ? { retryOfSessionId: input.retryOfSessionId } : {}),
       ...(input.continueLatestSession === false ? { continueLatestSession: false } : {}),
       ...(input.continueFromSessionId ? { continueFromSessionId: input.continueFromSessionId } : {}),
@@ -2110,6 +2132,7 @@ async function executeTeamWorkflow(
         ...(input.provider ? { provider: input.provider } : {}),
         ...(input.model ? { model: input.model } : {}),
         ...(input.noMemory ? { noMemory: true } : {}),
+        ...(input.legacyMemory ? { legacyMemory: true } : {}),
       }),
   };
   const orchestrator = new TeamOrchestrator({
@@ -2757,7 +2780,31 @@ async function createDefaultProviderRegistry(config: LoadedConfig['config']): Pr
   return registry;
 }
 
-function createCliMemoryWrapupHook(skills: SkillsManager, logger: CliLogger): MemoryWrapupHook {
+function createLegacyMemoryFabric(config: LoadedConfig['config'], paths: HaroPaths): ReturnType<typeof createMemoryFabric> {
+  const { root, backupRoot } = resolveLegacyMemoryRoots(config, paths);
+  return createMemoryFabric({
+    root,
+    ...(backupRoot ? { backupRoot } : {}),
+  });
+}
+
+function resolveLegacyMemoryRoots(
+  config: LoadedConfig['config'],
+  paths: HaroPaths,
+): { root: string; backupRoot?: string } {
+  const root = config.memory?.primary?.path ?? config.memory?.path ?? paths.dirs.memory;
+  const backupRoot = config.memory?.backup?.path;
+  return {
+    root,
+    ...(backupRoot ? { backupRoot } : {}),
+  };
+}
+
+function createCliMemoryWrapupHook(
+  skills: SkillsManager,
+  logger: CliLogger,
+  createFabric: () => ReturnType<typeof createMemoryFabric>,
+): MemoryWrapupHook {
   let memoryFabric: ReturnType<typeof createMemoryFabric> | undefined;
   return async ({ sessionId, agentId, task, result }) => {
     const enabled = skills.list().some((entry) => entry.id === 'memory-wrapup' && entry.enabled);
@@ -2766,7 +2813,7 @@ function createCliMemoryWrapupHook(skills: SkillsManager, logger: CliLogger): Me
       return;
     }
     try {
-      memoryFabric ??= createMemoryFabric({ root: skills.paths.dirs.memory });
+      memoryFabric ??= createFabric();
       await memoryFabric.wrapupSession({
         scope: 'agent',
         agentId,

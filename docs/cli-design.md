@@ -183,14 +183,16 @@ haro update --check # 仅预览，不输出安装提示
 haro run "列出当前目录下的 TypeScript 文件"
 haro run "帮我审查 src/provider.ts" --agent code-reviewer
 haro run "..." --provider codex --model <live-model-id>
-haro run "..." --no-memory
+haro run "..." --legacy-memory   # 历史兼容：显式启用 Haro-owned MemoryFabric
+haro run "..." --no-memory       # legacy alias；sidecar 默认已不读写 Haro memory
 ```
 
 **选项**：
 - `--agent <id>`：指定使用的 Agent
 - `--provider <id>`：覆盖 Provider 选择规则
 - `--model <name>`：显式 pin model
-- `--no-memory`：本次执行不读写记忆，也不触发 `memory-wrapup`
+- `--legacy-memory`：历史兼容开关；显式启用 Haro-owned MemoryFabric context / `memory-wrapup`
+- `--no-memory`：legacy alias / safety override；sidecar 默认已不读写 Haro memory，且不会触发 `memory-wrapup`；与 `--legacy-memory` 同时出现时以 `--no-memory` 为准
 
 ### `haro model`
 

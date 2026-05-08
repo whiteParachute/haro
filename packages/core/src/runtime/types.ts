@@ -68,6 +68,14 @@ export interface RunAgentInput {
   provider?: string;
   model?: string;
   noMemory?: boolean;
+  /**
+   * Historical Haro-owned MemoryFabric compatibility switch.
+   *
+   * Sidecar-era default is AgentDock-owned memory, so runner executions do not
+   * read/write Haro MemoryFabric unless this is explicitly enabled by a legacy
+   * caller/test.
+   */
+  legacyMemory?: boolean;
   retryOfSessionId?: string;
   continueLatestSession?: boolean;
   /**

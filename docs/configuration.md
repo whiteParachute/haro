@@ -34,6 +34,8 @@ providers:
     defaultModel: <live-codex-model-id>
 
 memory:
+  # Historical Haro-owned MemoryFabric only. Sidecar/default `haro run`
+  # ignores this path; `--legacy-memory` or explicit memory commands opt in.
   path: ~/.haro/memory
 
 channels:
@@ -72,6 +74,8 @@ channels:
     enabled: true
 
 memory:
+  # Historical Haro-owned MemoryFabric only. Default sidecar/run memory is
+  # owned by AgentDock, not this directory.
   path: ./.haro/memory
 
 defaultAgent: code-reviewer
@@ -218,7 +222,8 @@ Invalid Haro config (/home/user/.haro/config.yaml):
 
 ```bash
 haro run "..." --provider codex --model <live-model-id>
-haro run "..." --no-memory
+haro run "..." --legacy-memory   # 历史兼容：显式启用 Haro-owned MemoryFabric
+haro run "..." --no-memory       # legacy alias；sidecar 默认已不读写 Haro memory
 ```
 
-这些覆盖只在当前命令生效，优先级高于所有配置文件。
+这些覆盖只在当前命令生效，优先级高于所有配置文件；`--no-memory` 是 safety override，与 `--legacy-memory` 同时出现时以 `--no-memory` 为准。

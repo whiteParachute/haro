@@ -360,7 +360,7 @@ describe('AgentRunner [FEAT-005]', () => {
     expect(state.pendingWork).toContain('这个任务会超时');
   });
 
-  it('AC7: successful runs log "memory-wrapup hook skipped" when the hook is absent', async () => {
+  it('AC7: successful sidecar-default runs skip legacy Haro memory when the hook is absent', async () => {
     const debug = vi.fn();
     const providerRegistry = new ProviderRegistry();
     providerRegistry.register(
@@ -390,7 +390,7 @@ describe('AgentRunner [FEAT-005]', () => {
     expect(result.finalEvent).toMatchObject({ type: 'result' });
     expect(debug).toHaveBeenCalledWith(
       { sessionId: result.sessionId },
-      'memory-wrapup hook skipped',
+      'legacy Haro memory disabled; skipping memory-wrapup hook',
     );
   });
 

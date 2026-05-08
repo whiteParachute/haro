@@ -50,7 +50,7 @@ interface AgentConfig {
   → 调用 provider.query()
   → 逐条写入 session_events
   → result 时写入 sessions.context_ref
-  → 成功：更新 agent state + 触发 memory-wrapup
+  → 成功：更新 agent state；仅在 legacyMemory=true 时触发历史 Haro memory-wrapup
   → 失败：按 fallback 条件写 provider_fallback_log，继续下一个候选
 ```
 

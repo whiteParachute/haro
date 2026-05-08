@@ -98,7 +98,7 @@ Haro 后续价值不在重新实现 AgentDock 已经具备的 runtime/workbench 
 - 不提供自由文本 apply。
 - 不改 AgentDock DB。
 - 不接管 AgentDock session lifecycle。
-- 不创建或写入 Haro-owned MemoryFabric；记忆由 AgentDock 侧提供。
+- `haro mcp` 与默认 `haro run` 不创建或写入 Haro-owned MemoryFabric；记忆由 AgentDock 侧提供，历史兼容只能显式开启。
 
 ## Phase D: Scheduled Sidecar
 

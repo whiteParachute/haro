@@ -107,7 +107,7 @@ describe('AgentRunner [FEAT-005]', () => {
 
     const task =
       '列出当前目录下的 TypeScript 文件，并解释你为什么选择这些输出，同时保持描述足够长以验证 taskPreview 会按 FEAT-005 规则截断到 120 字符以内。';
-    const result = await runner.run({ task, agentId: 'haro-assistant' });
+    const result = await runner.run({ task, agentId: 'haro-assistant', legacyMemory: true });
 
     expect(result.finalEvent.type).toBe('result');
     expect(result.provider).toBe('codex');
@@ -298,6 +298,47 @@ describe('AgentRunner [FEAT-005]', () => {
     );
   });
 
+  it('sidecar default: skips legacy Haro memory wrapup unless explicitly enabled', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runner-default-no-memory-'));
+    roots.push(root);
+    const wrapup = vi.fn(async () => undefined);
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const runner = new AgentRunner({
+      root,
+      agentRegistry: createAgentRegistry(),
+      providerRegistry: createProviderRegistry(
+        new MockProvider({
+          models: [{ id: 'codex-primary', created: 1, maxContextTokens: 8_000 }],
+          query: async function* () {
+            yield { type: 'result', content: 'done', responseId: 'resp-default-no-memory' };
+          },
+        }),
+      ),
+      createSessionId: () => 'sess-default-no-memory',
+      loadConfig: () => createLoadedConfig(),
+      memoryWrapupHook: wrapup,
+      logger,
+    });
+
+    const result = await runner.run({
+      task: '默认不写 Haro 自有记忆',
+      agentId: 'haro-assistant',
+    });
+
+    expect(result.finalEvent.type).toBe('result');
+    expect(wrapup).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      { sessionId: 'sess-default-no-memory' },
+      'legacy Haro memory disabled; skipping memory-wrapup hook',
+    );
+  });
+
   it('AC7: honors --no-memory by skipping the memory-wrapup hook even on success', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-runner-no-memory-'));
     roots.push(root);
@@ -330,6 +371,7 @@ describe('AgentRunner [FEAT-005]', () => {
       task: '这次运行不要写记忆',
       agentId: 'haro-assistant',
       noMemory: true,
+      legacyMemory: true,
     });
     expect(result.finalEvent.type).toBe('result');
     expect(wrapup).not.toHaveBeenCalled();
@@ -368,6 +410,7 @@ describe('AgentRunner [FEAT-005]', () => {
     const result = await runner.run({
       task: 'memory-wrapup hook 未接入时也应成功',
       agentId: 'haro-assistant',
+      legacyMemory: true,
     });
     expect(result.finalEvent.type).toBe('result');
     expect(logger.debug).toHaveBeenCalledWith(
@@ -376,7 +419,54 @@ describe('AgentRunner [FEAT-005]', () => {
     );
   });
 
-  it('historical compatibility: injects MemoryFabric context into the provider system prompt', async () => {
+  it('sidecar default: ignores injected MemoryFabric context unless legacyMemory is enabled', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runner-memory-context-disabled-'));
+    roots.push(root);
+    const seenSystemPrompts: string[] = [];
+    const memoryFabric = {
+      contextFor: vi.fn(() => ({
+        items: [
+          {
+            summary: '不应进入默认 sidecar prompt',
+            source: 'remember',
+            sourceFile: '/memory/agents/haro-assistant/knowledge/preferences.md',
+            tier: 'knowledge' as const,
+          },
+        ],
+      })),
+      wrapupSession: vi.fn(async () => ({ file: '/tmp/fake', key: 'fake' })),
+    };
+
+    const runner = new AgentRunner({
+      root,
+      agentRegistry: createAgentRegistry(),
+      providerRegistry: createProviderRegistry(
+        new MockProvider({
+          models: [{ id: 'codex-primary', created: 1, maxContextTokens: 8_000 }],
+          query: async function* (params) {
+            seenSystemPrompts.push(params.systemPrompt ?? '');
+            yield { type: 'result', content: 'done', responseId: 'resp-memory-context-disabled' };
+          },
+        }),
+      ),
+      createSessionId: () => 'sess-memory-context-disabled',
+      loadConfig: () => createLoadedConfig(),
+      memoryFabric,
+    });
+
+    const result = await runner.run({
+      task: '默认 sidecar prompt 不读 Haro memory',
+      agentId: 'haro-assistant',
+    });
+
+    expect(result.finalEvent.type).toBe('result');
+    expect(memoryFabric.contextFor).not.toHaveBeenCalled();
+    expect(seenSystemPrompts[0]).toContain('You are helpful.');
+    expect(seenSystemPrompts[0]).not.toContain('<memory-context>');
+    expect(seenSystemPrompts[0]).not.toContain('不应进入默认 sidecar prompt');
+  });
+
+  it('historical compatibility: injects MemoryFabric context into the provider system prompt when legacyMemory is enabled', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-runner-memory-context-'));
     roots.push(root);
     const seenSystemPrompts: string[] = [];
@@ -417,6 +507,7 @@ describe('AgentRunner [FEAT-005]', () => {
     const result = await runner.run({
       task: '请保持简洁地回答',
       agentId: 'haro-assistant',
+      legacyMemory: true,
     });
 
     expect(result.finalEvent.type).toBe('result');
@@ -474,8 +565,8 @@ describe('AgentRunner [FEAT-005]', () => {
       memoryFabric,
     });
 
-    await runner.run({ task: '第一次运行', agentId: 'haro-assistant' });
-    const result = await runner.run({ task: '第二次运行', agentId: 'haro-assistant' });
+    await runner.run({ task: '第一次运行', agentId: 'haro-assistant', legacyMemory: true });
+    const result = await runner.run({ task: '第二次运行', agentId: 'haro-assistant', legacyMemory: true });
 
     expect(result.finalEvent).toMatchObject({
       type: 'result',
@@ -501,5 +592,118 @@ describe('AgentRunner [FEAT-005]', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('sidecar default: context_too_long save-and-clear retries without writing Haro memory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runner-save-clear-default-no-memory-'));
+    roots.push(root);
+    const previousResponseIds: Array<string | undefined> = [];
+    const memoryFabric = {
+      contextFor: vi.fn(() => ({ items: [] })),
+      wrapupSession: vi.fn(async () => ({ file: '/tmp/fake-wrapup.md', key: 'wrapup-key' })),
+    };
+    let callCount = 0;
+
+    const runner = new AgentRunner({
+      root,
+      agentRegistry: createAgentRegistry(),
+      providerRegistry: createProviderRegistry(
+        new MockProvider({
+          models: [{ id: 'codex-primary', created: 1, maxContextTokens: 8_000 }],
+          query: async function* (params) {
+            callCount += 1;
+            previousResponseIds.push(params.sessionContext?.previousResponseId);
+            if (callCount === 1) {
+              yield { type: 'result', content: 'first run', responseId: 'resp-1' };
+              return;
+            }
+            if (callCount === 2) {
+              yield {
+                type: 'error',
+                code: 'context_too_long',
+                message: 'context too long',
+                retryable: false,
+                hint: 'save-and-clear',
+              };
+              return;
+            }
+            yield { type: 'result', content: 'recovered after clear', responseId: 'resp-2' };
+          },
+        }),
+      ),
+      createSessionId: () => `sess-save-clear-default-${callCount + 1}`,
+      loadConfig: () => createLoadedConfig(),
+      memoryFabric,
+    });
+
+    await runner.run({ task: '第一次运行', agentId: 'haro-assistant' });
+    const result = await runner.run({ task: '第二次运行', agentId: 'haro-assistant' });
+
+    expect(result.finalEvent).toMatchObject({
+      type: 'result',
+      content: 'recovered after clear',
+    });
+    expect(previousResponseIds).toEqual([undefined, 'resp-1', undefined]);
+    expect(memoryFabric.contextFor).not.toHaveBeenCalled();
+    expect(memoryFabric.wrapupSession).not.toHaveBeenCalled();
+  });
+
+  it('AC7: --no-memory wins over legacyMemory during context_too_long save-and-clear', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-runner-save-clear-no-memory-wins-'));
+    roots.push(root);
+    const previousResponseIds: Array<string | undefined> = [];
+    const memoryFabric = {
+      contextFor: vi.fn(() => ({ items: [] })),
+      wrapupSession: vi.fn(async () => ({ file: '/tmp/fake-wrapup.md', key: 'wrapup-key' })),
+    };
+    let callCount = 0;
+
+    const runner = new AgentRunner({
+      root,
+      agentRegistry: createAgentRegistry(),
+      providerRegistry: createProviderRegistry(
+        new MockProvider({
+          models: [{ id: 'codex-primary', created: 1, maxContextTokens: 8_000 }],
+          query: async function* (params) {
+            callCount += 1;
+            previousResponseIds.push(params.sessionContext?.previousResponseId);
+            if (callCount === 1) {
+              yield { type: 'result', content: 'first run', responseId: 'resp-1' };
+              return;
+            }
+            if (callCount === 2) {
+              yield {
+                type: 'error',
+                code: 'context_too_long',
+                message: 'context too long',
+                retryable: false,
+                hint: 'save-and-clear',
+              };
+              return;
+            }
+            yield { type: 'result', content: 'recovered after clear', responseId: 'resp-2' };
+          },
+        }),
+      ),
+      createSessionId: () => `sess-save-clear-no-memory-${callCount + 1}`,
+      loadConfig: () => createLoadedConfig(),
+      memoryFabric,
+    });
+
+    await runner.run({ task: '第一次运行', agentId: 'haro-assistant', legacyMemory: true });
+    const result = await runner.run({
+      task: '第二次运行',
+      agentId: 'haro-assistant',
+      legacyMemory: true,
+      noMemory: true,
+    });
+
+    expect(result.finalEvent).toMatchObject({
+      type: 'result',
+      content: 'recovered after clear',
+    });
+    expect(previousResponseIds).toEqual([undefined, 'resp-1', undefined]);
+    expect(memoryFabric.contextFor).toHaveBeenCalledTimes(1);
+    expect(memoryFabric.wrapupSession).not.toHaveBeenCalled();
   });
 });
