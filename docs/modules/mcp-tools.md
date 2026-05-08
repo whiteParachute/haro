@@ -1,5 +1,10 @@
 # MCP 工具层（@haro/mcp-tools）
 
+> **2026-05-08 状态：historical workbench baseline。**
+>
+> 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
+
+
 **Spec**：[`specs/phase-1.5/FEAT-032-mcp-tool-layer.md`](../../specs/phase-1.5/FEAT-032-mcp-tool-layer.md)（2026-05-06 实现交付）
 
 `@haro/mcp-tools` 是 Haro Agent 的 "动手做事" 工具层。它把"发消息 / 查记忆 / 写记忆 / 调度任务"这四个跨模块动作封装为标准 MCP 工具，让 agent 可以在主循环之外显式调用平台原生能力，同时把每次调用都过 permission 守门 + 写 audit 日志。
@@ -10,15 +15,15 @@
 - **stdio + JSON-RPC**（R2）：不开额外 HTTP 端口，只通过 stdio 与子进程通信，自实现轻量 dispatcher（无新依赖）。
 - **per-tool timeout**（D2 / R6.1）：每个工具在 registry 注册时必须显式声明 `timeoutMs`；缺省直接 `throw`，registry 拒绝默认值。
 - **不做工具组合**（D3）：平台层不提供 workflow DSL；agent 自己多次调用，每次调用都独立守门、独立审计。
-- **dimension 对齐 aria-memory**（D4）：`memory_remember` 的 `dimension` 取值与 aria-memory 4 类（`user` / `feedback` / `project` / `reference`）完全一致，缺省时由 Memory Fabric 推断。
+- **历史兼容**：`memory_query` / `memory_remember` 是旧 workbench 内置工具；sidecar baseline 下 memory 工具由 AgentDock 提供，Haro MCP server 不再登记 memory asset。
 
 ## 4 个内置工具
 
 | Tool | 作用 | timeoutMs | 关键守门 |
 |------|------|-----------|----------|
 | `send_message` | 把文本/Markdown 消息投递到 Channel session | 30 000 | 跨 channel → `external-service` 审批；channel 必须 enabled |
-| `memory_query` | 走 `MemoryFabric.searchMemoryFiles` 读记忆，按 `dimension` 过滤 | 5 000 | 只读，默认 allow |
-| `memory_remember` | 走 `MemoryFabric.writeEntry` 写记忆 + 在 Evolution Asset Registry 记录 `proposed` 事件 | 5 000 | scope=shared/platform → `write-shared` 审批；scope=agent allow |
+| `memory_query` | 历史兼容：读旧 Haro MemoryFabric | 5 000 | sidecar baseline 不推荐；优先走 AgentDock memory MCP/API |
+| `memory_remember` | 历史兼容：写旧 Haro MemoryFabric；不再记录 Haro memory asset | 5 000 | sidecar baseline 不推荐；AgentDock 负责 memory 写入权限 |
 | `schedule_task` | 走 `services.cron.createJob` 注册 cron / once 任务 | 1 000 | 默认 allow；非法 cron / 过期 ISO → `INVALID_PARAMS` |
 
 错误码统一来自 `error.ts`：`PERMISSION_DENIED` / `NEEDS_APPROVAL` / `INVALID_PARAMS` / `TARGET_NOT_FOUND` / `TARGET_DISABLED` / `TOOL_TIMEOUT` / `INTERNAL_ERROR`，retryable 矩阵：仅 `TOOL_TIMEOUT` / `INTERNAL_ERROR` 为 `true`，其他显式 `false`。
@@ -50,7 +55,7 @@ ToolRegistry.invoke({ name, rawParams, session, deps })
 ## 已知缺口（2026-05-06 实现交付）
 
 - **Provider 端工具调用尚未接通**：`@haro/mcp-tools` 的 server / 4 工具 / 守门 / audit 层都已就位；AgentRunner 的 `mcpSessionFactory` 也会在 session 启动时 spawn 子进程并在 finally 5 s 内 graceful shutdown。但 provider SDK（如 Codex / Claude）侧的 `mcpServers` 配置尚未把 spawn 的子进程 stdio 接入，因此 agent 暂时**不会**真的去调用这些工具。本 FEAT 交付的是 "infra 就位 + lifecycle 严格符合 spec"，provider 接入留作后续 FEAT。`McpSessionHandle.child` 已暴露原始 `ChildProcess` 句柄，未来 wiring 直接读它的 stdio 即可。
-- **subprocess 内部 ChannelRegistry 为空**：`server-entry.ts` 的子进程目前没有从父进程 IPC 拿到 channel 注册信息（这需要序列化 channel adapter，复杂度高）。短期里 production 路径仍以 in-process 嵌入 `McpServer` 为主：父进程把现成的 `ChannelRegistry` / `MemoryFabric` / cron `ServiceContext` 通过 `ToolDependencies` 直接传给 `createDefaultRegistry({ audit })`。
+- **subprocess 内部 ChannelRegistry 为空**：`server-entry.ts` 的子进程目前没有从父进程 IPC 拿到 channel 注册信息（这需要序列化 channel adapter，复杂度高）。短期里 production 路径仍以 in-process 嵌入 `McpServer` 为主：父进程把现成的 `ChannelRegistry` / 历史 `MemoryFabric` / cron `ServiceContext` 通过 `ToolDependencies` 直接传给 `createDefaultRegistry({ audit })`。sidecar 新路径应改为 AgentDock-owned memory deps。
 - **AbortSignal 是协作式取消**：`ToolExecutionContext.signal` 在 timeout 时被 `abort()`；honor 该 signal 的工具会及时停下，否则后台仍会跑完。当前 4 个 builtin 内部不发外部网络调用，超时影响有限；调用方仍以 `TOOL_TIMEOUT` 为准（spec R9 / AC5）。
 
 ## per-session 子进程生命周期
@@ -87,8 +92,8 @@ CLI / Web 通过 `import { mcp } from '@haro/core/services'; mcp.listInvocations
 ## 与其他模块的接合点
 
 - `send_message` → `@haro/channel`（`ChannelRegistry.get(channelId).send(channelSessionId, OutboundMessage)`），FEAT-031 web channel 含 channelSessionId 语义统一。
-- `memory_query` / `memory_remember` → `@haro/core/memory`（`MemoryFabric.searchMemoryFiles` / `writeEntry`，FEAT-035 v2，文件存储无 FTS5）。
-- `memory_remember` → `@haro/core/evolution`（`EvolutionAssetRegistry.recordEvent({ asset:{kind:'memory', ...}, type:'proposed', actor:'agent' })`，FEAT-022）。
+- `memory_query` / `memory_remember` → 历史 `@haro/core/memory` 兼容层；sidecar baseline 通过 AgentDock memory MCP/API 获取记忆。
+- `memory_remember` 不再写 `kind=memory` 的 Haro EvolutionAsset。
 - `schedule_task` → `@haro/core/services` cron 命名空间（`services.cron.createJob`，FEAT-033）。
 - 守门 → 内置 `permission.evaluate`（轻量 in-package 表，按 toolName + scope 决策；audit 仍写 `tool_invocation_log`）。
 

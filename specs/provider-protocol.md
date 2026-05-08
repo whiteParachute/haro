@@ -1,15 +1,20 @@
 # Provider 接入协议规范
 
+> **2026-05-08 状态：historical workbench protocol。**
+>
+> 本文描述 Haro 自建 Provider Abstraction Layer。新基线下 Haro 不再继续扩展自建 provider 主路径；`packages/providers/` 占位包已删除，仅 `provider-codex` 作为历史 runtime 代码保留。后续 sidecar 实现不得依赖本协议新增 provider。
+
+
 ## 概述
 
 本文档定义 Haro Provider Abstraction Layer 的核心接口协议。所有 Provider 实现必须遵守此协议。
 
 **当前实现状态**：
 - 唯一正式实现：**Codex Provider**（`packages/provider-codex/`，含 FEAT-029 ChatGPT 订阅认证）
-- 占位包：`packages/providers/`（保留作为后续 Provider 的目录位）
-- 规划接入（Phase 1.5+）：`xiaomi-token-plan` / `kimi-token-plan`；接入时通过 provider catalog 驱动，不允许在核心 CLI / runtime 散落 `providerId === 'xxx'` 特判
+- `packages/providers/` 占位包已删除；不再为后续 Provider 保留目录位。
+- 历史规划的 `xiaomi-token-plan` / `kimi-token-plan` 不再作为 Haro 主线目标。
 
-协议层始终保持多 Provider 抽象，确保新 Provider 接入只需实现本协议接口 + 注册 catalog 描述，不动核心代码。
+协议层仅作为历史 runtime 参考；sidecar-era 新能力不得以新增 Haro Provider 为前提。
 
 ## 核心接口定义
 

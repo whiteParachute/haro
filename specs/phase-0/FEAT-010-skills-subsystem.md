@@ -9,7 +9,6 @@ updated: 2026-04-20
 related:
   - ../../docs/modules/skills-system.md
   - ../evolution-metabolism.md
-  - ./FEAT-007-memory-fabric-independent.md
   - ./FEAT-011-manual-eat-shit.md
   - ../../roadmap/phases.md#p0-10skills-子系统--15-预装
 ---
@@ -18,7 +17,7 @@ related:
 
 ## 1. Context / 背景
 
-Skills 子系统是 Haro 的能力扩展机制。Phase 0 交付安装 / 卸载 / 查询 + 15 个预装 skill + 与 Memory Fabric / eat/shit 的集成点。Skills 必须遵守 [可插拔原则](../../docs/architecture/overview.md#设计原则)，核心模块对具体 skill 名称零硬编码。
+Skills 子系统是 Haro 的能力扩展机制。Phase 0 历史交付安装 / 卸载 / 查询 + 15 个预装 skill；sidecar 修订后预装 memory skills 已删除，memory 由 AgentDock 侧提供。Skills 必须遵守 [可插拔原则](../../docs/architecture/overview.md#设计原则)，核心模块对具体 skill 名称零硬编码。
 
 15 个预装清单和分类见 [skills-system.md](../../docs/modules/skills-system.md#预装-skillsphase-0)，本 spec 交付承接机制 + 打包分发。
 
@@ -58,7 +57,7 @@ Skills 子系统是 Haro 的能力扩展机制。Phase 0 交付安装 / 卸载 /
   - 显式 slash：`/skill-name [args]`，**优先级最高**
   - description 匹配：在 Provider 调用之前由 Haro 自己判定并至多自动触发一个 skill
   - 自动触发结果再交给 Provider；Phase 0 不把 skill 作为 provider tool 注入链的一部分
-- R7: 记忆类 skill（6 个）内部调用 FEAT-007 的 `MemoryFabric` API
+- R7: sidecar 修订后删除 Haro-owned 记忆类预装 skill；memory 由 AgentDock 侧提供。
 - R8: 核心代码不得出现具体 skill 名字硬编码（如 `if skill === 'memory'`）
 - R9: `haro skills uninstall <id>` 对 preinstalled skill 拒绝（提示"预装 skill 不可卸载"）
 - R10: 分发必须暴露 license/source 元数据：
@@ -86,9 +85,9 @@ scripts/prepare-preinstalled.ts
 {
   "version": 1,
   "skills": {
-    "memory": {
+    "eat": {
       "source": "preinstalled",
-      "originalSource": "aria-memory",
+      "originalSource": "haro",
       "pinnedCommit": "<sha>",
       "installedAt": "2026-04-19T...",
       "isPreinstalled": true,
@@ -111,7 +110,7 @@ scripts/prepare-preinstalled.ts
 - AC3: `haro skills uninstall memory` 返回错误并提示预装 skill 不可卸载（对应 R9）
 - AC4: 用户 REPL 输入 `/memory 查一下 xxx`，skill 被调用，`usage.sqlite` 中 `memory` 的 `use_count +1` 且 `last_used_at` 更新（对应 R5、R6）
 - AC5: 运行 `grep -rE "skillId\s*===|skill\.id\s*===" packages/core packages/cli` 返回 0 行（对应 R8）
-- AC6: 记忆类 skill（如 `remember`）内部只通过 `MemoryFabric` API 读写，不直接访问 `~/.haro/memory/` 文件（对应 R7）
+- AC6: sidecar 修订后 `remember` / `memory-*` 不再作为 Haro 预装 skill 分发；记忆读写走 AgentDock。
 - AC7: 预装 skill 目录下均有 `LICENSE`/`NOTICE`（若上游提供）且 `haro skills info <name>` 能展示来源与 pinned commit（对应 R10、R12）
 - AC8: description 匹配触发：用户输入“记住这个偏好”，`remember` 被自动调用，而不是 `eat`（对应 R6）
 - AC9: 安装符号链接路径时，最终内容被复制进 `user/`，manifest 记录 `resolvedFrom`（对应 R11）

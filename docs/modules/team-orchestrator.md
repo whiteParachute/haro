@@ -1,5 +1,10 @@
 # Team Orchestrator 模块
 
+> **2026-05-08 状态：historical workbench baseline。**
+>
+> 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
+
+
 ## 概述
 
 `packages/core/src/team-orchestrator.ts` 现在承接 FEAT-014：它消费 FEAT-013 的

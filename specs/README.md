@@ -2,6 +2,29 @@
 
 本目录是 Haro 项目的 **spec 单一真源（single source of truth）**。所有 feature、defect、协议、约束都在这里登记，开发/测试/迭代都围绕 spec 展开，以此防止需求与实现漂移。
 
+## 2026-05-08 新基线
+
+Haro 当前主线已切换为 **AgentDock self-evolution sidecar**。
+
+新 spec 优先进入 `specs/sidecar/`。旧 `phase-0/`、`phase-1/`、`phase-1.5/` 作为历史 workbench 路线资产保留；其中已交付模块可以复用经验，但不再决定后续主路径。旧 Phase 2.0 / 2.5 规划已被 sidecar-era specs 替代并删除。
+
+硬约束：
+
+- AgentDock 不能 import Haro。
+- Haro 不能 import AgentDock 内部 `src/*` 模块。
+- Haro 接入 AgentDock 只走外部 MCP server 注册、AgentDock scheduler/script task、AgentDock skills/MCP 调用面。
+- 第一阶段只读 / dry-run；L0/L1 apply 必须有 proposal、validation、snapshot、rollback ref。
+
+当前 sidecar-era specs：
+
+| Spec | 主题 | 阶段 | 状态 |
+| --- | --- | --- | --- |
+| [FEAT-043](sidecar/FEAT-043-agentdock-contract-skeleton.md) | AgentDock contract skeleton | Phase B | in-progress |
+| [FEAT-044](sidecar/FEAT-044-read-only-mcp-sidecar.md) | Read-only Haro MCP sidecar | Phase C | draft |
+| [FEAT-045](sidecar/FEAT-045-scheduled-sidecar-cli.md) | Scheduled sidecar CLI | Phase D | draft |
+| [FEAT-046](sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | Sidecar asset registry adapter | Phase E | draft |
+| [FEAT-047](sidecar/FEAT-047-gated-apply-l0-l1.md) | Gated apply L0/L1 | Phase F | draft |
+
 ## 目录结构
 
 ```
@@ -16,9 +39,13 @@ specs/
 │   └── BUG-001-xxx.md
 ├── phase-1/
 │   └── ...
-├── phase-1.5/                      # 自用底座补完（2026-05-01 重排新增）
-├── phase-2.0/                      # 进化感知层
-├── phase-2.5/                      # 进化提案层
+├── sidecar/                        # 2026-05-08 新基线：AgentDock sidecar specs
+│   ├── FEAT-043-agentdock-contract-skeleton.md
+│   ├── FEAT-044-read-only-mcp-sidecar.md
+│   ├── FEAT-045-scheduled-sidecar-cli.md
+│   ├── FEAT-046-sidecar-asset-registry-adapter.md
+│   └── FEAT-047-gated-apply-l0-l1.md
+├── phase-1.5/                      # 历史 workbench parity 资产（2026-05-01 路线）
 │
 ├── multi-agent-design-constraints.md   # 强制规范（跨 phase）
 ├── provider-protocol.md                # 协议规范
@@ -30,8 +57,9 @@ specs/
 ```
 
 - **`_template-*`**：以 `_` 前缀排在最上面，复制后填充
-- **`phase-N/`**：当前及未来迭代的 feature / defect spec
-- **无前缀的 `*.md`（根目录）**：跨 phase 的强制规范和协议（PAL / Channel / 多 Agent 约束 / 代谢机制等）
+- **`sidecar/`**：2026-05-08 之后的新主线 feature / defect spec
+- **`phase-N/`**：历史 workbench 路线的 feature / defect spec；除非用户明确要求，不再新增主线 spec
+- **无前缀的 `*.md`（根目录）**：跨 phase 的强制规范和协议；如内容仍绑定旧 workbench，应按 sidecar 语境重评估后再引用
 
 ## Spec 类型
 
@@ -204,11 +232,11 @@ describe('ProviderRegistry [FEAT-003]', () => {
 
 ```bash
 # 1. 复制模板
-cp specs/_template-feature.md specs/phase-0/FEAT-NNN-<slug>.md
+cp specs/_template-feature.md specs/sidecar/FEAT-NNN-<slug>.md
 
 # 2. 填充 frontmatter + 所有 section
 # 3. 提交 draft 让用户确认
-git add specs/phase-0/FEAT-NNN-*.md
+git add specs/sidecar/FEAT-NNN-*.md
 git commit -m "spec(draft): FEAT-NNN <title>"
 
 # 4. 讨论 → Open Questions 清零 → 用户点头 → 改 status 为 approved
@@ -216,7 +244,9 @@ git commit -m "spec(draft): FEAT-NNN <title>"
 git checkout -b feat/FEAT-NNN-<slug>
 ```
 
-## 前端与 Dashboard 开发规范
+## 历史：前端与 Dashboard 开发规范
+
+> 2026-05-08：本节属于旧 Haro workbench / Dashboard 路线的历史规范。后续 Haro sidecar 不再把 Web Dashboard 作为主产品面扩展；如需新增可视化能力，优先通过 AgentDock 现有 Web/PWA 或 AgentDock session + MCP tool 交互承载。
 
 Dashboard（Web 管理后台）作为 Haro 的**呈现层**，其需求规划遵循**后端先行、前端跟进**的分层模式。这一模式确保核心能力先在服务端沉淀，前端在此基础上做可视化适配，避免"前端等接口"或"后端适配 UI"的双向耦合。
 
@@ -256,10 +286,9 @@ FEAT-018 只负责 **workflow 编排调试的只读可观测面**，避免把后
 
 | 编号 | 范围 | 说明 |
 |------|------|------|
-| FEAT-021 | Memory Fabric v1 | Hermes 风格三层记忆 + SQLite FTS5 + Haro scope/verification/assetRef |
-| FEAT-022 | Evolution Asset Registry | EvoMap 风格资产封装：skill/prompt/rule/memory/archive 的版本与审计 |
+| FEAT-022 | Evolution Asset Registry | EvoMap 风格资产封装：skill/prompt/rule/archive 的版本与审计 |
 | FEAT-023 | Permission & Token Budget Guard | Mercury 风格操作权限分级 + workflow/branch token 预算 |
-| FEAT-024 | Web Dashboard Knowledge & Skills | 从 FEAT-018 拆分：Memory 搜索/写入、Skills 生命周期、asset 追溯 |
+| FEAT-024 | Web Dashboard Knowledge & Skills | 从 FEAT-018 拆分：历史 Knowledge/Skills 页面、asset 追溯 |
 | FEAT-025 | Web Dashboard Runtime Logs & Provider Monitoring | 从 FEAT-018 拆分：Session events、provider fallback、provider/token 统计、Monitor |
 | FEAT-026 | Provider Onboarding Wizard | Hermes 风格 `haro provider` 引导配置、model 选择、secretRef 与 provider doctor |
 | FEAT-027 | Guided Setup & Doctor Remediation | OpenClaw/Hermes 风格 `haro setup` 从零引导、`haro doctor` 结构化修复建议 |
@@ -274,39 +303,26 @@ FEAT-018 只负责 **workflow 编排调试的只读可观测面**，避免把后
 | 编号 | 范围 | 说明 |
 |------|------|------|
 | FEAT-031 | Web Channel | 浏览器作为 IM channel（对话 / 历史 / 文件），与飞书 / Telegram 同等公民 |
-| FEAT-032 | MCP 工具层 | 内置 MCP server + 4 核心工具（send_message / memory_query / memory_remember / schedule_task） |
+| FEAT-032 | MCP 工具层 | 历史内置 MCP server；sidecar 口径下 memory 工具由 AgentDock 提供 |
 | FEAT-033 | Cron 任务最小版 | cron + 一次性，复用现有 session 上下文（done 2026-05-06；hermes-agent 风格 `tick()` + 三触发源 + inflight registry 30s graceful cancel） |
 | FEAT-034 | 流式 UX 升级 | thinking 折叠 / tool timeline / Hook 状态 / GFM / lightbox（done 2026-05-07） |
 | FEAT-038 | Web API 解耦 | 新建 `packages/web-api`，从 CLI 剥离；hermes-web-ui 风格前后端解耦 |
-| FEAT-039 | CLI 等价补完 | chat / session / agent / memory / logs / workflow / budget / user / skill / config 命令族 |
+| FEAT-039 | CLI 等价补完 | chat / session / agent / logs / workflow / budget / user / skill / config 命令族；memory CLI 为历史兼容 |
 
-**Phase 2.0 — 进化感知层**（specs/phase-2.0/）：
-
-| 编号 | 范围 | 说明 |
-|------|------|------|
-| FEAT-036 | Industry Intel | Anthropic / OpenAI changelog + 关键 GitHub repo release 订阅 + 自动 eat |
-| FEAT-040 | Self-Monitor | session / tool / 失败 / 重试 / token 浪费 被动观测埋点（Phase 1.5 后期开始预埋） |
-| FEAT-041 | 自动 eat/shit 触发 | 政策驱动 dry-run；artifact 持久化 + Phase 2.5 桥接到 proposal |
-
-**Phase 2.5 — 进化提案层**（specs/phase-2.5/）：
-
-| 编号 | 范围 | 说明 |
-|------|------|------|
-| FEAT-042 | Pattern Miner | 跨源（Self-Monitor + Industry Intel + Memory Fabric）模式归纳 |
-| FEAT-037 | Evolution Proposal | 结构化提案 + Dashboard 审批队列 + 决策反馈到 Pattern Miner |
+**历史 Phase 2.0 / Phase 2.5 规划**：已由 `specs/sidecar/FEAT-043` 到 `FEAT-047` 替代并删除，避免继续误导到 Haro 自建 workbench 路线。
 
 2026-04-25 后续路线重排原则：
 
 1. **先补首配闭环**：FEAT-026/027 优先于新增复杂能力，确保用户能从空环境配置 provider、全局命令、systemd/web 服务并跑通 smoke test。
-2. **再补智能底座**：FEAT-021/022/023 建立 Memory、资产审计、权限和预算，作为后续 Dashboard 与编排能力的后端基础。
+2. **再补智能底座**：FEAT-022/023 建立资产审计、权限和预算；Memory 改由 AgentDock 侧提供，Haro 不再维护自有 Memory Fabric。
 3. **最后补管理面成熟度**：FEAT-028 与 FEAT-024/025 共同把 Dashboard 从调试壳升级为可多人使用、可分页浏览、中文可读的控制面。
 
-2026-05-01 重排原则：
+2026-05-08 sidecar 重排原则：
 
-1. **CLI-first 与前后端解耦先行**：FEAT-038 / 039 是后续所有 Phase 1.5 spec 的架构前提，必须最先落。
-2. **Workbench 补完压在 Phase 1.5**：Web Channel / MCP / 定时 / 流式 UX 让 Haro 成为日用工具并产生进化层数据。
-3. **进化层分感知 → 提案 → 演化三层**：Phase 2.0（FEAT-036/040/041）只感知不改、Phase 2.5（FEAT-042/037）产提案 owner 审批、Phase 3.0+ 才执行。
-4. **跨 phase 依赖只能正向**：前置 phase 不能依赖后置 phase 实现；如必须接合，写双阶段实现条款 + 桥接表 + 状态字段（参见 FEAT-041 的 `auto_trigger_artifacts.bridge_status` 模式）。
+1. **AgentDock kernel 优先**：Haro 不再自建 workbench/runtime，只作为 AgentDock sidecar 接入。
+2. **Contract 先行**：先落 `@haro/agentdock-contract`，再做 MCP / scheduled CLI / apply。
+3. **先只读后可写**：observe/propose/validate/query 先落地；L0/L1 apply 必须后置到 validation + snapshot + rollback gate。
+4. **删除旧未来规划**：旧 Phase 2.0 / 2.5 spec 已删除，后续以 `specs/sidecar/` 为准。
 
 ### 规划 checklist（后端 FEAT 起草时自检）
 
@@ -330,4 +346,4 @@ Dashboard FEAT 的作者在起草时必须回答：
 - [Defect 模板](./_template-defect.md)
 - [PR 模板](../.github/PULL_REQUEST_TEMPLATE.md)
 - [多 Agent 设计约束](./multi-agent-design-constraints.md)
-- [路线图](../roadmap/phases.md)（Phase 0/1/1.5/2.0/2.5/3.0/3.5）
+- [路线图](../roadmap/phases.md)（sidecar-era Phase A–G）

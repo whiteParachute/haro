@@ -1,5 +1,10 @@
 # Skills 子系统设计
 
+> **2026-05-08 状态：sidecar reusable asset。**
+>
+> Skills / eat/shit 代谢思想保留，但 Haro 不新增 AgentDock 内部 skill runtime。sidecar 通过 AgentDock 已有 skills/MCP 调用面被编排。旧文中若出现 Haro 自建 workbench 语境，按 sidecar 语境重评估后再引用。
+
+
 ## 概述
 
 Skills 子系统负责 Haro 的**能力扩展与代谢**：

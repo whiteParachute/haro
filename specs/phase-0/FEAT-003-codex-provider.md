@@ -10,7 +10,6 @@ related:
   - ../provider-protocol.md
   - ../../docs/architecture/provider-layer.md
   - ./FEAT-005-single-agent-execution-loop.md
-  - ./FEAT-007-memory-fabric-independent.md
   - ../../roadmap/phases.md#p0-3codex-provider
 ---
 
@@ -70,10 +69,10 @@ Session 级 `response_id` 存储由 FEAT-005 的 Agent Runtime 负责，本 spec
 | 层 | 职责 |
 |----|------|
 | FEAT-003 Provider | 只翻译错误：发 `AgentErrorEvent { code: 'context_too_long', retryable: false, hint: 'save-and-clear' }` |
-| FEAT-005 Runner | 看到 `hint === 'save-and-clear'` 时调 `MemoryFabric.wrapupSession()` 把当前上下文落成 impression，清空 `previousResponseId`，重新发起 query |
-| Memory Fabric | 承接 session 收尾写入，保证"清空上下文但不丢失记忆" |
+| FEAT-005 Runner | 历史 workbench：看到 `hint === 'save-and-clear'` 时曾调 MemoryFabric wrapup；sidecar baseline 由 AgentDock Runner/Memory 处理 |
+| AgentDock Memory | sidecar baseline 的 session 收尾记忆由 AgentDock 负责 |
 
-这样把"保存记忆并 clear"的策略沉淀到 Runner + Memory Fabric 协同，Provider 保持无状态。
+sidecar baseline 下，"保存记忆并 clear"策略由 AgentDock Runner/Memory 协同承担，Provider 保持无状态。
 
 **错误处理**
 
@@ -119,7 +118,7 @@ Session 级 `response_id` 存储由 FEAT-005 的 Agent Runtime 负责，本 spec
 - 2026-04-18: whiteParachute — 关闭 Open Questions → approved
   - Q1 → 采用 `@openai/codex-sdk`（对齐 lark-bridge / KeyClaw-fresh / happyclaw-yl-new 本组织已验证路径）；不引入原生 `openai` 包；**不**设 ESLint 拦截（Codex 无封号合规顾虑）
   - Q2 → Phase 0 工具调用彻底不支持；MCP 外部处理推迟 Phase 1
-  - Q3 → Provider 只翻译错误事件（`context_too_long` + `hint: save-and-clear`）；"保存记忆并 clear"的策略沉淀到 FEAT-005 Runner + FEAT-007 MemoryFabric 协同，Provider 保持无状态
+  - Q3 → Provider 只翻译错误事件（`context_too_long` + `hint: save-and-clear`）；"保存记忆并 clear"的策略由 AgentDock Runner/Memory 协同，Provider 保持无状态
   - Q4 → **不保留** `codex-1-mini` 或任何硬编码兜底模型；模型清单通过 `listModels()` 实时获取（TTL 缓存）；上层需要 fallback 时从实时清单里挑选
   - R5 认证 → 不做 YAML `${ENV}` 插值；Provider 构造时直接读 `process.env.OPENAI_API_KEY`；`providers.codex` 配置只收 `baseUrl` 等非凭证字段
   - 原 AC6（latency_ms 落库）撤回 → 延迟观测由 FEAT-005 Runner 通过 pino 结构化日志统一处理；本 spec 不再要求 `session_events` 加列

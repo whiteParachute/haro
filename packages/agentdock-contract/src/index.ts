@@ -1,0 +1,83 @@
+export {
+  IsoDateTimeSchema,
+  JsonPrimitiveSchema,
+  JsonValueSchema,
+  NonEmptyStringSchema,
+  RefSchema,
+} from './primitives.js';
+export type { JsonValue, Ref } from './primitives.js';
+
+export {
+  AgentDockConnectionSchema,
+  ObservationSourceKindSchema,
+  ObservationSourceSchema,
+} from './connection.js';
+export type {
+  AgentDockConnection,
+  ObservationSource,
+  ObservationSourceKind,
+} from './connection.js';
+
+export { AgentDockCapabilitySchema, CapabilityFlagSchema } from './capability.js';
+export type { AgentDockCapability, CapabilityFlag } from './capability.js';
+
+export {
+  MemoryMaintenanceObservationSchema,
+  ObservationBatchSchema,
+  ObservationWindowSchema,
+  RunnerErrorObservationSchema,
+  ScheduledTaskRunObservationSchema,
+  SessionObservationSchema,
+  ToolCallObservationSchema,
+  TurnObservationSchema,
+  UsageRecordObservationSchema,
+} from './observation.js';
+export type {
+  MemoryMaintenanceObservation,
+  ObservationBatch,
+  ObservationWindow,
+  RunnerErrorObservation,
+  ScheduledTaskRunObservation,
+  SessionObservation,
+  ToolCallObservation,
+  TurnObservation,
+  UsageRecordObservation,
+} from './observation.js';
+
+export {
+  ChangeOperationSchema,
+  EvolutionLevelSchema,
+  EvolutionProposalSchema,
+  ProposalTargetKindSchema,
+  RollbackPlanSchema,
+  TestPlanSchema,
+} from './proposal.js';
+export type {
+  ChangeOperation,
+  EvolutionLevel,
+  EvolutionProposal,
+  ProposalTargetKind,
+  RollbackPlan,
+  TestPlan,
+} from './proposal.js';
+
+export { ValidationReportSchema } from './validation.js';
+export type { ValidationReport } from './validation.js';
+
+export {
+  AssetEventSchema,
+  AssetEventTypeSchema,
+  AssetKindSchema,
+  AssetStatusSchema,
+  RollbackMetadataSchema,
+} from './asset-event.js';
+export type {
+  AssetEvent,
+  AssetEventType,
+  AssetKind,
+  AssetStatus,
+  RollbackMetadata,
+} from './asset-event.js';
+
+export { FakeAgentDockSource, createFakeAgentDockSource } from './fake-source.js';
+export type { FakeAgentDockSourceOptions } from './fake-source.js';

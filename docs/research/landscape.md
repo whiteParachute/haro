@@ -32,7 +32,7 @@
 
 | 来源 | 可借鉴点 | Haro 落点 | Phase |
 |------|----------|-----------|-------|
-| Hermes | Session / Persistent / Skill memory + FTS5 | FEAT-021 Memory Fabric v1：三级记忆、全文搜索、信息维度拆分、对抗性验证 | Phase 1 P0 |
+| Hermes | Session / Persistent / Skill memory + FTS5 | 历史借鉴；sidecar baseline 下 memory 由 AgentDock 提供，Haro 不再实现自有 Memory Fabric | Historical |
 | EvoMap | 协议化进化语法与资产审计 | FEAT-022 Evolution Asset Registry：eat/shit 产物、prompt、skill、编排规则统一资产化 | Phase 1 P0 |
 | Mercury Agent | 权限审批和 Token 预算 | FEAT-023 Permission & Token Budget Guard：operation class、approval policy、workflow budget | Phase 1 P1 |
 | LangGraph / CrewAI | 编排图可视化、任务流监控 | FEAT-018 调整版：workflow 图、checkpoint 时间线、stalled branch 调试 | Phase 1 P1 |

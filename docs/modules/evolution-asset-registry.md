@@ -1,8 +1,13 @@
 # Evolution Asset Registry 设计
 
+> **2026-05-08 状态：sidecar reusable asset。**
+>
+> Evolution Asset Registry 保留并迁移到 Haro sidecar 数据目录，服务 proposal / validation / gated apply 的资产事件。旧文中若出现 Haro 自建 workbench 语境，按 sidecar 语境重评估后再引用。
+
+
 ## 概述
 
-Evolution Asset Registry 是 Haro Phase 1 的进化资产 read model 与审计日志。它把 `eat` / `shit` / Skills / Memory Fabric 影响到的对象注册为统一资产，但不取代原始文件：skill、prompt、routing rule、memory Markdown、archive manifest 仍然是可读 source 或 runtime 加载面。
+Evolution Asset Registry 是 Haro Phase 1 的进化资产 read model 与审计日志。在 sidecar 基线中，它把 `eat` / `shit` / Skills 影响到的 prompt、skill、routing rule、MCP/tool config、archive manifest 注册为统一资产，但不取代原始文件。Memory 由 AgentDock 侧提供，Haro 只在 observation / proposal 中保留 memory source refs，不再注册 memory asset。
 
 ## 资产身份与内容版本
 
@@ -33,14 +38,14 @@ registry.exportManifest({ outputFile: '~/.haro/assets/manifest-exports/assets.js
 
 ## 子系统接入
 
-- `eat`：memory direct write 注册 memory asset，并把 `assetRef` 写入 Memory Fabric；skill/prompt/routing-rule proposal 注册为 `proposed` asset。
+- `eat`：不再直接写入 Haro-owned memory；只生成 observation preview 与 skill/prompt/routing-rule proposal，并注册为 `proposed` asset。
 - `SkillsManager`：install/promote、enable、disable、uninstall、use 追加对应事件；skill 资产 id 使用 `skill:<skillId>`。
 - `shit`：archive 创建 `archive:<archiveId>` asset；受影响对象追加 `archived` event；rollback 追加 `rollback` event，不删除历史事件。
-- Memory Fabric：每条 entry 的 `asset_ref` frontmatter 字段可通过 `queryEntries({ assetRef })` 或 `searchMemoryFiles(query, { assetRef })` 反查相关 memory（FEAT-035 v2 走文件存储）。
-- Web Dashboard（FEAT-024）：Skills REST 的 install/uninstall 必须返回 audit 结果；如果 Registry 能力缺失，返回显式 `unsupported`，不能静默跳过事件。Memory REST 暴露 `assetRef` 字段用于 KnowledgePage 追溯来源。
+- AgentDock memory：如 proposal 依赖记忆证据，只保存 AgentDock 暴露的 sourceRef / observationRef；不在 Haro registry 中创建 memory kind。
+- Web Dashboard（FEAT-024，历史 workbench）：Skills REST 的 install/uninstall 必须返回 audit 结果；如果 Registry 能力缺失，返回显式 `unsupported`，不能静默跳过事件。
 
 ## Phase 1 边界
 
 - prompt asset 以完整 Agent `systemPrompt` 为最小边界；不实现 `@model-dependent` 块级治理。
 - routing-rule asset 只覆盖用户/项目级覆盖规则；内建 RoutingMatrix 仅可作为只读 baseline/sourceRef。
-- GEP metadata 是可选字段，缺失时不影响现有 eat/shit/skills/memory 流程。
+- GEP metadata 是可选字段，缺失时不影响现有 eat/shit/skills 流程。

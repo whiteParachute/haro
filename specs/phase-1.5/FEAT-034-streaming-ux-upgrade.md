@@ -45,7 +45,7 @@ happyclaw 在这一层做得很完整：thinking 折叠面板 + 工具调用 tim
 - 不引入富文本编辑器；输入框仍是 plain textarea + Markdown 提示。
 - 不实现实时 collaborative editing（无多用户同时编辑同一 session 的需求）。
 - 不引入新的渲染框架；继续用 React 19 + 既有 Tailwind + shadcn/ui。
-- **不做工具调用聚合统计**（D2）：Tool Timeline 仅展示当前 session 最近 N 个调用的详情；按工具类型 / 跨 session 的频次 / 耗时 / 失败率聚合留给 FEAT-025 Runtime Monitoring 或 Phase 2.0 FEAT-040 Self-Monitor 消费 `tool_invocation_log`（FEAT-032）。
+- **不做工具调用聚合统计**（D2）：Tool Timeline 仅展示当前 session 最近 N 个调用的详情；按工具类型 / 跨 session 的频次 / 耗时 / 失败率聚合留给 FEAT-025 Runtime Monitoring 或 sidecar observation pipeline 消费 `tool_invocation_log`（FEAT-032）。
 
 ## 4. Requirements / 需求项
 
@@ -135,7 +135,7 @@ ChatPage
 ## 8. Resolved Decisions / 已决议（原 Open Questions）
 
 - D1（原 Q1，移动端是否优化）：**做响应式布局**。viewport ≥ 375px 核心路径必须可用（G7 / R11 / AC8）。仍**不做** PWA / 离线 / native shell。Tailwind 既有断点 + shadcn/ui `Sheet` 即可，不引入新前端依赖。
-- D2（原 Q2，Tool Timeline 是否做聚合统计）：**不做**。本 spec 只展示当前 session 最近 N 个调用的详情；跨 session / 跨工具类型的频次 / 失败率 / 耗时聚合归属 FEAT-025 Runtime Monitoring 与 Phase 2.0 FEAT-040 Self-Monitor，二者消费 FEAT-032 落地的 `tool_invocation_log` 表。
+- D2（原 Q2，Tool Timeline 是否做聚合统计）：**不做**。本 spec 只展示当前 session 最近 N 个调用的详情；跨 session / 跨工具类型的频次 / 失败率 / 耗时聚合归属 FEAT-025 Runtime Monitoring 与 sidecar observation pipeline，二者消费 FEAT-032 落地的 `tool_invocation_log` 表。
 - D3（原 Q3，代码块语言识别失败 fallback）：**fallback 为纯文本** + **保留复制按钮**，不展示语言标签与行号（避免假信息），不阻塞渲染（R8 / AC9）。
 - D4（原 Q4，Image lightbox 是否支持多图轮播）：**支持多图轮播**。≥ 2 张图时方向键 / touch swipe 切换、显示当前序号 / 总数、ESC / 背景点击关闭。仍坚持**自实现**（约 150–200 行 React），不引入 `react-photo-view` / `swiper` 等新依赖（R12 / AC4 / 5.3）。
 

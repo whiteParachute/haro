@@ -1,5 +1,10 @@
 # Scenario Router 设计
 
+> **2026-05-08 状态：historical workbench baseline。**
+>
+> 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
+
+
 ## 概述
 
 Scenario Router 是 Phase 1 的 canonical ingress，负责在任务进入执行层之前完成三件事：

@@ -1,5 +1,10 @@
 # Channel 接入协议规范
 
+> **2026-05-08 状态：historical workbench protocol。**
+>
+> 本文描述 Haro 自建 Channel Abstraction。新基线下 AgentDock 负责 IM/Web/PWA channel 主链路，Haro sidecar 不再实现自有 channel；本文仅作为历史参考。
+
+
 ## 概述
 
 本文档定义 Haro Channel Abstraction 的核心接口协议。Channel 是 Haro 对接外部消息入口（飞书、Telegram、Slack、Web、邮件…）的抽象层，和 [Provider Abstraction Layer](./provider-protocol.md) 并列，分别抽象"谁在回答"和"从哪里来"。

@@ -2,9 +2,43 @@
 
 ## 当前设计基线
 
-**2026-05-01 重设计**：Haro 采用双层架构（workbench + 进化）+ 四边界约束（CLI 优先 / 前后端解耦 / 多 provider 抽象 / 多 channel 抽象）；原 Phase 4 Ecosystem 已移除。**Phase 1.5（自用底座补完）已收尾**：FEAT-031 Web Channel + FEAT-032 MCP 工具层 + FEAT-033 Cron 任务 + FEAT-034 流式 UX 升级 + FEAT-035 Memory Fabric v2 Aria-Memory 对齐 + FEAT-038 Web API 解耦 + FEAT-039 CLI 等价补完 全部 2026-05-07 done。CLI 与 Web 命令面等价、`@haro/core/services` 共享层就位、`packages/core/src/cron/` 三触发源调度器就位、`@haro/channel-web` 第四 channel adapter 就位、`@haro/mcp-tools` 4 工具 MCP server + per-session subprocess 生命周期 + `tool_invocation_log` 审计表就位、`@haro/core/stream` 12 类 `StreamEvent` + Web Dashboard `MessageStream` / `ThinkingPanel` / `ToolTimeline` / GFM 渲染管线就位、Memory Fabric v2 aria-memory 风格散文件存储 + `searchMemoryFiles` + `runWrapup` / `runSleep` skill 钩子 + `migrateFromV1` / `recoverV1Snapshot` 兜底就位。任何 spec 评审、模块设计、UX 决策都要先过这四条边界。
+**2026-05-08 新基线**：Haro 不再继续自建完整 workbench/runtime。AgentDock 是独立运行的 agent runtime / workbench；Haro 是 AgentDock 的可插拔 self-evolution sidecar。
 
-历史决策记录见 [`docs/planning/archive/redesign-2026-05-01.md`](docs/planning/archive/redesign-2026-05-01.md)（已归档）；后续路线以 [`roadmap/phases.md`](roadmap/phases.md) 为准。
+依赖方向只能是：
+
+```text
+haro -> AgentDock public API / MCP / event export / filesystem contract
+```
+
+硬约束：
+
+- AgentDock 不能 import Haro。
+- Haro 不能 import AgentDock 内部 `src/*` 模块。
+- Haro 接入 AgentDock 只走现有能力：外部 MCP server 注册、AgentDock scheduler/script task、AgentDock skills/MCP 调用面。
+- Haro 不接管 AgentDock 的 Session、Runner、Memory Agent、IM、Web/PWA 或 Scheduler 主链路。
+- 第一阶段只做 read-only / dry-run；L0/L1 apply 必须有 proposal、validation、snapshot、rollback ref。
+
+历史基线：2026-05-01 双层架构（workbench + 进化）和 Phase 1.5 workbench parity 已归档，只作为可复用经验来源，不再作为后续主路径。
+
+当前权威文档：
+
+- [`docs/planning/agentdock-kernel-sidecar-architecture.md`](docs/planning/agentdock-kernel-sidecar-architecture.md)
+- [`docs/architecture/overview.md`](docs/architecture/overview.md)
+- [`roadmap/phases.md`](roadmap/phases.md)
+- [`specs/sidecar/`](specs/sidecar/)（FEAT-043 到 FEAT-047）
+- [`docs/planning/archive/redesign-2026-05-01.md`](docs/planning/archive/redesign-2026-05-01.md)（历史归档）
+
+## 历史模块处理
+
+| 历史模块 | 新状态 | 处理方式 |
+| --- | --- | --- |
+| Memory 接入 | AgentDock-owned | Haro 通过 AgentDock MCP/API/任务上下文读取记忆；不维护自有 Memory Fabric |
+| MCP tools permission/audit | 保留经验 | 复用守门链思想，重建 Haro sidecar tools |
+| Evolution Asset Registry | 保留并迁移 | 移到 sidecar 数据目录 |
+| eat/shit | 保留思想 | 作为 asset metabolism 继续使用 |
+| CLI / Web API / Web Dashboard | 降级 | admin/debug/control surface，不再主推 |
+| Scenario Router / Team Orchestrator | 冻结 | 只保留 validation 相关经验 |
+| Provider / Channel / Session runtime | 废弃主路径 | 不再继续扩展 |
 
 ## 开发收尾流程
 

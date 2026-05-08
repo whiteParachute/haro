@@ -1,5 +1,10 @@
 # Team Orchestration 协议规范（Phase 1，draft）
 
+> **2026-05-08 状态：historical workbench protocol。**
+>
+> 本文描述 Haro 自建 Team Orchestrator 协议。新基线下 AgentDock 负责 session/runner 编排主链路，Haro 只保留其中可服务 proposal validation 的经验；本文仅作为历史参考。
+
+
 **状态：draft。本规范为 **Phase 1 实现前的硬约束锚点**——Phase 0 不实现 Team Orchestrator，但本 spec 定义的约束**自 Phase 0 起即生效**：任何 Phase 0 的 FEAT spec 若试图引入临时多 Agent 组合方案，必须对照本规范，冲突则推迟到 Phase 1。**
 
 ## 概述
@@ -257,7 +262,7 @@ Orchestrator Agent ┼→ Worker B（子任务 2 原始材料）→┼→ Orches
 **规则**：Team 内部传递必须是**原始材料**，**禁止**由 Orchestrator 或任何中间环节对原始内容做摘要后投递给下一成员。本约束是[约束①](./multi-agent-design-constraints.md)的协议级兜底。
 
 **落地要求**：
-- 原始材料存放于 Memory Fabric 或 evolution-context/；Team 调用时传引用（文件路径 / memory id），**不**传压缩后的文本
+- 原始材料存放于 AgentDock memory 或 Haro evolution-context/；Team 调用时传引用（文件路径 / observation ref），**不**传压缩后的文本
 - 当材料实在过大时，采用"分片后各自读原片段"的方式（对应 P7 filesystem-as-substrate），**不**做语义摘要
 - 确因规模必须摘要时，必须**同时**提供原始引用，让下游可选择深读
 

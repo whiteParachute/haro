@@ -12,7 +12,6 @@ related:
   - ../../docs/modules/agent-runtime.md
   - ./FEAT-003-codex-provider.md
   - ./FEAT-004-minimal-agent-definition.md
-  - ./FEAT-007-memory-fabric-independent.md
   - ../../roadmap/phases.md#p0-5单-agent-执行循环
 ---
 
@@ -20,7 +19,7 @@ related:
 
 ## 1. Context / 背景
 
-Phase 0 的核心业务路径：接收一个任务 → 选 Provider/Model → 调用 → 回写结果。本 spec 串联 FEAT-001（骨架）、FEAT-003（Provider）、FEAT-004（Agent 定义）、FEAT-007（Memory Fabric），产出 Haro 第一个端到端可跑的执行链路。不涉及多 Agent、Team、Scenario Router（推迟到 Phase 1）。
+Phase 0 的核心业务路径：接收一个任务 → 选 Provider/Model → 调用 → 回写结果。本 spec 属历史 workbench，串联 FEAT-001（骨架）、FEAT-003（Provider）、FEAT-004（Agent 定义）与当时的 Memory 设计，产出 Haro 第一个端到端可跑的执行链路。Sidecar baseline 下 Runner/Memory 由 AgentDock 提供。不涉及多 Agent、Team、Scenario Router（推迟到 Phase 1）。
 
 ## 2. Goals / 目标
 

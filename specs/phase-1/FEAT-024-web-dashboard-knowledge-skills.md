@@ -8,11 +8,9 @@ created: 2026-04-25
 updated: 2026-04-26
 related:
   - ./FEAT-018-web-dashboard-orchestration-observability.md
-  - ./FEAT-021-memory-fabric-v1.md
   - ./FEAT-022-evolution-asset-registry.md
   - ../phase-0/FEAT-010-skills-subsystem.md
   - ../phase-0/FEAT-011-manual-eat-shit.md
-  - ../../docs/modules/memory-fabric.md
   - ../../docs/modules/skills-system.md
 ---
 
@@ -20,13 +18,13 @@ related:
 
 ## 1. Context / 背景
 
-FEAT-018 原计划同时交付 workflow 图、KnowledgePage、SkillsPage、LogsPage、Provider 统计和 MonitorPage。2026-04-25 owner 决策要求拆分。由于 KnowledgePage 依赖 FEAT-021 Memory Fabric v1，SkillsPage 又需要 FEAT-022 Evolution Asset Registry 才能正确展示 proposal/promote/archive 生命周期，因此二者合并为独立 spec。
+FEAT-018 原计划同时交付 workflow 图、KnowledgePage、SkillsPage、LogsPage、Provider 统计和 MonitorPage。2026-04-25 owner 决策要求拆分。该 spec 属历史 workbench：KnowledgePage 当时依赖 Haro MemoryFabric，SkillsPage 依赖 FEAT-022 Evolution Asset Registry，因此二者合并为独立 spec。Sidecar baseline 下 Memory/Knowledge UI 由 AgentDock 提供。
 
 本 FEAT 的目标是让用户在 Dashboard 中浏览、搜索和维护 Haro 的知识与技能资产，但不承担编排调试和运行时监控。
 
 ## 2. Goals / 目标
 
-- G1: 实现 KnowledgePage，支持 Memory Fabric v1 的搜索、浏览和安全写入。
+- G1: 历史 workbench：实现 KnowledgePage，支持旧 Haro MemoryFabric 的搜索、浏览和安全写入。Sidecar baseline 不再新增该路径。
 - G2: 实现 SkillsPage，支持 Skills 的列表、详情、启用、禁用、安装和卸载。
 - G3: 展示 skill / memory 与 Evolution Asset Registry 的关联，能追溯来源和状态。
 - G4: 通过 REST API 暴露 Memory 与 Skills read/write contract，不直接操作文件系统。
@@ -35,7 +33,7 @@ FEAT-018 原计划同时交付 workflow 图、KnowledgePage、SkillsPage、LogsP
 
 - 不实现 workflow/branch/checkpoint 调试；属于 FEAT-018。
 - 不实现 Logs/Provider/Monitor；属于 FEAT-025。
-- 不实现 Memory Fabric v1 存储和 FTS5 核心；属于 FEAT-021。
+- 不实现 Memory 存储核心；sidecar baseline 由 AgentDock memory 提供。
 - 不实现 Evolution Asset Registry 核心；属于 FEAT-022。
 - 不允许通过 UI 写入 `platform` scope memory；platform scope 只能只读展示。
 - 不绕过 `haro shit` 或 asset registry 直接删除 skill 文件。
@@ -110,11 +108,11 @@ packages/web/src/
 
 全部已关闭（见 Changelog 2026-04-26 决策条）。
 
-- Q1: FEAT-024 是否必须等待 FEAT-021/022 都 done 后才能 approved，还是允许先做只读页面？ —— 等待 FEAT-021/022 都 done 后再 approved；当前 FEAT-021 和 FEAT-022 已为 `done`，满足开工前置条件。
+- Q1: 历史决策：FEAT-024 曾等待 Memory/Asset 前置完成后开工；sidecar 修订后 Memory 前置改由 AgentDock 满足。
 - Q2: `memory/maintenance` 在 Phase 1 是同步返回结果，还是异步 taskId？ —— Phase 1 先采用异步 `taskId`，后续可再优化为同步返回结果。
 
 ## 9. Changelog / 变更记录
 
 - 2026-04-25: Codex — 从 FEAT-018 拆分 KnowledgePage 与 SkillsPage，形成独立 FEAT-024。
-- 2026-04-26: whiteParachute — 关闭 Open Questions 并批准进入实现：FEAT-024 等待 FEAT-021/022 done 后开工，当前前置均已满足；`memory/maintenance` Phase 1 先返回异步 `taskId`，后续再考虑同步优化。status: draft → approved。
+- 2026-04-26: whiteParachute — 关闭 Open Questions 并批准进入实现：FEAT-024 当时等待 Memory/Asset 前置完成后开工；`memory/maintenance` Phase 1 先返回异步 `taskId`，后续再考虑同步优化。status: draft → approved。
 - 2026-04-26: Codex — 交付 Memory REST、Skills REST、KnowledgePage、SkillsPage、asset audit/unsupported 分支、文档与回归测试；验证命令：`pnpm -F @haro/core test`、`pnpm -F @haro/cli test -- web-feat024.test.ts`、`pnpm -F @haro/web test -- feat024.test.tsx`、`pnpm test`、`pnpm lint`、`pnpm -F @haro/web lint`、`pnpm build`、`pnpm smoke`、Web smoke（/knowledge、/skills 截图 + REST）；commit: 99cbf28。status: approved → done。

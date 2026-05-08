@@ -1,5 +1,10 @@
 # Web Dashboard 设计
 
+> **2026-05-08 状态：historical workbench baseline。**
+>
+> 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
+
+
 ## 概述
 
 Web Dashboard 是 Haro 的可视化呈现层。FEAT-015 交付的是基础框架：`packages/web` 前端包、嵌入在 CLI 内的 Hono HTTP 服务，以及 `haro web` 启动命令。该模块遵守可插拔原则，不改动 `packages/core` 的执行语义；关闭或移除 Dashboard 后，既有 CLI 命令仍独立工作。
@@ -183,7 +188,7 @@ Runtime latency 来源保持在 Runner 边界：Provider adapter 仍只实现 `p
 
 FEAT-024 将 `/knowledge` 与 `/skills` 从占位升级为可用管理面：
 
-- Knowledge 页面按 keyword/scope/layer/verificationStatus 查询 Memory Fabric v1，结果展示 `summary/sourceRef/verificationStatus/assetRef/timestamp`，并可展开完整内容。
+- Knowledge 页面是历史 workbench 设计；sidecar baseline 下 Memory/Knowledge UI 由 AgentDock 提供，Haro 只消费 observation refs。
 - Knowledge 写入表单默认 `shared`；选择 `agent` 时必须填写 `agentId`；页面不提供 `platform` 写入入口，后端也会拒绝 platform 写入，避免绕过治理边界。
 - Skills 页面按 `Preinstalled skills` 与 `User skills` 分组展示，包含 enabled/source/installedAt/isPreinstalled/assetStatus/lastUsedAt/useCount。
 - enable/disable 是低风险操作，会走 SkillsManager 现有 lifecycle；install/uninstall 返回 Evolution Asset Registry audit 结果。

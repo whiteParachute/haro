@@ -1,5 +1,10 @@
 # Evolution Engine 协议规范（强制）
 
+> **2026-05-08 状态：historical workbench protocol。**
+>
+> 本文描述旧 Haro workbench 路线下的 Evolution Engine / OODA 协议。旧 Phase 2.0 / 2.5 spec 文件已被 `specs/sidecar/FEAT-043` 到 `FEAT-047` 替代并删除；本文仅保留为概念参考。sidecar-era 实现以 AgentDock contract、read-only MCP、scheduled CLI、asset registry adapter 和 gated apply specs 为准。
+
+
 **状态：强制执行。所有 Evolution Engine 相关实现（Self-Monitor / Pattern Miner / Auto-Refactorer / Verifier 等）必须遵守本规范。**
 
 ## 概述
@@ -20,35 +25,21 @@ Evolution Engine 由三件套组成：
 | [multi-agent-design-constraints.md](./multi-agent-design-constraints.md) | 阶段间数据流约束是约束①（传原文者活）的协议化；验证门控是约束④（验证 Agent 是否定者）的协议化 |
 | [evolution-metabolism.md](./evolution-metabolism.md) | eat 承接 Observe 阶段的用户反馈/互联网调研产出；shit 扫描 Act 阶段留下的代码遗产 |
 | [provider-protocol.md](./provider-protocol.md) | Auto-Refactorer 执行时是 AgentProvider 的调用方 |
-| FEAT-007 Memory Fabric | evolution-context/ 是临时工作台；Memory 是跨进化周期的长期知识仓（见本规范 §八） |
+| AgentDock Memory refs | evolution-context/ 是 Haro 临时工作台；长期记忆由 AgentDock 提供，Haro 只保存 observation/source refs |
 
-## Phase 映射（2026-05-01 重排后）
+## 历史 Phase 映射
 
-OODA 协议是跨阶段的持久契约。具体落地按 Phase 2.0 / 2.5 / 3.0 / 3.5 分批实现：
+旧 Phase 2.0 / 2.5 / 3.0 / 3.5 映射已废弃。对应文件已删除，避免继续误导到 Haro 自建 workbench 路线。
 
-| Phase | OODA 段 | 实现 spec | 落地内容 | 自治水平 |
+sidecar-era 映射如下：
+
+| Sidecar Phase | OODA 段 | 实现 spec | 落地内容 | 自治水平 |
 |---|---|---|---|---|
-| **Phase 2.0 Awareness** | Observe（被动观测） | [FEAT-040 Self-Monitor](./phase-2.0/FEAT-040-self-monitor.md) | session / tool / channel / memory / budget 等被动埋点；feature views | 仅采集，不分析 |
-| Phase 2.0 | Observe（外部信号） | [FEAT-036 Industry Intel](./phase-2.0/FEAT-036-industry-intel.md) | RSS / Atom / GitHub Release 订阅 + 自动 eat | 自动入库，不改 platform |
-| Phase 2.0 | Act（dry-run only） | [FEAT-041 Auto eat/shit Trigger](./phase-2.0/FEAT-041-auto-eat-shit-trigger.md) | 政策驱动 dry-run + artifact 持久化（`bridge_status: pending-bridge`） | 仅写产物，不写 platform 状态 |
-| **Phase 2.5 Proposal** | Orient | [FEAT-042 Pattern Miner](./phase-2.5/FEAT-042-pattern-miner.md) | 跨源（Self-Monitor + Intel + Memory）模式归纳；confidence ∈ [0,1] | Agent 思考，不产生改动 |
-| Phase 2.5 | Decide | [FEAT-037 Evolution Proposal](./phase-2.5/FEAT-037-evolution-proposal.md) | 结构化提案 + Dashboard 审批队列 + bridge from FEAT-041 artifacts + decision log | Owner 决策，平台执行 |
-| **Phase 3.0 Controlled Self-Evolution** | Act（受控） | （后续 spec） | Auto-Refactorer L0（Prompt） + L1（编排 / skill 配置）；approval 后自动落地 + 灰度 + 回滚 | Agent 自治，人类监督 |
-| **Phase 3.5 Agent-as-Developer** | Act（开放） | （后续 spec） | Auto-Refactorer L2（结构重构）+ L3（架构演进）；Agent 自写 spec / 自提 PR | Agent 自治，人类引导 |
-
-**约束 E1（OODA 单向）的 Phase 落地**：
-
-- Phase 2.0 实现 Observe 段（FEAT-040 + FEAT-036），并把 Act 段限制为 dry-run（FEAT-041）；Orient / Decide 段在本阶段缺失，因此触发器仅落 artifact 等待桥接
-- Phase 2.5 补齐 Orient（FEAT-042）和 Decide（FEAT-037）；FEAT-041 artifact 的 `bridge_status: pending-bridge` 在此阶段被 bridge 模块扫描转为 proposal
-- Phase 3.0 / 3.5 补齐 Act 真正的 platform 改动；Auto-Refactorer 的 L 等级与 E10-E12 门控栈对齐
-
-**约束 E13（按变更类型分类自治）的 Phase 落地**：
-
-- Bugfix（Agent 自主 + 事后 review）— Phase 3.0 起允许 Auto-Refactorer 接手 L0 / L1 自动 fix；事后写 `human-review-queue.jsonl`
-- Feature Request（人类决策 + Agent 实现）— Phase 2.5 FEAT-037 Evolution Proposal 是该流程的承载者
-- Architecture Evolution（人类亲自决定 + Agent 协助）— Phase 3.5 才允许 Agent 提出，仍由 owner 在 Dashboard 决议
-
----
+| Phase B | Observe contract | [FEAT-043](./sidecar/FEAT-043-agentdock-contract-skeleton.md) | observation / proposal / validation / asset event schema | 无写入 |
+| Phase C | Observe / Orient / Validate read-only | [FEAT-044](./sidecar/FEAT-044-read-only-mcp-sidecar.md) | Haro MCP read-only tools | dry-run |
+| Phase D | Observe / Propose scheduled | [FEAT-045](./sidecar/FEAT-045-scheduled-sidecar-cli.md) | AgentDock script task 周期触发 | dry-run |
+| Phase E | Asset memory | [FEAT-046](./sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | sidecar asset registry | 写 Haro 自有目录 |
+| Phase F | Act gated | [FEAT-047](./sidecar/FEAT-047-gated-apply-l0-l1.md) | L0/L1 proposal + validation + snapshot + rollback apply | gated-write |
 
 ## 一、OODA 契约
 
@@ -348,7 +339,7 @@ systemPrompt: |
 
 **重要立场**：代码层的质量校验**完全由 Critic + tests + CI 自动完成**，不依赖人类逐行审代码。人类的带宽应留给方向/需求裁决（E13）。这是 [design-principles.md P4 Steering 优先于 Implementing](./design-principles.md) 的直接落地。
 
-**核心模块不得被 L2 覆盖**：Agent Runtime 核心、Scenario Router、Evolution Engine 自身、Memory Fabric 协议层、Channel 协议层、PAL 协议层——这些模块的修改**只能走 L3**。
+**核心模块不得被 L2 覆盖**：Agent Runtime 核心、Scenario Router、Evolution Engine 自身、Channel 协议层、PAL 协议层——这些模块的修改**只能走 L3**。
 
 **违规示例（禁止）**：
 - 一个 PR 同时改 Prompt（L0）和 Provider 接口（L3）→ 拒绝；必须拆
@@ -424,7 +415,7 @@ Bugfix **不限层级**（L0/L1/L2/L3 都可），Agent 自主 Act 完成后：
 
 ```json
 { "change_type": "bugfix",
-  "bug_source": "FEAT-007#R5",          // 必填；指向具体条目
+  "bug_source": "agentdock-memory-ref:example", // 可选；指向 AgentDock observation/source ref
   "description": "T1 同步写入在高并发下出现 race",
   "evidence_refs": ["observe/failure-events.jsonl#L42"] }
 ```
@@ -459,7 +450,7 @@ Bugfix **不限层级**（L0/L1/L2/L3 都可），Agent 自主 Act 完成后：
 
 #### 合规示例
 
-- Agent 发现 FEAT-007 的 T1 写入路径有 race（违反 R5）→ Bugfix → `bug_source: "FEAT-007#R5"` → Critic 通过 → Act → 写入 human-review-queue → 人类事后 ack
+- Agent 发现 AgentDock memory observation ingest 路径有 race → Bugfix → `bug_source: "agentdock-memory-ref:..."` → Critic 通过 → Act → 写入 human-review-queue → 人类事后 ack
 - Agent 发现业界流行用 vector DB 做 skill 路由 → Feature Request（业界方向子类）→ 附调研 → 等人类 approve 需求 → Act（代码由 Critic + tests + CI 守护）→ 无需人类审代码
 - Agent 发现 Provider 层应新增 `validate()` 接口（改 provider-protocol.md）→ 架构演进 → 人类事前裁决方向 + 分阶段 → 每阶段人类核对方向是否偏离
 
@@ -515,7 +506,7 @@ Bugfix **不限层级**（L0/L1/L2/L3 都可），Agent 自主 Act 完成后：
 
 **规则**：evolution-context/ 是**临时工作台**，Memory 是**长期知识仓**，两者的数据生命周期**不得混淆**。
 
-| 维度 | evolution-context/ | Memory Fabric |
+| 维度 | evolution-context/ | AgentDock Memory refs |
 |---|---|---|
 | 生命周期 | 本次进化周期；90 天后归档 | 长期保留；shit 扫描归档 |
 | 写入权 | Evolution Engine（四阶段） | Agent / 用户 / eat / 本协议规定的沉淀路径 |
@@ -525,7 +516,7 @@ Bugfix **不限层级**（L0/L1/L2/L3 都可），Agent 自主 Act 完成后：
 **转化路径**（强制）：
 - **Act 成功后**：成功模式通过 `eat` 沉淀到 Memory（rules / skills / knowledge）
 - **失败教训**：写入 `agents/<id>/knowledge/anti-patterns/<date>-<slug>.md`
-- **用户反馈**：原文落 observe/user-feedback.jsonl 之外，**关键事实**由 Agent 通过 T1/T2 写入 Memory（见 FEAT-007）
+- **用户反馈**：原文落 observe/user-feedback.jsonl 之外，**关键事实**由 AgentDock memory 侧维护；Haro 只引用 observation/source refs
 
 **违规示例（禁止）**：
 - 把永久性知识存在 `evolution-context/` 里依赖查询 → 违反 E6
@@ -594,7 +585,7 @@ Bugfix **不限层级**（L0/L1/L2/L3 都可），Agent 自主 Act 完成后：
 - [multi-agent-design-constraints.md](./multi-agent-design-constraints.md)
 - [evolution-metabolism.md](./evolution-metabolism.md)
 - [provider-protocol.md](./provider-protocol.md)
-- [FEAT-007-memory-fabric-independent.md](./phase-0/FEAT-007-memory-fabric-independent.md)
+- Historical note: Haro-owned Memory Fabric specs were removed from the AgentDock sidecar baseline; memory is AgentDock-owned.
 
 ## Changelog
 

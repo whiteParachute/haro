@@ -8,7 +8,7 @@ Haro 的自我改进机制将平台本身作为被改进的对象，实现从单
 
 在四个层级之外，Haro 有一套独立的**代谢机制**，作为所有层级的底层伴随：
 
-- **eat**（摄入）：把外部知识 / 用户反馈 / 调研产出沉淀为 rules / skills / Agent 配置 / Memory Fabric 条目。带质量门槛（四问验证）和防膨胀检查。
+- **eat**（摄入）：把外部知识 / 用户反馈 / 调研产出沉淀为 rules / skills / Agent 配置提案；memory 证据只引用 AgentDock observation refs。带质量门槛（四问验证）和防膨胀检查。
 - **shit**（排出）：扫描现有外挂组件（rules / skills / MCP / memory），评估必要性，归档冗余项（可回滚）。
 - **Evolution Asset Registry**（资产注册表）：Phase 1 起记录 eat/shit 影响的 skill、prompt、routing rule、memory 与 archive，提供版本、来源和审计日志。
 
@@ -29,7 +29,7 @@ FEAT-022 的 Registry API 边界：
 - Registry 只维护资产 read model 和 append-only audit events；原始 skill、prompt、routing rule、memory、archive 文件仍是人类可读 source/canonical。
 - prompt asset 的 Phase 1 最小边界是完整 Agent `systemPrompt`；`@model-dependent` 块级治理留给 Phase 2+。
 - routing-rule asset 只覆盖用户/项目级覆盖规则；内建 RoutingMatrix 只能作为只读 baseline/sourceRef 注册或导出，不能在 Phase 1 被 Registry 当作可修改生命周期对象。
-- GEP metadata (`signalRef/geneRef/promptRef/eventRef`) 是可选追溯字段；缺失时不得阻断 eat/shit、Skills 或 Memory Fabric 流程。
+- GEP metadata (`signalRef/geneRef/promptRef/eventRef`) 是可选追溯字段；缺失时不得阻断 eat/shit 或 Skills 流程。
 
 详细规范：[specs/evolution-metabolism.md](../../specs/evolution-metabolism.md)。
 

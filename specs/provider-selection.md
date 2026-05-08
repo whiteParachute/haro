@@ -1,5 +1,10 @@
 # Provider/Model 智能选择规则引擎
 
+> **2026-05-08 状态：historical workbench protocol。**
+>
+> 本文描述 Haro 自建 Provider/Model 选择规则。新基线下 AgentDock 负责 runner/model/profile 主链路，Haro sidecar 不再实现自有 provider selection；本文仅作为历史参考。
+
+
 ## 概述
 
 Provider 和 Model 的选择不由 Agent 硬绑定。Haro 通过**规则引擎**做静态匹配，通过**动态重评估机制**让这些规则随时间演进，最终目标是 Haro 能**自主为每个任务选出最合适的 Provider + Model**，并在 Provider / Model 版本更新时谨慎地重新评估它们。

@@ -20,10 +20,10 @@
       "path": "./packages/cli"
     },
     {
-      "path": "./packages/providers"
+      "path": "./packages/provider-codex"
     },
     {
-      "path": "./packages/provider-codex"
+      "path": "./packages/agentdock-contract"
     }
   ]
 }

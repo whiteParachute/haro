@@ -1,22 +1,28 @@
 {
-  "name": "@haro/providers",
+  "name": "@haro/agentdock-contract",
   "version": "0.1.0",
-  "description": "Haro Provider implementations (placeholder — concrete providers arrive in FEAT-002 / FEAT-003)",
+  "description": "Haro AgentDock sidecar contract schemas (FEAT-043)",
   "engines": {
     "node": ">=22.0.0"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@haro/core": "workspace:*"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

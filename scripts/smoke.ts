@@ -24,7 +24,6 @@ const EXPECTED_DIST = [
   'packages/core/dist/fs/index.js',
   'packages/core/dist/paths.js',
   'packages/cli/dist/index.js',
-  'packages/providers/dist/index.js',
 ];
 
 function fail(msg: string): never {

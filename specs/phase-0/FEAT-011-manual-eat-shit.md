@@ -9,7 +9,6 @@ updated: 2026-04-22
 related:
   - ../evolution-metabolism.md
   - ./FEAT-010-skills-subsystem.md
-  - ./FEAT-007-memory-fabric-independent.md
   - ../../roadmap/phases.md#p0-11手动-eat--shit
 ---
 
@@ -42,7 +41,7 @@ Haro 的进化代谢由 eat（摄入）+ shit（排出）两个 skill 构成。P
 - R3: 包含质量门槛（8 条拒绝条件）+ 四问验证
 - R4: 写入前必须预览 + 用户确认；支持 `--yes` 跳过确认（默认不跳过）
 - R5: 分桶决策：
-  - `memory`：直接写入 FEAT-007 `MemoryFabric`
+  - `memory`：sidecar 修订后不再作为 Haro-owned write target；记忆由 AgentDock 提供
   - `claude/rules/skills`：写入 `~/.haro/archive/eat-proposals/<timestamp>/` proposal bundle，不自动生效
   - `reject`：输出拒绝原因
 - R6: 防膨胀检查：proposal bundle 中 `claude/` 单文件 ≤ 200 行、`rules/` 单文件 < 100 行、`skills/` 的 `SKILL.md` < 500 行；超限时只生成拆分建议，不落盘
@@ -53,7 +52,7 @@ Haro 的进化代谢由 eat（摄入）+ shit（排出）两个 skill 构成。P
 
 - R9: 命令 `haro shit --scope <rules|skills|mcp|memory|all> [--days N] [--dry-run]`；默认 `--days 90 --scope all`
 - R10: 执行流程严格按 [evolution-metabolism.md 的 shit 规范](../evolution-metabolism.md#shit--排出规范) 五步：扫描 → 评估 → 预览 → 用户确认 → 执行
-- R11: 防误删白名单：预装 skill、`specs/` 下所有强制规范、`memory/platform/index.md`、带 `@core` 标注的 rule 文件、未 promote 的 eat proposal bundle
+- R11: 防误删白名单：预装 skill、`specs/` 下所有强制规范、带 `@core` 标注的 rule 文件、未 promote 的 eat proposal bundle
 - R12: 归档位置：`~/.haro/archive/shit-<timestamp>/` + `manifest.json`（含回滚步骤）
 - R13: `haro shit rollback <archive-id>` 支持整包回滚；`--item <path>` 支持单项回滚
 - R14: 风险等级：low / medium / high；high 项必须显式 `--confirm-high` 或勾选确认才能执行
@@ -98,7 +97,7 @@ else → 提示二义性，要求 --as url|path|text
 
 ### eat
 
-- AC1: `haro eat https://example.com/article` 走完四步后：memory 类候选被写入 MemoryFabric，rules/skills/claude 类候选进入 proposal bundle，且 manifest 完整（对应 R1~R6）
+- AC1: `haro eat https://example.com/article` 走完四步后：memory 证据只保留 AgentDock observation/source ref，rules/skills/claude 类候选进入 proposal bundle，且 manifest 完整（对应 R1~R6）
 - AC2: 故意给一个已被 Claude/Haro 通用知识覆盖的内容（如“Python 基础语法”），eat 在质量门槛阶段拒绝并给出理由（对应 R3）
 - AC3: 故意让 eat 建议写入 180 行的 rule 文件时，防膨胀检查触发拆分建议且**不**落 proposal 文件（对应 R6）
 - AC4: `haro eat "短文本"` 不加 `--as` 时提示二义性退出（对应 R1）
@@ -148,7 +147,7 @@ else → 提示二义性，要求 --as url|path|text
   - Q4 → GitHub repo 默认只读 README/说明；`--deep` 才扩大读取范围
   - Q5 → skills 不直接安装到 active 目录，先生成 proposal bundle，由用户后续 install/promote
 - 2026-04-20: whiteParachute — done
-  - `packages/skills/src/metabolism.ts` 落地 eat / shit / rollback 的 Phase 0 手动代谢流程：输入识别、最小文本抓取、质量门槛、memory 写入、proposal bundle、防膨胀检查、skills/memory/rules/mcp 扫描、归档与回滚
+  - `packages/skills/src/metabolism.ts` 落地 eat / shit / rollback 的 Phase 0 手动代谢流程：输入识别、最小文本抓取、质量门槛、proposal bundle、防膨胀检查、skills/rules/mcp 扫描、归档与回滚；memory 改由 AgentDock 提供
   - `packages/skills/src/manager.ts` 通过 `invokeCommandSkill('eat'|'shit', ...)` 暴露命令级技能入口；`packages/cli/src/index.ts` 新增 `haro eat` / `haro shit` / `haro shit rollback`，保持 CLI 只做参数桥接
   - `packages/skills/test/metabolism.test.ts` 与 `packages/cli/test/cli.test.ts` 补齐 reject / bundle / dry-run / archive / rollback / CLI bridge 覆盖，并复用 FEAT-010 的 usage 统计与预装白名单
 - 2026-04-22: whiteParachute — quality gate completed

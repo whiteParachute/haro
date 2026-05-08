@@ -18,7 +18,7 @@
 **规则**：下游 Agent 必须接收上游的原始材料，禁止接收上游 Agent 的理解、摘要或结论。
 
 **合规设计**：
-- Memory Fabric 共享原始上下文，所有 Agent 从共享存储读取原始数据
+- AgentDock memory / Haro evolution-context 共享原始上下文，所有 Agent 通过引用读取原始数据
 - `evolution-context/` 共享目录存储原始数据，不压缩传递
 - 使用 Checkpointing 保存完整状态，而非关键信息摘要
 

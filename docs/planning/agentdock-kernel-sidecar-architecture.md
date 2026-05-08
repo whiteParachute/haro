@@ -1,6 +1,6 @@
 # AgentDock Kernel + Haro Sidecar Architecture
 
-Status: draft
+Status: draft / new baseline
 Date: 2026-05-08
 
 ## 结论
@@ -29,7 +29,7 @@ AgentDock 不能 import Haro。Haro 也不能 import AgentDock 的内部 `src/*`
 
 Haro 原设计把 workbench 和 self-evolution 放在同一个项目中：
 
-- Workbench: CLI / Web Channel / Feishu / Telegram / Agent Runtime / Memory / Skills / MCP / Cron。
+- Workbench: CLI / Web Channel / Feishu / Telegram / Agent Runtime / Memory / Skills / MCP / Cron（历史基线）。
 - Evolution: Self-Monitor / Industry Intel / Pattern Miner / Proposal / Auto-Refactorer。
 
 现在判断是，workbench/runtime 与 AgentDock 的现有主线高度重叠。继续在 Haro 内维护一套 Provider、Channel、Session runtime、Web API、CLI 等价能力，会让 Haro 的差异化被基础设施消耗掉。
@@ -39,7 +39,7 @@ Haro 的差异化应该集中在：
 - 观察 AgentDock 的真实使用数据。
 - 生成进化提案。
 - 验证提案风险、测试计划和回滚路径。
-- 资产化 prompt / skill / rule / memory / tool config。
+- 资产化 prompt / skill / rule / tool config；memory 由 AgentDock 侧提供，Haro 只引用 observation refs。
 - 在安全边界内执行 L0/L1 级自进化。
 
 ## 设计原则
@@ -51,16 +51,31 @@ Haro 的差异化应该集中在：
    Haro 不能污染 AgentDock runtime 主链路，也不要求 AgentDock 为 Haro 引入深度插件系统。
 
 3. **MCP 是主动交互面**
-   Agent 可以显式调用 Haro 暴露的 MCP tools 来观察、提案、验证、登记资产或执行受控变更。
+   AgentDock 通过已有外部 MCP server 注册能力加载 `haro mcp`。Agent 可以显式调用 Haro 暴露的 MCP tools 来观察、提案、验证、登记资产或执行受控变更。
 
 4. **定时任务是后台驱动面**
-   周期性 observe/propose/maintain 不依赖普通聊天上下文，不要求 agent 每次记得调用 Haro。
+   周期性 observe/propose/maintain 通过 AgentDock 已有 scheduler / script task 触发，不依赖普通聊天上下文，不要求 agent 每次记得调用 Haro。
 
-5. **contract 优先于内部依赖**
-   两个项目之间只通过 schema、API、MCP tool contract、文件目录约定和 capability version 协作。
+5. **skills 是编排辅助面**
+   AgentDock 已有 skills / workflow 能力可以编排 Haro MCP tools 或 Haro CLI。Haro 不因此成为 AgentDock 内部插件，也不接管 AgentDock session。
 
-6. **先只读，后可写**
+6. **contract 优先于内部依赖**
+   两个项目之间只通过 schema、API、MCP tool contract、event export、文件目录约定和 capability version 协作。
+
+7. **先只读，后可写**
    Haro 初期只观察和生成 dry-run proposal；确认 contract 和验证门稳定后，再开放 L0/L1 apply。
+
+## 接入方式约束
+
+Haro 接入 AgentDock 只走三条现有能力，不新增第四条主链路：
+
+| 接入面 | AgentDock 已有能力 | Haro 使用方式 | 禁止事项 |
+| --- | --- | --- | --- |
+| MCP server 注册 | 外部 MCP server 管理 | 注册 `haro mcp`，暴露 observe/propose/validate/query tools | 不在 AgentDock 内部 import Haro |
+| 定时任务 | scheduler + script task | 周期执行 `haro observe/propose/validate` | 不把后台维护塞进普通聊天上下文 |
+| skills / agent 编排 | AgentDock skills + MCP 调用面 | 在 session 中显式调用 Haro tools 并通过原 channel 汇报 | Haro 不直接接管 IM/Web/Runner/Memory 主链路 |
+
+这三条接入面都属于 AgentDock 已有能力。Haro 的实现目标是适配这些能力，而不是要求 AgentDock 为 Haro 引入深度插件系统。
 
 ## AgentDock 侧最小要求
 
@@ -104,7 +119,19 @@ haro validate --pending
 - 失败可以写结构化日志并重试。
 - 不会把自进化流程混进普通 session。
 
-### 3. 只读观测接口
+### 3. AgentDock skills / agent 编排
+
+AgentDock 普通 session 中，agent 可以通过已有 skills / MCP 调用面主动使用 Haro：
+
+```text
+AgentDock session
+  -> calls haro_observe / haro_propose / haro_validate
+  -> sends summary to user through AgentDock channel
+```
+
+Haro 不直接发送 IM，不绕过 AgentDock channel，不持有 AgentDock session lifecycle。
+
+### 4. 只读观测接口
 
 Haro 至少需要读取这些信息：
 
@@ -113,13 +140,13 @@ Haro 至少需要读取这些信息：
 - runner id / model / profile
 - tool calls and results
 - scheduled task runs
-- memory wrapup / global sleep logs
+- AgentDock memory activity refs（只读/引用）
 - runner errors / recoverable errors
 - usage records
 
 初期可以通过 AgentDock 已有 API、DB export、日志目录或只读文件约定实现。后续再收敛为稳定 `event export` 或 `event stream`。
 
-### 4. 受控可写入口
+### 5. 受控可写入口
 
 Haro apply 阶段只允许改这些低风险对象：
 
@@ -141,12 +168,12 @@ Haro 对 AgentDock 暴露一组 MCP tools：
 | `haro_observe` | 收集 AgentDock 当前状态或增量状态 | read-only |
 | `haro_propose` | 基于观察结果生成 evolution proposal | read-only |
 | `haro_validate` | 验证 proposal 风险、测试计划、回滚路径 | read-only |
-| `haro_asset_register` | 登记 prompt/skill/rule/memory/tool config 为资产 | write-haro |
 | `haro_asset_query` | 查询资产、事件、版本和效果 | read-only |
-| `haro_apply` | 应用 L0/L1 变更 | gated-write |
-| `haro_rollback` | 回滚已应用的 L0/L1 变更 | gated-write |
+| `haro_asset_register` | 登记 prompt/skill/rule/tool config 为资产 | write-haro，Phase 4 后开放；memory 不登记为 Haro asset |
+| `haro_apply` | 应用 L0/L1 变更 | gated-write，Phase 5 后开放 |
+| `haro_rollback` | 回滚已应用的 L0/L1 变更 | gated-write，Phase 5 后开放 |
 
-`haro_apply` 默认只接受 dry-run proposal id，不接受自由文本改动。
+首批 MCP tools 只开放 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。`haro_apply` 默认只接受 dry-run proposal id，不接受自由文本改动。
 
 ### 2. Haro Daemon / Scheduled CLI
 
@@ -191,7 +218,7 @@ AgentDock 数据是被观察对象，不是 Haro 的内部状态。
 - prompts
 - runner profiles
 - routing / task rules
-- memory entries
+- AgentDock memory observation refs
 - MCP tool configs
 - archives
 
@@ -229,15 +256,17 @@ AgentDock scheduler
   -> Haro does not apply changes
 ```
 
-### 流程 C：Agent 主动调用 Haro
+### 流程 C：AgentDock skills / Agent 主动调用 Haro
 
 ```text
-Agent in AgentDock session
+AgentDock skill / AgentDock session
   -> calls haro_observe
   -> calls haro_propose
   -> calls haro_validate
   -> sends summary to user through normal AgentDock channel
 ```
+
+这里的 skills 是 AgentDock 现有编排面。Haro 不新增 AgentDock 内部 skill runtime，也不改变 AgentDock skill 加载机制。
 
 ### 流程 D：受控应用
 
@@ -263,7 +292,7 @@ User approves proposal
 
 ### 保留
 
-- Memory Fabric v2 的文件模型、pending merge、wrapup/sleep、snapshot recover 经验。
+- AgentDock Memory Agent / memory MCP 接入经验：Haro 只读取或引用 AgentDock 暴露的记忆，不维护自有 Memory Fabric。
 - MCP tools 的 permission / timeout / audit 守门链。
 - Evolution Asset Registry。
 - eat/shit 代谢思想。
@@ -289,6 +318,7 @@ User approves proposal
 - 创建 main 存档分支。
 - 新建 feature 分支。
 - 落地本文档。
+- 改写 README / roadmap / architecture overview，让 sidecar 定位成为唯一新基线。
 - 暂不改 runtime 代码。
 
 ### Phase 1: Contract Skeleton
@@ -325,7 +355,8 @@ User approves proposal
 
 - AgentDock 不 import Haro，Haro 不 import AgentDock 内部源码。
 - Haro 可以作为外部 MCP server 注册到 AgentDock。
-- Haro 可以通过 AgentDock 定时任务周期执行 observe/propose。
+- Haro 可以通过 AgentDock 定时任务周期执行 observe/propose/validate。
+- Haro 可以被 AgentDock 现有 skills / agent 编排面调用，并通过 AgentDock 原 channel 汇报。
 - Haro 能基于真实 AgentDock 状态生成 dry-run proposal。
 - Haro 的所有资产变更写入独立 Evolution Asset Registry。
 - L0/L1 apply 有 proposal、validation、snapshot、rollback ref。

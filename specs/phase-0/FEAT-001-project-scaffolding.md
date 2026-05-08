@@ -38,8 +38,8 @@ Haro 是全新仓库，当前只有设计文档，没有任何代码骨架。Pha
 - R2: TypeScript 配置统一 — root 的 `tsconfig.base.json` 被各 package `extends`；配套 ESLint + Prettier 基本规则
 - R3: 全局配置由 Zod schema 定义，支持从 `~/.haro/config.yaml` 与项目级 `.haro/config.yaml` 读取（项目级优先）
 - R4: pino 日志按 [CLI 设计](../../docs/cli-design.md) 的双输出配置：stdout + `~/.haro/logs/haro.log`；日志级别由配置控制（默认 `info`）
-- R5: SQLite 初始化脚本创建五张表（`sessions`、`session_events`、`workflow_checkpoints`、`provider_fallback_log`、`component_usage`），**开启 WAL 模式 + 启用 FTS5 扩展**（供 FEAT-007 做记忆全文检索）；脚本幂等（`CREATE TABLE IF NOT EXISTS`）
-- R6: 首次运行时自动创建 `~/.haro/` 下所需目录（`agents/`、`skills/`、`channels/`、`memory/`、`logs/`、`evolution-context/`、`archive/`）
+- R5: SQLite 初始化脚本创建五张表（`sessions`、`session_events`、`workflow_checkpoints`、`provider_fallback_log`、`component_usage`），**开启 WAL 模式 + 启用 FTS5 扩展**（历史 workbench 兼容；sidecar baseline 不再新增 Haro-owned memory read model）；脚本幂等（`CREATE TABLE IF NOT EXISTS`）
+- R6: 首次运行时自动创建 `~/.haro/` 下所需目录（`agents/`、`skills/`、`channels/`、`logs/`、`evolution-context/`、`archive/`）
 - R7: 核心模块不得出现任何 Provider/Channel 特判硬编码（对齐可插拔原则；lint 规则占位即可，具体规则在 FEAT-002/008 落实）
 
 ## 5. Design / 设计要点
@@ -53,7 +53,7 @@ haro/
 ├── .eslintrc.cjs
 ├── .prettierrc
 ├── packages/
-│   ├── core/                 # Runtime / Memory Fabric / Scenario Router 的核心逻辑（本 spec 仅占位）
+│   ├── core/                 # Runtime / 历史 Memory 兼容 / Scenario Router 的核心逻辑（本 spec 仅占位）
 │   ├── cli/                  # haro 可执行入口（本 spec 仅占位）
 │   └── providers/            # Provider 子包集合（本 spec 仅占位）
 └── scripts/
@@ -72,7 +72,7 @@ haro/
 
 **SQLite（R5）**
 - 使用 `better-sqlite3`（同步、零依赖、适合 CLI）
-- **启用 FTS5 扩展**（`better-sqlite3` 的官方预编译二进制默认带 FTS5），为 FEAT-007 做记忆全文检索准备
+- **启用 FTS5 扩展**（`better-sqlite3` 的官方预编译二进制默认带 FTS5），为历史 workbench 记忆全文检索准备；sidecar baseline 不再新增该路径
 - 表结构按 `docs/data-directory.md` 的定义
 
 **Lint 选型的 Phase 2 演进**

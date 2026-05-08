@@ -1,5 +1,10 @@
 # Agent Runtime 设计
 
+> **2026-05-08 状态：historical workbench baseline。**
+>
+> 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
+
+
 ## 概述
 
 Agent Runtime 负责把单条任务串成一次完整的 Agent 执行：选择 Provider/Model、创建 session、消费事件流、记录 continuation、更新跨 session 状态，并在成功结束后触发记忆 wrapup。

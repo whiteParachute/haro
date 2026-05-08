@@ -1,252 +1,188 @@
 # Haro
 
-> Haro 是一个**自进化多 Agent 中间件平台**——不只让 Agent 完成一次任务，而是让 **Agent、编排方式和平台本身** 在持续使用中自动变得更好。
+> Haro 是 AgentDock 的可插拔 self-evolution sidecar。AgentDock 负责日用 agent runtime / workbench；Haro 负责观察、提案、验证、资产登记和受控低风险自进化。
 
-## 双层架构
+## 当前定位
 
-Haro 把"日用 workbench"和"自我进化"放在两层，进化层寄生在 workbench 之上：
+2026-05-08 起，Haro 不再继续自建完整 workbench/runtime。新的边界如下：
 
-```
-┌─────────────────────────────────────────────────┐
-│  进化层（Haro 真正的差异化）                     │
-│  - 使用记忆驱动（Self-Monitor）                  │
-│  - 业界趋势驱动（Industry Intel）                │
-│  - 用户决策驱动（Evolution Proposal/Approval）   │
-│  - Agent 自判断驱动（Pattern Miner + 自规划）    │
-└─────────────────────────────────────────────────┘
-                      ↑ 喂数据
-┌─────────────────────────────────────────────────┐
-│  Workbench 层（happyclaw 级别的日用底座）        │
-│  - CLI / Web Channel / 飞书 / Telegram           │
-│  - Agent Runtime / Memory Fabric / Skills        │
-│  - MCP 工具层 / 定时任务 / 流式 UX               │
-│  - 多 Agent 编排 + 权限/Token 预算守门           │
-└─────────────────────────────────────────────────┘
+| 项目 | 定位 | 负责范围 |
+| --- | --- | --- |
+| AgentDock | 独立运行的 agent runtime / workbench | Session、Runner、Memory Agent、MCP、IM、Scheduler、Web/PWA、skills 运行面 |
+| Haro | AgentDock 的 self-evolution sidecar | 观察 AgentDock 使用数据、生成 evolution proposal、验证风险与回滚路径、登记 evolution assets、执行 gated L0/L1 变更 |
+
+依赖方向只有一条：
+
+```text
+haro -> AgentDock public API / MCP / event export / filesystem contract
 ```
 
-底座没有日用数据流过，进化层就没东西可吃。所以"先 workbench 稳，再上进化"是必然顺序。
+约束：
 
-## 四条边界约束
+- AgentDock 不能 import Haro。
+- Haro 不能 import AgentDock 内部 `src/*` 模块。
+- Haro 不要求 AgentDock 为它新增深度插件主链路。
+- Haro 只通过稳定 contract 接入 AgentDock 已有能力。
 
-任何模块设计、任何 spec 评审都要先过这四条：
+## 接入方式
 
-1. **CLI 优先**：CLI 是"功能等价 Web UI 减去图形化体验"的完整入口，必须能在脱离 Web UI 的情况下完成全部使用与配置（hermes-agent 风格）
-2. **Web UI 与后端解耦**：Web 前端通过稳定的 HTTP/JSON contract 与 Web API 通信，前后端独立 `package.json`，可独立发布（hermes-web-ui 风格）
-3. **多 provider 抽象保留**：当前唯一正式实现是 Codex；抽象层完整，规划接入 xiaomi-token-plan / kimi-token-plan 等
-4. **多 channel 抽象保留**：CLI / 飞书 / Telegram 已实现；Phase 1.5 新增 Web channel；后续可能继续接入
+Haro 接入 AgentDock 的方式固定为三类，不引入第四条主链路。
 
-## 项目状态
+### 1. 外部 MCP server 注册
 
-**截至 2026-05-07：Phase 0 / Phase 1 主线全部 done；Phase 1.5（自用底座补完）大部分交付。**
+Haro 作为普通外部 MCP server 注册到 AgentDock：
 
-- Phase 0 验收闭环已完成（见 [`docs/reviews/phase-0-audit-2026-04-19.md`](docs/reviews/phase-0-audit-2026-04-19.md)）
-- Phase 1 18 个 spec 中 17 个已 done，FEAT-030（ChatGPT 订阅认证 Dashboard UI）draft
-- Phase 1.5：FEAT-038 Web API 解耦 + FEAT-039 CLI 等价补完 + FEAT-033 Cron + FEAT-035 Memory Fabric v2（done 2026-05-07）+ FEAT-031 Web Channel + FEAT-032 MCP 工具层（4 工具 + per-session subprocess 生命周期）+ FEAT-034 流式 UX 升级（done 2026-05-07）全部交付
-- 历史规划记录：[`docs/planning/archive/redesign-2026-05-01.md`](docs/planning/archive/redesign-2026-05-01.md)（已归档）
-- 当前仓库版本：`0.1.0`
-- 当前形态：**源码运行 + 自用为主**，欢迎多人使用但不是对外发布的稳定产品版本
+```json
+{
+  "id": "haro",
+  "command": "haro",
+  "args": ["mcp"],
+  "env": {
+    "HARO_AGENTDOCK_BASE_URL": "http://127.0.0.1:3000",
+    "HARO_HOME": "/path/to/.haro"
+  },
+  "enabled": true
+}
+```
 
-## 已实现 vs 进行中
+AgentDock 侧复用已有 MCP server 管理能力：新增、启用、禁用、运行时合入 runner settings/env。
 
-### 已实现（可直接使用）
+### 2. AgentDock 定时任务
 
-- **CLI 入口** — `haro` REPL + `haro run` 单次任务 + `haro provider/setup/doctor/skills/status` 等命令族
-- **Codex Provider** — `@openai/codex-sdk` + ChatGPT 订阅认证（device flow，FEAT-029）
-- **Channel 层** — CLI / 飞书 / Telegram / Web 四个 channel adapter（FEAT-031 Web Channel：Dashboard 作为第四 channel，REST `/api/v1/channels/web/*` + WS `channels:web` 订阅 + sessions.sqlite + `0600` 文件存储；禁用后 Dashboard 进入只读模式）
-- **Memory Fabric v2**（FEAT-035，done 2026-05-07）— 三层记忆 + aria-memory 风格散文件存储 + MEMORY.md 索引 + scope/verification/assetRef；SQLite/FTS5 read model 已下线，新增 `searchMemoryFiles` 公开搜索 + `runWrapup` / `runSleep` skill 钩子 + `migrateFromV1` 迁移工具 + `recoverV1Snapshot` / `haro memory recover-snapshot` 30 天兜底（copy 到侧路径供 sqlite3 forensic 检查）；wrapup/sleep 时 .pending body 重新从磁盘读，避免 deposit 与 wrapup 之间外部编辑被静默丢弃
-- **Skills 子系统** — 15 预装 + 安装/卸载/查询 + 手动 eat/shit
-- **多 Agent 核心** — Scenario Router + Team Orchestrator + 编排调试 timeline
-- **Web Dashboard** — Chat / Session / Agent / Skill / Memory / Logs / Monitor / Settings / Channel / Workflow / Users 页
-- **权限/Token 预算守门** — 操作分级 + 预算阻断 + 并行 Agent 汇总（FEAT-023）
-- **Evolution Asset Registry** — eat/shit 产物、prompt、skill、编排规则统一资产化（FEAT-022）
-- **多用户支持** — 本地多用户 + RBAC + Bootstrap + Audit Log（FEAT-028，自用为主，欢迎多人使用）
-- **Web API 解耦**（FEAT-038）— `packages/web-api/` 独立服务，CLI `haro web` 是薄启动器；`pnpm -F @haro/web-api start` 也可独立启动
-- **CLI 等价补完**（FEAT-039）— chat / session / agent / memory / logs / workflow / budget / user / skill 单数 / config get-set-unset 全部落地；REPL `/sessions` `/memory` `/logs` `/budget` slash 直连 `services`；所有命令 `--json/--human` 统一（默认按 TTY 推断），`--json` 输出 `CliRecordEnvelope` / `CliListEnvelope`
-- **Cron 任务**（FEAT-033）— cron 表达式 + once ISO 时间触发，hermes-agent 风格 `tick()` 纯函数 + 跨进程 SQLite advisory lease lock；`haro cron list/show/create/cancel/trigger/tick/daemon` 命令族；`/api/v1/cron/jobs` REST；三触发源（web-api ticker / `haro cron daemon` / `haro cron tick`）任一在跑即可调度，**不强依赖 web-api**
-- **MCP 工具层**（FEAT-032）— `@haro/mcp-tools` 包：MCP stdio + JSON-RPC server + 4 工具（`send_message` / `memory_query` / `memory_remember` / `schedule_task`）；per-tool timeout（D2）+ per-session subprocess 生命周期（D1，SIGTERM 5 s 后 SIGKILL）+ permission 守门（跨 channel / 跨 scope 触发审批）+ `tool_invocation_log` 审计表（params 仅落 sha256 hash）；CLI / Web 通过 `services.mcp.listInvocations` 看历史
-- **流式 UX 升级**（FEAT-034，2026-05-07）— `@haro/core/stream` 导出 12 类 `StreamEvent` 与 `AgentEvent` 翻译器；Web Channel 在 `channels.web.event` 上同时保留 legacy `agent` envelope 和新 `kind: 'stream'` envelope，Chat store 做 structured/legacy 去重；Dashboard Chat 统一 `MessageStream` / `MarkdownRenderer` / `ThinkingPanel` / `ToolTimeline` / `ImageLightbox` 管线，支持 GFM 表格、代码高亮、未知语言纯文本 fallback、多图 lightbox 与 react-window 虚拟化
-
-### 远期（Phase 2.0+）
-
-- **进化感知层**（Phase 2.0）— Self-Monitor / Industry Intel / 自动 eat/shit 触发
-- **进化提案层**（Phase 2.5）— Pattern Miner + Evolution Proposal + 用户审批闭环
-- **受控自演化**（Phase 3.0）— Auto-Refactorer L0–L1 + 灰度 + 回滚
-- **Agent-as-Developer**（Phase 3.5）— L2/L3 改动、自写 spec、自提 PR
-
-完整阶段路线见 [`roadmap/phases.md`](roadmap/phases.md)。
-
-## 快速开始
-
-### Web Dashboard 首次访问
+后台 observe / propose / validate 通过 AgentDock 已有 scheduler 触发，优先使用 script task：
 
 ```bash
-pnpm build
-pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
+haro observe --agentdock-url http://127.0.0.1:3000 --since last
+haro propose --auto-dry-run
+haro validate --pending
 ```
 
-浏览器打开 `http://127.0.0.1:3456/`：首次无用户实例自动进入 `/bootstrap`，创建第一个 `owner` → 自动登录 → `/chat`。后续访问先到 `/login`。旧部署仍可在迁移窗口内继续使用 `HARO_WEB_API_KEY` / `x-api-key` 兼容 API 访问。
+原因：
 
-### 安装
+- 不依赖普通聊天上下文。
+- 可以独立记录结构化日志。
+- 失败可重试，不污染用户 session。
 
-**macOS / Linux**
+### 3. AgentDock skills / agent 能力编排
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/haro-ai/haro/main/scripts/install.sh | bash
+AgentDock agent 在需要时通过 MCP tools 或已有 skills 显式调用 Haro：
+
+```text
+AgentDock session
+  -> haro_observe
+  -> haro_propose
+  -> haro_validate
+  -> 通过 AgentDock 原有 channel 向用户汇报
 ```
 
-**Windows (PowerShell)**
+Haro 不直接接管 AgentDock 的聊天、IM、Web、Runner 或 Memory Agent 主链路。
 
-```powershell
-iwr -useb https://raw.githubusercontent.com/haro-ai/haro/main/scripts/install.ps1 | iex
-```
+## 当前已确认的 AgentDock 能力
 
-**npm / pnpm 全局安装**
+基于本地 AgentDock 仓库检查，第一版接入可以依赖以下现有能力：
 
-```bash
-npm install -g @haro/cli@latest
-# 或
-pnpm add -g @haro/cli@latest
-```
+| 能力 | AgentDock 位置 | Haro 使用方式 |
+| --- | --- | --- |
+| 外部 MCP server 管理 | `src/routes/mcp-servers.ts` | 注册 `haro mcp` |
+| Runner 合入 MCP 配置 | `src/runtime-runner.ts` | 让 AgentDock session 可见 Haro tools |
+| 定时任务 | `src/routes/tasks.ts` / `src/task-scheduler.ts` | 周期触发 `haro observe/propose/validate` |
+| script task | `src/task-scheduler.ts` | 后台执行 Haro CLI，无需聊天上下文 |
 
-更多安装方式见 [`docs/install.md`](docs/install.md)。
+这些是接入事实，不代表 Haro 可以依赖 AgentDock 内部源码。正式实现仍应通过 public API、MCP contract、event export 或文件目录约定协作。
 
-### 最短可跑通路径（CLI 优先）
+## Haro 侧目标能力
 
-```bash
-# 1. 配置 Provider 凭证（不会写入 YAML）
-export OPENAI_API_KEY=<your-key>
+### 已保留经验
 
-# 2. 配置 Codex provider、发现 live models、选择默认模型
-haro provider setup codex --scope global --non-interactive
-haro provider models codex
-haro provider select codex <live-model-id>
+- AgentDock Memory Agent / memory MCP 的接入经验：Haro 只读取或引用 AgentDock 暴露的记忆，不维护自有 Memory Fabric。
+- MCP tools 的 permission / timeout / audit 守门链。
+- Evolution Asset Registry。
+- eat/shit 代谢思想。
+- Evolution Proposal / Validation / Auto-Refactorer specs 中与 sidecar 相关的部分。
 
-# 3. 跑首次引导
-haro setup --profile global
+### 降级为 admin/debug/control surface
 
-# 4. 结构化诊断（必要时执行安全修复）
-haro doctor --json
-haro doctor --fix
+- CLI 等价能力。
+- Web API。
+- Cron 任务。
+- Web Dashboard。
+- Scenario Router / Team Orchestrator 中可服务 validation 的片段。
 
-# 5. 执行第一条任务
-haro run "列出当前目录下的 TypeScript 文件"
+### 不再作为主路径继续建设
 
-# 6. 进入交互式 REPL
-haro
-```
+- Haro 自建 Provider 抽象。
+- Haro 自建 Channel 抽象。
+- Haro 自建 Session runtime。
+- Haro 内部 workbench 主链路。
 
-完整新手路径与命令速查见 [`docs/getting-started.md`](docs/getting-started.md)。
+## 目标组件
 
-### 从源码运行（开发备选）
+| 组件 | 职责 | 第一版状态 |
+| --- | --- | --- |
+| `@haro/agentdock-contract` | AgentDock connection、observation、proposal、validation、asset event schema | 进行中 |
+| Haro MCP Server | 暴露 `haro_observe` / `haro_propose` / `haro_validate` / `haro_asset_query` | 待实现 |
+| Haro Scheduled CLI | 支持 `connect agent-dock`、`observe`、`propose`、`validate`、`status`、`doctor` | 待实现 |
+| Evolution Store | `~/.haro/evolution/*` 独立存储 observations/proposals/validations/applications | 待迁移 |
+| Asset Registry | 管理 skills/prompts/profiles/rules/tool config 资产事件 | 复用并迁移；memory 由 AgentDock 提供，Haro 仅保存 observation refs |
+| Gated Apply | L0/L1 proposal + validation + snapshot + rollback 后应用 | 后续实现 |
 
-```bash
-git clone https://github.com/haro-ai/haro.git
-cd haro
-pnpm install
-pnpm build
-pnpm haro setup --profile dev
-pnpm haro doctor --json
-pnpm haro run "列出当前目录下的 TypeScript 文件"
-```
+## 自进化分级
 
-> 注：`pnpm setup` 与 pnpm 内置命令冲突，等价路径为 `pnpm run setup` 或 `pnpm haro setup`。
+| Level | 范围 | 是否允许 MCP apply |
+| --- | --- | --- |
+| L0 | prompt 文案、skill 描述、配置默认值 | 允许，需 proposal + validation |
+| L1 | skill 文件、runner profile、schedule/routing config | 允许，需 snapshot + rollback |
+| L2 | Haro sidecar 代码 | 不直接 apply，生成 patch branch |
+| L3 | AgentDock kernel 代码或跨项目 contract | 不直接 apply，必须人工决策 |
 
 ## 仓库结构
 
+当前仓库仍保留历史 workbench 代码。第一阶段不做物理删除，先完成文档基线与 sidecar contract。
+
 ```text
 packages/
-├── core/               # 核心运行时、配置、存储、Memory Fabric、Scenario Router、Team Orchestrator、Permission Budget、Evolution Registry
-├── provider-codex/     # Codex Provider（含 ChatGPT 订阅认证）
-├── providers/          # 其他 Provider 占位位（计划接入 xiaomi-token-plan / kimi-token-plan 等）
-├── channel/            # 共享 Channel 协议层
-├── channel-feishu/     # 飞书 adapter
-├── channel-telegram/   # Telegram adapter
-├── channel-web/        # Web Channel adapter（FEAT-031；Dashboard 作为 IM channel）
-├── skills/             # Skills 子系统与 eat/shit 代谢
-├── cli/                # CLI 入口；`haro web` 是 @haro/web-api 的薄启动器
-├── web-api/            # Web 后端服务（FEAT-038 已交付，独立可发布）
-└── web/                # Web Dashboard 前端（React 19 SPA）
+├── agentdock-contract/ # AgentDock sidecar contract schema、fake source、contract tests
+├── core/               # 历史核心能力；保留 Evolution / Guard 等可迁移部分；自有 Memory 逻辑不进入 sidecar 基线
+├── cli/                # 后续降级为 sidecar admin/debug CLI
+├── mcp-tools/          # 历史 MCP 工具层；后续新增/迁移为 Haro sidecar MCP server
+├── skills/             # Skills 与 eat/shit 代谢能力
+├── web-api/            # 历史控制面；后续按需保留
+├── web/                # 历史 Dashboard；不再作为主产品面扩展
+├── channel*/           # 历史 channel adapter；冻结主路径
+└── provider*/          # 历史 provider adapter；冻结主路径
 
-docs/                   # 架构、模块、演进、评审、规划文档
-specs/                  # 单一真源：feature / defect / protocol / constraints
-roadmap/                # 阶段路线图
+docs/                   # 架构、模块、规划文档
+specs/                  # 历史 spec + 后续 sidecar-era spec
+roadmap/                # sidecar-era 路线图
 scripts/                # 辅助脚本
 ```
 
 ## 文档导航
 
-### 先看这几份
+当前新基线：
 
-- [Getting Started](docs/getting-started.md) — 从安装到跑通第一条任务
-- [Install](docs/install.md) — 全平台安装指南
-- [Configuration](docs/configuration.md) — 配置层级、环境变量、敏感数据原则
-- [Channels](docs/channels.md) — 飞书 / Telegram / Web channel 启用与 Gateway 控制
-- [架构总览](docs/architecture/overview.md) — 双层架构 + 三层解耦 + 四进化驱动源
-- [路线图](roadmap/phases.md) — Phase 0/1/1.5/2.0/2.5/3.0/3.5
-- [2026-05-01 重设计规划](docs/planning/archive/redesign-2026-05-01.md) — 已归档的路线重排背景
-- [spec 体系与开发流程](specs/README.md)
-- [Troubleshooting](docs/troubleshooting.md)
-
-### 按主题阅读
-
-**架构与约束**
+- [AgentDock Kernel + Haro Sidecar Architecture](docs/planning/agentdock-kernel-sidecar-architecture.md)
 - [架构总览](docs/architecture/overview.md)
-- [设计原则](specs/design-principles.md)
-- [多 Agent 设计约束](specs/multi-agent-design-constraints.md)
-- [Provider 协议](specs/provider-protocol.md)
-- [Channel 协议](specs/channel-protocol.md)
-- [Evolution 代谢机制](specs/evolution-metabolism.md)
-- [Evolution Engine 协议](specs/evolution-engine-protocol.md)
-- [Team Orchestration 协议](specs/team-orchestration-protocol.md)
+- [路线图](roadmap/phases.md)
+- [Sidecar-era specs](specs/sidecar) — FEAT-043 到 FEAT-047
+- [2026-05-01 重设计规划](docs/planning/archive/redesign-2026-05-01.md) — 历史基线，已归档
 
-**模块说明**
-- [CLI 设计](docs/cli-design.md)
-- [数据目录](docs/data-directory.md)
-- [模块文档](docs/modules)
-
-**研究与评审**
-- [竞品调研](docs/research/landscape.md)
-- [自有项目资产](docs/research/prior-art.md)
-- [Phase 0 审计](docs/reviews/phase-0-audit-2026-04-19.md)
+历史模块文档仍保留，但阅读时以 2026-05-08 sidecar 文档为准。若旧文档仍描述 Haro 自建 workbench 主路径，视为 historical baseline，不作为后续实现依据。
 
 ## 开发流程
 
-Haro 采用 **spec 驱动开发**：
+当前阶段采用“文档基线 → contract skeleton → read-only integration → gated write”的顺序。
 
-1. `specs/` 是单一真源
-2. 新 feature / defect 先补 spec，再实现
-3. Requirement、Acceptance Criteria、测试、文档同步闭环
-4. docs 与 spec 漂移视为未完成
+1. 文档基线清理：README、roadmap、architecture overview、planning 文档对齐 sidecar 定位。
+2. Contract skeleton：新增 AgentDock contract schema 与 fake source tests。
+3. Read-only MCP/CLI：实现 observe/propose/validate/query，默认 dry-run。
+4. Scheduled sidecar：通过 AgentDock script task 周期触发。
+5. Gated apply：只开放 L0/L1，必须有 validation、snapshot、rollback ref。
 
-每次开发任务结束按顺序调用：
-1. `/codex:review` — Codex 独立评审本次改动
-2. `/neat-freak` — 同步项目文档与 Agent 记忆
+每次开发任务结束按顺序执行：
 
-详细规则见 [`specs/README.md`](specs/README.md)。
-
-## 当前边界
-
-为了避免 README 说得比代码多，明确写清楚：
-
-- 当前正式实现的 Provider 只有 **Codex**；多 provider 抽象保留，规划接入 xiaomi-token-plan / kimi-token-plan 等
-- 当前已实现的 Channel：**CLI / 飞书 / Telegram / Web**（Web 为 Phase 1.5 FEAT-031 新增，Dashboard 走 Web Channel 路由）
-- Phase 0 + Phase 1 主线已完成；进入 **Phase 1.5（自用底座补完）**
-- Evolution Engine、自动 eat/shit、Industry Intel 仍属于 Phase 2.0+
-- Agent-as-Developer（自改代码、自提 PR）属于 Phase 3.5+
-- 当前形态：**源码运行 + 自用为主**，不是稳定发布版本
-- 不引入：Agent Store / 跨实例协作（Phase 4 已移除）；企业 SSO/OIDC；向量数据库（FEAT-035 v2 文件搜索够用到 Phase 2+）
-
-## 路线图
-
-| 阶段 | 状态 | 目标 |
-| --- | --- | --- |
-| Phase 0 Foundation | 已完成 | CLI + Codex + 单 Agent + Memory + Channel + Skills + 手动 eat/shit |
-| Phase 1 Intelligence & Safety | 已完成 | Scenario Router + Team Orchestrator + Dashboard + Memory Fabric v1 + Asset Registry + 权限预算 |
-| Phase 1.5 Workbench Parity | **进行中**（FEAT-031/032/033/034/035/038/039 全部 done）| Web API 解耦 + CLI 等价补完 + Cron 任务 + Web Channel + MCP 工具层 + 流式 UX + Memory Fabric v2 |
-| Phase 2.0 Evolution Awareness | 规划中 | Self-Monitor + Industry Intel + 自动 eat/shit 触发 |
-| Phase 2.5 Evolution Proposal | 规划中 | Pattern Miner + Evolution Proposal + 用户审批闭环 |
-| Phase 3.0 Controlled Self-Evolution | 规划中 | Auto-Refactorer L0–L1 + 灰度 + 回滚 |
-| Phase 3.5 Agent-as-Developer | 视情况 | L2/L3 改动 + 自写 spec + 自提 PR |
+1. `/codex:review` — 独立评审本次改动。
+2. `/neat-freak` — 同步项目文档与 Agent 记忆。
 
 ## 开发验证
 
@@ -255,6 +191,13 @@ pnpm lint
 pnpm test
 pnpm build
 pnpm smoke
+```
+
+文档-only 改动至少检查：
+
+```bash
+git diff --check
+git diff -- README.md roadmap/phases.md docs/architecture/overview.md docs/planning/agentdock-kernel-sidecar-architecture.md
 ```
 
 ## License

@@ -368,7 +368,7 @@ haro shit --scope all --dry-run
 haro shit rollback <archive-id>
 ```
 
-> Phase 2.0 将新增自动 eat/shit 触发（FEAT-041）；当前命令仍由用户手动调用。
+> 2026-05-08 sidecar 新基线后，自动 eat/shit 触发不再沿旧 Phase 2.0 自动触发路线推进；后续以 `specs/sidecar/` 的 proposal / validation / gated apply 路线为准。
 
 ---
 
@@ -433,13 +433,13 @@ haro agent test <id> --task "..."  # sandbox：noMemory + continueLatestSession=
 记忆查询与写入，等价于 Web Dashboard `/knowledge`。所有读写经 `services.memory`。
 
 ```bash
-haro memory query "<query>"                       # 文件存储搜索（FEAT-035 v2）
+haro memory query "<query>"                       # 历史兼容：旧 Haro MemoryFabric 查询；sidecar 新路径走 AgentDock memory
 haro memory query "<q>" --scope agent --agent <id>
 haro memory remember "<text>" --scope shared      # platform 写入被拒
 haro memory list --scope shared
 haro memory show <memory-id>
 haro memory export --scope shared -o entries.json
-haro memory recover-snapshot                      # FEAT-035 D2 30 天兜底：copy 最新 .bak.<ISO> 到 <dbFile>.recovered.<ISO> 供 sqlite3 forensic 检查
+haro memory recover-snapshot                      # 历史兼容：旧 MemoryFabric SQLite 快照 forensic 检查
 haro memory recover-snapshot --from <bak> -y      # 显式指定快照（必须与 --db 同目录、后缀 .bak.<UTC ISO>）
 ```
 
@@ -554,7 +554,7 @@ haro cron daemon [--interval-ms 60000]  # 前台 60s 循环，SIGINT/SIGTERM gra
 | `/usage` | 已实现 | 查看当前 session 的 token / 事件用量 |
 | `/agent <id>` | 已实现 | 切换当前 Agent |
 | `/sessions [n]` | 已实现（批次 3） | 列出最近 N 个 session（默认 10），走 `services.sessions.listSessions` |
-| `/memory <query>` | 已实现（批次 3） | 文件存储搜索（FEAT-035 v2），走 `services.memory.queryMemory` |
+| `/memory <query>` | 历史兼容 | 旧 Haro MemoryFabric 查询；sidecar 新路径走 AgentDock memory MCP/API |
 | `/logs [n]` | 已实现（批次 3） | 当前 session 最近事件（默认 20），走 `services.logs.listSessionEventLogs` |
 | `/budget` | 已实现（批次 3） | 当前 turn 的 workflow 预算（由 `replState.lastWorkflowId` 锁定，避免共享 root 上其它 channel turn 的污染），走 `services.budget.getWorkflowBudget` |
 

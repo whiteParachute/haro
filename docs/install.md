@@ -159,7 +159,7 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.haro"
 - `agents/` — Agent 定义与状态
 - `skills/` — 已安装 skill
 - `channels/` — Channel 状态与 session 映射
-- `memory/` — Memory Fabric 数据
+- `memory/` — 历史 Haro-owned MemoryFabric 兼容数据；sidecar baseline 读取 AgentDock memory
 - `haro.db` — SQLite 数据库（sessions、events、checkpoints）
 - `logs/` — 运行日志
 - `archive/` — eat/shit 归档

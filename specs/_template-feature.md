@@ -2,7 +2,7 @@
 id: FEAT-XXX
 title: <简短标题>
 status: draft            # draft | approved | in-progress | done | superseded
-phase: phase-0           # 所属迭代阶段（phase-0 / phase-1 / ...）
+phase: sidecar           # 所属迭代阶段（sidecar / phase-0 / phase-1 / ...）
 owner: <负责人>
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
