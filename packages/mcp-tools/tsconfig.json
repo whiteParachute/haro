@@ -5,6 +5,7 @@
     "outDir": "./dist",
     "composite": true,
     "paths": {
+      "@haro/agentdock-contract": ["../agentdock-contract/dist/index.d.ts"],
       "@haro/channel": ["../channel/dist/index.d.ts"],
       "@haro/core": ["../core/dist/index.d.ts"],
       "@haro/core/services": ["../core/dist/services/index.d.ts"],
@@ -15,6 +16,7 @@
     }
   },
   "references": [
+    { "path": "../agentdock-contract" },
     { "path": "../channel" },
     { "path": "../core" }
   ],

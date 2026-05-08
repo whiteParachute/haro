@@ -1,7 +1,7 @@
 ---
 id: FEAT-044
 title: Read-only Haro MCP Sidecar
-status: draft
+status: in-progress
 phase: sidecar
 owner: whiteParachute
 created: 2026-05-08
@@ -76,6 +76,14 @@ AgentDock agent
   -> return structured result
 ```
 
+首版实现决策：
+
+- `haro_observe` 先接入 FEAT-043 `FakeAgentDockSource`，用于锁定外部 MCP server 形态与 schema；真实 AgentDock API / event export 接入后替换 source，不改变 tool contract。
+- `haro_propose` 第一版只生成 rule-based dry-run proposal，不调用 agent，不写 apply/application event。
+- `haro_validate` 只返回 advisory `ValidationReport`，`applyEligible=false`，不修改 proposal change set。
+- `haro_asset_query` 先通过只读 adapter 查询现有 Evolution Asset Registry，并映射成 FEAT-043 `AssetEvent` summary；FEAT-046 再迁移到 sidecar asset registry adapter。
+- MCP audit 同时保留历史 SQLite `tool_invocation_log` 行，并写 `~/.haro/logs/mcp-invocations.jsonl`；JSONL 只保存参数 hash，不保存原始参数。
+
 ## 6. Acceptance Criteria / 验收标准
 
 - AC1: 给定 AgentDock MCP server 配置，当运行 `haro mcp` 时，AgentDock 能列出 4 个 read-only tools。（对应 R1/R2/R7）
@@ -92,12 +100,13 @@ AgentDock agent
 - 集成测试：fake source observe → propose → validate。
 - 手动验证：在 AgentDock 外部 MCP server 配置中注册 `haro mcp`。
 
-## 8. Open Questions / 待定问题
+## 8. Decisions / 决策记录
 
-- Q1: 第一版 `haro_propose` 是否只做 rule-based proposal，还是允许调用 agent 生成 proposal？
-- Q2: MCP audit log 参数是全 hash，还是保留非敏感字段便于排查？
-- Q3: `haro_asset_query` 第一版读取现有 Evolution Asset Registry，还是先读 sidecar manifest files？
+- D1: 第一版 `haro_propose` 只做 rule-based dry-run proposal，不引入 agent generation。
+- D2: MCP audit JSONL 只记录参数 hash，避免 AgentDock session / user payload 泄露到 Haro 日志。
+- D3: `haro_asset_query` 第一版读取现有 Evolution Asset Registry 并输出 FEAT-043 `AssetEvent` summary；sidecar registry adapter 留给 FEAT-046。
 
 ## 9. Changelog / 变更记录
 
+- 2026-05-08: Codex — 开始落地 `haro mcp` 只读 sidecar：新增 4 个 read-only tools、JSONL audit、fake-source observe/propose/validate/asset query 测试。
 - 2026-05-08: Haro — 初稿。

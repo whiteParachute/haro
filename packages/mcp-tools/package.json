@@ -26,6 +26,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@haro/agentdock-contract": "workspace:*",
     "@haro/channel": "workspace:*",
     "@haro/core": "workspace:*",
     "better-sqlite3": "^11.7.0",

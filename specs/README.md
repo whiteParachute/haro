@@ -20,7 +20,7 @@ Haro 当前主线已切换为 **AgentDock self-evolution sidecar**。
 | Spec | 主题 | 阶段 | 状态 |
 | --- | --- | --- | --- |
 | [FEAT-043](sidecar/FEAT-043-agentdock-contract-skeleton.md) | AgentDock contract skeleton | Phase B | in-progress |
-| [FEAT-044](sidecar/FEAT-044-read-only-mcp-sidecar.md) | Read-only Haro MCP sidecar | Phase C | draft |
+| [FEAT-044](sidecar/FEAT-044-read-only-mcp-sidecar.md) | Read-only Haro MCP sidecar | Phase C | in-progress |
 | [FEAT-045](sidecar/FEAT-045-scheduled-sidecar-cli.md) | Scheduled sidecar CLI | Phase D | draft |
 | [FEAT-046](sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | Sidecar asset registry adapter | Phase E | draft |
 | [FEAT-047](sidecar/FEAT-047-gated-apply-l0-l1.md) | Gated apply L0/L1 | Phase F | draft |

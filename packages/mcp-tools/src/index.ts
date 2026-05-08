@@ -45,6 +45,24 @@ export {
   type ScheduleTaskInput,
   type ScheduleTaskOutput,
 } from './tools/schedule-task.js';
+export {
+  allowSidecarReadOnlyTools,
+  createSidecarRegistry,
+  haroAssetQueryTool,
+  haroObserveTool,
+  haroProposeTool,
+  haroValidateTool,
+  HaroAssetQueryInputSchema,
+  HaroAssetQueryOutputSchema,
+  HaroObserveInputSchema,
+  HaroProposeInputSchema,
+  HaroValidateInputSchema,
+  type HaroAssetQueryInput,
+  type HaroAssetQueryOutput,
+  type HaroObserveInput,
+  type HaroProposeInput,
+  type HaroValidateInput,
+} from './sidecar-tools.js';
 
 export type {
   SessionContext,

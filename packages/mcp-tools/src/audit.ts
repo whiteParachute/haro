@@ -8,6 +8,8 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { initHaroDatabase } from '@haro/core/db';
 
@@ -21,6 +23,12 @@ import type {
 export interface AuditWriterOptions {
   root?: string;
   dbFile?: string;
+  /**
+   * Optional JSONL sidecar audit sink. FEAT-044 `haro mcp` uses this for the
+   * AgentDock-facing read-only MCP server while the historical FEAT-032 path
+   * keeps its SQLite audit rows unchanged.
+   */
+  jsonlFile?: string;
   /** Pre-opened DB handle (tests). When provided, root/dbFile are ignored. */
   db?: Database.Database;
   now?: () => Date;
@@ -43,6 +51,7 @@ export class ToolInvocationAuditWriter {
   private readonly ownsDb: boolean;
   private readonly now: () => Date;
   private readonly createId: () => string;
+  private readonly jsonlFile?: string;
 
   constructor(options: AuditWriterOptions = {}) {
     if (options.db) {
@@ -59,6 +68,7 @@ export class ToolInvocationAuditWriter {
     }
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? (() => `tool_inv_${randomUUID()}`);
+    this.jsonlFile = options.jsonlFile;
   }
 
   close(): void {
@@ -97,6 +107,25 @@ export class ToolInvocationAuditWriter {
         row.errorCode,
         row.invokedAt,
       );
+    if (this.jsonlFile) {
+      mkdirSync(dirname(this.jsonlFile), { recursive: true });
+      appendFileSync(
+        this.jsonlFile,
+        `${JSON.stringify({
+          id: row.id,
+          sessionId: row.sessionId,
+          agentId: row.agentId,
+          toolName: row.toolName,
+          paramsHash: row.paramsHash,
+          decision: row.decision,
+          resultStatus: row.resultStatus,
+          latencyMs: row.latencyMs,
+          errorCode: row.errorCode,
+          invokedAt: row.invokedAt,
+        })}\n`,
+        'utf8',
+      );
+    }
     return row;
   }
 

@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Readable, Writable } from 'node:stream';
 import { Command } from 'commander';
 import { stringify as stringifyYaml } from 'yaml';
 import {
@@ -15,6 +16,7 @@ import {
   TeamOrchestrator,
   buildHaroPaths,
   classifyOperation,
+  createEvolutionAssetRegistry,
   createMemoryFabric,
   extractTokenUsage,
   createLogger,
@@ -175,6 +177,7 @@ export type RunCliAction =
   | 'shit'
   | 'gateway'
   | 'web'
+  | 'mcp'
   | 'update'
   | 'config-error';
 
@@ -555,6 +558,7 @@ function buildProgram(app: AppContext): Command {
   registerMetabolismCommands(program, app);
   registerGatewayCommands(program, app);
   registerWebCommand(program, app);
+  registerMcpCommand(program, app);
   registerUpdateCommand(program, app);
   registerSessionCommands(program, app, { runRepl });
   registerAgentCommands(program, app);
@@ -1333,6 +1337,73 @@ function registerUpdateCommand(program: Command, app: AppContext): void {
           throw new CommanderExit(result.exitCode, result.message);
         }
       });
+    },
+    program,
+  );
+}
+
+function registerMcpCommand(program: Command, app: AppContext): void {
+  registerCommand(
+    'mcp',
+    (cmd) => {
+      cmd
+        .description('Start the read-only Haro AgentDock sidecar MCP server (FEAT-044)')
+        .action(async () => {
+          const {
+            McpServer,
+            StdioTransport,
+            ToolInvocationAuditWriter,
+            createSidecarRegistry,
+          } = await import('@haro/mcp-tools');
+          const audit = new ToolInvocationAuditWriter({
+            root: app.paths.root,
+            dbFile: app.paths.dbFile,
+            jsonlFile: join(app.paths.dirs.logs, 'mcp-invocations.jsonl'),
+            now: app.now,
+          });
+          const registry = createSidecarRegistry({ audit, now: app.now });
+          const evolution = createEvolutionAssetRegistry({
+            root: app.paths.root,
+            dbFile: app.paths.dbFile,
+            now: app.now,
+          });
+          // The FEAT-044 registry never reads or writes Haro MemoryFabric.
+          // FEAT-032's shared ToolDependencies shape still carries this
+          // legacy dependency, so keep it scoped to the server lifetime.
+          const memory = createMemoryFabric({
+            root: app.paths.dirs.memory,
+            dbFile: app.paths.dbFile,
+          });
+          const server = new McpServer({
+            transport: new StdioTransport(app.stdin as Readable, app.stdout as Writable),
+            registry,
+            session: {
+              sessionId: `haro-sidecar-mcp-${randomUUID()}`,
+              agentId: 'haro-sidecar',
+            },
+            deps: {
+              channels: app.channelRegistry,
+              memory,
+              evolution,
+              serviceContext: { root: app.paths.root, dbFile: app.paths.dbFile },
+              now: app.now,
+            },
+            logger: {
+              warn: (msg) => app.logger.warn({ msg }, 'haro mcp warning'),
+              error: (msg) => app.logger.error({ msg }, 'haro mcp error'),
+            },
+          });
+          try {
+            await server.run();
+          } finally {
+            await server.stop();
+            audit.close();
+            evolution.close();
+            if ('close' in memory && typeof memory.close === 'function') {
+              memory.close();
+            }
+          }
+        });
     },
     program,
   );
@@ -2797,7 +2868,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

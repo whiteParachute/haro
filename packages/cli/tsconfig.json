@@ -26,6 +26,9 @@
       "@haro/channel-web": [
         "../channel-web/dist/index.d.ts"
       ],
+      "@haro/mcp-tools": [
+        "../mcp-tools/dist/index.d.ts"
+      ],
       "@haro/skills": [
         "../skills/dist/index.d.ts"
       ],
@@ -49,6 +52,9 @@
     },
     {
       "path": "../channel-web"
+    },
+    {
+      "path": "../mcp-tools"
     },
     {
       "path": "../skills"

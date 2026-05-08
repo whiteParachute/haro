@@ -97,4 +97,30 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it('shipped binary mcp lists only AgentDock sidecar read-only tools', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-mcp-'));
+    try {
+      const res = spawnSync(process.execPath, [bin, 'mcp'], {
+        env: { ...process.env, HARO_HOME: home },
+        input: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n',
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      expect(res.stderr).toBe('');
+      const payload = JSON.parse(res.stdout) as { result: { tools: Array<{ name: string }> } };
+      const names = payload.result.tools.map((tool) => tool.name).sort();
+      expect(names).toEqual([
+        'haro_asset_query',
+        'haro_observe',
+        'haro_propose',
+        'haro_validate',
+      ]);
+      expect(names).not.toContain('haro_apply');
+      expect(names).not.toContain('memory_query');
+      expect(names).not.toContain('send_message');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

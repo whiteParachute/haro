@@ -166,6 +166,9 @@ importers:
       '@haro/core':
         specifier: workspace:*
         version: link:../core
+      '@haro/mcp-tools':
+        specifier: workspace:*
+        version: link:../mcp-tools
       '@haro/provider-codex':
         specifier: workspace:*
         version: link:../provider-codex
@@ -243,6 +246,9 @@ importers:
 
   packages/mcp-tools:
     dependencies:
+      '@haro/agentdock-contract':
+        specifier: workspace:*
+        version: link:../agentdock-contract
       '@haro/channel':
         specifier: workspace:*
         version: link:../channel
