@@ -12,16 +12,16 @@ afterEach(() => {
 });
 
 describe('SkillsManager [FEAT-010]', () => {
-  it('expands 15 preinstalled skills on first launch and exposes source metadata', () => {
+  it('expands sidecar-era preinstalled skills on first launch and exposes source metadata', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-skills-expand-'));
     roots.push(root);
     const manager = new SkillsManager({ root });
 
     const entries = manager.list();
-    expect(entries).toHaveLength(15);
+    expect(entries).toHaveLength(9);
     expect(entries.every((entry) => entry.isPreinstalled)).toBe(true);
-    expect(existsSync(join(root, 'skills', 'preinstalled', 'memory', 'SKILL.md'))).toBe(true);
-    const info = manager.info('memory');
+    expect(existsSync(join(root, 'skills', 'preinstalled', 'eat', 'SKILL.md'))).toBe(true);
+    const info = manager.info('eat');
     expect(info.pinnedCommit).toHaveLength(40);
     expect(info.license.length).toBeGreaterThan(0);
     manager.close();
@@ -31,20 +31,18 @@ describe('SkillsManager [FEAT-010]', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-skills-uninstall-'));
     roots.push(root);
     const manager = new SkillsManager({ root });
-    expect(() => manager.uninstall('memory')).toThrow(/预装 skill 不可卸载/);
+    expect(() => manager.uninstall('eat')).toThrow(/预装 skill 不可卸载/);
     manager.close();
   });
 
-  it('tracks usage and routes remember before eat on description match', async () => {
+  it('does not route memory phrases to Haro-owned preinstalled memory skills', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-skills-trigger-'));
     roots.push(root);
     const manager = new SkillsManager({ root });
     const result = await manager.prepareTask('记住这个偏好：以后默认中文回答', { agentId: 'haro-assistant' });
-    expect(result.matchedSkillId).toBe('remember');
-    const usage = manager.getUsage('remember');
-    expect(usage?.useCount).toBe(1);
-    const memoryIndex = readFileSync(join(root, 'memory', 'agents', 'haro-assistant', 'index.md'), 'utf8');
-    expect(memoryIndex).toContain('以后默认中文回答');
+    expect(result.matchedSkillId).toBeUndefined();
+    expect(result.finalTask).toBe('记住这个偏好：以后默认中文回答');
+    expect(existsSync(join(root, 'memory', 'agents', 'haro-assistant', 'index.md'))).toBe(false);
     manager.close();
   });
 

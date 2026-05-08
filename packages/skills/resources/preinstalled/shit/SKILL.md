@@ -3,7 +3,7 @@ name: shit
 description: "Counterpart to eat: dry-run-first archival/rollback workflow for stale Haro skills and rules."
 ---
 
-Use this skill to review stale Haro skills, rules, MCP surfaces, and memory assets for archival through the Haro metabolism flow.
+Use this skill to review stale Haro skills, rules, and MCP surfaces for archival through the Haro metabolism flow.
 
 ## Safety contract
 
@@ -42,7 +42,6 @@ Use this skill to review stale Haro skills, rules, MCP surfaces, and memory asse
 ```bash
 haro shit --dry-run --scope skills --days 30
 haro shit --dry-run --scope rules --days 60
-haro shit --dry-run --scope memory --days 90
 ```
 
 Use a narrower scope when the user named a specific asset family. Keep preinstalled skills and agent-referenced skills protected unless Haro itself classifies a safe archival candidate.

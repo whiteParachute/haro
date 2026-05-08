@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createEvolutionAssetRegistry, createMemoryFabric } from '@haro/core';
+import { createEvolutionAssetRegistry } from '@haro/core';
 import { SkillsManager } from '../src/index.js';
 
 const roots: string[] = [];
@@ -67,7 +67,7 @@ describe('Metabolism commands [FEAT-011]', () => {
     manager.close();
   });
 
-  it('writes memory plus proposal bundle and enforces anti-bloat limits', async () => {
+  it('writes proposal bundle and enforces anti-bloat limits without Haro-owned memory assets', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-eat-bundle-'));
     roots.push(root);
     const manager = new SkillsManager({ root });
@@ -94,6 +94,7 @@ describe('Metabolism commands [FEAT-011]', () => {
       } as NodeJS.WritableStream,
     });
     expect(result.output).toContain('proposal bundle');
+    expect(result.output).not.toContain('memory updated');
     expect(preview).toContain('quality gate:');
     expect(preview).toContain('four questions:');
     expect(preview).toContain('Failure-backed?: pass');
@@ -102,12 +103,11 @@ describe('Metabolism commands [FEAT-011]', () => {
     expect(preview).toContain('decision: accept');
     const archiveRoot = join(root, 'archive', 'eat-proposals');
     const bundle = readDirSingle(archiveRoot);
-    expect(existsSync(join(bundle, 'memory-preview.md'))).toBe(true);
+    expect(existsSync(join(bundle, 'observation-preview.md'))).toBe(true);
     expect(existsSync(join(bundle, 'rules'))).toBe(true);
     expect(existsSync(join(bundle, 'skills'))).toBe(true);
-    expect(existsSync(join(root, 'memory', 'agents', 'haro-assistant', 'index.md'))).toBe(true);
+    expect(existsSync(join(root, 'memory', 'agents', 'haro-assistant', 'index.md'))).toBe(false);
     const manifest = JSON.parse(readFileSync(join(bundle, 'manifest.json'), 'utf8')) as {
-      memoryWrites: Array<{ assetRef: string }>;
       proposals: Array<{ type: string; assetId: string; eventType: string }>;
     };
     const registry = createEvolutionAssetRegistry({ root });
@@ -116,12 +116,6 @@ describe('Metabolism commands [FEAT-011]', () => {
     const skillAsset = registry.getAsset(skillProposal!.assetId, { includeEvents: true });
     expect(skillAsset?.status).toBe('proposed');
     expect(skillAsset?.events.map((event) => event.type)).toContain('proposed');
-    const memoryHits = createMemoryFabric({ root: join(root, 'memory'), dbFile: join(root, 'haro.db') }).queryEntries({
-      assetRef: manifest.memoryWrites[0]!.assetRef,
-      keyword: 'Keep interfaces narrow',
-      limit: 5,
-    });
-    expect(memoryHits.length).toBeGreaterThanOrEqual(1);
     registry.close();
 
     const largeInput = join(root, 'large.md');

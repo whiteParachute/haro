@@ -1185,11 +1185,11 @@ function registerMetabolismCommands(program: Command, app: AppContext): void {
     'shit',
     (cmd) => {
       cmd
-        .option('--scope <scope>', 'rules|skills|mcp|memory|all')
+        .option('--scope <scope>', 'rules|skills|mcp|all')
         .option('--days <n>', 'staleness window in days', (value) => Number.parseInt(value, 10))
         .option('--dry-run', 'preview candidates only')
         .option('--confirm-high', 'allow high-risk items')
-        .action(async (options: { scope?: 'rules' | 'skills' | 'mcp' | 'memory' | 'all'; days?: number; dryRun?: boolean; confirmHigh?: boolean }) => {
+        .action(async (options: { scope?: 'rules' | 'skills' | 'mcp' | 'all'; days?: number; dryRun?: boolean; confirmHigh?: boolean }) => {
           if (options.dryRun !== true) {
             const decision = recordCliPermissionDecision(app, {
               operationClass: 'archive',

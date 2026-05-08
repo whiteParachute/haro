@@ -55,7 +55,7 @@ describe('memory_remember tool [FEAT-032 R6 / AC3]', () => {
     expect(out.decision).toBe('needs-approval');
   });
 
-  it('records an EvolutionAssetRegistry event for successful writes', async () => {
+  it('does not register memory writes as Haro evolution assets', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
     const out = await registry.invoke({
@@ -69,11 +69,8 @@ describe('memory_remember tool [FEAT-032 R6 / AC3]', () => {
       deps: e.buildDeps(),
     });
     if (!out.result.ok) throw new Error('expected success');
-    expect(typeof out.result.value.assetEventId).toBe('string');
-    const events = e.evolution.listEvents();
-    expect(events.some((event) => event.evidenceRefs.some((ref) => ref.startsWith('memory:')))).toBe(
-      true,
-    );
+    expect(out.result.value.assetEventId).toBeUndefined();
+    expect(e.evolution.listEvents()).toEqual([]);
   });
 
   it('defaults dimension to project when caller omits it', async () => {

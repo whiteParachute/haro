@@ -1,14 +1,14 @@
 import { createInterface } from 'node:readline/promises';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { buildHaroPaths, createEvolutionAssetRegistry, createMemoryFabric, hashEvolutionAssetContent } from '@haro/core';
+import { buildHaroPaths, createEvolutionAssetRegistry, hashEvolutionAssetContent } from '@haro/core';
 import type { EvolutionAssetDraft, EvolutionAssetKind } from '@haro/core';
 import type { InstalledSkillsManifest } from './types.js';
 
 const EMPTY_INSTALLED: InstalledSkillsManifest = { version: 1, skills: {} };
 
 interface ArchivedItem {
-  scope: 'skills' | 'memory' | 'rules' | 'mcp';
+  scope: 'skills' | 'rules' | 'mcp';
   path: string;
   archivedPath: string;
   risk: 'low' | 'medium' | 'high';
@@ -31,7 +31,7 @@ export interface EatCommandInput {
 
 export interface ShitCommandInput {
   root: string;
-  scope?: 'rules' | 'skills' | 'mcp' | 'memory' | 'all';
+  scope?: 'rules' | 'skills' | 'mcp' | 'all';
   days?: number;
   dryRun?: boolean;
   confirmHigh?: boolean;
@@ -61,51 +61,22 @@ export async function runEat(input: EatCommandInput): Promise<{ output: string }
     }
   }
   const paths = buildHaroPaths(input.root);
-  const memoryFabric = createMemoryFabric({ root: paths.dirs.memory });
   const registry = createEvolutionAssetRegistry({ root: input.root });
   const bundleId = new Date().toISOString().replace(/[:.]/g, '-');
   const bundleRoot = join(paths.dirs.archive, 'eat-proposals', bundleId);
   try {
     mkdirSync(bundleRoot, { recursive: true });
-    const memoryPreviewFile = join(bundleRoot, 'memory-preview.md');
-    writeFileSync(memoryPreviewFile, buckets.memoryPreview, 'utf8');
+    const observationPreviewFile = join(bundleRoot, 'observation-preview.md');
+    writeFileSync(observationPreviewFile, buckets.observationPreview, 'utf8');
     const manifestFile = join(bundleRoot, 'manifest.json');
     const manifest: Record<string, unknown> = {
       sourceKind: detected.kind,
       createdAt: new Date().toISOString(),
       evaluation,
-      memoryWrites: [],
+      observationRef: relative(paths.root, observationPreviewFile),
       proposals: [],
       suggestions: [],
     };
-    const memoryAsset = registry.recordEvent({
-      type: 'promoted',
-      actor: 'agent',
-      asset: {
-        kind: 'memory',
-        name: buckets.memoryTitle,
-        status: 'active',
-        sourceRef: `eat:${detected.kind}`,
-        contentRef: `memory:agent:haro-assistant:${slug(buckets.memoryTitle)}`,
-        contentHash: hashEvolutionAssetContent(buckets.memoryContent),
-        createdBy: 'eat',
-      },
-      evidenceRefs: [memoryPreviewFile],
-      metadata: {
-        action: 'eat-memory-write',
-        bundleId,
-        sourceKind: detected.kind,
-      },
-    });
-    const memoryWrite = await memoryFabric.write({
-      scope: 'agent',
-      agentId: 'haro-assistant',
-      topic: buckets.memoryTitle,
-      content: buckets.memoryContent,
-      source: 'skill:eat',
-      assetRef: memoryAsset.assetId,
-    });
-    (manifest.memoryWrites as Array<unknown>).push({ ...memoryWrite, assetRef: memoryAsset.assetId, eventId: memoryAsset.id });
 
     for (const proposal of buckets.proposals) {
       const limit = proposal.type === 'claude' ? 200 : proposal.type === 'rules' ? 99 : 499;
@@ -149,7 +120,7 @@ export async function runEat(input: EatCommandInput): Promise<{ output: string }
     }
 
     writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-    return { output: `eat completed: memory updated, proposal bundle at ${bundleRoot}` };
+    return { output: `eat completed: proposal bundle at ${bundleRoot}` };
   } finally {
     registry.close();
   }
@@ -462,9 +433,9 @@ function buildEatBuckets(content: string) {
     proposals.push({ type: 'skills', path: `${slug(title)}/SKILL.md`, content: skillBody, lines: skillBody.split(/\r?\n/).length });
   }
   return {
-    memoryTitle: title,
-    memoryContent: summaryBlock,
-    memoryPreview: `# Memory Preview\n\n${summaryBlock}\n`,
+    observationTitle: title,
+    observationContent: summaryBlock,
+    observationPreview: `# Observation Preview\n\n${summaryBlock}\n`,
     proposals,
   };
 }
@@ -485,14 +456,14 @@ function proposalAssetName(path: string): string {
 }
 
 function collectShitCandidates(root: string, scope: ShitCommandInput['scope'], days: number, now: number) {
-  const scopes = scope === 'all' ? ['skills', 'memory', 'rules', 'mcp'] : [scope ?? 'all'];
+  const scopes = scope === 'all' ? ['skills', 'rules', 'mcp'] : [scope ?? 'all'];
   const threshold = now - days * 24 * 60 * 60 * 1000;
   const paths = buildHaroPaths(root);
   const installedFile = join(paths.dirs.skills, 'installed.json');
   const installed = existsSync(installedFile)
     ? (JSON.parse(readFileSync(installedFile, 'utf8')) as InstalledSkillsManifest)
     : { version: 1, skills: {} };
-  const candidates: Array<{ scope: 'skills' | 'memory' | 'rules' | 'mcp'; path: string; risk: 'low' | 'medium' | 'high'; reason: string; whitelisted: boolean; skillId?: string; skillEntry?: Record<string, unknown> }> = [];
+  const candidates: Array<{ scope: 'skills' | 'rules' | 'mcp'; path: string; risk: 'low' | 'medium' | 'high'; reason: string; whitelisted: boolean; skillId?: string; skillEntry?: Record<string, unknown> }> = [];
   if (scopes.includes('skills')) {
     for (const entry of Object.values(installed.skills)) {
       if (entry.isPreinstalled) continue;
@@ -506,17 +477,6 @@ function collectShitCandidates(root: string, scope: ShitCommandInput['scope'], d
         skillId: entry.id,
         skillEntry: entry as unknown as Record<string, unknown>,
       });
-    }
-  }
-  if (scopes.includes('memory')) {
-    const memoryRoot = paths.dirs.memory;
-    if (existsSync(memoryRoot)) {
-      for (const file of walk(memoryRoot)) {
-        if (file.endsWith('platform/index.md')) continue;
-        if (statSync(file).mtimeMs < threshold) {
-          candidates.push({ scope: 'memory', path: file, risk: 'low', reason: 'stale memory file', whitelisted: false });
-        }
-      }
     }
   }
   if (scopes.includes('rules')) {
@@ -558,12 +518,10 @@ function candidateAssetDraft(
   };
 }
 
-function candidateScopeToAssetKind(scope: 'skills' | 'memory' | 'rules' | 'mcp'): EvolutionAssetKind {
+function candidateScopeToAssetKind(scope: 'skills' | 'rules' | 'mcp'): EvolutionAssetKind {
   switch (scope) {
     case 'skills':
       return 'skill';
-    case 'memory':
-      return 'memory';
     case 'rules':
       return 'routing-rule';
     case 'mcp':
@@ -589,7 +547,7 @@ function stablePathId(path: string): string {
 function renderEatPreview(kind: string, buckets: ReturnType<typeof buildEatBuckets>, evaluation: ReturnType<typeof evaluateEatContent>): string {
   return [
     `eat preview (${kind})`,
-    `memory: ${buckets.memoryTitle}`,
+    `observation: ${buckets.observationTitle}`,
     `proposals: ${buckets.proposals.map((item) => `${item.type}:${item.path}`).join(', ') || 'none'}`,
     'quality gate:',
     ...evaluation.qualityGate.map((item) => `- ${item.name}: ${item.pass ? 'pass' : 'fail'} — ${item.reason}`),

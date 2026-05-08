@@ -5,7 +5,7 @@
  *   node dist/bin/server-entry.js <session-context-json> [<config-json>]
  *
  * The first arg is a JSON-encoded SessionContext; the second is optional
- * config (root / dbFile so the subprocess can open its own MemoryFabric /
+ * config (root / dbFile so the subprocess can open its historical MemoryFabric /
  * EvolutionAssetRegistry / cron service-context view).
  *
  * **Subprocess scaffolding caveat (Codex review BLOCKER #1 / #3)**: A

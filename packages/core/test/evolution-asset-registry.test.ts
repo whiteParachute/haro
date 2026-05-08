@@ -96,18 +96,18 @@ describe('EvolutionAssetRegistry [FEAT-022]', () => {
     registry.close();
   });
 
-  it('AC6 links memory assetRef to Memory Fabric reverse lookup', async () => {
+  it('AC6 links source assetRef to Memory Fabric reverse lookup', async () => {
     const registry = createEvolutionAssetRegistry({ root });
     const event = registry.recordEvent({
       type: 'promoted',
       actor: 'agent',
       asset: {
-        id: 'memory:eat:asset-ref-demo',
-        kind: 'memory',
-        name: 'assetRef demo memory',
+        id: 'skill:eat:asset-ref-demo',
+        kind: 'skill',
+        name: 'assetRef demo source skill',
         status: 'active',
         sourceRef: 'skill:eat',
-        contentRef: 'memory/agents/haro-assistant/knowledge/asset-ref-demo.md',
+        contentRef: 'skills/preinstalled/eat/SKILL.md',
         contentHash: hashEvolutionAssetContent('assetRef reverse lookup content'),
         createdBy: 'eat',
       },

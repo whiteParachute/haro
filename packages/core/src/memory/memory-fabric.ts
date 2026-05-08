@@ -137,9 +137,9 @@ export function createMemoryFabric(options: MemoryFabricOptions): MemoryFabric {
 }
 
 /**
- * FEAT-007 Memory Fabric. See `specs/phase-0/FEAT-007-memory-fabric-independent.md`
- * for the authoritative spec. Deliberate design notes worth flagging to future
- * readers:
+ * Historical Haro-owned MemoryFabric compatibility layer.
+ * Sidecar baseline consumes AgentDock-owned memory through observation refs.
+ * Deliberate design notes worth flagging to future readers:
  *
  *  - Everything that touches the filesystem routes through `SerialWriter`. Do
  *    not call atomicWriteFile directly from the public methods — the chain is

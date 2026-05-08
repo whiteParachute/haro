@@ -1,12 +1,9 @@
 /**
- * memory_remember tool (FEAT-032 R6 / AC3).
+ * memory_remember tool (historical FEAT-032 compatibility).
  *
- * Calls MemoryFabric.writeEntry directly so we can support shared/platform
- * scopes (services.writeMemoryEntry forbids platform). The dimension is stored
- * as a tag — MemoryFileStore.search uses it to filter, and AC3 verifies the
- * input dimension is present in the resulting entry.tags. Each successful
- * write also records an EvolutionAssetRegistry event so FEAT-022 sees the
- * provenance of agent-driven memory writes.
+ * Sidecar baseline delegates memory ownership to AgentDock. This legacy tool
+ * can still write to the historical Haro MemoryFabric for old workbench tests,
+ * but it no longer registers memory as a Haro EvolutionAsset kind.
  */
 
 import { z } from 'zod';
@@ -76,40 +73,11 @@ export const memoryRememberTool: ToolDefinition<
       throw new McpToolError('INTERNAL_ERROR', `memory.writeEntry failed: ${message}`);
     }
     const persistedDimension = inferDimensionFromTags(entry.tags);
-    let assetEventId: string | undefined;
-    try {
-      const event = ctx.deps.evolution.recordEvent({
-        asset: {
-          kind: 'memory',
-          name: entry.topic,
-          sourceRef: entry.sourceRef,
-          contentRef: entry.contentPath ?? entry.id,
-          contentHash: entry.contentHash,
-          createdBy: 'agent',
-        },
-        type: 'proposed',
-        actor: 'agent',
-        evidenceRefs: [`memory:${entry.id}`],
-        metadata: { scope: entry.scope, dimension: persistedDimension },
-      });
-      assetEventId = event.id;
-    } catch (err) {
-      // FEAT-022 asset registry is best-effort — we don't unwind the memory
-      // write — but operators must be able to spot misconfiguration. Log to
-      // stderr so the per-session subprocess surfaces it instead of failing
-      // silently (codex review SF6).
-      process.stderr.write(
-        `[mcp-tools] memory_remember: EvolutionAssetRegistry.recordEvent failed (${
-          err instanceof Error ? err.message : String(err)
-        }); memory entry ${entry.id} kept.\n`,
-      );
-    }
     return {
       entryId: entry.id,
       scope: entry.scope,
       dimension: persistedDimension,
       dimensionPersisted: dimension ? entry.tags.includes(dimension) : false,
-      ...(assetEventId ? { assetEventId } : {}),
     };
   },
 };

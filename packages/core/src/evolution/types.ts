@@ -2,7 +2,6 @@ export const EVOLUTION_ASSET_KINDS = [
   'skill',
   'prompt',
   'routing-rule',
-  'memory',
   'mcp',
   'archive',
 ] as const;

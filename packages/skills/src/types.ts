@@ -1,11 +1,5 @@
 export type SkillSourceKind = 'preinstalled' | 'user';
-export type SkillHandlerKind =
-  | 'memory-remember'
-  | 'memory-query'
-  | 'memory-wrapup'
-  | 'memory-maintain'
-  | 'memory-status'
-  | 'prompt';
+export type SkillHandlerKind = 'prompt';
 
 export interface SkillManifestEntry {
   id: string;

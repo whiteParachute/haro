@@ -1,8 +1,8 @@
 /**
- * memory_query tool (FEAT-032 R5 / AC2).
+ * memory_query tool (historical FEAT-032 compatibility).
  *
- * Wraps `MemoryFabric.searchMemoryFiles` with the aria-memory dimension
- * filter (D4). Read-only — no permission gating beyond the registry default.
+ * Sidecar baseline delegates memory ownership to AgentDock. This legacy tool
+ * can still read the historical Haro MemoryFabric for old workbench tests.
  */
 
 import { z } from 'zod';

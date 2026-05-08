@@ -214,11 +214,9 @@ export const CORE_TABLES: readonly TableDefinition[] = [
 ];
 
 /**
- * FEAT-035 v2: the SQLite-backed memory read model has been removed in favour
- * of file-based aria-memory storage. Existing installations migrate via
- * `MemoryFabric.migrateFromV1`, which renames the legacy SQLite snapshot to
- * `<file>.bak.<timestamp>`. We deliberately do not re-add the tables here so
- * fresh installs never recreate them.
+ * Sidecar baseline: Haro-owned memory is historical compatibility only.
+ * We deliberately do not create memory read-model tables for fresh installs;
+ * memory authority lives in AgentDock and is consumed through observation refs.
  */
 
 export const EVOLUTION_ASSET_TABLES: readonly TableDefinition[] = [
@@ -227,7 +225,7 @@ export const EVOLUTION_ASSET_TABLES: readonly TableDefinition[] = [
     ddl: `CREATE TABLE IF NOT EXISTS evolution_assets (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL
-        CHECK (kind IN ('skill', 'prompt', 'routing-rule', 'memory', 'mcp', 'archive')),
+        CHECK (kind IN ('skill', 'prompt', 'routing-rule', 'mcp', 'archive')),
       name TEXT NOT NULL,
       version INTEGER NOT NULL CHECK (version >= 1),
       status TEXT NOT NULL

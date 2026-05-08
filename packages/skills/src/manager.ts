@@ -2,8 +2,8 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { buildHaroPaths, createEvolutionAssetRegistry, createMemoryFabric, hashEvolutionAssetContent } from '@haro/core';
-import type { EvolutionAssetEventType, EvolutionAssetRegistry, EvolutionAssetStatus, MemoryFabric } from '@haro/core';
+import { buildHaroPaths, createEvolutionAssetRegistry, hashEvolutionAssetContent } from '@haro/core';
+import type { EvolutionAssetEventType, EvolutionAssetRegistry, EvolutionAssetStatus } from '@haro/core';
 import { parseSkillFile } from './frontmatter.js';
 import { rollbackShit, runEat, runShit, type EatCommandInput, type ShitCommandInput, type ShitRollbackInput } from './metabolism.js';
 import { SkillUsageTracker } from './usage-tracker.js';
@@ -41,7 +41,6 @@ export class SkillsManager {
   readonly preinstalledManifestFile: string;
   private readonly now: () => Date;
   private readonly usage: SkillUsageTracker;
-  private readonly memoryFabric: MemoryFabric;
   private readonly registry: EvolutionAssetRegistry;
   private readonly ownsRegistry: boolean;
 
@@ -58,7 +57,6 @@ export class SkillsManager {
     mkdirSync(this.preinstalledRoot, { recursive: true });
     mkdirSync(this.userRoot, { recursive: true });
     this.usage = new SkillUsageTracker(this.usageFile);
-    this.memoryFabric = createMemoryFabric({ root: this.paths.dirs.memory });
     this.registry = options.registry ?? createEvolutionAssetRegistry({ root: this.root, now: this.now });
     this.ownsRegistry = options.registry === undefined;
   }
@@ -246,7 +244,7 @@ export class SkillsManager {
     return { skillId: best.entry.id, args: normalized, trigger: 'description' };
   }
 
-  async prepareTask(task: string, context: { agentId: string }): Promise<SkillPrepareResult> {
+  async prepareTask(task: string, _context: { agentId: string }): Promise<SkillPrepareResult> {
     const resolved = this.resolveSkill(task);
     if (!resolved) {
       return { finalTask: task };
@@ -256,40 +254,9 @@ export class SkillsManager {
     this.recordSkillLifecycle(entry, 'used', { trigger: resolved.trigger }, [entry.path]);
     const descriptor = this.readDescriptor(entry.path, entry.id);
     const skillArgs = resolved.args.trim();
-    switch (entry.handler) {
-      case 'memory-remember': {
-        await this.memoryFabric.write({ scope: 'agent', agentId: context.agentId, topic: firstLine(skillArgs || 'remembered-note'), content: skillArgs || task, source: 'skill:remember' });
-        if (resolved.trigger === 'description') {
-          return { matchedSkillId: entry.id, trigger: resolved.trigger, finalTask: task };
-        }
-        return { matchedSkillId: entry.id, trigger: resolved.trigger, directOutput: `已记录到 memory：${skillArgs || task}` };
-      }
-      case 'memory-query': {
-        const result = this.memoryFabric.query({ scope: 'agent', agentId: context.agentId, query: skillArgs || task, limit: 5 });
-        return {
-          matchedSkillId: entry.id,
-          trigger: resolved.trigger,
-          directOutput: result.hits.length === 0 ? 'memory 中没有匹配结果。' : result.hits.map((hit, index) => `${index + 1}. ${hit.summary}`).join('\n'),
-        };
-      }
-      case 'memory-status': {
-        const stats = this.memoryFabric.stats();
-        return { matchedSkillId: entry.id, trigger: resolved.trigger, directOutput: JSON.stringify(stats, null, 2) };
-      }
-      case 'memory-maintain': {
-        const report = await this.memoryFabric.maintenance({});
-        return { matchedSkillId: entry.id, trigger: resolved.trigger, directOutput: JSON.stringify(report, null, 2) };
-      }
-      case 'memory-wrapup': {
-        await this.memoryFabric.deposit({ scope: 'agent', agentId: context.agentId, content: skillArgs || task, source: 'skill:memory-wrapup', wrapupId: this.now().toISOString(), summary: firstLine(skillArgs || task) });
-        return { matchedSkillId: entry.id, trigger: resolved.trigger, directOutput: '已生成 memory wrapup 存档。' };
-      }
-      default: {
-        const stripped = resolved.trigger === 'explicit' ? skillArgs : task;
-        const instruction = [descriptor.content, '', '---', '', stripped].join('\n');
-        return { matchedSkillId: entry.id, trigger: resolved.trigger, finalTask: instruction };
-      }
-    }
+    const stripped = resolved.trigger === 'explicit' ? skillArgs : task;
+    const instruction = [descriptor.content, '', '---', '', stripped].join('\n');
+    return { matchedSkillId: entry.id, trigger: resolved.trigger, finalTask: instruction };
   }
 
   getUsage(skillId: string) {
@@ -502,8 +469,4 @@ function safeGitRemoteHead(gitUrl: string): string | undefined {
   }
   const [sha] = result.stdout.trim().split(/\s+/);
   return sha && sha.length > 0 ? sha : undefined;
-}
-
-function firstLine(value: string): string {
-  return value.split(/\r?\n/).find((line) => line.trim().length > 0) ?? 'memory-entry';
 }
