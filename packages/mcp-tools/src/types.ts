@@ -25,7 +25,14 @@ export interface SessionContext {
 /** Live integrations the tools depend on. Constructed once per server lifetime. */
 export interface ToolDependencies {
   channels: ChannelRegistry;
-  memory: MemoryFabric;
+  /**
+   * Historical Haro MemoryFabric dependency.
+   *
+   * Sidecar-only registries intentionally omit this so `haro mcp` can run as
+   * an AgentDock read-only external MCP server without creating Haro-owned
+   * memory directories or write targets.
+   */
+  memory?: MemoryFabric;
   evolution: EvolutionAssetRegistry;
   serviceContext: ServiceContext;
   /** Database used to write tool_invocation_log rows. */

@@ -9,8 +9,8 @@
 | 阶段 | 状态 | 目标 | 核心交付 | 写权限 |
 | --- | --- | --- | --- | --- |
 | Phase A: Baseline Reset | 进行中 | 文档与边界切到 AgentDock sidecar 新基线 | README / roadmap / architecture overview / planning 文档改写 | 无 |
-| Phase B: Contract Skeleton | 进行中 | 建立 Haro 与 AgentDock 的稳定 contract | `@haro/agentdock-contract`、schema、fake source、contract tests | 无 |
-| Phase C: Read-only MCP Sidecar | 待启动 | 让 AgentDock agent 可以显式调用 Haro 观察与提案 | `haro mcp`、`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query` | Haro 自有目录 |
+| Phase B: Contract Skeleton | 已实现 skeleton | 建立 Haro 与 AgentDock 的稳定 contract | `@haro/agentdock-contract`、schema、fake source、contract tests | 无 |
+| Phase C: Read-only MCP Sidecar | 已实现，待 live smoke | 让 AgentDock agent 可以显式调用 Haro 观察与提案 | `haro mcp`、`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`；sidecar 启动不创建 Haro-owned memory 目录 | Haro 自有日志/资产目录 |
 | Phase D: Scheduled Sidecar | 待启动 | 通过 AgentDock 定时任务后台驱动 observe/propose/validate | `haro connect agent-dock`、`haro observe --since last`、`haro propose --auto-dry-run`、`haro validate --pending` | Haro 自有目录 |
 | Phase E: Asset Registry Adapter | 待启动 | 把 skills/prompts/profiles/rules/tool config 纳入资产事件 | sidecar 数据目录、manifest、hash、rollback metadata；memory 仅记录 AgentDock observation refs | Haro 自有目录 |
 | Phase F: Gated Apply L0/L1 | 待启动 | 在 validation gate 后执行低风险变更 | `haro_apply`、snapshot、rollback、application event | 受控写入 |
@@ -82,7 +82,7 @@ Haro 后续价值不在重新实现 AgentDock 已经具备的 runtime/workbench 
 
 ## Phase C: Read-only MCP Sidecar
 
-**目标**：让 AgentDock agent 能把 Haro 当作外部 MCP server 使用。
+**目标**：让 AgentDock agent 能把 Haro 当作外部 MCP server 使用。当前代码已实现首批 read-only sidecar tools，下一步是注册到 AgentDock 后做 live smoke。
 
 **首批 tools**：
 
@@ -98,6 +98,7 @@ Haro 后续价值不在重新实现 AgentDock 已经具备的 runtime/workbench 
 - 不提供自由文本 apply。
 - 不改 AgentDock DB。
 - 不接管 AgentDock session lifecycle。
+- 不创建或写入 Haro-owned MemoryFabric；记忆由 AgentDock 侧提供。
 
 ## Phase D: Scheduled Sidecar
 
@@ -208,4 +209,4 @@ pnpm test
 pnpm build
 ```
 
-文档-only 阶段以 `git diff --check` 和人工一致性检查为主，暂不要求 runtime test 全量通过。
+sidecar 代码阶段需至少通过 `pnpm lint && pnpm build && pnpm test && pnpm smoke && git diff --check`；文档-only 改动可降级为 `git diff --check` 和人工一致性检查。

@@ -119,6 +119,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       expect(names).not.toContain('haro_apply');
       expect(names).not.toContain('memory_query');
       expect(names).not.toContain('send_message');
+      expect(existsSync(join(home, 'memory'))).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

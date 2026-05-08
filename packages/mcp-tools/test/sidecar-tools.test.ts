@@ -34,7 +34,7 @@ async function runSidecarWith(e: TestEnv, requests: JsonRpcMessage[]): Promise<J
     transport,
     registry,
     session: e.buildSession({ agentId: 'haro-sidecar' }),
-    deps: e.buildDeps(),
+    deps: { ...e.buildDeps(), memory: undefined },
   });
   const runPromise = server.run();
   const responses: JsonRpcMessage[] = [];

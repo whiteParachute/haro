@@ -51,9 +51,16 @@ export const memoryQueryTool: ToolDefinition<typeof MemoryQueryInputSchema, Memo
   inputSchema: MemoryQueryInputSchema,
   timeoutMs: 5_000,
   async execute(params, ctx): Promise<MemoryQueryOutput> {
+    const memory = ctx.deps.memory;
+    if (!memory) {
+      throw new McpToolError(
+        'TARGET_DISABLED',
+        'historical Haro MemoryFabric is not configured for this MCP server',
+      );
+    }
     const limit = Math.min(params.limit ?? 10, 50);
     const scopeFilters = buildScopeFilter(params.scope, ctx.session.agentId);
-    const results = ctx.deps.memory.searchMemoryFiles(params.query, {
+    const results = memory.searchMemoryFiles(params.query, {
       scopes: scopeFilters,
       ...(params.dimension ? { type: params.dimension } : {}),
       limit,
@@ -97,6 +104,3 @@ function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1)}…`;
 }
-
-// keep linter happy when ts thinks McpToolError is unused
-void McpToolError;

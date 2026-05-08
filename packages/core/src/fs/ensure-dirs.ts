@@ -8,14 +8,23 @@ export interface EnsureDirsResult {
   existed: string[];
 }
 
-export function ensureHaroDirectories(root?: string): EnsureDirsResult {
+export interface EnsureDirsOptions {
+  skip?: readonly (typeof REQUIRED_HARO_SUBDIRS)[number][];
+}
+
+export function ensureHaroDirectories(
+  root?: string,
+  options: EnsureDirsOptions = {},
+): EnsureDirsResult {
   const paths = buildHaroPaths(root);
   const created: string[] = [];
   const existed: string[] = [];
+  const skipped = new Set(options.skip ?? []);
 
   mkdirSync(paths.root, { recursive: true });
 
   for (const name of REQUIRED_HARO_SUBDIRS) {
+    if (skipped.has(name)) continue;
     const dir = join(paths.root, name);
     const res = mkdirSync(dir, { recursive: true });
     if (res === undefined) {

@@ -31,7 +31,6 @@ export interface MemoryRememberOutput {
   dimension: 'user' | 'feedback' | 'project' | 'reference';
   /** Did the persisted entry's tags include the input dimension? AC3 verifier. */
   dimensionPersisted: boolean;
-  assetEventId?: string;
 }
 
 export const memoryRememberTool: ToolDefinition<
@@ -44,6 +43,13 @@ export const memoryRememberTool: ToolDefinition<
   inputSchema: MemoryRememberInputSchema,
   timeoutMs: 5_000,
   async execute(params, ctx): Promise<MemoryRememberOutput> {
+    const memory = ctx.deps.memory;
+    if (!memory) {
+      throw new McpToolError(
+        'TARGET_DISABLED',
+        'historical Haro MemoryFabric is not configured for this MCP server',
+      );
+    }
     const dimension = params.dimension;
     const scope = resolveScope(params.scope, ctx.session.agentId);
     const topic = params.topic ?? deriveTopic(params.content);
@@ -58,7 +64,7 @@ export const memoryRememberTool: ToolDefinition<
     ]);
     let entry;
     try {
-      entry = await ctx.deps.memory.writeEntry({
+      entry = await memory.writeEntry({
         layer: 'persistent',
         scope,
         ...(scope.startsWith('agent:') ? { agentId: ctx.session.agentId } : {}),

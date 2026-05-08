@@ -69,7 +69,7 @@ describe('memory_remember tool [FEAT-032 R6 / AC3]', () => {
       deps: e.buildDeps(),
     });
     if (!out.result.ok) throw new Error('expected success');
-    expect(out.result.value.assetEventId).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(out.result.value, 'assetEventId')).toBe(false);
     expect(e.evolution.listEvents()).toEqual([]);
   });
 

@@ -1367,13 +1367,6 @@ function registerMcpCommand(program: Command, app: AppContext): void {
             dbFile: app.paths.dbFile,
             now: app.now,
           });
-          // The FEAT-044 registry never reads or writes Haro MemoryFabric.
-          // FEAT-032's shared ToolDependencies shape still carries this
-          // legacy dependency, so keep it scoped to the server lifetime.
-          const memory = createMemoryFabric({
-            root: app.paths.dirs.memory,
-            dbFile: app.paths.dbFile,
-          });
           const server = new McpServer({
             transport: new StdioTransport(app.stdin as Readable, app.stdout as Writable),
             registry,
@@ -1383,7 +1376,6 @@ function registerMcpCommand(program: Command, app: AppContext): void {
             },
             deps: {
               channels: app.channelRegistry,
-              memory,
               evolution,
               serviceContext: { root: app.paths.root, dbFile: app.paths.dbFile },
               now: app.now,
@@ -1399,9 +1391,6 @@ function registerMcpCommand(program: Command, app: AppContext): void {
             await server.stop();
             audit.close();
             evolution.close();
-            if ('close' in memory && typeof memory.close === 'function') {
-              memory.close();
-            }
           }
         });
     },
@@ -1599,7 +1588,10 @@ async function bootstrapApp(
     throw err;
   }
 
-  const dirResult = haroFs.ensureHaroDirectories(input.root);
+  const sidecarOnly = input.argv?.[0] === 'mcp';
+  const dirResult = haroFs.ensureHaroDirectories(input.root, {
+    skip: sidecarOnly ? ['memory'] : [],
+  });
   haroDb.initHaroDatabase({ root: input.root });
   const skills = new SkillsManager({ root: paths.root });
   skills.ensureInitialized();
@@ -2766,7 +2758,7 @@ async function createDefaultProviderRegistry(config: LoadedConfig['config']): Pr
 }
 
 function createCliMemoryWrapupHook(skills: SkillsManager, logger: CliLogger): MemoryWrapupHook {
-  const memoryFabric = createMemoryFabric({ root: skills.paths.dirs.memory });
+  let memoryFabric: ReturnType<typeof createMemoryFabric> | undefined;
   return async ({ sessionId, agentId, task, result }) => {
     const enabled = skills.list().some((entry) => entry.id === 'memory-wrapup' && entry.enabled);
     if (!enabled) {
@@ -2774,6 +2766,7 @@ function createCliMemoryWrapupHook(skills: SkillsManager, logger: CliLogger): Me
       return;
     }
     try {
+      memoryFabric ??= createMemoryFabric({ root: skills.paths.dirs.memory });
       await memoryFabric.wrapupSession({
         scope: 'agent',
         agentId,

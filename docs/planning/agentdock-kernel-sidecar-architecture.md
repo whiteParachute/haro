@@ -319,7 +319,7 @@ User approves proposal
 - 新建 feature 分支。
 - 落地本文档。
 - 改写 README / roadmap / architecture overview，让 sidecar 定位成为唯一新基线。
-- 暂不改 runtime 代码。
+- 先完成文档基线；后续允许删除确定不需要的历史代码/文档，保持 sidecar 边界。
 
 ### Phase 1: Contract Skeleton
 
@@ -329,9 +329,9 @@ User approves proposal
 
 ### Phase 2: Haro MCP Server
 
-- 实现 `haro mcp` stdio server。
-- 暴露 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。
-- 首批 tools 全部 read-only。
+- 实现 `haro mcp` stdio server。（已完成首版）
+- 暴露 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。（已完成首版）
+- 首批 tools 全部 read-only，且 sidecar 启动不创建 Haro-owned MemoryFabric / `$HARO_HOME/memory`。
 
 ### Phase 3: Scheduled Sidecar
 
