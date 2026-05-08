@@ -54,6 +54,13 @@ function runMigrations(db: Database.Database): void {
   if (!hasColumn(db, 'session_events', 'latency_ms')) {
     db.exec(`ALTER TABLE session_events ADD COLUMN latency_ms INTEGER`);
   }
+  db.exec(`
+    UPDATE evolution_assets
+    SET kind = 'archive',
+        status = 'archived',
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE kind = 'memory'
+  `);
 }
 
 /**

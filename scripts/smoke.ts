@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Integration smoke test for FEAT-001. Validates the full Phase-0 scaffold:
+ * Integration smoke test for the current Haro workspace baseline:
  *   AC1: all workspace packages produced build artifacts (dist/index.js)
  *   AC3: dual-output logger writes same JSON to stdout + log file
  *   AC4: SQLite init is idempotent, WAL + FTS5 enabled

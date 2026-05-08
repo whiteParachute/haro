@@ -1,4 +1,4 @@
-/** AC11 — only MemoryFabric itself may touch ~/.haro/memory directly. */
+/** Historical MemoryFabric compatibility — only MemoryFabric itself may touch ~/.haro/memory directly. */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -25,7 +25,7 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-describe('FEAT-007 R11 memory-fs boundary', () => {
+describe('historical MemoryFabric memory-fs boundary', () => {
   it('AC11 no package outside MemoryFabric touches ~/.haro/memory via node:fs', () => {
     const offenders: string[] = [];
     for (const rootDir of RESTRICTED_ROOTS) {

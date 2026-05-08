@@ -376,7 +376,7 @@ describe('AgentRunner [FEAT-005]', () => {
     );
   });
 
-  it('FEAT-007 AC4: injects MemoryFabric context into the provider system prompt', async () => {
+  it('historical compatibility: injects MemoryFabric context into the provider system prompt', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-runner-memory-context-'));
     roots.push(root);
     const seenSystemPrompts: string[] = [];

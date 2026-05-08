@@ -108,6 +108,63 @@ describe('initHaroDatabase [FEAT-001]', () => {
     }
   });
 
+  it('archives legacy memory evolution assets during re-init', () => {
+    const legacy = new Database(dbFile);
+    try {
+      legacy.exec(`
+        CREATE TABLE evolution_assets (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL
+            CHECK (kind IN ('skill', 'prompt', 'routing-rule', 'memory', 'mcp', 'archive')),
+          name TEXT NOT NULL,
+          version INTEGER NOT NULL CHECK (version >= 1),
+          status TEXT NOT NULL
+            CHECK (status IN ('proposed', 'active', 'archived', 'rejected', 'superseded')),
+          source_ref TEXT NOT NULL,
+          content_ref TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          created_by TEXT NOT NULL
+            CHECK (created_by IN ('user', 'agent', 'eat', 'shit', 'migration')),
+          gep_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      legacy
+        .prepare(
+          `INSERT INTO evolution_assets (
+            id, kind, name, version, status, source_ref, content_ref, content_hash,
+            created_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'memory:legacy',
+          'memory',
+          'legacy memory asset',
+          1,
+          'active',
+          'memory/agents/haro-assistant/index.md',
+          'memory/agents/haro-assistant/index.md',
+          'sha256:legacy',
+          'migration',
+          '2026-04-25T00:00:00.000Z',
+          '2026-04-25T00:00:00.000Z',
+        );
+    } finally {
+      legacy.close();
+    }
+
+    const result = initHaroDatabase({ dbFile, keepOpen: true });
+    try {
+      const row = result.database!
+        .prepare(`SELECT kind, status FROM evolution_assets WHERE id = ?`)
+        .get('memory:legacy') as { kind: string; status: string };
+      expect(row).toEqual({ kind: 'archive', status: 'archived' });
+    } finally {
+      result.database!.close();
+    }
+  });
+
   it('AC4 second invocation is idempotent: no error and schema unchanged', () => {
     initHaroDatabase({ dbFile });
     const before = listUserTables(dbFile);

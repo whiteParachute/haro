@@ -73,7 +73,7 @@ describe('memory_remember tool [FEAT-032 R6 / AC3]', () => {
     expect(e.evolution.listEvents()).toEqual([]);
   });
 
-  it('defaults dimension to project when caller omits it', async () => {
+  it('infers one valid dimension when caller omits it', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
     const out = await registry.invoke({

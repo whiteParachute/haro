@@ -1,4 +1,4 @@
-/** FEAT-007 — MemoryFabric unit tests covering AC1..AC10. */
+/** Historical MemoryFabric compatibility unit tests. */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ function freshRoot(): string {
   return mkdtempSync(join(tmpdir(), 'haro-memory-'));
 }
 
-describe('MemoryFabric write + query [FEAT-007]', () => {
+describe('MemoryFabric write + query [historical compatibility]', () => {
   let root: string;
   let fabric: MemoryFabric;
 
@@ -85,7 +85,7 @@ describe('MemoryFabric write + query [FEAT-007]', () => {
   });
 });
 
-describe('MemoryFabric merge + maintenance [FEAT-007]', () => {
+describe('MemoryFabric merge + maintenance [historical compatibility]', () => {
   let root: string;
   let fabric: MemoryFabric;
 
@@ -180,7 +180,7 @@ describe('MemoryFabric merge + maintenance [FEAT-007]', () => {
   });
 });
 
-describe('MemoryFabric aria-memory compatibility [FEAT-007]', () => {
+describe('MemoryFabric aria-memory compatibility [historical compatibility]', () => {
   it('AC9 preserves legacy aria-memory personality.md and changelog.md files', async () => {
     const root = freshRoot();
     try {
@@ -205,7 +205,7 @@ describe('MemoryFabric aria-memory compatibility [FEAT-007]', () => {
   });
 });
 
-describe('MemoryFabric primary+backup [FEAT-007]', () => {
+describe('MemoryFabric primary+backup [historical compatibility]', () => {
   it('R10 读先主后备: hydrates from backup when primary is empty (codex final review)', async () => {
     const primary = freshRoot();
     const backup = freshRoot();

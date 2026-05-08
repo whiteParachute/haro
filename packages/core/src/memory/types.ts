@@ -1,5 +1,5 @@
 /**
- * Public types for FEAT-007 Memory Fabric. The public surface is intentionally
+ * Public types for the historical Memory Fabric compatibility surface. The public surface is intentionally
  * small: spec §4 forbids callers from reading the memory directory directly
  * (R11), so any consumer-facing abstraction must route through these types.
  */
@@ -46,7 +46,7 @@ export interface MemoryDepositInput {
    * Optional grouping key used when memory-sleep merges pending deposits into
    * knowledge files. Callers that know the topic in advance should pass it
    * explicitly — otherwise we fall back to a summary-derived slug which can
-   * alias across prefix-sharing topics (see FEAT-007 §5.4 and codex review).
+   * alias across prefix-sharing topics (see historical MemoryFabric review).
    */
   topic?: string;
 }
