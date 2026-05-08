@@ -27,6 +27,8 @@ import {
   RefSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
+  createHttpAgentDockSource,
+  AgentDockHttpSourceError,
 } from '@haro/agentdock-contract';
 import type {
   EvolutionAsset,
@@ -36,10 +38,7 @@ import type {
 import { McpToolError } from './error.js';
 import type { PermissionEvaluator } from './permission.js';
 import { ToolRegistry, type RegistryOptions } from './registry.js';
-import type {
-  PermissionDecisionOutput,
-  ToolDefinition,
-} from './types.js';
+import type { PermissionDecisionOutput, ToolDefinition, ToolErrorCode } from './types.js';
 
 const SIDECAR_TOOL_NAMES = [
   'haro_observe',
@@ -65,20 +64,99 @@ export const haroObserveTool: ToolDefinition<typeof HaroObserveInputSchema, Obse
   inputSchema: HaroObserveInputSchema,
   timeoutMs: 5_000,
   async execute(params, ctx): Promise<ObservationBatch> {
-    const source = createFakeAgentDockSource({
-      ...(params.connectionId ? { connectionId: params.connectionId } : {}),
-      now: ctx.now().toISOString(),
-    });
-    const batch = source.collectObservationBatch();
-    return ObservationBatchSchema.parse(limitObservationBatch({
-      ...batch,
-      window: {
-        ...batch.window,
-        ...(params.since ? { since: params.since } : {}),
-      },
-    }, params.limit));
+    try {
+      const batch = await collectAgentDockObservationBatch(params, ctx);
+      return ObservationBatchSchema.parse(limitObservationBatch(batch, params.limit));
+    } catch (err) {
+      if (err instanceof AgentDockHttpSourceError) {
+        throw new McpToolError(
+          agentDockSourceErrorCode(err),
+          `Unable to collect AgentDock observations: ${err.message}`,
+          remediationForAgentDockSourceError(err),
+        );
+      }
+      throw err;
+    }
   },
 };
+
+async function collectAgentDockObservationBatch(
+  params: HaroObserveInput,
+  ctx: { now: () => Date; signal: AbortSignal },
+): Promise<ObservationBatch> {
+  const baseUrl = normalizeEnvString(process.env.HARO_AGENTDOCK_BASE_URL);
+  if (baseUrl && !shouldForceFakeAgentDockSource()) {
+    const source = createHttpAgentDockSource({
+      baseUrl,
+      connectionId:
+        params.connectionId ??
+        normalizeEnvString(process.env.HARO_AGENTDOCK_CONNECTION_ID) ??
+        'agentdock-local',
+      authHeader: normalizeEnvString(process.env.HARO_AGENTDOCK_AUTH_HEADER),
+      now: ctx.now,
+    });
+    return source.collectObservationBatch({
+      ...(params.since ? { since: params.since } : {}),
+      ...(params.limit ? { limit: params.limit } : {}),
+      signal: ctx.signal,
+    });
+  }
+
+  const source = createFakeAgentDockSource({
+    ...(params.connectionId ? { connectionId: params.connectionId } : {}),
+    now: ctx.now().toISOString(),
+  });
+  const batch = source.collectObservationBatch();
+  return ObservationBatchSchema.parse({
+    ...batch,
+    window: {
+      ...batch.window,
+      ...(params.since ? { since: params.since } : {}),
+    },
+  });
+}
+
+function agentDockSourceErrorCode(err: AgentDockHttpSourceError): ToolErrorCode {
+  if (
+    /^Invalid AgentDock base URL:|must not include username or password|must use http or https scheme/.test(
+      err.message,
+    )
+  ) {
+    return 'INVALID_PARAMS';
+  }
+  if (err.status === 401 || err.status === 403) return 'PERMISSION_DENIED';
+  if (err.status === 404) return 'TARGET_NOT_FOUND';
+  return 'INTERNAL_ERROR';
+}
+
+function remediationForAgentDockSourceError(err: AgentDockHttpSourceError): string {
+  if (err.status === 401 || err.status === 403) {
+    return 'Verify HARO_AGENTDOCK_AUTH_HEADER or AgentDock API credentials, then retry.';
+  }
+  if (err.status === 404) {
+    return 'Verify HARO_AGENTDOCK_BASE_URL points at the AgentDock web/API endpoint, or set HARO_AGENTDOCK_SOURCE=fake for fixture mode.';
+  }
+  if (/must not include username or password/.test(err.message)) {
+    return 'Move credentials from HARO_AGENTDOCK_BASE_URL into HARO_AGENTDOCK_AUTH_HEADER.';
+  }
+  if (/must use http or https scheme/.test(err.message)) {
+    return 'Set HARO_AGENTDOCK_BASE_URL to an absolute http(s) AgentDock base URL.';
+  }
+  if (/^Invalid AgentDock base URL:/.test(err.message)) {
+    return 'Set HARO_AGENTDOCK_BASE_URL to an absolute http(s) AgentDock base URL.';
+  }
+  return 'Verify AgentDock is reachable and returning valid JSON, then retry; set HARO_AGENTDOCK_SOURCE=fake only for offline fixture mode.';
+}
+
+function shouldForceFakeAgentDockSource(): boolean {
+  const mode = normalizeEnvString(process.env.HARO_AGENTDOCK_SOURCE)?.toLowerCase();
+  return mode === 'fake' || mode === 'fixture';
+}
+
+function normalizeEnvString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 export const HaroProposeInputSchema = z.object({
   observationRefs: z.array(RefSchema).min(1).optional(),
@@ -123,10 +201,7 @@ export const haroProposeTool: ToolDefinition<typeof HaroProposeInputSchema, Evol
         },
       ],
       testPlan: {
-        requiredCommands: [
-          'pnpm -F @haro/agentdock-contract test',
-          'pnpm -F @haro/mcp-tools test',
-        ],
+        requiredCommands: ['pnpm -F @haro/agentdock-contract test', 'pnpm -F @haro/mcp-tools test'],
         manualChecks: [
           'Register `haro mcp` as an external AgentDock MCP server and verify tools/list shows read-only tools only.',
         ],

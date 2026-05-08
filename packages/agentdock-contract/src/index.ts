@@ -81,3 +81,16 @@ export type {
 
 export { FakeAgentDockSource, createFakeAgentDockSource } from './fake-source.js';
 export type { FakeAgentDockSourceOptions } from './fake-source.js';
+
+export {
+  AgentDockHttpSourceError,
+  HttpAgentDockSource,
+  createHttpAgentDockSource,
+} from './http-source.js';
+export type {
+  AgentDockFetch,
+  AgentDockFetchInit,
+  AgentDockJsonResponse,
+  CollectAgentDockObservationOptions,
+  HttpAgentDockSourceOptions,
+} from './http-source.js';

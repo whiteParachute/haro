@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AssetEventSchema,
   EvolutionProposalSchema,
@@ -12,8 +12,32 @@ import { McpServer } from '../src/server.js';
 import { InMemoryTransport, type JsonRpcMessage } from '../src/transport.js';
 import { setupEnv, type TestEnv } from './helpers.js';
 
+const AGENTDOCK_ENV_KEYS = [
+  'HARO_AGENTDOCK_BASE_URL',
+  'HARO_AGENTDOCK_SOURCE',
+  'HARO_AGENTDOCK_CONNECTION_ID',
+  'HARO_AGENTDOCK_AUTH_HEADER',
+] as const;
+
 let env: TestEnv | null = null;
+let previousFetch: typeof globalThis.fetch;
+let previousAgentDockEnv: Record<(typeof AGENTDOCK_ENV_KEYS)[number], string | undefined>;
+
+beforeEach(() => {
+  previousFetch = globalThis.fetch;
+  previousAgentDockEnv = Object.fromEntries(
+    AGENTDOCK_ENV_KEYS.map((key) => [key, process.env[key]]),
+  ) as Record<(typeof AGENTDOCK_ENV_KEYS)[number], string | undefined>;
+  for (const key of AGENTDOCK_ENV_KEYS) delete process.env[key];
+});
+
 afterEach(() => {
+  for (const key of AGENTDOCK_ENV_KEYS) {
+    const value = previousAgentDockEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  globalThis.fetch = previousFetch;
   env?.cleanup();
   env = null;
 });
@@ -57,25 +81,20 @@ function callResult<T>(message: JsonRpcMessage): T {
   };
   expect(response.result.isError).toBe(false);
   expect(response.result.content[0]).toMatchObject({ type: 'text' });
-  expect(response.result.content[0]!.text).toBe(JSON.stringify(response.result.structuredContent, null, 2));
+  expect(response.result.content[0]!.text).toBe(
+    JSON.stringify(response.result.structuredContent, null, 2),
+  );
   return response.result.structuredContent;
 }
 
 describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
   it('lists only the four read-only Haro sidecar tools', async () => {
     const e = (env = setupEnv());
-    const responses = await runSidecarWith(e, [
-      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
-    ]);
+    const responses = await runSidecarWith(e, [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]);
 
     const r = responses[0]! as { result: { tools: Array<{ name: string }> } };
     const names = r.result.tools.map((tool) => tool.name).sort();
-    expect(names).toEqual([
-      'haro_asset_query',
-      'haro_observe',
-      'haro_propose',
-      'haro_validate',
-    ]);
+    expect(names).toEqual(['haro_asset_query', 'haro_observe', 'haro_propose', 'haro_validate']);
     expect(names).not.toContain('haro_apply');
     expect(names).not.toContain('haro_rollback');
     expect(names).not.toContain('memory_query');
@@ -101,6 +120,123 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
     expect(batch.connectionId).toBe('fake-agentdock-test');
     expect(batch.sessions).toHaveLength(1);
     expect(batch.rawRefs).toEqual(['fake://agentdock/raw/session-001']);
+  });
+
+  it('uses AgentDock HTTP observation source when HARO_AGENTDOCK_BASE_URL is configured', async () => {
+    const e = (env = setupEnv());
+    process.env.HARO_AGENTDOCK_BASE_URL = 'http://agentdock.local';
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      const path = `${new URL(url).pathname}${new URL(url).search}`;
+      const payloadByPath: Record<string, unknown> = {
+        '/api/health': { status: 'healthy' },
+        '/api/status': { activeRuntimes: 1, queueLength: 0, sessions: [] },
+        '/api/sessions': {
+          sessions: {
+            'main:flow-1': {
+              id: 'main:flow-1',
+              backing_jid: 'feishu:oc_test',
+              runner_id: 'codex',
+              created_at: '2026-05-08T05:59:00.000Z',
+            },
+          },
+        },
+        '/api/sessions/main%3Aflow-1/messages?limit=1': {
+          messages: [
+            {
+              id: 'm1',
+              is_from_me: false,
+              content: 'real AgentDock message',
+              timestamp: '2026-05-08T05:59:30.000Z',
+            },
+          ],
+        },
+        '/api/sessions/main%3Aflow-1/turns?limit=1': { turns: [] },
+        '/api/tasks': { tasks: [] },
+      };
+      const payload = payloadByPath[path];
+      if (!payload) throw new Error(`unexpected path: ${path}`);
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        async json(): Promise<unknown> {
+          return payload;
+        },
+      } as Response;
+    }) as typeof fetch;
+
+    const responses = await runSidecarWith(e, [
+      {
+        jsonrpc: '2.0',
+        id: 20,
+        method: 'tools/call',
+        params: {
+          name: 'haro_observe',
+          arguments: { limit: 1 },
+        },
+      },
+    ]);
+
+    const batch = ObservationBatchSchema.parse(callResult(responses[0]!));
+    expect(batch.source).toBe('agentdock-http');
+    expect(batch.connectionId).toBe('agentdock-local');
+    expect(batch.sessions[0]?.id).toBe('main:flow-1');
+    expect(batch.turns[0]?.contentExcerpt).toBe('real AgentDock message');
+    expect(batch.rawRefs[0]).toBe('http://agentdock.local/api/health');
+  });
+
+  it('maps AgentDock HTTP source failures to classified MCP errors', async () => {
+    const e = (env = setupEnv());
+    process.env.HARO_AGENTDOCK_BASE_URL = 'http://agentdock.local';
+    globalThis.fetch = (async () =>
+      ({
+        ok: false,
+        status: 403,
+        statusText: 'Forbidden',
+        async json(): Promise<unknown> {
+          return { error: 'forbidden' };
+        },
+      }) as Response) as typeof fetch;
+
+    const responses = await runSidecarWith(e, [
+      {
+        jsonrpc: '2.0',
+        id: 21,
+        method: 'tools/call',
+        params: { name: 'haro_observe', arguments: {} },
+      },
+    ]);
+    const forbidden = responses[0]! as {
+      result: {
+        isError: boolean;
+        error: { code: string; retryable: boolean; remediation: string };
+        structuredContent: { error: { code: string } };
+      };
+    };
+    expect(forbidden.result.isError).toBe(true);
+    expect(forbidden.result.error.code).toBe('PERMISSION_DENIED');
+    expect(forbidden.result.error.retryable).toBe(false);
+    expect(forbidden.result.structuredContent.error.code).toBe('PERMISSION_DENIED');
+
+    globalThis.fetch = (async () => {
+      throw new Error('connection refused');
+    }) as typeof fetch;
+
+    const networkResponses = await runSidecarWith(e, [
+      {
+        jsonrpc: '2.0',
+        id: 22,
+        method: 'tools/call',
+        params: { name: 'haro_observe', arguments: {} },
+      },
+    ]);
+    const network = networkResponses[0]! as {
+      result: { isError: boolean; error: { code: string; retryable: boolean } };
+    };
+    expect(network.result.isError).toBe(true);
+    expect(network.result.error.code).toBe('INTERNAL_ERROR');
+    expect(network.result.error.retryable).toBe(true);
   });
 
   it('generates dry-run proposal and validates without writing asset events', async () => {
@@ -212,7 +348,12 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
     expect(existsSync(jsonl)).toBe(true);
     const line = readFileSync(jsonl, 'utf8').trim();
     expect(line).not.toContain('apply');
-    const record = JSON.parse(line) as { toolName: string; paramsHash: string; resultStatus: string; errorCode: string };
+    const record = JSON.parse(line) as {
+      toolName: string;
+      paramsHash: string;
+      resultStatus: string;
+      errorCode: string;
+    };
     expect(record.toolName).toBe('haro_propose');
     expect(record.paramsHash).toMatch(/^[a-f0-9]{64}$/);
     expect(record.resultStatus).toBe('error');

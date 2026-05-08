@@ -4,7 +4,6 @@
 >
 > 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
 
-
 **Spec**：[`specs/phase-1.5/FEAT-032-mcp-tool-layer.md`](../../specs/phase-1.5/FEAT-032-mcp-tool-layer.md)（2026-05-06 实现交付）
 
 `@haro/mcp-tools` 是 Haro Agent 的 "动手做事" 工具层。它把"发消息 / 查记忆 / 写记忆 / 调度任务"这四个跨模块动作封装为标准 MCP 工具，让 agent 可以在主循环之外显式调用平台原生能力，同时把每次调用都过 permission 守门 + 写 audit 日志。
@@ -19,12 +18,12 @@
 
 ## 4 个内置工具
 
-| Tool | 作用 | timeoutMs | 关键守门 |
-|------|------|-----------|----------|
-| `send_message` | 把文本/Markdown 消息投递到 Channel session | 30 000 | 跨 channel → `external-service` 审批；channel 必须 enabled |
-| `memory_query` | 历史兼容：读旧 Haro MemoryFabric | 5 000 | sidecar baseline 不推荐；优先走 AgentDock memory MCP/API |
-| `memory_remember` | 历史兼容：写旧 Haro MemoryFabric；不再记录 Haro memory asset | 5 000 | sidecar baseline 不推荐；AgentDock 负责 memory 写入权限 |
-| `schedule_task` | 走 `services.cron.createJob` 注册 cron / once 任务 | 1 000 | 默认 allow；非法 cron / 过期 ISO → `INVALID_PARAMS` |
+| Tool              | 作用                                                         | timeoutMs | 关键守门                                                   |
+| ----------------- | ------------------------------------------------------------ | --------- | ---------------------------------------------------------- |
+| `send_message`    | 把文本/Markdown 消息投递到 Channel session                   | 30 000    | 跨 channel → `external-service` 审批；channel 必须 enabled |
+| `memory_query`    | 历史兼容：读旧 Haro MemoryFabric                             | 5 000     | sidecar baseline 不推荐；优先走 AgentDock memory MCP/API   |
+| `memory_remember` | 历史兼容：写旧 Haro MemoryFabric；不再记录 Haro memory asset | 5 000     | sidecar baseline 不推荐；AgentDock 负责 memory 写入权限    |
+| `schedule_task`   | 走 `services.cron.createJob` 注册 cron / once 任务           | 1 000     | 默认 allow；非法 cron / 过期 ISO → `INVALID_PARAMS`        |
 
 错误码统一来自 `error.ts`：`PERMISSION_DENIED` / `NEEDS_APPROVAL` / `INVALID_PARAMS` / `TARGET_NOT_FOUND` / `TARGET_DISABLED` / `TOOL_TIMEOUT` / `INTERNAL_ERROR`，retryable 矩阵：仅 `TOOL_TIMEOUT` / `INTERNAL_ERROR` 为 `true`，其他显式 `false`。
 
@@ -62,6 +61,15 @@ ToolRegistry.invoke({ name, rawParams, session, deps })
 - `decision` / `latencyMs` 作为 Haro legacy metadata 暂时保留；新客户端应优先读 `_meta.haro`。
 
 不要再把业务对象直接放到 `result.content` 顶层；部分 MCP 客户端会按协议校验 `content[]`，直接对象会被拒绝为 `Unexpected response type`。
+
+## AgentDock sidecar observation source
+
+sidecar baseline 下，`haro mcp` 额外注册 4 个只读 Haro tools：`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。其中 `haro_observe` 的 source 选择规则是：
+
+- 配置 `HARO_AGENTDOCK_BASE_URL` 且未设置 `HARO_AGENTDOCK_SOURCE=fake|fixture`：走 AgentDock HTTP API，只读访问 `/api/health`、`/api/status`、`/api/sessions`、session messages/turns 和 `/api/tasks`，返回 `ObservationBatch(source=agentdock-http)`。如目标 API 需要鉴权，通过 `HARO_AGENTDOCK_AUTH_HEADER` 传入完整 Authorization header；`HARO_AGENTDOCK_BASE_URL` 必须是 http(s) URL，且不允许携带 username/password。
+- 未配置 `HARO_AGENTDOCK_BASE_URL`，或显式设置 `HARO_AGENTDOCK_SOURCE=fake`：保留 FEAT-043 fake fixture，返回 `ObservationBatch(source=fake)`，用于离线 contract 测试。
+
+HTTP source 只依赖 AgentDock API 契约，不 import AgentDock 内部 `src/*` / `dist/*`。API 不可达时 `haro_observe` 按错误类型返回结构化错误：401/403 → `PERMISSION_DENIED`，404 → `TARGET_NOT_FOUND`，网络/5xx/JSON 失败 → retryable `INTERNAL_ERROR`；不会退回读取 AgentDock 本地文件，也不会创建 Haro-owned `$HARO_HOME/memory`。`limit` 会同时限制返回的 observation arrays；`window.cursor` 使用最新观察事件时间而非采集时间。
 
 ## 已知缺口（2026-05-06 实现交付）
 

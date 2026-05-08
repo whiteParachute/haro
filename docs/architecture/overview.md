@@ -48,27 +48,27 @@ Haro 旧设计把 workbench 和 self-evolution 放在同一仓库：
 
 ## 设计原则
 
-| 原则 | 说明 |
-| --- | --- |
-| AgentDock 独立运行 | Haro 插上去增强自进化；拔掉以后 AgentDock 仍完整可用 |
-| Haro 是 sidecar，不是 fork | Haro 不污染 AgentDock runtime 主链路 |
-| MCP 是主动交互面 | AgentDock agent 显式调用 Haro MCP tools |
-| 定时任务是后台驱动面 | 周期性 observe/propose/validate 不依赖聊天上下文 |
-| Skills 是编排辅助面 | Haro 可被 AgentDock 已有 skills/workflow 调用，不新增深度插件主链路 |
-| Contract 优先于内部依赖 | 只通过 schema、API、MCP、event export、filesystem contract 协作 |
-| 先只读，后可写 | 第一版全部 read-only / dry-run；L0/L1 apply 后置 |
+| 原则                       | 说明                                                                |
+| -------------------------- | ------------------------------------------------------------------- |
+| AgentDock 独立运行         | Haro 插上去增强自进化；拔掉以后 AgentDock 仍完整可用                |
+| Haro 是 sidecar，不是 fork | Haro 不污染 AgentDock runtime 主链路                                |
+| MCP 是主动交互面           | AgentDock agent 显式调用 Haro MCP tools                             |
+| 定时任务是后台驱动面       | 周期性 observe/propose/validate 不依赖聊天上下文                    |
+| Skills 是编排辅助面        | Haro 可被 AgentDock 已有 skills/workflow 调用，不新增深度插件主链路 |
+| Contract 优先于内部依赖    | 只通过 schema、API、MCP、event export、filesystem contract 协作     |
+| 先只读，后可写             | 第一版全部 read-only / dry-run；L0/L1 apply 后置                    |
 
 ## AgentDock 侧能力
 
 Haro 不要求 AgentDock 内嵌 Haro，只要求 AgentDock 保持已有能力稳定。
 
-| 能力 | 用途 | 当前接入判断 |
-| --- | --- | --- |
-| 外部 MCP server 注册 | 注册 `haro mcp` | AgentDock 已有 `src/routes/mcp-servers.ts` |
-| Runner 合入 MCP 配置 | 让 session 可见 Haro tools | AgentDock 已有 `src/runtime-runner.ts` |
-| 定时任务 | 周期性触发 Haro CLI | AgentDock 已有 `src/routes/tasks.ts` / `src/task-scheduler.ts` |
-| Script task | 后台执行 observe/propose/validate | AgentDock scheduler 已支持 script execution |
-| Skills / agent 调用面 | 在普通 session 中主动调用 Haro | 复用 AgentDock 现有 skills/MCP 能力 |
+| 能力                  | 用途                              | 当前接入判断                                                   |
+| --------------------- | --------------------------------- | -------------------------------------------------------------- |
+| 外部 MCP server 注册  | 注册 `haro mcp`                   | AgentDock 已有 `src/routes/mcp-servers.ts`                     |
+| Runner 合入 MCP 配置  | 让 session 可见 Haro tools        | AgentDock 已有 `src/runtime-runner.ts`                         |
+| 定时任务              | 周期性触发 Haro CLI               | AgentDock 已有 `src/routes/tasks.ts` / `src/task-scheduler.ts` |
+| Script task           | 后台执行 observe/propose/validate | AgentDock scheduler 已支持 script execution                    |
+| Skills / agent 调用面 | 在普通 session 中主动调用 Haro    | 复用 AgentDock 现有 skills/MCP 能力                            |
 
 这些是 contract 的来源，不是源码依赖许可。Haro 实现中不得 import 上述 AgentDock 内部文件。
 
@@ -83,6 +83,7 @@ Haro 不要求 AgentDock 内嵌 Haro，只要求 AgentDock 保持已有能力稳
   "args": ["mcp"],
   "env": {
     "HARO_AGENTDOCK_BASE_URL": "http://127.0.0.1:3000",
+    "HARO_AGENTDOCK_AUTH_HEADER": "Bearer ...",
     "HARO_HOME": "/path/to/.haro"
   },
   "enabled": true
@@ -91,12 +92,14 @@ Haro 不要求 AgentDock 内嵌 Haro，只要求 AgentDock 保持已有能力稳
 
 首批 tools：
 
-| Tool | 作用 | 权限 |
-| --- | --- | --- |
-| `haro_observe` | 收集 AgentDock 当前状态或增量状态 | read-only |
-| `haro_propose` | 基于观察结果生成 evolution proposal | read-only |
-| `haro_validate` | 验证 proposal 风险、测试计划、回滚路径 | read-only |
-| `haro_asset_query` | 查询资产、事件、版本和效果 | read-only |
+| Tool               | 作用                                   | 权限      |
+| ------------------ | -------------------------------------- | --------- |
+| `haro_observe`     | 收集 AgentDock 当前状态或增量状态      | read-only |
+| `haro_propose`     | 基于观察结果生成 evolution proposal    | read-only |
+| `haro_validate`    | 验证 proposal 风险、测试计划、回滚路径 | read-only |
+| `haro_asset_query` | 查询资产、事件、版本和效果             | read-only |
+
+`haro_observe` 的读取源由环境变量决定：配置 `HARO_AGENTDOCK_BASE_URL` 时读取 AgentDock HTTP API 并返回 `source=agentdock-http`；需要鉴权时用 `HARO_AGENTDOCK_AUTH_HEADER`，baseUrl 必须是 http(s) URL，且不要把凭据放进 baseUrl；未配置或显式 `HARO_AGENTDOCK_SOURCE=fake` 时只使用离线 fake fixture。Haro 不读取 AgentDock repo 内部文件，也不维护独立 memory authority。
 
 ### 路径 B：AgentDock 定时任务
 
@@ -124,15 +127,15 @@ Haro 不直接发 IM，不直接接管 AgentDock channel。用户可见输出仍
 
 ## Haro 侧组件
 
-| 组件 | 职责 | 数据写入 |
-| --- | --- | --- |
-| AgentDock Contract | connection / observation / proposal / validation / asset event schema | repo code |
-| Observation Source | 读取 AgentDock API、event export、日志或文件约定 | read-only |
-| Haro MCP Server | 暴露 observe/propose/validate/query tools | Haro 自有日志 |
-| Scheduled CLI | 支持 connect/observe/propose/validate/status/doctor | `~/.haro/evolution/*` |
-| Evolution Store | 保存 observations/proposals/validations/applications | `~/.haro/evolution/*` |
-| Asset Registry | 管理 prompt/skill/profile/rule/tool config 资产 | `~/.haro/assets/*`；memory 不作为 Haro asset kind |
-| Gated Apply | 应用 L0/L1 低风险变更 | 受控目标 + snapshot |
+| 组件               | 职责                                                                  | 数据写入                                          |
+| ------------------ | --------------------------------------------------------------------- | ------------------------------------------------- |
+| AgentDock Contract | connection / observation / proposal / validation / asset event schema | repo code                                         |
+| Observation Source | 读取 AgentDock API、event export、日志或文件约定                      | read-only                                         |
+| Haro MCP Server    | 暴露 observe/propose/validate/query tools                             | Haro 自有日志                                     |
+| Scheduled CLI      | 支持 connect/observe/propose/validate/status/doctor                   | `~/.haro/evolution/*`                             |
+| Evolution Store    | 保存 observations/proposals/validations/applications                  | `~/.haro/evolution/*`                             |
+| Asset Registry     | 管理 prompt/skill/profile/rule/tool config 资产                       | `~/.haro/assets/*`；memory 不作为 Haro asset kind |
+| Gated Apply        | 应用 L0/L1 低风险变更                                                 | 受控目标 + snapshot                               |
 
 ## 数据目录
 
@@ -182,36 +185,36 @@ Haro apply 阶段只允许写入低风险对象：
 
 ## 自进化分级
 
-| Level | 范围 | 是否允许 MCP apply |
-| --- | --- | --- |
-| L0 | prompt 文案、skill 描述、配置默认值 | 允许，需 proposal + validation |
-| L1 | skill 文件、runner profile、schedule/routing config | 允许，需 snapshot + rollback |
-| L2 | Haro sidecar 代码 | 不直接 apply，生成 patch branch |
-| L3 | AgentDock kernel 代码或跨项目 contract | 不直接 apply，必须人工决策 |
+| Level | 范围                                                | 是否允许 MCP apply              |
+| ----- | --------------------------------------------------- | ------------------------------- |
+| L0    | prompt 文案、skill 描述、配置默认值                 | 允许，需 proposal + validation  |
+| L1    | skill 文件、runner profile、schedule/routing config | 允许，需 snapshot + rollback    |
+| L2    | Haro sidecar 代码                                   | 不直接 apply，生成 patch branch |
+| L3    | AgentDock kernel 代码或跨项目 contract              | 不直接 apply，必须人工决策      |
 
 ## 历史模块状态
 
-| 历史模块 | 新状态 | 处理方式 |
-| --- | --- | --- |
-| Memory 接入 | AgentDock-owned | Haro 通过 AgentDock MCP/API/任务上下文读取记忆；不维护自有 Memory Fabric |
-| MCP tools permission/audit | 保留经验 | 复用守门链，重建 sidecar MCP tools |
-| Evolution Asset Registry | 保留并迁移 | 移入 sidecar 数据目录 |
-| eat/shit | 保留思想 | 作为 asset metabolism 使用 |
-| CLI parity | 降级 | admin/debug/control surface |
-| Web API / Dashboard | 降级 | 可选控制面 |
-| Scenario Router / Team Orchestrator | 冻结 | 只保留 validation 相关能力 |
-| Provider / Channel / Session runtime | 废弃主路径 | 不再继续扩展 |
+| 历史模块                             | 新状态          | 处理方式                                                                 |
+| ------------------------------------ | --------------- | ------------------------------------------------------------------------ |
+| Memory 接入                          | AgentDock-owned | Haro 通过 AgentDock MCP/API/任务上下文读取记忆；不维护自有 Memory Fabric |
+| MCP tools permission/audit           | 保留经验        | 复用守门链，重建 sidecar MCP tools                                       |
+| Evolution Asset Registry             | 保留并迁移      | 移入 sidecar 数据目录                                                    |
+| eat/shit                             | 保留思想        | 作为 asset metabolism 使用                                               |
+| CLI parity                           | 降级            | admin/debug/control surface                                              |
+| Web API / Dashboard                  | 降级            | 可选控制面                                                               |
+| Scenario Router / Team Orchestrator  | 冻结            | 只保留 validation 相关能力                                               |
+| Provider / Channel / Session runtime | 废弃主路径      | 不再继续扩展                                                             |
 
 ## 实施路线
 
-| 阶段 | 目标 | 验收 |
-| --- | --- | --- |
-| Phase A | 文档基线重置 | README / roadmap / overview / planning 一致 |
-| Phase B | Contract skeleton | schema + fake source + contract tests |
-| Phase C | Read-only MCP sidecar | `haro mcp` 暴露 read-only tools |
-| Phase D | Scheduled sidecar | AgentDock script task 可周期触发 Haro CLI |
-| Phase E | Asset registry adapter | 资产事件写入 sidecar store |
-| Phase F | Gated apply L0/L1 | proposal + validation + snapshot + rollback gate |
+| 阶段    | 目标                   | 验收                                             |
+| ------- | ---------------------- | ------------------------------------------------ |
+| Phase A | 文档基线重置           | README / roadmap / overview / planning 一致      |
+| Phase B | Contract skeleton      | schema + fake source + contract tests            |
+| Phase C | Read-only MCP sidecar  | `haro mcp` 暴露 read-only tools                  |
+| Phase D | Scheduled sidecar      | AgentDock script task 可周期触发 Haro CLI        |
+| Phase E | Asset registry adapter | 资产事件写入 sidecar store                       |
+| Phase F | Gated apply L0/L1      | proposal + validation + snapshot + rollback gate |
 
 ## 架构变更记录
 

@@ -19,7 +19,7 @@ related:
 
 Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。AgentDock 已支持 scheduler 和 script task，因此 Haro 应提供无交互 CLI，让 AgentDock 定时任务周期触发。
 
-该能力是 Haro sidecar 的后台驱动面。
+该能力是 Haro sidecar 的后台驱动面。FEAT-045 的第一步先把 FEAT-044 `haro_observe` 从纯 fake fixture 升级为可读真实 AgentDock HTTP API 的 observation source；后续 CLI 的 `haro observe --since last` 复用同一 source，而不是读取 AgentDock 内部源码或维护第二套 memory。
 
 ## 2. Goals / 目标
 
@@ -61,10 +61,22 @@ haro observe --since last && haro propose --auto-dry-run && haro validate --pend
 AgentDock scheduler
   -> script task
   -> Haro CLI
-  -> AgentDock observation source read-only
+  -> AgentDock HTTP observation source read-only
   -> ~/.haro/evolution/*
   -> cursor update
 ```
+
+第一步已落地到 MCP source：
+
+```text
+AgentDock agent
+  -> registered haro mcp
+  -> haro_observe
+  -> HARO_AGENTDOCK_BASE_URL HTTP API
+  -> ObservationBatch(source=agentdock-http)
+```
+
+读取范围保持最小闭环：`/api/health`、`/api/status`、`/api/sessions`、`/api/sessions/:id/messages`、`/api/sessions/:id/turns`、`/api/tasks`。messages 映射为 `TurnObservation`，failed/error/timeout runtime turns 映射为 `RunnerErrorObservation`，有 `last_run` 的 tasks 映射为 `ScheduledTaskRunObservation`。`limit` 在返回层全局限制各 observation arrays；`window.cursor` 使用最新观察事件时间，不用采集时间 `until` 冒充事件高水位。
 
 cursor 存储建议：
 
@@ -76,6 +88,7 @@ cursor 存储建议：
 
 - AC1: 给定有效 baseUrl，当执行 `haro connect agent-dock` 时，应写入 connection 配置并通过 schema 校验。（对应 R1）
 - AC2: 给定 fake AgentDock source 和空 cursor，当执行 `haro observe --since last` 时，应写入 observation 文件并更新 cursor。（对应 R2/R8）
+- AC2.1: 给定 `HARO_AGENTDOCK_BASE_URL`，当通过 `haro mcp` 调用 `haro_observe` 时，应采集真实 AgentDock HTTP API 并返回 `source=agentdock-http` 的 schema-valid `ObservationBatch`，不创建 `$HARO_HOME/memory`。（对应 R2/R5/R8）
 - AC3: 给定同一 cursor 重复执行 observe，不应生成重复 observation。（对应 R8）
 - AC4: 给定未消费 observation，当执行 propose 时，应生成 dry-run proposal。（对应 R3）
 - AC5: 给定 pending proposal，当执行 validate 时，应生成 validation report。（对应 R4）
@@ -84,9 +97,11 @@ cursor 存储建议：
 ## 7. Test Plan / 测试计划
 
 - 单元测试：connection/cursor 读写。
+- 单元测试：HTTP observation source 的 sessions/messages/turns/tasks 映射、since 过滤、全局 limit、cursor、错误分类、baseUrl 凭据拒绝、excerpt 截断和 schema 校验。
 - 集成测试：fake source observe → propose → validate。
 - CLI 测试：`--json` 输出、退出码、stderr。
 - 手动验证：在 AgentDock 中创建 script task 周期执行 Haro CLI。
+- Live smoke：把 `haro mcp` 注册为 AgentDock 外部 MCP server，配置 `HARO_AGENTDOCK_BASE_URL=http://127.0.0.1:3000`，从 AgentDock runner 调用 `mcp__haro-sidecar__haro_observe` 并确认返回真实 AgentDock sessions/messages。
 
 ## 8. Open Questions / 待定问题
 
@@ -97,3 +112,4 @@ cursor 存储建议：
 ## 9. Changelog / 变更记录
 
 - 2026-05-08: Haro — 初稿。
+- 2026-05-08: Codex — 先落地真实 AgentDock HTTP observation source 最小闭环，作为后续 `haro observe --since last` CLI 的共享读取层。
