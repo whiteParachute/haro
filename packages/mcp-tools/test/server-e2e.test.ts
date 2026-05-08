@@ -75,9 +75,27 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
         },
       },
     ]);
-    const r = responses[0]! as { id: number; result: { isError: boolean; decision: string } };
+    const r = responses[0]! as {
+      id: number;
+      result: {
+        content: Array<{ type: string; text: string }>;
+        structuredContent: { channelId: string; channelSessionId: string; sentAt: string };
+        isError: boolean;
+        decision: string;
+        _meta: { haro: { decision: string; latencyMs: number } };
+      };
+    };
+    expect(r.result.content).toEqual([
+      {
+        type: 'text',
+        text: JSON.stringify(r.result.structuredContent, null, 2),
+      },
+    ]);
     expect(r.result.isError).toBe(false);
     expect(r.result.decision).toBe('allowed');
+    expect(r.result.structuredContent.channelId).toBe('fake-im');
+    expect(r.result.structuredContent.channelSessionId).toBe('sess-A');
+    expect(r.result._meta.haro.decision).toBe('allowed');
     expect(e.fakeChannel.outbound[0]!.sessionId).toBe('sess-A');
   });
 
@@ -104,10 +122,23 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
     const drained = await transport.drain();
     await server.stop();
     await runPromise;
-    const r = drained[0]! as { result: { isError: boolean; decision: string; error: { code: string } } };
+    const r = drained[0]! as {
+      result: {
+        content: Array<{ type: string; text: string }>;
+        structuredContent: { error: { code: string } };
+        isError: boolean;
+        decision: string;
+        error: { code: string };
+        _meta: { haro: { errorCode: string } };
+      };
+    };
     expect(r.result.isError).toBe(true);
     expect(r.result.decision).toBe('needs-approval');
     expect(r.result.error.code).toBe('NEEDS_APPROVAL');
+    expect(r.result.structuredContent.error.code).toBe('NEEDS_APPROVAL');
+    expect(r.result._meta.haro.errorCode).toBe('NEEDS_APPROVAL');
+    expect(r.result.content[0]).toMatchObject({ type: 'text' });
+    expect(r.result.content[0]!.text).toContain('NEEDS_APPROVAL');
   });
 
   it('returns method-not-found on unknown JSON-RPC methods', async () => {

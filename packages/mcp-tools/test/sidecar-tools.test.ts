@@ -48,9 +48,17 @@ async function runSidecarWith(e: TestEnv, requests: JsonRpcMessage[]): Promise<J
 }
 
 function callResult<T>(message: JsonRpcMessage): T {
-  const response = message as { result: { isError: boolean; content: T } };
+  const response = message as {
+    result: {
+      content: Array<{ type: string; text: string }>;
+      isError: boolean;
+      structuredContent: T;
+    };
+  };
   expect(response.result.isError).toBe(false);
-  return response.result.content;
+  expect(response.result.content[0]).toMatchObject({ type: 'text' });
+  expect(response.result.content[0]!.text).toBe(JSON.stringify(response.result.structuredContent, null, 2));
+  return response.result.structuredContent;
 }
 
 describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
@@ -187,9 +195,18 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
         },
       },
     ]);
-    const r = responses[0]! as { result: { isError: boolean; error: { code: string } } };
+    const r = responses[0]! as {
+      result: {
+        content: Array<{ type: string; text: string }>;
+        isError: boolean;
+        structuredContent: { error: { code: string } };
+        error: { code: string };
+      };
+    };
     expect(r.result.isError).toBe(true);
     expect(r.result.error.code).toBe('INVALID_PARAMS');
+    expect(r.result.structuredContent.error.code).toBe('INVALID_PARAMS');
+    expect(r.result.content[0]!.text).toContain('INVALID_PARAMS');
 
     const jsonl = join(e.root, 'logs', 'mcp-invocations.jsonl');
     expect(existsSync(jsonl)).toBe(true);

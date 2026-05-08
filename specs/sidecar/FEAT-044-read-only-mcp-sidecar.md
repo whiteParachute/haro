@@ -114,4 +114,5 @@ AgentDock agent
 ## 9. Changelog / 变更记录
 
 - 2026-05-08: Codex — 完成 `haro mcp` 只读 sidecar 首版：新增 4 个 read-only tools、JSONL audit、fake-source observe/propose/validate/asset query 测试；sidecar registry 不暴露历史 memory/send_message tools，启动路径不创建 Haro-owned MemoryFabric 或 `$HARO_HOME/memory`。
+- 2026-05-08: Codex — 修复 `tools/call` wire result：`content` 改为 MCP 标准 content block 数组，结构化 payload 进入 `structuredContent`，避免 AgentDock/Codex MCP client 报 `Unexpected response type`。
 - 2026-05-08: Haro — 初稿。

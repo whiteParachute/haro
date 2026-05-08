@@ -124,4 +124,43 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it('shipped binary mcp returns MCP-standard content blocks for tool calls', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-mcp-call-'));
+    try {
+      const res = spawnSync(process.execPath, [bin, 'mcp'], {
+        env: { ...process.env, HARO_HOME: home },
+        input: [
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: {
+              name: 'haro_observe',
+              arguments: { connectionId: 'fake-agentdock-test', limit: 1 },
+            },
+          }),
+          '',
+        ].join('\n'),
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      expect(res.stderr).toBe('');
+      const payload = JSON.parse(res.stdout) as {
+        result: {
+          content: Array<{ type: string; text: string }>;
+          isError: boolean;
+          structuredContent: { connectionId: string; sessions: unknown[] };
+        };
+      };
+      expect(payload.result.isError).toBe(false);
+      expect(payload.result.content[0]).toMatchObject({ type: 'text' });
+      expect(payload.result.content[0]!.text).toBe(JSON.stringify(payload.result.structuredContent, null, 2));
+      expect(payload.result.structuredContent.connectionId).toBe('fake-agentdock-test');
+      expect(payload.result.structuredContent.sessions).toHaveLength(1);
+      expect(existsSync(join(home, 'memory'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

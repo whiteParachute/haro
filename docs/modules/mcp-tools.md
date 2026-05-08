@@ -52,6 +52,17 @@ ToolRegistry.invoke({ name, rawParams, session, deps })
 
 每条路径都写 `tool_invocation_log` 一行；payload 字段只入 `sha256(JSON.stringify(params)).slice(0,32)`，**绝不入原文**（R8 / AC7）。
 
+## MCP wire result shape
+
+`tools/call` 返回 MCP 标准 `CallToolResult`：
+
+- `content: [{ type: "text", text: "<pretty JSON>" }]` 作为所有客户端都能展示的兜底文本。
+- `structuredContent` 保留工具原始结构化输出，供 AgentDock / Codex 等客户端直接消费。
+- `isError` 表示 registry/tool execution 错误；错误详情同时放在 `structuredContent.error` 和 legacy `error` 字段中。`tools/call` envelope 非法（例如 `params.name` 缺失）仍按 JSON-RPC protocol error 返回。
+- `decision` / `latencyMs` 作为 Haro legacy metadata 暂时保留；新客户端应优先读 `_meta.haro`。
+
+不要再把业务对象直接放到 `result.content` 顶层；部分 MCP 客户端会按协议校验 `content[]`，直接对象会被拒绝为 `Unexpected response type`。
+
 ## 已知缺口（2026-05-06 实现交付）
 
 - **Provider 端工具调用尚未接通**：`@haro/mcp-tools` 的 server / 4 工具 / 守门 / audit 层都已就位；AgentRunner 的 `mcpSessionFactory` 也会在 session 启动时 spawn 子进程并在 finally 5 s 内 graceful shutdown。但 provider SDK（如 Codex / Claude）侧的 `mcpServers` 配置尚未把 spawn 的子进程 stdio 接入，因此 agent 暂时**不会**真的去调用这些工具。本 FEAT 交付的是 "infra 就位 + lifecycle 严格符合 spec"，provider 接入留作后续 FEAT。`McpSessionHandle.child` 已暴露原始 `ChildProcess` 句柄，未来 wiring 直接读它的 stdio 即可。

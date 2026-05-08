@@ -13,6 +13,7 @@ import { toErrorPayload } from './error.js';
 import type {
   SessionContext,
   ToolDependencies,
+  ToolDecision,
   ToolErrorPayload,
 } from './types.js';
 
@@ -132,26 +133,82 @@ export class McpServer {
       await this.transport.send({
         jsonrpc: '2.0',
         id,
-        result: {
-          isError: false,
-          decision: record.decision,
-          latencyMs: record.latencyMs,
-          content: record.result.value,
-        },
+        result: toolSuccessResult(record.result.value, record.decision, record.latencyMs),
       });
     } else {
       await this.transport.send({
         jsonrpc: '2.0',
         id,
-        result: {
-          isError: true,
-          decision: record.decision,
-          latencyMs: record.latencyMs,
-          error: record.result.error,
-        },
+        result: toolErrorResult(record.result.error, record.decision, record.latencyMs),
       });
     }
   }
+}
+
+interface McpTextContentBlock {
+  type: 'text';
+  text: string;
+}
+
+interface McpToolCallResult {
+  content: McpTextContentBlock[];
+  isError: boolean;
+  /**
+   * Modern MCP clients prefer structuredContent for machine-readable output
+   * while content[] stays the protocol-required user-visible fallback.
+   */
+  structuredContent?: unknown;
+  /**
+   * Haro-specific execution metadata is retained for existing tests and older
+   * consumers. MCP Result passthrough permits additional fields.
+   */
+  decision: ToolDecision;
+  latencyMs: number;
+  error?: ToolErrorPayload;
+  _meta: {
+    haro: {
+      decision: ToolDecision;
+      latencyMs: number;
+      errorCode?: string;
+    };
+  };
+}
+
+function toolSuccessResult(value: unknown, decision: ToolDecision, latencyMs: number): McpToolCallResult {
+  return {
+    content: [{ type: 'text', text: stringifyToolPayload(value) }],
+    structuredContent: normalizeStructuredContent(value),
+    isError: false,
+    decision,
+    latencyMs,
+    _meta: { haro: { decision, latencyMs } },
+  };
+}
+
+function toolErrorResult(error: ToolErrorPayload, decision: ToolDecision, latencyMs: number): McpToolCallResult {
+  return {
+    content: [{ type: 'text', text: stringifyToolPayload(error) }],
+    structuredContent: { error },
+    isError: true,
+    decision,
+    latencyMs,
+    error,
+    _meta: { haro: { decision, latencyMs, errorCode: error.code } },
+  };
+}
+
+function stringifyToolPayload(payload: unknown): string {
+  if (typeof payload === 'string') return payload;
+  if (payload === undefined) return '';
+  try {
+    return JSON.stringify(payload, null, 2) ?? String(payload);
+  } catch {
+    return String(payload);
+  }
+}
+
+function normalizeStructuredContent(value: unknown): unknown {
+  return value === undefined ? null : value;
 }
 
 function parseToolCallParams(
