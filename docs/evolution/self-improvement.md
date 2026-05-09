@@ -4,12 +4,14 @@
 
 Haro 的自我改进机制将平台本身作为被改进的对象，实现从单 Agent 进化（yoyo-evolve 的思路）到**平台级多 Agent 进化**的跨越。
 
+> **Sidecar 修订（2026-05-09）**：当前主线中，被改进对象主要是 AgentDock runtime/workbench 的配置面与 Haro sidecar 自身；Haro 不再自建 Provider/Channel/Session/Memory 主链路。外部前沿情报只作为 proposal evidence，所有 L0/L1 apply 必须审批，L2/L3 只生成 patch branch。
+
 ## 代谢机制：eat / shit（底层伴随机制）
 
 在四个层级之外，Haro 有一套独立的**代谢机制**，作为所有层级的底层伴随：
 
 - **eat**（摄入）：把外部知识 / 用户反馈 / 调研产出沉淀为 rules / skills / Agent 配置提案；memory 证据只引用 AgentDock observation refs。带质量门槛（四问验证）和防膨胀检查。
-- **shit**（排出）：扫描现有外挂组件（rules / skills / MCP / memory），评估必要性，归档冗余项（可回滚）。
+- **shit**（排出）：扫描现有外挂组件（rules / skills / MCP / frontier source refs / historical memory refs），评估必要性，归档冗余项（可回滚）。
 - **Evolution Asset Registry**（资产注册表）：Phase 1 起记录 eat/shit 影响的 skill、prompt、routing rule、memory 与 archive，提供版本、来源和审计日志。
 
 两者与四层改进的关系：

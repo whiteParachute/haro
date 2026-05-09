@@ -5,7 +5,7 @@
 > 本文描述旧 Haro workbench 路线下的 Evolution Engine / OODA 协议。旧 Phase 2.0 / 2.5 spec 文件已被 `specs/sidecar/FEAT-043` 到 `FEAT-047` 替代并删除；本文仅保留为概念参考。sidecar-era 实现以 AgentDock contract、read-only MCP、scheduled CLI、asset registry adapter 和 gated apply specs 为准。
 
 
-**状态：强制执行。所有 Evolution Engine 相关实现（Self-Monitor / Pattern Miner / Auto-Refactorer / Verifier 等）必须遵守本规范。**
+**状态：历史参考。** 新 sidecar-era 实现以 `docs/architecture/sidecar-operating-model.md` 与 `specs/sidecar/` 为准；如本文与 sidecar specs 冲突，以 sidecar specs 为准。
 
 ## 概述
 
@@ -38,7 +38,7 @@ sidecar-era 映射如下：
 | Phase B | Observe contract | [FEAT-043](./sidecar/FEAT-043-agentdock-contract-skeleton.md) | observation / proposal / validation / asset event schema | 无写入 |
 | Phase C | Observe / Orient / Validate read-only | [FEAT-044](./sidecar/FEAT-044-read-only-mcp-sidecar.md) | Haro MCP read-only tools | dry-run |
 | Phase D | Observe / Propose scheduled | [FEAT-045](./sidecar/FEAT-045-scheduled-sidecar-cli.md) | AgentDock script task 周期触发 | dry-run |
-| Phase E | Asset memory | [FEAT-046](./sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | sidecar asset registry | 写 Haro 自有目录 |
+| Phase E | Signal + asset memory | [FEAT-048](./sidecar/FEAT-048-frontier-intelligence-intake.md) / [FEAT-046](./sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | external frontier signals + sidecar asset registry | 写 Haro 自有目录 |
 | Phase F | Act gated | [FEAT-047](./sidecar/FEAT-047-gated-apply-l0-l1.md) | L0/L1 proposal + validation + snapshot + rollback apply | gated-write |
 
 ## 一、OODA 契约
@@ -590,6 +590,6 @@ Bugfix **不限层级**（L0/L1/L2/L3 都可），Agent 自主 Act 完成后：
 ## Changelog
 
 - 2026-04-19: whiteParachute — 初稿 draft。整合 `docs/evolution/feedback-loop.md`（OODA / evolution-context 布局 / 验证门控 / @model-dependent）+ `docs/evolution/self-improvement.md`（L0-L3 层级 / Agent-as-Maintainer 约束）的硬约束部分。共 16 条强制约束 E1-E16
-- 2026-04-19: whiteParachute — 重构 E13：从"三选一认可"改为**按变更类型分类自治**（Bugfix / Feature Request / Architecture Evolution）；Bugfix Agent 可自主决策（需具体 spec 违反点），Feature Request 和架构演进必须人类参与决策。同步调整 E14：源头路径标注不再决定自治边界，仅作溯源用途，自治边界一律由 E13 决定
+- 2026-04-19: whiteParachute — 历史 workbench 路线曾将 E13 改为按变更类型分类自治；sidecar-era 已由 FEAT-047/FEAT-048 收口为 proposal + validation + approval gate。
 - 2026-04-19: whiteParachute — 分工立场硬化：**人类审方向/需求，不审代码**。E11 技术门控栈剥离人类代码 review 条款；E12 明确人类介入对象；E13 Bugfix 改为可跨 L0-L3、Agent 主导 + **事后 review**（通过 `human-review-queue.jsonl` 通知机制，不阻塞 Agent 执行）。新增 **E7a Critic 必须独立判断原则冲突**——Agent 自标 `principle_alignment` 只作"已考虑"证据，最终由 Critic 独立 per-principle 判定；冲突自动升格为架构演进。
 - 2026-04-19: whiteParachute — 用户 review 完成，状态确认为 approved。

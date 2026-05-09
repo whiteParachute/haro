@@ -14,6 +14,8 @@ related:
 
 # 手动 eat / shit
 
+> **2026-05-09 sidecar note**：本文是历史 Phase 0 workbench spec。新基线下 memory 由 AgentDock 提供，Haro eat/shit 不再直接写 Haro-owned Memory；外部知识和 frontier source refs 进入 proposal / asset event 流程，详见 [evolution-metabolism](../evolution-metabolism.md) 与 [FEAT-048](../sidecar/FEAT-048-frontier-intelligence-intake.md)。
+
 ## 1. Context / 背景
 
 Haro 的进化代谢由 eat（摄入）+ shit（排出）两个 skill 构成。Phase 0 仅交付**手动触发**：用户显式执行命令 / slash。自动触发（Evolution Engine 调度）推迟到 Phase 2。本 spec 交付两个 skill 的 CLI 命令、执行流程、提案/归档回滚机制。eat 逻辑复用 `/home/heyucong.bebop/SKILL.md` 的思路，但按 Haro 的落地边界收窄：Phase 0 直接写 Memory，其他 sink 先生成 proposal bundle。

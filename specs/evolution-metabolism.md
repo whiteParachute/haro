@@ -5,11 +5,11 @@
 Haro 的自我进化不只是 OODA 线性改进，还包含**双向代谢**：
 
 - **eat（摄入）**：把外部知识 / 经验 / 反馈沉淀为持久能力（可安装 skill 提案、规则提案、prompt 提案）；不再写 Haro-owned Memory。
-- **shit（排出）**：扫描现有外挂组件（rules / skills / MCP server / 记忆），评估必要性，淘汰冗余
+- **shit（排出）**：扫描现有外挂组件（rules / skills / MCP server / frontier source refs / historical memory refs），评估必要性，淘汰冗余
 
 两者合力确保平台**持续进化但不膨胀**，是 [自我改进机制](../docs/evolution/self-improvement.md) 的底层代谢层。
 
-> Phase 0 限定：由于 Instruction Substrate（`CLAUDE.md` / `rules/` 的主动加载链）尚未单独落地，`eat` 在 Phase 0 的**直接写入**只覆盖 Memory；对 `CLAUDE.md` / `rules/` / `skills` 的候选产物先生成**proposal bundle**，再由用户显式 promote/install。
+> **Sidecar 修订（2026-05-09）**：历史 Phase 0 曾允许 `eat` 直接写 Memory。新基线下 memory 由 AgentDock 提供；`eat` 只能生成 rules / skills / prompt / frontier-source-ref 等 proposal 或 asset event，不直接写 Haro-owned Memory。
 
 本规范定义 `eat` 和 `shit` 两个核心 skill 的行为契约。Haro 将 `eat` 作为预装 skill 引入（保留原作者署名与 `CC-BY-NC-SA-4.0` 许可），`shit` 为 Haro 自研。
 

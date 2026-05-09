@@ -14,6 +14,7 @@ Haro 当前主线已切换为 **AgentDock self-evolution sidecar**。
 - Haro 不能 import AgentDock 内部 `src/*` 模块。
 - Haro 接入 AgentDock 只走外部 MCP server 注册、AgentDock scheduler/script task、AgentDock skills/MCP 调用面。
 - 第一阶段只读 / dry-run；L0/L1 apply 必须有 proposal、validation、snapshot、rollback ref。
+- 外部前沿情报只能作为带来源 evidence 进入 proposal，不得绕过 validation / approval / rollback gate。
 
 当前 sidecar-era specs：
 
@@ -24,6 +25,7 @@ Haro 当前主线已切换为 **AgentDock self-evolution sidecar**。
 | [FEAT-045](sidecar/FEAT-045-scheduled-sidecar-cli.md) | Scheduled sidecar CLI | Phase D | draft |
 | [FEAT-046](sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | Sidecar asset registry adapter | Phase E | draft |
 | [FEAT-047](sidecar/FEAT-047-gated-apply-l0-l1.md) | Gated apply L0/L1 | Phase F | draft |
+| [FEAT-048](sidecar/FEAT-048-frontier-intelligence-intake.md) | Frontier intelligence intake | Phase E | draft |
 
 ## 目录结构
 
@@ -44,7 +46,8 @@ specs/
 │   ├── FEAT-044-read-only-mcp-sidecar.md
 │   ├── FEAT-045-scheduled-sidecar-cli.md
 │   ├── FEAT-046-sidecar-asset-registry-adapter.md
-│   └── FEAT-047-gated-apply-l0-l1.md
+│   ├── FEAT-047-gated-apply-l0-l1.md
+│   └── FEAT-048-frontier-intelligence-intake.md
 ├── phase-1.5/                      # 历史 workbench parity 资产（2026-05-01 路线）
 │
 ├── multi-agent-design-constraints.md   # 强制规范（跨 phase）

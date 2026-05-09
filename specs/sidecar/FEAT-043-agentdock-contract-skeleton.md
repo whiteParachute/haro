@@ -40,7 +40,7 @@ Haro 已切换为 AgentDock self-evolution sidecar。后续所有能力都依赖
 - R1: 新增 `@haro/agentdock-contract` 或等价内部模块，导出所有 sidecar contract 类型和 schema。
 - R2: `AgentDockConnection` 必须包含 `id`、`baseUrl`、`authRef?`、`capabilityVersion?`、`observationSources`、`createdAt`、`updatedAt`。
 - R3: `AgentDockCapability` 必须描述 MCP、scheduler、skills、event export、filesystem contract 的可用性和版本。
-- R4: `ObservationBatch` 必须能表达 sessions、turns、tool calls、scheduled task runs、AgentDock memory activity refs、runner errors、usage records；Haro 不定义自有 memory write/read schema。
+- R4: `ObservationBatch` 必须能表达 sessions、turns、tool calls、scheduled task runs、AgentDock memory activity refs、runner errors、usage records；Haro 不定义自有 memory write/read schema。后续 FEAT-048 可通过外部 `FrontierSignal` refs 扩展 proposal evidence，不把外部情报伪装成 AgentDock memory。
 - R5: `EvolutionProposal` 必须包含 proposal id、source observation refs、target kind、risk level、change set、test plan、rollback plan、status。
 - R6: `ValidationReport` 必须包含 proposal id、risk verdict、required tests、rollback readiness、apply eligibility、blocking reasons。
 - R7: `AssetEvent` 必须包含 stable asset id、kind、version、source ref、content ref、content hash、status、event type、rollback metadata。
@@ -96,5 +96,6 @@ schema 可使用现有 Zod 依赖，不新增第三方包。
 
 ## 9. Changelog / 变更记录
 
+- 2026-05-09: Haro — 澄清外部 frontier intelligence 通过 FEAT-048 signal refs 扩展 evidence，不进入 Haro-owned memory。
 - 2026-05-08: Haro — 切到 in-progress；采用独立 `packages/agentdock-contract`，补 schema / fake source / import guard 实现。
 - 2026-05-08: Haro — 初稿。

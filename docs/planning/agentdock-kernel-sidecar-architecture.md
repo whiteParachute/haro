@@ -14,7 +14,7 @@ agent-dock
 
 haro
   可插拔的 self-evolution sidecar
-  通过 MCP server、定时任务、只读观测和少量可写配置入口接入 AgentDock
+  通过 MCP server、定时任务、skills 编排、只读观测和少量可写配置入口接入 AgentDock
 ```
 
 依赖方向只能是：
@@ -37,6 +37,8 @@ Haro 原设计把 workbench 和 self-evolution 放在同一个项目中：
 Haro 的差异化应该集中在：
 
 - 观察 AgentDock 的真实使用数据。
+- 观察 Haro sidecar 自身 MCP / CLI / Evolution Store / Asset Registry 的运行质量。
+- 从 X、YouTube、论文、开源仓库 release notes、官方文档、benchmark 等来源摄入 agent 前沿情报。
 - 生成进化提案。
 - 验证提案风险、测试计划和回滚路径。
 - 资产化 prompt / skill / rule / tool config；memory 由 AgentDock 侧提供，Haro 只引用 observation refs。
@@ -64,6 +66,9 @@ Haro 的差异化应该集中在：
 
 7. **先只读，后可写**
    Haro 初期只观察和生成 dry-run proposal；确认 contract 和验证门稳定后，再开放 L0/L1 apply。
+
+8. **外部情报必须证据化**
+   X、YouTube、论文、release notes 等外部信号只作为带 source ref 的 evidence。任何基于外部趋势的建议，都必须进入 proposal / validation / approval / rollback gate。
 
 ## 接入方式约束
 
@@ -141,8 +146,12 @@ Haro 至少需要读取这些信息：
 - tool calls and results
 - scheduled task runs
 - AgentDock memory activity refs（只读/引用）
+- Web/PWA 状态与操作路径
+- IM/message routing 与用户等待信号
 - runner errors / recoverable errors
 - usage records
+- Haro MCP/CLI/Evolution Store/Asset Registry 自身健康信号
+- 外部前沿情报 refs（X / YouTube / paper / release / doc / benchmark）
 
 初期可以通过 AgentDock 已有 API、DB export、日志目录或只读文件约定实现。后续再收敛为稳定 `event export` 或 `event stream`。
 
@@ -246,17 +255,27 @@ AgentDock scheduler
   -> Haro updates cursor
 ```
 
-### 流程 B：自动提案 dry-run
+### 流程 B：外部情报 intake
 
 ```text
 AgentDock scheduler
-  -> script task: haro propose --auto-dry-run
-  -> Haro consumes observations + asset history
+  -> script task: haro intake frontier --since last
+  -> Haro reads configured public/approved sources
+  -> Haro writes frontier signal records with source refs
+  -> Haro does not apply changes
+```
+
+### 流程 C：自动提案 dry-run
+
+```text
+AgentDock scheduler
+  -> script task: haro propose --auto-dry-run --include-frontier
+  -> Haro consumes AgentDock observations + Haro self signals + frontier signals + asset history
   -> Haro writes proposal
   -> Haro does not apply changes
 ```
 
-### 流程 C：AgentDock skills / Agent 主动调用 Haro
+### 流程 D：AgentDock skills / Agent 主动调用 Haro
 
 ```text
 AgentDock skill / AgentDock session
@@ -268,7 +287,7 @@ AgentDock skill / AgentDock session
 
 这里的 skills 是 AgentDock 现有编排面。Haro 不新增 AgentDock 内部 skill runtime，也不改变 AgentDock skill 加载机制。
 
-### 流程 D：受控应用
+### 流程 E：受控应用
 
 ```text
 User approves proposal
@@ -340,12 +359,18 @@ User approves proposal
 - 下一步实现 `haro propose --auto-dry-run`。
 - 通过 AgentDock script scheduled task 周期触发。
 
-### Phase 4: Asset Registry Adapter
+### Phase 4: Frontier Intelligence Intake
+
+- 定义 `FrontierSignal` schema。
+- 支持由 AgentDock script task 周期执行外部前沿情报 intake。
+- 把 X / YouTube / paper / release note / official doc / benchmark 归一为 proposal evidence。
+
+### Phase 5: Asset Registry Adapter
 
 - 将 Haro Evolution Asset Registry 迁到 sidecar 数据目录。
-- skill/prompt/profile/task config 的变更全部登记资产事件。
+- skill/prompt/profile/task config/frontier source refs 的变更全部登记资产事件。
 
-### Phase 5: Gated Apply
+### Phase 6: Gated Apply
 
 - 实现 L0/L1 `haro_apply`。
 - 增加 snapshot / rollback。
@@ -357,7 +382,7 @@ User approves proposal
 - Haro 可以作为外部 MCP server 注册到 AgentDock。
 - Haro 可以通过 AgentDock 定时任务周期执行 observe/propose/validate。
 - Haro 可以被 AgentDock 现有 skills / agent 编排面调用，并通过 AgentDock 原 channel 汇报。
-- Haro 能基于真实 AgentDock 状态生成 dry-run proposal。
+- Haro 能基于真实 AgentDock 状态、Haro 自身信号和外部 frontier signals 生成 dry-run proposal。
 - Haro 的所有资产变更写入独立 Evolution Asset Registry。
 - L0/L1 apply 有 proposal、validation、snapshot、rollback ref。
 - AgentDock 升级时，只需要跑 Haro contract tests 判断兼容性。
@@ -365,6 +390,7 @@ User approves proposal
 ## Open Questions
 
 - AgentDock 观测源第一版走 API、DB 只读、日志目录，还是新增 event export？
+- 外部前沿情报第一版走官方 API/RSS/search provider，还是由 AgentDock skill 生成 curated refs？
 - Haro apply L1 时，AgentDock skill/profile/task config 的最小稳定写入口是什么？
 - Haro 是否需要自己的轻量 Web UI，还是全部通过 AgentDock session + MCP tool 交互？
 - contract version 由 AgentDock 暴露，还是 Haro 自己通过 capability probe 推断？

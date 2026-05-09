@@ -18,7 +18,7 @@ AgentDock
         │ MCP server registration + scheduled script task + skills/MCP call
         │
 Haro
-  Observe / Propose / Validate / Asset Registry / Gated Apply
+  Observe / Frontier Intake / Propose / Validate / Asset Registry / Gated Apply
 ```
 
 依赖方向只能是：
@@ -41,6 +41,8 @@ Haro 旧设计把 workbench 和 self-evolution 放在同一仓库：
 新的差异化集中在：
 
 - 观察 AgentDock 真实使用数据。
+- 观察 Haro MCP/CLI/Evolution Store/Asset Registry 自身健康信号。
+- 从 X、YouTube、论文、开源仓库 release notes、官方文档和 benchmark 等来源吸收外部前沿情报。
 - 生成进化提案。
 - 验证提案风险、测试计划和回滚路径。
 - 资产化 prompt、skill、rule、tool config；memory 由 AgentDock 侧提供，Haro 只引用 observation refs。
@@ -57,6 +59,7 @@ Haro 旧设计把 workbench 和 self-evolution 放在同一仓库：
 | Skills 是编排辅助面        | Haro 可被 AgentDock 已有 skills/workflow 调用，不新增深度插件主链路 |
 | Contract 优先于内部依赖    | 只通过 schema、API、MCP、event export、filesystem contract 协作     |
 | 先只读，后可写             | 第一版全部 read-only / dry-run；L0/L1 apply 后置                    |
+| 外部情报只作证据           | 最新趋势必须带 source ref / 时间 / 置信度，不直接触发 apply          |
 
 ## AgentDock 侧能力
 
@@ -159,7 +162,9 @@ AgentDock 数据是被观察对象，不是 Haro 内部状态。
 
 ## 观测范围
 
-第一版至少覆盖：
+Haro 同时观察三类信号：
+
+### AgentDock 内部使用信号
 
 - sessions
 - messages / turns
@@ -169,8 +174,26 @@ AgentDock 数据是被观察对象，不是 Haro 内部状态。
 - AgentDock memory activity refs（只读/引用）
 - runner errors / recoverable errors
 - usage records
+- Web/PWA 可观测状态、IM/message routing 结果、skills/workflow 触发结果
 
-观测源可以先走 AgentDock 已有 API、DB export、日志目录或只读文件约定。稳定后再收敛为 event export / event stream。
+### Haro sidecar 自身信号
+
+- MCP server tool latency / error code / schema mismatch
+- Scheduled CLI exit code / cursor / lock / duplicate suppression
+- Evolution Store observation/proposal/validation/application 状态
+- Asset Registry event lifecycle / rollback metadata
+- Gated apply / rollback 成功率和阻断原因
+
+### 外部前沿情报
+
+- X / 社交短讯中的 agent 架构与实践经验
+- YouTube / 公开视频 demo、talk、engineering deep dive
+- 论文 / preprint 中的 agent memory、tool use、planning、eval、multi-agent 方法
+- 开源仓库 release notes、官方文档、benchmark / eval report
+
+外部情报必须带 source ref、发布时间或版本、抓取时间和置信度，只能作为 proposal evidence。Haro 不把无来源“最新趋势”直接应用到 AgentDock 或 Haro 代码。
+
+观测源可以先走 AgentDock 已有 API、event export、日志目录、只读文件约定或外部 source config。稳定后再收敛为 event export / event stream。
 
 ## 写入边界
 
@@ -181,7 +204,7 @@ Haro apply 阶段只允许写入低风险对象：
 - AgentDock runner profile / prompt / task config。
 - Haro MCP server 自身配置。
 
-代码级修改不通过 MCP tool 直接落地。代码级自进化必须生成 proposal、patch branch、验证报告和回滚计划。
+代码级修改不通过 MCP tool 直接落地。代码级自进化必须生成 proposal、patch branch、验证报告和回滚计划。外部前沿情报触发的建议也必须走同一 proposal / validation / approval / apply gate。
 
 ## 自进化分级
 
@@ -213,11 +236,12 @@ Haro apply 阶段只允许写入低风险对象：
 | Phase B | Contract skeleton      | schema + fake source + contract tests            |
 | Phase C | Read-only MCP sidecar  | `haro mcp` 暴露 read-only tools                  |
 | Phase D | Scheduled sidecar      | `connect agent-dock` + `observe --since last` 已落地；下一步补 propose/validate/status/doctor |
-| Phase E | Asset registry adapter | 资产事件写入 sidecar store                       |
+| Phase E | Signal intake + asset registry | 外部前沿情报 intake + 资产事件写入 sidecar store |
 | Phase F | Gated apply L0/L1      | proposal + validation + snapshot + rollback gate |
 
 ## 架构变更记录
 
+- **2026-05-09**：补充 sidecar operating model：Haro 同时观察 AgentDock 使用、Haro 自身组件和外部前沿情报；所有建议在审批后才进入 gated apply 或 patch branch。
 - **2026-05-08**：架构基线切换为 AgentDock Kernel + Haro Sidecar。Haro 不再继续自建完整 workbench/runtime；通过 AgentDock 外部 MCP server 注册、定时任务和 skills/MCP 调用面接入。
 - **2026-05-07**：FEAT-034 流式 UX 升级 done。该能力作为历史 workbench 资产保留，不再决定后续主路径。
 - **2026-05-06**：FEAT-032 MCP 工具层实现交付。permission / timeout / audit 经验保留，tool 语义后续迁移到 Haro sidecar。
