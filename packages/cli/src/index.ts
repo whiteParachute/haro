@@ -82,6 +82,7 @@ import { registerUserCommands } from './commands/user.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerConfigWriteCommands } from './commands/config.js';
 import { registerCronCommands } from './commands/cron.js';
+import { registerAgentDockSidecarCommands } from './commands/agentdock-sidecar.js';
 import { buildServiceContext } from './commands/service-context.js';
 import { renderJson, renderJsonDiagnostic, renderListJson, resolveOutputMode } from './output/index.js';
 import {
@@ -171,6 +172,8 @@ export type RunCliAction =
   | 'doctor'
   | 'provider'
   | 'status'
+  | 'connect'
+  | 'observe'
   | 'channel'
   | 'skills'
   | 'eat'
@@ -569,6 +572,7 @@ function buildProgram(app: AppContext): Command {
   registerGatewayCommands(program, app);
   registerWebCommand(program, app);
   registerMcpCommand(program, app);
+  registerAgentDockSidecarCommands(program, app);
   registerUpdateCommand(program, app);
   registerSessionCommands(program, app, { runRepl });
   registerAgentCommands(program, app);
@@ -1598,7 +1602,10 @@ async function bootstrapApp(
     throw err;
   }
 
-  const sidecarOnly = input.argv?.[0] === 'mcp';
+  const sidecarOnly =
+    input.argv?.[0] === 'mcp' ||
+    input.argv?.[0] === 'connect' ||
+    input.argv?.[0] === 'observe';
   const legacyRunMemory =
     input.argv?.[0] === 'run' && input.argv.includes('--legacy-memory') && !input.argv.includes('--no-memory');
   const legacyMemoryRoots = resolveLegacyMemoryRoots(loaded.config, paths);
@@ -2908,7 +2915,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

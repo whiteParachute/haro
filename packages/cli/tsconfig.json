@@ -29,6 +29,9 @@
       "@haro/mcp-tools": [
         "../mcp-tools/dist/index.d.ts"
       ],
+      "@haro/agentdock-contract": [
+        "../agentdock-contract/dist/index.d.ts"
+      ],
       "@haro/skills": [
         "../skills/dist/index.d.ts"
       ],
@@ -55,6 +58,9 @@
     },
     {
       "path": "../mcp-tools"
+    },
+    {
+      "path": "../agentdock-contract"
     },
     {
       "path": "../skills"

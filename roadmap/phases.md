@@ -10,8 +10,8 @@
 | --- | --- | --- | --- | --- |
 | Phase A: Baseline Reset | 进行中 | 文档与边界切到 AgentDock sidecar 新基线 | README / roadmap / architecture overview / planning 文档改写 | 无 |
 | Phase B: Contract Skeleton | 已实现 skeleton | 建立 Haro 与 AgentDock 的稳定 contract | `@haro/agentdock-contract`、schema、fake source、contract tests | 无 |
-| Phase C: Read-only MCP Sidecar | 已实现，待 live smoke | 让 AgentDock agent 可以显式调用 Haro 观察与提案 | `haro mcp`、`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`；sidecar 启动不创建 Haro-owned memory 目录 | Haro 自有日志/资产目录 |
-| Phase D: Scheduled Sidecar | 待启动 | 通过 AgentDock 定时任务后台驱动 observe/propose/validate | `haro connect agent-dock`、`haro observe --since last`、`haro propose --auto-dry-run`、`haro validate --pending` | Haro 自有目录 |
+| Phase C: Read-only MCP Sidecar | 已实现，live smoke 已通过 | 让 AgentDock agent 可以显式调用 Haro 观察与提案 | `haro mcp`、`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`；sidecar 启动不创建 Haro-owned memory 目录 | Haro 自有日志/资产目录 |
+| Phase D: Scheduled Sidecar | 进行中，connect/observe 已落地 | 通过 AgentDock 定时任务后台驱动 observe/propose/validate | `haro connect agent-dock`、`haro observe --since last`、`haro propose --auto-dry-run`、`haro validate --pending` | Haro 自有目录 |
 | Phase E: Asset Registry Adapter | 待启动 | 把 skills/prompts/profiles/rules/tool config 纳入资产事件 | sidecar 数据目录、manifest、hash、rollback metadata；memory 仅记录 AgentDock observation refs | Haro 自有目录 |
 | Phase F: Gated Apply L0/L1 | 待启动 | 在 validation gate 后执行低风险变更 | `haro_apply`、snapshot、rollback、application event | 受控写入 |
 | Phase G: Patch Branch L2/L3 | 规划中 | 对 Haro 代码或 AgentDock contract 生成 patch branch 与验证报告 | proposal、patch branch、test report、rollback plan | 不直接 apply |
@@ -82,7 +82,7 @@ Haro 后续价值不在重新实现 AgentDock 已经具备的 runtime/workbench 
 
 ## Phase C: Read-only MCP Sidecar
 
-**目标**：让 AgentDock agent 能把 Haro 当作外部 MCP server 使用。当前代码已实现首批 read-only sidecar tools，下一步是注册到 AgentDock 后做 live smoke。
+**目标**：让 AgentDock agent 能把 Haro 当作外部 MCP server 使用。当前代码已实现首批 read-only sidecar tools，并已通过 AgentDock 注册 MCP live smoke（2026-05-08）。
 
 **首批 tools**：
 
@@ -109,6 +109,7 @@ Haro 后续价值不在重新实现 AgentDock 已经具备的 runtime/workbench 
 ```bash
 haro connect agent-dock --base-url http://127.0.0.1:3000
 haro observe --since last
+# next
 haro propose --auto-dry-run
 haro validate --pending
 haro status
@@ -128,7 +129,8 @@ AgentDock scheduler
 
 - 定时任务失败不影响普通 AgentDock session。
 - Haro 日志可独立排查。
-- cursor 可恢复，不重复消费已处理 observation。
+- 复用 FEAT-045 已落地的 AgentDock HTTP observation source。
+- cursor 可恢复，不重复消费已处理 observation，且跨 connection 不互相去重/碰撞。
 
 ## Phase E: Asset Registry Adapter
 

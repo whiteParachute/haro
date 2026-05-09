@@ -275,8 +275,10 @@ describe('HttpAgentDockSource [FEAT-045]', () => {
     const batch = await source.collectObservationBatch({ since: '2026-05-08T10:00:00.000Z' });
 
     expect(batch.window.since).toBe('2026-05-08T10:00:00.000Z');
+    expect(batch.sessions).toEqual([]);
     expect(batch.turns.map((turn) => turn.id)).toEqual(['agentdock-message-main-flow-1-new']);
     expect(batch.scheduledTaskRuns.map((run) => run.taskId)).toEqual(['new-task']);
     expect(batch.usageRecords).toHaveLength(1);
+    expect(batch.window.cursor).toBe('2026-05-08T10:40:00.000Z');
   });
 });

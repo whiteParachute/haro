@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.10.1",
+    "@haro/agentdock-contract": "workspace:*",
     "@haro/core": "workspace:*",
     "@haro/provider-codex": "workspace:*",
     "commander": "^12.1.0",

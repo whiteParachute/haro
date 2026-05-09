@@ -335,9 +335,9 @@ User approves proposal
 
 ### Phase 3: Scheduled Sidecar
 
-- 实现 `haro connect agent-dock`。
-- 实现 `haro observe --since last`。
-- 实现 `haro propose --auto-dry-run`。
+- `haro connect agent-dock` 已实现：保存 AgentDock HTTP connection。
+- `haro observe --since last` 已实现：复用 HTTP observation source，写入 `~/.haro/evolution/observations/` 并更新 base64url-encoded connection cursor；去重与锁均按 connection 隔离。
+- 下一步实现 `haro propose --auto-dry-run`。
 - 通过 AgentDock script scheduled task 周期触发。
 
 ### Phase 4: Asset Registry Adapter

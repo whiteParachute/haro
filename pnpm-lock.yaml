@@ -151,6 +151,9 @@ importers:
       '@clack/prompts':
         specifier: ^0.10.1
         version: 0.10.1
+      '@haro/agentdock-contract':
+        specifier: workspace:*
+        version: link:../agentdock-contract
       '@haro/channel':
         specifier: workspace:*
         version: link:../channel

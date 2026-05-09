@@ -81,7 +81,7 @@ AgentDock agent
 cursor 存储建议：
 
 ```text
-~/.haro/evolution/cursors/<connection-id>.json
+~/.haro/evolution/cursors/<base64url(connection-id)>.json
 ```
 
 ## 6. Acceptance Criteria / 验收标准
@@ -89,14 +89,15 @@ cursor 存储建议：
 - AC1: 给定有效 baseUrl，当执行 `haro connect agent-dock` 时，应写入 connection 配置并通过 schema 校验。（对应 R1）
 - AC2: 给定 fake AgentDock source 和空 cursor，当执行 `haro observe --since last` 时，应写入 observation 文件并更新 cursor。（对应 R2/R8）
 - AC2.1: 给定 `HARO_AGENTDOCK_BASE_URL`，当通过 `haro mcp` 调用 `haro_observe` 时，应采集真实 AgentDock HTTP API 并返回 `source=agentdock-http` 的 schema-valid `ObservationBatch`，不创建 `$HARO_HOME/memory`。（对应 R2/R5/R8）
-- AC3: 给定同一 cursor 重复执行 observe，不应生成重复 observation。（对应 R8）
+- AC3: 给定同一 cursor 重复执行 observe，不应生成重复 observation；跨 connection 的相同 observation id 不应互相去重。（对应 R8）
+- AC3.1: 给定 `prod:us` 与 `prod-us` 等可归一成同一路径的 connection id，cursor/lock 文件名应使用可逆编码隔离，不发生路径碰撞。
 - AC4: 给定未消费 observation，当执行 propose 时，应生成 dry-run proposal。（对应 R3）
 - AC5: 给定 pending proposal，当执行 validate 时，应生成 validation report。（对应 R4）
 - AC6: 给定 `--json`，stdout 应为可解析 JSON，stderr 不应混入进度文本。（对应 R7）
 
 ## 7. Test Plan / 测试计划
 
-- 单元测试：connection/cursor 读写。
+- 单元测试：connection/cursor 读写、跨 connection 去重隔离、cursor 文件名碰撞、锁目录并发保护、损坏配置友好报错。
 - 单元测试：HTTP observation source 的 sessions/messages/turns/tasks 映射、since 过滤、全局 limit、cursor、错误分类、baseUrl 凭据拒绝、excerpt 截断和 schema 校验。
 - 集成测试：fake source observe → propose → validate。
 - CLI 测试：`--json` 输出、退出码、stderr。
@@ -107,9 +108,10 @@ cursor 存储建议：
 
 - Q1: 第一版 scheduler 推荐 cron 频率是多少？
 - Q2: AgentDock reachability 检查走 HTTP health API，还是 capability probe？
-- Q3: observation cursor 用 AgentDock event id、timestamp，还是文件 offset？
+- Q3: 第一版已采用 observation timestamp cursor + connection-scoped 已落盘 observation id 去重；若 AgentDock 后续暴露稳定 event id，再升级为 event-id cursor。
 
 ## 9. Changelog / 变更记录
 
 - 2026-05-08: Haro — 初稿。
 - 2026-05-08: Codex — 先落地真实 AgentDock HTTP observation source 最小闭环，作为后续 `haro observe --since last` CLI 的共享读取层。
+- 2026-05-08: Codex — 实现 `haro connect agent-dock` 与 `haro observe --since last` 第一段：连接写入 `~/.haro/agentdock-connections.json`，observations 写入 `~/.haro/evolution/observations/`，cursor 写入 `~/.haro/evolution/cursors/<base64url(connection-id)>.json`，重复 observe 通过 connection-scoped 已落盘 observation id 去重，使用 per-connection lock 避免同连接并发重复写入，且不创建 `$HARO_HOME/memory`。

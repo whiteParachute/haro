@@ -156,11 +156,14 @@ export class HttpAgentDockSource {
       0,
       maxSessions,
     );
-    const sessions = mergedSessionRecords.map(mapSessionObservation).filter(isDefined);
+    const observedSessions = mergedSessionRecords.map(mapSessionObservation).filter(isDefined);
+    const sessions = observedSessions.filter((session) =>
+      isSessionObservationOnOrAfter(session, options.since),
+    );
 
     const turns: TurnObservation[] = [];
     const usageRecords: UsageRecordObservation[] = [];
-    for (const session of sessions) {
+    for (const session of observedSessions) {
       const messageResult = await this.fetchSessionScopedJson(
         session.id,
         `messages?limit=${maxMessagesPerSession}`,
@@ -629,6 +632,16 @@ function buildMetadata(input: {
 
 function filterByObservationLimit<T>(items: T[], limit: number | undefined): T[] {
   return limit ? items.slice(0, limit) : items;
+}
+
+function isSessionObservationOnOrAfter(
+  session: SessionObservation,
+  since: string | undefined,
+): boolean {
+  if (!since) return true;
+  return [session.startedAt, session.endedAt].some(
+    (iso) => iso !== undefined && isOnOrAfter(iso, since),
+  );
 }
 
 function isOnOrAfter(iso: string, since: string | undefined): boolean {
