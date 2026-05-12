@@ -82,7 +82,7 @@ import { registerUserCommands } from './commands/user.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerConfigWriteCommands } from './commands/config.js';
 import { registerCronCommands } from './commands/cron.js';
-import { registerAgentDockSidecarCommands } from './commands/agentdock-sidecar.js';
+import { readAgentDockSidecarStatus, registerAgentDockSidecarCommands } from './commands/agentdock-sidecar.js';
 import { buildServiceContext } from './commands/service-context.js';
 import { renderJson, renderJsonDiagnostic, renderListJson, resolveOutputMode } from './output/index.js';
 import {
@@ -555,13 +555,16 @@ function buildProgram(app: AppContext): Command {
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
         .action(async (options: { json?: boolean; human?: boolean }) => {
-          const report = readStatus(app.paths.root, app.paths.dbFile);
+          const report = {
+            ...readStatus(app.paths.root, app.paths.dbFile),
+            sidecar: readAgentDockSidecarStatus(app),
+          };
           const mode = resolveOutputMode(options, app.stdout);
           if (mode === 'json') {
             renderJson(report, { stdout: app.stdout });
             return;
           }
-          app.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+          app.stdout.write(`${formatStatusHuman(report)}\n`);
         });
     },
     program,
@@ -1609,7 +1612,8 @@ async function bootstrapApp(
     input.argv?.[0] === 'connect' ||
     input.argv?.[0] === 'observe' ||
     input.argv?.[0] === 'propose' ||
-    input.argv?.[0] === 'validate';
+    input.argv?.[0] === 'validate' ||
+    input.argv?.[0] === 'status';
   const legacyRunMemory =
     input.argv?.[0] === 'run' && input.argv.includes('--legacy-memory') && !input.argv.includes('--no-memory');
   const legacyMemoryRoots = resolveLegacyMemoryRoots(loaded.config, paths);
@@ -2874,6 +2878,10 @@ function readStatus(root: string, dbFile: string): Record<string, unknown> {
   } finally {
     db.close();
   }
+}
+
+function formatStatusHuman(report: Record<string, unknown>): string {
+  return JSON.stringify(report, null, 2);
 }
 
 function readUsage(root: string, dbFile: string, sessionId?: string): Record<string, unknown> {

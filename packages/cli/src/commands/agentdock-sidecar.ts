@@ -102,6 +102,49 @@ interface ValidateResult {
   validationPaths: string[];
 }
 
+interface SidecarStatusResult {
+  command: 'status';
+  root: string;
+  connection: {
+    path: string;
+    configured: boolean;
+    valid: boolean;
+    connectionCount: number;
+    defaultConnectionId?: string;
+    error?: string;
+    connections: Array<{
+      id: string;
+      baseUrl: string;
+      hasAuthRef: boolean;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  };
+  cursors: {
+    path: string;
+    count: number;
+    corruptCount: number;
+  };
+  observations: {
+    path: string;
+    batchCount: number;
+    corruptCount: number;
+    semanticObservationCount: number;
+  };
+  proposals: {
+    path: string;
+    count: number;
+    corruptCount: number;
+    pendingCount: number;
+    validatedCount: number;
+  };
+  validations: {
+    path: string;
+    count: number;
+    corruptCount: number;
+  };
+}
+
 const CONNECTIONS_FILE = 'agentdock-connections.json';
 const DEFAULT_CONNECTION_ID = 'agentdock-local';
 
@@ -323,6 +366,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
         throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
       }
     });
+
 }
 
 async function observeAgentDock(app: AppContext, options: ObserveOptions): Promise<ObserveResult> {
@@ -361,7 +405,7 @@ async function observeAgentDock(app: AppContext, options: ObserveOptions): Promi
     const duplicate = existsSync(observationPath);
     let wroteObservation = false;
     if (observationCount > 0 && !duplicate) {
-      mkdirSync(join(app.paths.root, 'evolution', 'observations'), { recursive: true });
+      mkdirSync(observationsDir(app.paths.root), { recursive: true });
       writeJsonFile(observationPath, prunedBatch);
       wroteObservation = true;
     }
@@ -374,7 +418,7 @@ async function observeAgentDock(app: AppContext, options: ObserveOptions): Promi
         lastObservationId: prunedBatch.id,
         ...(observationCount > 0 ? { lastObservationPath: observationPath } : {}),
       };
-      mkdirSync(join(app.paths.root, 'evolution', 'cursors'), { recursive: true });
+      mkdirSync(cursorsDir(app.paths.root), { recursive: true });
       writeJsonFile(cursorPath, cursorRecord);
     }
 
@@ -430,7 +474,6 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
 
     const proposal = createDryRunProposal(selected, app.now);
     const path = proposalFilePath(app.paths.root, proposal);
-    mkdirSync(join(app.paths.root, 'evolution', 'proposals'), { recursive: true });
     writeJsonFile(path, proposal);
     return {
       command: 'propose',
@@ -505,6 +548,36 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
   } finally {
     releaseConnectionLock(lockDir);
   }
+}
+
+export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult {
+  const validationStats = readValidationStats(app.paths.root);
+  const proposalStats = readProposalStats(app.paths.root, validationStats.validatedProposalIds);
+  const observationStats = readObservationStats(app.paths.root);
+  return {
+    command: 'status',
+    root: app.paths.root,
+    connection: readConnectionStatus(app.paths.root),
+    cursors: readCursorStats(app.paths.root),
+    observations: {
+      path: observationsDir(app.paths.root),
+      batchCount: observationStats.batchCount,
+      corruptCount: observationStats.corruptCount,
+      semanticObservationCount: observationStats.semanticObservationCount,
+    },
+    proposals: {
+      path: proposalsDir(app.paths.root),
+      count: proposalStats.count,
+      corruptCount: proposalStats.corruptCount,
+      pendingCount: proposalStats.pendingCount,
+      validatedCount: proposalStats.validatedCount,
+    },
+    validations: {
+      path: validationsDir(app.paths.root),
+      count: validationStats.count,
+      corruptCount: validationStats.corruptCount,
+    },
+  };
 }
 
 function resolveObservationConnection(
@@ -695,6 +768,23 @@ function readCursor(path: string, expectedConnectionId?: string): ObservationCur
       `Invalid AgentDock cursor file at ${path}; remove it and rerun \`haro observe\`. ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  const cursor = parseCursorRecord(value);
+  if (!cursor) {
+    throw new CommanderExit(
+      1,
+      `Invalid AgentDock cursor file at ${path}; expected { connectionId, cursor }. Remove it and rerun \`haro observe\`.`,
+    );
+  }
+  if (expectedConnectionId && cursor.connectionId !== expectedConnectionId) {
+    throw new CommanderExit(
+      1,
+      `Invalid AgentDock cursor file at ${path}; connectionId '${cursor.connectionId}' does not match '${expectedConnectionId}'. Remove it and rerun \`haro observe\`.`,
+    );
+  }
+  return cursor;
+}
+
+function parseCursorRecord(value: unknown): ObservationCursorRecord | undefined {
   if (
     !isRecord(value) ||
     typeof value.connectionId !== 'string' ||
@@ -703,16 +793,7 @@ function readCursor(path: string, expectedConnectionId?: string): ObservationCur
     (value.lastObservationId !== undefined && typeof value.lastObservationId !== 'string') ||
     (value.lastObservationPath !== undefined && typeof value.lastObservationPath !== 'string')
   ) {
-    throw new CommanderExit(
-      1,
-      `Invalid AgentDock cursor file at ${path}; expected { connectionId, cursor }. Remove it and rerun \`haro observe\`.`,
-    );
-  }
-  if (expectedConnectionId && value.connectionId !== expectedConnectionId) {
-    throw new CommanderExit(
-      1,
-      `Invalid AgentDock cursor file at ${path}; connectionId '${value.connectionId}' does not match '${expectedConnectionId}'. Remove it and rerun \`haro observe\`.`,
-    );
+    return undefined;
   }
   return value as unknown as ObservationCursorRecord;
 }
@@ -722,24 +803,38 @@ function connectionsPath(root: string): string {
 }
 
 function cursorFilePath(root: string, connectionId: string): string {
-  return join(root, 'evolution', 'cursors', `${encodedConnectionId(connectionId)}.json`);
+  return join(cursorsDir(root), `${encodedConnectionId(connectionId)}.json`);
 }
 
 function observationFilePath(root: string, batch: ObservationBatch): string {
   return join(
-    root,
-    'evolution',
-    'observations',
+    observationsDir(root),
     `${safePathSegment(batch.collectedAt)}-${encodedConnectionId(batch.connectionId)}-${safePathSegment(batch.id)}.json`,
   );
 }
 
 function proposalFilePath(root: string, proposal: EvolutionProposal): string {
-  return join(root, 'evolution', 'proposals', `${safePathSegment(proposal.id)}.json`);
+  return join(proposalsDir(root), `${safePathSegment(proposal.id)}.json`);
 }
 
 function validationFilePath(root: string, report: ValidationReport): string {
-  return join(root, 'evolution', 'validations', `${safePathSegment(report.id)}.json`);
+  return join(validationsDir(root), `${safePathSegment(report.id)}.json`);
+}
+
+function cursorsDir(root: string): string {
+  return join(root, 'evolution', 'cursors');
+}
+
+function observationsDir(root: string): string {
+  return join(root, 'evolution', 'observations');
+}
+
+function proposalsDir(root: string): string {
+  return join(root, 'evolution', 'proposals');
+}
+
+function validationsDir(root: string): string {
+  return join(root, 'evolution', 'validations');
 }
 
 function acquireConnectionLock(root: string, connectionId: string): string {
@@ -938,6 +1033,146 @@ function readValidatedProposalIds(root: string): { validated: Set<string>; corru
     }
   }
   return { validated, corruptCount };
+}
+
+function readConnectionStatus(root: string): SidecarStatusResult['connection'] {
+  const path = connectionsPath(root);
+  if (!existsSync(path)) {
+    return {
+      path,
+      configured: false,
+      valid: true,
+      connectionCount: 0,
+      connections: [],
+    };
+  }
+  try {
+    const file = readConnectionsFile(root);
+    return {
+      path,
+      configured: true,
+      valid: true,
+      connectionCount: Object.keys(file.connections).length,
+      ...(file.defaultConnectionId ? { defaultConnectionId: file.defaultConnectionId } : {}),
+      connections: Object.values(file.connections)
+        .map((connection) => ({
+          id: connection.id,
+          baseUrl: connection.baseUrl,
+          hasAuthRef: Boolean(connection.authRef),
+          createdAt: connection.createdAt,
+          updatedAt: connection.updatedAt,
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    };
+  } catch (error) {
+    return {
+      path,
+      configured: true,
+      valid: false,
+      connectionCount: 0,
+      error: error instanceof Error ? error.message : String(error),
+      connections: [],
+    };
+  }
+}
+
+function readCursorStats(root: string): SidecarStatusResult['cursors'] {
+  const dir = cursorsDir(root);
+  if (!existsSync(dir)) return { path: dir, count: 0, corruptCount: 0 };
+  let count = 0;
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const cursor = parseCursorRecord(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (!cursor) {
+        corruptCount += 1;
+        continue;
+      }
+      count += 1;
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { path: dir, count, corruptCount };
+}
+
+function readObservationStats(root: string): {
+  batchCount: number;
+  corruptCount: number;
+  semanticObservationCount: number;
+} {
+  const dir = observationsDir(root);
+  if (!existsSync(dir)) return { batchCount: 0, corruptCount: 0, semanticObservationCount: 0 };
+  let batchCount = 0;
+  let corruptCount = 0;
+  let semanticObservationCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const batch = ObservationBatchSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      batchCount += 1;
+      semanticObservationCount += countSemanticObservations(batch);
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { batchCount, corruptCount, semanticObservationCount };
+}
+
+function readProposalStats(
+  root: string,
+  validatedProposalIds: ReadonlySet<string>,
+): {
+  count: number;
+  corruptCount: number;
+  pendingCount: number;
+  validatedCount: number;
+} {
+  const dir = proposalsDir(root);
+  if (!existsSync(dir)) return { count: 0, corruptCount: 0, pendingCount: 0, validatedCount: 0 };
+  let count = 0;
+  let corruptCount = 0;
+  let pendingCount = 0;
+  let validatedCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const proposal = EvolutionProposalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+      if (validatedProposalIds.has(proposal.id)) {
+        validatedCount += 1;
+      } else {
+        pendingCount += 1;
+      }
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount, pendingCount, validatedCount };
+}
+
+function readValidationStats(root: string): {
+  count: number;
+  corruptCount: number;
+  validatedProposalIds: Set<string>;
+} {
+  const dir = validationsDir(root);
+  const validatedProposalIds = new Set<string>();
+  if (!existsSync(dir)) return { count: 0, corruptCount: 0, validatedProposalIds };
+  let count = 0;
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const report = ValidationReportSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+      validatedProposalIds.add(report.proposalId);
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount, validatedProposalIds };
 }
 
 function emitCorruptJsonWarnings(

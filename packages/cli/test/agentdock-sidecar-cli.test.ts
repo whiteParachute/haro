@@ -648,6 +648,130 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.skippedCorruptProposalCount).toBe(1);
   });
 
+  it('status summarizes an empty sidecar store without creating memory', async () => {
+    const root = newHome('agentdock-status-empty');
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'status',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(result.action).toBe('status');
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: { sidecar: {
+      command: string;
+      connection: { configured: boolean; valid: boolean; connectionCount: number };
+      cursors: { count: number; corruptCount: number };
+      observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
+      proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
+      validations: { count: number; corruptCount: number };
+    } } }).data.sidecar;
+    expect(payload.command).toBe('status');
+    expect(payload.connection).toMatchObject({ configured: false, valid: true, connectionCount: 0 });
+    expect(payload.cursors).toMatchObject({ count: 0, corruptCount: 0 });
+    expect(payload.observations).toMatchObject({ batchCount: 0, corruptCount: 0, semanticObservationCount: 0 });
+    expect(payload.proposals).toMatchObject({ count: 0, pendingCount: 0, validatedCount: 0, corruptCount: 0 });
+    expect(payload.validations).toMatchObject({ count: 0, corruptCount: 0 });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('status reports connection and evolution store counts including corrupt artifacts', async () => {
+    const root = newHome('agentdock-status-populated');
+    const connectOut = captureStream();
+    const connectErr = captureStream();
+    const connect = await runCli(commonOpts(root, connectOut, connectErr, [
+      'connect',
+      'agent-dock',
+      '--base-url',
+      'http://agentdock.local',
+      '--json',
+    ]));
+    expect(connect.exitCode).toBe(0);
+
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(propose.exitCode).toBe(0);
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+
+    writeFileSync(join(root, 'evolution', 'cursors', 'broken.json'), '{ broken json');
+    writeFileSync(join(root, 'evolution', 'observations', 'broken.json'), '{ broken json');
+    writeFileSync(join(root, 'evolution', 'proposals', 'broken.json'), '{ broken json');
+    writeFileSync(join(root, 'evolution', 'validations', 'broken.json'), '{ broken json');
+
+    const statusOut = captureStream();
+    const statusErr = captureStream();
+    const status = await runCli(commonOpts(root, statusOut, statusErr, [
+      'status',
+      '--json',
+    ]));
+
+    expect(status.exitCode).toBe(0);
+    expect(statusErr.read()).toBe('');
+    const payload = (JSON.parse(statusOut.read()) as { data: { sidecar: {
+      connection: {
+        configured: boolean;
+        valid: boolean;
+        connectionCount: number;
+        defaultConnectionId?: string;
+        connections: Array<{ id: string; baseUrl: string; hasAuthRef: boolean }>;
+      };
+      cursors: { count: number; corruptCount: number };
+      observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
+      proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
+      validations: { count: number; corruptCount: number };
+    } } }).data.sidecar;
+    expect(payload.connection).toMatchObject({
+      configured: true,
+      valid: true,
+      connectionCount: 1,
+      defaultConnectionId: 'agentdock-local',
+    });
+    expect(payload.connection.connections).toEqual([
+      expect.objectContaining({ id: 'agentdock-local', baseUrl: 'http://agentdock.local', hasAuthRef: false }),
+    ]);
+    expect(payload.cursors).toMatchObject({ count: 1, corruptCount: 1 });
+    expect(payload.observations.batchCount).toBe(1);
+    expect(payload.observations.semanticObservationCount).toBeGreaterThan(0);
+    expect(payload.observations.corruptCount).toBe(1);
+    expect(payload.proposals).toMatchObject({ count: 1, pendingCount: 0, validatedCount: 1, corruptCount: 1 });
+    expect(payload.validations).toMatchObject({ count: 1, corruptCount: 1 });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+    expect(connectErr.read()).toBe('');
+    expect(observeErr.read()).toBe('');
+    expect(proposeErr.read()).toBe('');
+    expect(validateErr.read()).toBe('');
+  });
+
   it('propose --auto-dry-run is a no-op when no observations exist', async () => {
     const root = newHome('agentdock-propose-empty');
     const stdout = captureStream();
