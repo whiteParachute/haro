@@ -357,7 +357,8 @@ User approves proposal
 - `haro connect agent-dock` 已实现：保存 AgentDock HTTP connection。
 - `haro observe --since last` 已实现：复用 HTTP observation source，写入 `~/.haro/evolution/observations/` 并更新 base64url-encoded connection cursor；去重与锁均按 connection 隔离。
 - `haro propose --auto-dry-run` 已实现：读取未消费 observation batches，写入 `~/.haro/evolution/proposals/` dry-run proposal；source refs 作为 consumption marker，重复运行幂等；`--limit` 限制单次 proposal 打包的 observation batch 数，损坏 observation/proposal 会在 JSON 结果和 stderr warning 中显式暴露。
-- 下一步实现 `haro validate --pending`、`haro status`、`haro doctor`。
+- `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
+- 下一步实现 `haro status`、`haro doctor`。
 - 通过 AgentDock script scheduled task 周期触发。
 
 ### Phase 4: Frontier Intelligence Intake

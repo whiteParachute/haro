@@ -5,11 +5,13 @@ import type { Command } from 'commander';
 import {
   EvolutionProposalSchema,
   ObservationBatchSchema,
+  ValidationReportSchema,
   createFakeAgentDockSource,
   createHttpAgentDockSource,
   type EvolutionProposal,
   type ObservationBatch,
   type Ref,
+  type ValidationReport,
 } from '@haro/agentdock-contract';
 import { CommanderExit, type AppContext } from '../index.js';
 import { renderError, renderJson, resolveOutputMode } from '../output/index.js';
@@ -55,6 +57,11 @@ interface ProposeOptions extends OutputFlags {
   limit?: string;
 }
 
+interface ValidateOptions extends OutputFlags {
+  pending?: boolean;
+  limit?: string;
+}
+
 interface ObserveResult {
   command: 'observe';
   connectionId: string;
@@ -80,6 +87,19 @@ interface ProposeResult {
   wroteProposal: boolean;
   proposal?: EvolutionProposal;
   proposalPath?: string;
+}
+
+interface ValidateResult {
+  command: 'validate';
+  mode: 'pending';
+  validationCount: number;
+  validatedProposalCount: number;
+  pendingProposalCount: number;
+  skippedCorruptProposalCount: number;
+  skippedCorruptValidationCount: number;
+  wroteValidations: boolean;
+  validations: ValidationReport[];
+  validationPaths: string[];
 }
 
 const CONNECTIONS_FILE = 'agentdock-connections.json';
@@ -252,6 +272,57 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
         throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
       }
     });
+
+  program
+    .command('validate')
+    .description('Validate persisted pending AgentDock sidecar proposals')
+    .option('--pending', 'validate proposals that do not yet have a validation report')
+    .option('--limit <n>', 'maximum pending proposals to validate')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: ValidateOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = validateAgentDock(app, options);
+        if (mode === 'json') {
+          renderJson({
+            command: result.command,
+            mode: result.mode,
+            validationCount: result.validationCount,
+            validatedProposalCount: result.validatedProposalCount,
+            pendingProposalCount: result.pendingProposalCount,
+            skippedCorruptProposalCount: result.skippedCorruptProposalCount,
+            skippedCorruptValidationCount: result.skippedCorruptValidationCount,
+            wroteValidations: result.wroteValidations,
+            validationIds: result.validations.map((report) => report.id),
+            validationPaths: result.validationPaths,
+            validations: result.validations,
+          }, { stdout: app.stdout });
+          return;
+        }
+        if (result.validations.length > 0) {
+          app.stdout.write(
+            [
+              `Validations: ${result.validationCount}`,
+              `Validated proposals: ${result.validatedProposalCount}`,
+              `Pending proposals after run: ${result.pendingProposalCount}`,
+              `Wrote: ${result.validationPaths.join(', ')}`,
+            ].join('\n') + '\n',
+          );
+          return;
+        }
+        app.stdout.write(
+          [
+            'No pending AgentDock sidecar proposals found.',
+            `Pending proposals after run: ${result.pendingProposalCount}`,
+          ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
 }
 
 async function observeAgentDock(app: AppContext, options: ObserveOptions): Promise<ObserveResult> {
@@ -372,6 +443,64 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       wroteProposal: true,
       proposal,
       proposalPath: path,
+    };
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
+function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateResult {
+  if (!options.pending) {
+    throw new CommanderExit(
+      2,
+      '`haro validate` is currently read-only; pass `--pending` to validate persisted pending proposals.',
+    );
+  }
+
+  const limit = normalizeOptionalPositiveInt(options.limit, '--limit');
+  const lockDir = acquireValidateLock(app.paths.root);
+  try {
+    const existingValidationResult = readValidatedProposalIds(app.paths.root);
+    const pendingProposalResult = readPendingProposals(app.paths.root, existingValidationResult.validated);
+    emitCorruptValidationWarnings(app, {
+      corruptProposalCount: pendingProposalResult.corruptCount,
+      corruptValidationCount: existingValidationResult.corruptCount,
+    });
+    const pending = pendingProposalResult.proposals;
+    const selected = typeof limit === 'number' ? pending.slice(0, limit) : pending;
+    if (selected.length === 0) {
+      return {
+        command: 'validate',
+        mode: 'pending',
+        validationCount: 0,
+        validatedProposalCount: 0,
+        pendingProposalCount: 0,
+        skippedCorruptProposalCount: pendingProposalResult.corruptCount,
+        skippedCorruptValidationCount: existingValidationResult.corruptCount,
+        wroteValidations: false,
+        validations: [],
+        validationPaths: [],
+      };
+    }
+
+    const validations = selected.map((proposal) => createValidationReport(proposal, app.now));
+    const validationPaths = validations.map((report) => validationFilePath(app.paths.root, report));
+    for (let i = 0; i < validations.length; i += 1) {
+      const report = validations[i]!;
+      const path = validationPaths[i]!;
+      writeJsonFile(path, report);
+    }
+    return {
+      command: 'validate',
+      mode: 'pending',
+      validationCount: validations.length,
+      validatedProposalCount: selected.length,
+      pendingProposalCount: pending.length - selected.length,
+      skippedCorruptProposalCount: pendingProposalResult.corruptCount,
+      skippedCorruptValidationCount: existingValidationResult.corruptCount,
+      wroteValidations: true,
+      validations,
+      validationPaths,
     };
   } finally {
     releaseConnectionLock(lockDir);
@@ -609,6 +738,10 @@ function proposalFilePath(root: string, proposal: EvolutionProposal): string {
   return join(root, 'evolution', 'proposals', `${safePathSegment(proposal.id)}.json`);
 }
 
+function validationFilePath(root: string, report: ValidationReport): string {
+  return join(root, 'evolution', 'validations', `${safePathSegment(report.id)}.json`);
+}
+
 function acquireConnectionLock(root: string, connectionId: string): string {
   const parent = join(root, 'evolution', 'locks');
   mkdirSync(parent, { recursive: true });
@@ -640,6 +773,25 @@ function acquireProposeLock(root: string): string {
       throw new CommanderExit(
         1,
         'Another haro propose process is already running.',
+      );
+    }
+    throw error;
+  }
+  return dir;
+}
+
+function acquireValidateLock(root: string): string {
+  const parent = join(root, 'evolution', 'locks');
+  mkdirSync(parent, { recursive: true });
+  const dir = join(parent, 'validate.lock');
+  try {
+    mkdirSync(dir);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === 'EEXIST') {
+      throw new CommanderExit(
+        1,
+        'Another haro validate process is already running.',
       );
     }
     throw error;
@@ -750,6 +902,44 @@ function readConsumedObservationBatchIds(root: string): { consumed: Set<string>;
   return { consumed, corruptCount };
 }
 
+function readPendingProposals(
+  root: string,
+  validatedProposalIds: ReadonlySet<string>,
+): { proposals: EvolutionProposal[]; corruptCount: number } {
+  const dir = join(root, 'evolution', 'proposals');
+  if (!existsSync(dir)) return { proposals: [], corruptCount: 0 };
+  const proposals: EvolutionProposal[] = [];
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    const path = join(dir, name);
+    try {
+      const proposal = EvolutionProposalSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+      if (!validatedProposalIds.has(proposal.id)) proposals.push(proposal);
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { proposals, corruptCount };
+}
+
+function readValidatedProposalIds(root: string): { validated: Set<string>; corruptCount: number } {
+  const dir = join(root, 'evolution', 'validations');
+  const validated = new Set<string>();
+  if (!existsSync(dir)) return { validated, corruptCount: 0 };
+  let corruptCount = 0;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const report = ValidationReportSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      validated.add(report.proposalId);
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { validated, corruptCount };
+}
+
 function emitCorruptJsonWarnings(
   app: AppContext,
   counts: { corruptObservationCount: number; corruptProposalCount: number },
@@ -762,6 +952,22 @@ function emitCorruptJsonWarnings(
   if (counts.corruptProposalCount > 0) {
     app.stderr.write(
       `Warning: skipped ${counts.corruptProposalCount} corrupt AgentDock proposal file(s) under evolution/proposals.\n`,
+    );
+  }
+}
+
+function emitCorruptValidationWarnings(
+  app: AppContext,
+  counts: { corruptProposalCount: number; corruptValidationCount: number },
+): void {
+  if (counts.corruptProposalCount > 0) {
+    app.stderr.write(
+      `Warning: skipped ${counts.corruptProposalCount} corrupt AgentDock proposal file(s) under evolution/proposals.\n`,
+    );
+  }
+  if (counts.corruptValidationCount > 0) {
+    app.stderr.write(
+      `Warning: skipped ${counts.corruptValidationCount} corrupt AgentDock validation file(s) under evolution/validations.\n`,
     );
   }
 }
@@ -819,6 +1025,60 @@ function createDryRunProposal(
     createdAt: timestamp,
     updatedAt: timestamp,
   });
+}
+
+function createValidationReport(
+  proposal: EvolutionProposal,
+  now: () => Date,
+): ValidationReport {
+  const rollbackReady = !proposal.rollbackPlan.snapshotRequired || proposal.rollbackPlan.rollbackRefs.length > 0;
+  const blockingReasons = validationBlockingReasons(proposal, rollbackReady);
+  const riskVerdict = proposal.level === 'L2' || proposal.level === 'L3'
+    ? 'blocked'
+    : proposal.riskLevel;
+  const evidenceRefs: Ref[] = [
+    {
+      id: proposal.id,
+      kind: 'evolution-proposal',
+      uri: `haro-sidecar://proposals/${encodeURIComponent(proposal.id)}`,
+    },
+    ...proposal.sourceObservationRefs,
+  ];
+  const fingerprint = sha256(JSON.stringify({
+    proposalId: proposal.id,
+    proposalUpdatedAt: proposal.updatedAt,
+    riskVerdict,
+    rollbackReady,
+    blockingReasons,
+    requiredTests: proposal.testPlan.requiredCommands,
+  }));
+  return ValidationReportSchema.parse({
+    id: `validation_${fingerprint.slice(0, 24)}`,
+    proposalId: proposal.id,
+    riskVerdict,
+    requiredTests: proposal.testPlan.requiredCommands,
+    rollbackReady,
+    applyEligible: false,
+    blockingReasons,
+    evidenceRefs,
+    createdAt: now().toISOString(),
+  });
+}
+
+function validationBlockingReasons(proposal: EvolutionProposal, rollbackReady: boolean): string[] {
+  const reasons = [
+    'FEAT-045 scheduled validation is advisory; gated apply and explicit user approval are not implemented in this CLI slice.',
+  ];
+  if (!rollbackReady) {
+    reasons.push('Rollback plan requires a snapshot or rollback refs before apply can be considered.');
+  }
+  if (proposal.level === 'L2' || proposal.level === 'L3') {
+    reasons.push('Direct apply is forbidden for L2/L3 proposals; generate a patch branch and require human review.');
+  }
+  if (proposal.riskLevel === 'high') {
+    reasons.push('High-risk proposals require manual review before any apply gate can be considered.');
+  }
+  return reasons;
 }
 
 function observationBatchRef(batch: ObservationBatch): Ref {

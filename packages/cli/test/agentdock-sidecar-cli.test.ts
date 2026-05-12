@@ -370,6 +370,284 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.skippedCorruptObservationCount).toBe(1);
   });
 
+  it('validate --pending writes validation reports for pending proposals and is idempotent', async () => {
+    const root = newHome('agentdock-validate');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(propose.exitCode).toBe(0);
+    const proposalPayload = (JSON.parse(proposeOut.read()) as { data: { proposalId: string } }).data;
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(validate.exitCode).toBe(0);
+    expect(validate.action).toBe('validate');
+    expect(validateErr.read()).toBe('');
+    const payload = (JSON.parse(validateOut.read()) as { data: {
+      validationCount: number;
+      validatedProposalCount: number;
+      pendingProposalCount: number;
+      wroteValidations: boolean;
+      validationPaths: string[];
+      validations: Array<{
+        proposalId: string;
+        riskVerdict: string;
+        rollbackReady: boolean;
+        applyEligible: boolean;
+        blockingReasons: string[];
+        evidenceRefs: Array<{ id: string; kind: string }>;
+      }>;
+    } }).data;
+    expect(payload.validationCount).toBe(1);
+    expect(payload.validatedProposalCount).toBe(1);
+    expect(payload.pendingProposalCount).toBe(0);
+    expect(payload.wroteValidations).toBe(true);
+    expect(payload.validations[0]).toMatchObject({
+      proposalId: proposalPayload.proposalId,
+      riskVerdict: 'medium',
+      rollbackReady: true,
+      applyEligible: false,
+    });
+    expect(payload.validations[0]?.blockingReasons[0]).toContain('FEAT-045');
+    expect(payload.validations[0]?.evidenceRefs[0]).toMatchObject({
+      id: proposalPayload.proposalId,
+      kind: 'evolution-proposal',
+    });
+    expect(existsSync(payload.validationPaths[0]!)).toBe(true);
+    expect(readdirSync(join(root, 'evolution', 'validations'))).toHaveLength(1);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+
+    const repeatOut = captureStream();
+    const repeatErr = captureStream();
+    const repeat = await runCli(commonOpts(root, repeatOut, repeatErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(repeat.exitCode).toBe(0);
+    expect(repeatErr.read()).toBe('');
+    const repeatPayload = (JSON.parse(repeatOut.read()) as { data: {
+      validationCount: number;
+      validatedProposalCount: number;
+      wroteValidations: boolean;
+    } }).data;
+    expect(repeatPayload.validationCount).toBe(0);
+    expect(repeatPayload.validatedProposalCount).toBe(0);
+    expect(repeatPayload.wroteValidations).toBe(false);
+    expect(readdirSync(join(root, 'evolution', 'validations'))).toHaveLength(1);
+    expect(observeErr.read()).toBe('');
+    expect(proposeErr.read()).toBe('');
+  });
+
+  it('validate --pending --limit only validates the selected pending proposal count', async () => {
+    const root = newHome('agentdock-validate-limit');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(propose.exitCode).toBe(0);
+    const proposalPayload = (JSON.parse(proposeOut.read()) as { data: {
+      proposalPath: string;
+      proposal: Record<string, unknown>;
+    } }).data;
+    const secondProposal = {
+      ...proposalPayload.proposal,
+      id: 'proposal_zzzz_limit_fixture',
+      title: 'Second pending proposal for limit coverage',
+      updatedAt: '2026-05-08T12:01:00.000Z',
+    };
+    writeFileSync(
+      join(root, 'evolution', 'proposals', 'proposal_zzzz_limit_fixture.json'),
+      `${JSON.stringify(secondProposal, null, 2)}\n`,
+    );
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--limit',
+      '1',
+      '--json',
+    ]));
+
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const payload = (JSON.parse(validateOut.read()) as { data: {
+      validationCount: number;
+      validatedProposalCount: number;
+      pendingProposalCount: number;
+      validations: Array<{ proposalId: string }>;
+    } }).data;
+    expect(payload.validationCount).toBe(1);
+    expect(payload.validatedProposalCount).toBe(1);
+    expect(payload.pendingProposalCount).toBe(1);
+    expect(payload.validations[0]?.proposalId).not.toBe('proposal_zzzz_limit_fixture');
+
+    const remainingOut = captureStream();
+    const remainingErr = captureStream();
+    const remaining = await runCli(commonOpts(root, remainingOut, remainingErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(remaining.exitCode).toBe(0);
+    expect(remainingErr.read()).toBe('');
+    const remainingPayload = (JSON.parse(remainingOut.read()) as { data: {
+      validationCount: number;
+      pendingProposalCount: number;
+      validations: Array<{ proposalId: string }>;
+    } }).data;
+    expect(remainingPayload.validationCount).toBe(1);
+    expect(remainingPayload.pendingProposalCount).toBe(0);
+    expect(remainingPayload.validations[0]?.proposalId).toBe('proposal_zzzz_limit_fixture');
+    expect(readdirSync(join(root, 'evolution', 'validations'))).toHaveLength(2);
+    expect(observeErr.read()).toBe('');
+    expect(proposeErr.read()).toBe('');
+  });
+
+  it('validate --pending reports corrupt validations and repairs deterministic validation files', async () => {
+    const root = newHome('agentdock-validate-repair-corrupt');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(propose.exitCode).toBe(0);
+
+    const firstValidateOut = captureStream();
+    const firstValidateErr = captureStream();
+    const firstValidate = await runCli(commonOpts(root, firstValidateOut, firstValidateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(firstValidate.exitCode).toBe(0);
+    const firstPayload = (JSON.parse(firstValidateOut.read()) as { data: {
+      validationIds: string[];
+      validationPaths: string[];
+    } }).data;
+    writeFileSync(firstPayload.validationPaths[0]!, '{}\n');
+
+    const repairOut = captureStream();
+    const repairErr = captureStream();
+    const repair = await runCli(commonOpts(root, repairOut, repairErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(repair.exitCode).toBe(0);
+    expect(repairErr.read()).toContain('skipped 1 corrupt AgentDock validation');
+    const repairPayload = (JSON.parse(repairOut.read()) as { data: {
+      validationCount: number;
+      wroteValidations: boolean;
+      skippedCorruptValidationCount: number;
+      validationIds: string[];
+      validations: Array<{ id: string; proposalId: string }>;
+    } }).data;
+    expect(repairPayload.validationCount).toBe(1);
+    expect(repairPayload.wroteValidations).toBe(true);
+    expect(repairPayload.skippedCorruptValidationCount).toBe(1);
+    expect(repairPayload.validationIds[0]).toBe(firstPayload.validationIds[0]);
+    expect(repairPayload.validations[0]?.proposalId).toBeDefined();
+    const repairedFile = JSON.parse(readFileSync(firstPayload.validationPaths[0]!, 'utf8')) as {
+      id: string;
+      proposalId: string;
+    };
+    expect(repairedFile.id).toBe(firstPayload.validationIds[0]);
+    expect(repairedFile.proposalId).toBe(repairPayload.validations[0]?.proposalId);
+    expect(observeErr.read()).toBe('');
+    expect(proposeErr.read()).toBe('');
+    expect(firstValidateErr.read()).toBe('');
+  });
+
+  it('validate --pending reports corrupt proposal files without silently ignoring them', async () => {
+    const root = newHome('agentdock-validate-corrupt-proposal');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    mkdirSync(proposalDir, { recursive: true });
+    writeFileSync(join(proposalDir, 'broken.json'), '{ broken json');
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toContain('skipped 1 corrupt AgentDock proposal');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      validationCount: number;
+      wroteValidations: boolean;
+      skippedCorruptProposalCount: number;
+    } }).data;
+    expect(payload.validationCount).toBe(0);
+    expect(payload.wroteValidations).toBe(false);
+    expect(payload.skippedCorruptProposalCount).toBe(1);
+  });
+
   it('propose --auto-dry-run is a no-op when no observations exist', async () => {
     const root = newHome('agentdock-propose-empty');
     const stdout = captureStream();

@@ -93,12 +93,13 @@ cursor 存储建议：
 - AC3.1: 给定 `prod:us` 与 `prod-us` 等可归一成同一路径的 connection id，cursor/lock 文件名应使用可逆编码隔离，不发生路径碰撞。
 - AC4: 给定未消费 observation，当执行 `haro propose --auto-dry-run` 时，应生成 dry-run proposal；重复执行不重复消费同一 observation batch；`--limit` 只限制单次打包进 proposal 的 observation batch 数，不表示 proposal 数。（对应 R3/R8）
 - AC4.1: 给定损坏的 observation/proposal JSON，当执行 `haro propose --auto-dry-run --json` 时，应在结果中暴露 `skippedCorruptObservationCount` / `skippedCorruptProposalCount` 并向 stderr 输出 warning；若确定性 proposal 文件已存在但损坏，应原子覆盖修复。（对应 R3/R7/R8）
-- AC5: 给定 pending proposal，当执行 validate 时，应生成 validation report。（对应 R4）
+- AC5: 给定 pending proposal，当执行 `haro validate --pending` 时，应生成 advisory validation report；重复执行不重复验证同一 proposal；`--limit` 只限制单次处理的 pending proposal 数。（对应 R4/R8）
+- AC5.1: 给定损坏的 proposal/validation JSON，当执行 `haro validate --pending --json` 时，应在结果中暴露 `skippedCorruptProposalCount` / `skippedCorruptValidationCount` 并向 stderr 输出 warning；若确定性 validation 文件已存在但损坏，应原子覆盖修复。（对应 R4/R7/R8）
 - AC6: 给定 `--json`，stdout 应为可解析 JSON，stderr 不应混入进度文本。（对应 R7）
 
 ## 7. Test Plan / 测试计划
 
-- 单元测试：connection/cursor 读写、跨 connection 去重隔离、cursor 文件名碰撞、锁目录并发保护、损坏配置友好报错、propose 损坏 observation/proposal 计数与确定性 proposal 修复。
+- 单元测试：connection/cursor 读写、跨 connection 去重隔离、cursor 文件名碰撞、锁目录并发保护、损坏配置友好报错、propose 损坏 observation/proposal 计数与确定性 proposal 修复、validate 损坏 proposal/validation 计数与确定性 validation 修复。
 - 单元测试：HTTP observation source 的 sessions/messages/turns/tasks 映射、since 过滤、全局 limit、cursor、错误分类、baseUrl 凭据拒绝、excerpt 截断和 schema 校验。
 - 集成测试：fake source observe → propose → validate。
 - CLI 测试：`--json` 输出、退出码、stderr。
@@ -118,3 +119,4 @@ cursor 存储建议：
 - 2026-05-08: Codex — 实现 `haro connect agent-dock` 与 `haro observe --since last` 第一段：连接写入 `~/.haro/agentdock-connections.json`，observations 写入 `~/.haro/evolution/observations/`，cursor 写入 `~/.haro/evolution/cursors/<base64url(connection-id)>.json`，重复 observe 通过 connection-scoped 已落盘 observation id 去重，使用 per-connection lock 避免同连接并发重复写入，且不创建 `$HARO_HOME/memory`。
 - 2026-05-12: Codex — 实现 `haro propose --auto-dry-run` 第一段：读取未消费 observation batches，写入 `~/.haro/evolution/proposals/<proposal-id>.json` dry-run proposal；通过 proposal source refs 记录已消费 batch，重复执行幂等；新增 propose lock、saved `authRef` 校验和 cursor connectionId 校验，仍不创建 `$HARO_HOME/memory`。
 - 2026-05-12: Codex — 按只读 review 收口 propose 边界：JSON 写入改为 tmp+rename 原子替换；损坏 observation/proposal 通过 result 计数与 stderr warning 显式暴露；确定性 proposal 文件损坏时自动覆盖修复；connection 记录校验保留未知字段。
+- 2026-05-12: Codex — 实现 `haro validate --pending` 第一段：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/<validation-id>.json` advisory validation report；通过 existing validation reports 记录已验证 proposal，重复执行幂等；新增 validate lock，损坏 proposal/validation 通过 result 计数与 stderr warning 显式暴露，确定性 validation 文件损坏时自动覆盖修复，仍不创建 `$HARO_HOME/memory`。
