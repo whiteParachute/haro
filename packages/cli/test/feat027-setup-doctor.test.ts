@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -170,10 +170,51 @@ describe('guided setup and doctor remediation [FEAT-027]', () => {
     expect(first.result.exitCode).toBe(0);
     expect(existsSync(join(root, 'data'))).toBe(true);
     expect(existsSync(join(root, 'haro.db'))).toBe(true);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
     const second = await runJson(root, ['doctor', '--fix', '--json']);
     expect(second.result.exitCode).toBe(0);
     expect(second.json.sqlite.ok).toBe(true);
     expect(existsSync(join(root, 'setup-state.json'))).toBe(false);
+  });
+
+  it('doctor --component sidecar reports sidecar readiness without creating Haro memory', async () => {
+    const root = tempRoot('haro-feat027-sidecar-doctor-');
+    const { result, json } = await runJson(root, ['doctor', '--component', 'sidecar', '--json']);
+
+    expect(result.exitCode).toBe(0);
+    expect(json.stages.map((stage: { id: string }) => stage.id)).toEqual(['sidecar']);
+    expect(json.sidecar.connection.configured).toBe(false);
+    expect(json.sidecar.observations.batchCount).toBe(0);
+    expect(json.sidecar.validations.count).toBe(0);
+    const sidecarStage = json.stages[0];
+    expect(sidecarStage.status).toBe('warning');
+    expect(sidecarStage.issues[0]).toMatchObject({
+      code: 'SIDECAR_AGENTDOCK_CONNECTION_MISSING',
+      component: 'sidecar',
+      severity: 'warning',
+    });
+    expect(sidecarStage.evidence.memoryPolicy).toMatchObject({
+      authority: 'agentdock',
+      haroMemoryStore: 'disabled',
+      ariaMemoryVaultMutation: 'forbidden',
+    });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('doctor --component sidecar reports corrupt sidecar artifacts', async () => {
+    const root = tempRoot('haro-feat027-sidecar-corrupt-');
+    const proposalsDir = join(root, 'evolution', 'proposals');
+    mkdirSync(proposalsDir, { recursive: true });
+    writeFileSync(join(proposalsDir, 'broken.json'), '{ broken json');
+
+    const { json } = await runJson(root, ['doctor', '--component', 'sidecar', '--json']);
+
+    const sidecarStage = json.stages[0];
+    expect(json.sidecar.proposals.corruptCount).toBe(1);
+    expect(sidecarStage.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SIDECAR_STORE_CORRUPT_ARTIFACTS', component: 'sidecar' }),
+    ]));
+    expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
   it('smoke-test marks offline dry-run passed when provider secret is missing', async () => {

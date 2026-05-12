@@ -235,7 +235,7 @@ Haro apply 阶段只允许写入低风险对象：
 | Phase A | 文档基线重置           | README / roadmap / overview / planning 一致      |
 | Phase B | Contract skeleton      | schema + fake source + contract tests            |
 | Phase C | Read-only MCP sidecar  | `haro mcp` 暴露 read-only tools                  |
-| Phase D | Scheduled sidecar      | `connect agent-dock` + `observe --since last` + `propose --auto-dry-run` + `validate --pending` + `status` 已落地；propose/validate 已显式报告损坏 JSON 并原子写 artifact；status 只读汇总 sidecar store；下一步补 doctor |
+| Phase D | Scheduled sidecar      | `connect agent-dock` + `observe --since last` + `propose --auto-dry-run` + `validate --pending` + `status` + `doctor --component sidecar` 已落地；propose/validate 已显式报告损坏 JSON 并原子写 artifact；status/doctor 只读汇总和检查 sidecar store |
 | Phase E | Signal intake + asset registry | 外部前沿情报 intake + 资产事件写入 sidecar store |
 | Phase F | Gated apply L0/L1      | proposal + validation + snapshot + rollback gate |
 

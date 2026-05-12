@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { Command } from 'commander';
@@ -64,8 +64,10 @@ import {
   parseSetupProfile,
   runDiagnostics,
   type DoctorComponent,
+  type DoctorIssue,
   type SetupProfile,
   type SetupRunDeps,
+  type SetupStageResult,
 } from './diagnostics.js';
 import {
   DEFAULT_PROVIDER_CATALOG,
@@ -512,7 +514,7 @@ function buildProgram(app: AppContext): Command {
     'doctor',
     (cmd) => {
       cmd
-        .option('--component <component>', 'component: provider, web, database, channel, config, cli, or systemd')
+        .option('--component <component>', 'component: provider, web, database, sidecar, channel, config, cli, or systemd')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
         .option('--fix', 'apply safe fixes')
@@ -537,6 +539,19 @@ function buildProgram(app: AppContext): Command {
             channelRegistry: app.channelRegistry,
             deps: app.opts.doctorDeps ?? app.opts.setupDeps,
           });
+          if (component === undefined || component === 'sidecar') {
+            const sidecarStage = await createSidecarDoctorStage(app, {
+              env: (app.opts.doctorDeps ?? app.opts.setupDeps)?.env ?? process.env,
+            });
+            report.stages.push(sidecarStage);
+            report.issues.push(...sidecarStage.issues);
+            report.nextActions = Array.from(new Set([
+              ...report.nextActions,
+              ...sidecarStage.nextActions,
+            ]));
+            report.ok = report.ok && !sidecarStage.issues.some((issue) => issue.severity === 'error');
+            Object.assign(report, { sidecar: sidecarStage.evidence.sidecar });
+          }
           const payload = { command: 'doctor', component, fix: options.fix === true, ...report };
           const mode = resolveOutputMode(options, app.stdout);
           app.stdout.write(mode === 'json' ? `${JSON.stringify(payload, null, 2)}\n` : formatDiagnosticsHuman(report));
@@ -1613,7 +1628,8 @@ async function bootstrapApp(
     input.argv?.[0] === 'observe' ||
     input.argv?.[0] === 'propose' ||
     input.argv?.[0] === 'validate' ||
-    input.argv?.[0] === 'status';
+    input.argv?.[0] === 'status' ||
+    input.argv?.[0] === 'doctor';
   const legacyRunMemory =
     input.argv?.[0] === 'run' && input.argv.includes('--legacy-memory') && !input.argv.includes('--no-memory');
   const legacyMemoryRoots = resolveLegacyMemoryRoots(loaded.config, paths);
@@ -2882,6 +2898,185 @@ function readStatus(root: string, dbFile: string): Record<string, unknown> {
 
 function formatStatusHuman(report: Record<string, unknown>): string {
   return JSON.stringify(report, null, 2);
+}
+
+async function createSidecarDoctorStage(
+  app: AppContext,
+  options: { env: NodeJS.ProcessEnv },
+): Promise<SetupStageResult> {
+  const sidecar = readAgentDockSidecarStatus(app);
+  const issues: DoctorIssue[] = [];
+  const nextActions: string[] = [];
+  const paths = [
+    { name: 'root', path: app.paths.root, required: true },
+    { name: 'evolution', path: join(app.paths.root, 'evolution'), required: false },
+    { name: 'cursors', path: sidecar.cursors.path, required: false },
+    { name: 'observations', path: sidecar.observations.path, required: false },
+    { name: 'proposals', path: sidecar.proposals.path, required: false },
+    { name: 'validations', path: sidecar.validations.path, required: false },
+  ].map((item) => ({
+    ...item,
+    exists: existsSync(item.path),
+    writable: existsSync(item.path) ? canWritePath(item.path) : canWritePath(app.paths.root),
+  }));
+
+  for (const pathCheck of paths) {
+    if (pathCheck.required && !pathCheck.exists) {
+      issues.push({
+        code: 'SIDECAR_ROOT_MISSING',
+        severity: 'error',
+        component: 'sidecar',
+        evidence: `${pathCheck.path} does not exist`,
+        remediation: 'Run haro doctor --fix to create the Haro root before running scheduled sidecar tasks.',
+        fixable: true,
+      });
+      nextActions.push('haro doctor --fix');
+    }
+    if (pathCheck.exists && !pathCheck.writable) {
+      issues.push({
+        code: 'SIDECAR_STORE_NOT_WRITABLE',
+        severity: 'error',
+        component: 'sidecar',
+        evidence: `${pathCheck.name}: ${pathCheck.path} is not writable`,
+        remediation: 'Fix filesystem permissions for the Haro sidecar store path.',
+        fixable: false,
+      });
+    }
+  }
+
+  if (!sidecar.connection.configured) {
+    issues.push({
+      code: 'SIDECAR_AGENTDOCK_CONNECTION_MISSING',
+      severity: 'warning',
+      component: 'sidecar',
+      evidence: `${sidecar.connection.path} does not exist`,
+      remediation: 'Run haro connect agent-dock --base-url <agentdock-url> before enabling scheduled sidecar tasks.',
+      fixable: false,
+    });
+    nextActions.push('haro connect agent-dock --base-url <agentdock-url>');
+  } else if (!sidecar.connection.valid) {
+    issues.push({
+      code: 'SIDECAR_AGENTDOCK_CONNECTION_INVALID',
+      severity: 'error',
+      component: 'sidecar',
+      evidence: sidecar.connection.error ?? 'AgentDock connection config is invalid',
+      remediation: 'Remove or repair agentdock-connections.json, then rerun haro connect agent-dock.',
+      fixable: false,
+    });
+    nextActions.push('haro connect agent-dock --base-url <agentdock-url>');
+  }
+
+  const corruptCounts = {
+    cursors: sidecar.cursors.corruptCount,
+    observations: sidecar.observations.corruptCount,
+    proposals: sidecar.proposals.corruptCount,
+    validations: sidecar.validations.corruptCount,
+  };
+  const corruptTotal = Object.values(corruptCounts).reduce((sum, count) => sum + count, 0);
+  if (corruptTotal > 0) {
+    issues.push({
+      code: 'SIDECAR_STORE_CORRUPT_ARTIFACTS',
+      severity: 'warning',
+      component: 'sidecar',
+      evidence: JSON.stringify(corruptCounts),
+      remediation: 'Inspect the corrupt JSON artifacts under ~/.haro/evolution; propose/validate can repair deterministic proposal/validation files, otherwise remove or archive broken files after review.',
+      fixable: false,
+    });
+    nextActions.push('haro status --json');
+  }
+
+  const reachability = await checkAgentDockReachability(sidecar, options.env);
+  if (reachability.checked && !reachability.ok) {
+    issues.push({
+      code: 'SIDECAR_AGENTDOCK_UNREACHABLE',
+      severity: 'warning',
+      component: 'sidecar',
+      evidence: reachability.error ?? `HTTP ${reachability.status ?? 'unknown'} from ${reachability.url}`,
+      remediation: 'Verify the AgentDock base URL, authRef environment variable, and network reachability before enabling scheduled observe.',
+      fixable: false,
+    });
+  }
+
+  return {
+    id: 'sidecar',
+    status: issues.some((issue) => issue.severity === 'error')
+      ? 'error'
+      : issues.some((issue) => issue.severity === 'warning')
+        ? 'warning'
+        : 'ok',
+    issues,
+    nextActions,
+    evidence: {
+      sidecar,
+      paths,
+      reachability,
+      memoryPolicy: {
+        authority: 'agentdock',
+        haroMemoryStore: 'disabled',
+        ariaMemoryVaultMutation: 'forbidden',
+      },
+    },
+  };
+}
+
+async function checkAgentDockReachability(
+  sidecar: ReturnType<typeof readAgentDockSidecarStatus>,
+  env: NodeJS.ProcessEnv,
+): Promise<{
+  checked: boolean;
+  ok: boolean;
+  url?: string;
+  status?: number;
+  error?: string;
+}> {
+  const connectionId = sidecar.connection.defaultConnectionId ?? sidecar.connection.connections[0]?.id;
+  const connection = sidecar.connection.connections.find((item) => item.id === connectionId);
+  if (!sidecar.connection.valid || !connection) return { checked: false, ok: false };
+  if (typeof fetch !== 'function') {
+    return { checked: false, ok: false, error: 'global fetch is unavailable' };
+  }
+  const url = `${connection.baseUrl.replace(/\/+$/, '')}/api/health`;
+  const authHeader = resolveStatusAuthHeader(sidecar, connection.id, env);
+  try {
+    const response = await fetch(url, {
+      ...(authHeader ? { headers: { authorization: authHeader } } : {}),
+      signal: AbortSignal.timeout(2_000),
+    });
+    return { checked: true, ok: response.ok, url, status: response.status };
+  } catch (error) {
+    return {
+      checked: true,
+      ok: false,
+      url,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function resolveStatusAuthHeader(
+  sidecar: ReturnType<typeof readAgentDockSidecarStatus>,
+  connectionId: string,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(sidecar.connection.path, 'utf8')) as unknown;
+    if (!isRecord(raw) || !isRecord(raw.connections)) return undefined;
+    const connection = raw.connections[connectionId];
+    if (!isRecord(connection) || typeof connection.authRef !== 'string') return env.HARO_AGENTDOCK_AUTH_HEADER;
+    if (!connection.authRef.startsWith('env:')) return env.HARO_AGENTDOCK_AUTH_HEADER;
+    return env[connection.authRef.slice('env:'.length)] ?? env.HARO_AGENTDOCK_AUTH_HEADER;
+  } catch {
+    return env.HARO_AGENTDOCK_AUTH_HEADER;
+  }
+}
+
+function canWritePath(path: string): boolean {
+  try {
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readUsage(root: string, dbFile: string, sessionId?: string): Record<string, unknown> {

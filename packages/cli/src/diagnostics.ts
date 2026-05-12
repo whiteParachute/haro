@@ -17,13 +17,14 @@ export type SetupStageId =
   | 'configuration'
   | 'provider'
   | 'database'
+  | 'sidecar'
   | 'web-service'
   | 'channels'
   | 'smoke-test';
 
 export type StageStatus = 'ok' | 'warning' | 'error' | 'skipped' | 'fixed';
 export type DoctorSeverity = 'info' | 'warning' | 'error';
-export type DoctorComponent = 'cli' | 'config' | 'provider' | 'database' | 'web' | 'channel' | 'systemd';
+export type DoctorComponent = 'cli' | 'config' | 'provider' | 'database' | 'sidecar' | 'web' | 'channel' | 'systemd';
 export type SetupProfile = 'dev' | 'global' | 'systemd';
 
 export interface DoctorIssue {
@@ -166,7 +167,7 @@ async function buildStages(ctx: DiagnosticsInput & { profile: SetupProfile; deps
 }
 
 async function applySafeFixes(ctx: DiagnosticsInput & { profile: SetupProfile; deps: RequiredDeps; fixed: string[] }): Promise<void> {
-  haroFs.ensureHaroDirectories(ctx.root);
+  haroFs.ensureHaroDirectories(ctx.root, { skip: ['memory'] });
   mkdirSync(join(ctx.paths.root, 'data'), { recursive: true });
   ctx.fixed.push('created-haro-directories');
 
@@ -261,7 +262,6 @@ async function checkDataDirectory(ctx: { paths: HaroPaths }): Promise<SetupStage
     agents: ctx.paths.dirs.agents,
     skills: ctx.paths.dirs.skills,
     channels: ctx.paths.dirs.channels,
-    memory: ctx.paths.dirs.memory,
   };
   const checks = await Promise.all(
     Object.entries(entries).map(async ([name, path]) => ({
@@ -594,6 +594,8 @@ function componentStageIds(component: DoctorComponent): SetupStageId[] {
       return ['provider', 'smoke-test'];
     case 'database':
       return ['data-directory', 'database'];
+    case 'sidecar':
+      return ['sidecar'];
     case 'web':
     case 'systemd':
       return ['web-service'];
@@ -705,6 +707,6 @@ export function parseSetupProfile(value: unknown): SetupProfile {
 
 export function parseDoctorComponent(value: unknown): DoctorComponent | undefined {
   if (value === undefined) return undefined;
-  if (value === 'provider' || value === 'web' || value === 'database' || value === 'channel' || value === 'config' || value === 'cli' || value === 'systemd') return value;
+  if (value === 'provider' || value === 'web' || value === 'database' || value === 'sidecar' || value === 'channel' || value === 'config' || value === 'cli' || value === 'systemd') return value;
   throw new Error(`Invalid doctor component: ${String(value)}`);
 }
