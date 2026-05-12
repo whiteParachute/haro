@@ -119,6 +119,49 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
+  it('connect agent-dock preserves unknown connection fields when updating an existing record', async () => {
+    const root = newHome('agentdock-connect-extra-fields');
+    writeFileSync(join(root, 'agentdock-connections.json'), JSON.stringify({
+      defaultConnectionId: 'agentdock-local',
+      connections: {
+        'agentdock-local': {
+          id: 'agentdock-local',
+          baseUrl: 'http://old-agentdock.local',
+          authRef: 'env:OLD_AUTH_HEADER',
+          tenant: 'prod',
+          region: 'us',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
+        },
+      },
+    }));
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'connect',
+      'agent-dock',
+      '--base-url',
+      'http://agentdock.local/',
+      '--id',
+      'agentdock-local',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const file = JSON.parse(readFileSync(join(root, 'agentdock-connections.json'), 'utf8')) as {
+      connections: Record<string, { baseUrl: string; tenant?: string; region?: string; authRef?: string; createdAt: string }>;
+    };
+    expect(file.connections['agentdock-local']).toMatchObject({
+      baseUrl: 'http://agentdock.local',
+      tenant: 'prod',
+      region: 'us',
+      createdAt: '2026-05-01T00:00:00.000Z',
+    });
+    expect(file.connections['agentdock-local']?.authRef).toBeUndefined();
+  });
+
   it('observe --source fake writes an observation and is idempotent on repeat', async () => {
     const root = newHome('agentdock-observe-fake');
     const stdout = captureStream();
@@ -174,6 +217,183 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(secondPayload.observationCount).toBe(0);
     expect(secondPayload.wroteObservation).toBe(false);
     expect(readdirSync(join(root, 'evolution', 'observations'))).toHaveLength(1);
+  });
+
+  it('propose --auto-dry-run writes one proposal from unconsumed observations and is idempotent', async () => {
+    const root = newHome('agentdock-propose');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+    const observePayload = (JSON.parse(observeOut.read()) as { data: { batchId: string } }).data;
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+
+    expect(propose.exitCode).toBe(0);
+    expect(propose.action).toBe('propose');
+    expect(proposeErr.read()).toBe('');
+    const payload = (JSON.parse(proposeOut.read()) as { data: {
+      proposalCount: number;
+      consumedObservationCount: number;
+      pendingObservationCount: number;
+      wroteProposal: boolean;
+      proposalId: string;
+      proposalPath: string;
+      proposal: { status: string; sourceObservationRefs: Array<{ id: string; kind: string }> };
+    } }).data;
+    expect(payload.proposalCount).toBe(1);
+    expect(payload.consumedObservationCount).toBe(1);
+    expect(payload.pendingObservationCount).toBe(0);
+    expect(payload.wroteProposal).toBe(true);
+    expect(payload.proposal.status).toBe('dry-run');
+    expect(payload.proposal.sourceObservationRefs).toEqual([
+      { id: observePayload.batchId, kind: 'observation-batch', uri: `haro-sidecar://observations/${encodeURIComponent(observePayload.batchId)}` },
+    ]);
+    expect(existsSync(payload.proposalPath)).toBe(true);
+    expect(readdirSync(join(root, 'evolution', 'proposals'))).toHaveLength(1);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+
+    const repeatOut = captureStream();
+    const repeatErr = captureStream();
+    const repeat = await runCli(commonOpts(root, repeatOut, repeatErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(repeat.exitCode).toBe(0);
+    expect(repeatErr.read()).toBe('');
+    const repeatPayload = (JSON.parse(repeatOut.read()) as { data: {
+      proposalCount: number;
+      consumedObservationCount: number;
+      wroteProposal: boolean;
+    } }).data;
+    expect(repeatPayload.proposalCount).toBe(0);
+    expect(repeatPayload.consumedObservationCount).toBe(0);
+    expect(repeatPayload.wroteProposal).toBe(false);
+    expect(readdirSync(join(root, 'evolution', 'proposals'))).toHaveLength(1);
+  });
+
+  it('propose --auto-dry-run reports corrupt proposals and repairs deterministic proposal files', async () => {
+    const root = newHome('agentdock-propose-repair-corrupt');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(propose.exitCode).toBe(0);
+    expect(proposeErr.read()).toBe('');
+    const firstPayload = (JSON.parse(proposeOut.read()) as { data: { proposalPath: string; proposalId: string } }).data;
+    writeFileSync(firstPayload.proposalPath, '{}\n');
+
+    const repairOut = captureStream();
+    const repairErr = captureStream();
+    const repair = await runCli(commonOpts(root, repairOut, repairErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+
+    expect(repair.exitCode).toBe(0);
+    expect(repairErr.read()).toContain('skipped 1 corrupt AgentDock proposal');
+    const repairPayload = (JSON.parse(repairOut.read()) as { data: {
+      proposalCount: number;
+      wroteProposal: boolean;
+      skippedCorruptProposalCount: number;
+      proposalId: string;
+      proposal: { sourceObservationRefs: Array<{ kind: string }> };
+    } }).data;
+    expect(repairPayload.proposalCount).toBe(1);
+    expect(repairPayload.wroteProposal).toBe(true);
+    expect(repairPayload.skippedCorruptProposalCount).toBe(1);
+    expect(repairPayload.proposalId).toBe(firstPayload.proposalId);
+    expect(repairPayload.proposal.sourceObservationRefs[0]?.kind).toBe('observation-batch');
+    const repairedFile = JSON.parse(readFileSync(firstPayload.proposalPath, 'utf8')) as { id: string; status: string };
+    expect(repairedFile).toMatchObject({ id: firstPayload.proposalId, status: 'dry-run' });
+  });
+
+  it('propose --auto-dry-run reports corrupt observation files without silently ignoring them', async () => {
+    const root = newHome('agentdock-propose-corrupt-observation');
+    const observationDir = join(root, 'evolution', 'observations');
+    mkdirSync(observationDir, { recursive: true });
+    writeFileSync(join(observationDir, 'broken.json'), '{ broken json');
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toContain('skipped 1 corrupt AgentDock observation');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      proposalCount: number;
+      wroteProposal: boolean;
+      skippedCorruptObservationCount: number;
+    } }).data;
+    expect(payload.proposalCount).toBe(0);
+    expect(payload.wroteProposal).toBe(false);
+    expect(payload.skippedCorruptObservationCount).toBe(1);
+  });
+
+  it('propose --auto-dry-run is a no-op when no observations exist', async () => {
+    const root = newHome('agentdock-propose-empty');
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(result.action).toBe('propose');
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      proposalCount: number;
+      wroteProposal: boolean;
+      pendingObservationCount: number;
+    } }).data;
+    expect(payload.proposalCount).toBe(0);
+    expect(payload.wroteProposal).toBe(false);
+    expect(payload.pendingObservationCount).toBe(0);
+    expect(existsSync(join(root, 'evolution', 'proposals'))).toBe(false);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
   it('observe uses saved AgentDock HTTP connection, cursor, and stored-id dedupe', async () => {
@@ -311,6 +531,61 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     const error = JSON.parse(stderr.read()) as { ok: boolean; error: { message: string } };
     expect(error.ok).toBe(false);
     expect(error.error.message).toContain('Invalid AgentDock connections file');
+  });
+
+  it('rejects invalid saved authRef values before observation', async () => {
+    const root = newHome('agentdock-invalid-authref');
+    writeFileSync(join(root, 'agentdock-connections.json'), JSON.stringify({
+      defaultConnectionId: 'agentdock-local',
+      connections: {
+        'agentdock-local': {
+          id: 'agentdock-local',
+          baseUrl: 'http://agentdock.local',
+          authRef: 'plain-token',
+          createdAt: '2026-05-08T12:00:00.000Z',
+          updatedAt: '2026-05-08T12:00:00.000Z',
+        },
+      },
+    }));
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'observe',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(1);
+    expect(stdout.read()).toBe('');
+    const error = JSON.parse(stderr.read()) as { error: { message: string } };
+    expect(error.error.message).toContain('authRef must be env:VARNAME');
+  });
+
+  it('rejects cursor files that belong to a different connection', async () => {
+    const root = newHome('agentdock-invalid-cursor');
+    const cursorDir = join(root, 'evolution', 'cursors');
+    mkdirSync(cursorDir, { recursive: true });
+    writeFileSync(join(cursorDir, `${Buffer.from('fake-agentdock').toString('base64url')}.json`), JSON.stringify({
+      connectionId: 'other-agentdock',
+      cursor: 'fake-cursor-001',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    }));
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(1);
+    expect(stdout.read()).toBe('');
+    const error = JSON.parse(stderr.read()) as { error: { message: string } };
+    expect(error.error.message).toContain("does not match 'fake-agentdock'");
   });
 
   it('rejects concurrent observe for the same connection via a lock directory', async () => {

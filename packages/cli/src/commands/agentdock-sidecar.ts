@@ -1,11 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import {
+  EvolutionProposalSchema,
   ObservationBatchSchema,
   createFakeAgentDockSource,
   createHttpAgentDockSource,
+  type EvolutionProposal,
   type ObservationBatch,
+  type Ref,
 } from '@haro/agentdock-contract';
 import { CommanderExit, type AppContext } from '../index.js';
 import { renderError, renderJson, resolveOutputMode } from '../output/index.js';
@@ -15,7 +19,7 @@ interface OutputFlags {
   human?: boolean;
 }
 
-interface AgentDockConnectionRecord {
+interface AgentDockConnectionRecord extends Record<string, unknown> {
   id: string;
   baseUrl: string;
   authRef?: string;
@@ -46,6 +50,11 @@ interface ObserveOptions extends OutputFlags {
   limit?: string;
 }
 
+interface ProposeOptions extends OutputFlags {
+  autoDryRun?: boolean;
+  limit?: string;
+}
+
 interface ObserveResult {
   command: 'observe';
   connectionId: string;
@@ -58,6 +67,19 @@ interface ObserveResult {
   observationPath?: string;
   cursorPath?: string;
   batch: ObservationBatch;
+}
+
+interface ProposeResult {
+  command: 'propose';
+  mode: 'dry-run';
+  proposalCount: number;
+  consumedObservationCount: number;
+  pendingObservationCount: number;
+  skippedCorruptObservationCount: number;
+  skippedCorruptProposalCount: number;
+  wroteProposal: boolean;
+  proposal?: EvolutionProposal;
+  proposalPath?: string;
 }
 
 const CONNECTIONS_FILE = 'agentdock-connections.json';
@@ -88,12 +110,17 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
         const file = readConnectionsFile(app.paths.root);
         const existing = file.connections[id];
         const connection: AgentDockConnectionRecord = {
+          ...(existing ?? {}),
           id,
           baseUrl: source.connection.baseUrl,
-          ...(authRef ? { authRef } : {}),
           createdAt: existing?.createdAt ?? now,
           updatedAt: now,
         };
+        if (authRef) {
+          connection.authRef = authRef;
+        } else {
+          delete connection.authRef;
+        }
         file.connections[id] = connection;
         file.defaultConnectionId = id;
         writeConnectionsFile(app.paths.root, file);
@@ -173,6 +200,58 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
         throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
       }
     });
+
+  program
+    .command('propose')
+    .description('Generate dry-run evolution proposals from persisted AgentDock observations')
+    .option('--auto-dry-run', 'generate a dry-run proposal from unconsumed observation batches')
+    .option('--limit <n>', 'maximum unconsumed observation batches to include')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: ProposeOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = proposeAgentDock(app, options);
+        if (mode === 'json') {
+          renderJson({
+            command: result.command,
+            mode: result.mode,
+            proposalCount: result.proposalCount,
+            consumedObservationCount: result.consumedObservationCount,
+            pendingObservationCount: result.pendingObservationCount,
+            skippedCorruptObservationCount: result.skippedCorruptObservationCount,
+            skippedCorruptProposalCount: result.skippedCorruptProposalCount,
+            wroteProposal: result.wroteProposal,
+            proposalId: result.proposal?.id,
+            proposalPath: result.proposalPath,
+            proposal: result.proposal,
+          }, { stdout: app.stdout });
+          return;
+        }
+        if (result.proposal) {
+          app.stdout.write(
+            [
+              `Proposal: ${result.proposal.id}`,
+              `Mode: ${result.mode}`,
+              `Source observations: ${result.consumedObservationCount}`,
+              `Pending observations after run: ${result.pendingObservationCount}`,
+              `Wrote: ${result.proposalPath}`,
+            ].join('\n') + '\n',
+          );
+          return;
+        }
+        app.stdout.write(
+          [
+            'No unconsumed AgentDock observation batches found.',
+            `Pending observations after run: ${result.pendingObservationCount}`,
+          ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
 }
 
 async function observeAgentDock(app: AppContext, options: ObserveOptions): Promise<ObserveResult> {
@@ -183,7 +262,7 @@ async function observeAgentDock(app: AppContext, options: ObserveOptions): Promi
   try {
     const cursorPath = cursorFilePath(app.paths.root, connection.id);
     const storedCursor = options.since === undefined || options.since === 'last'
-      ? readCursor(cursorPath)?.cursor
+      ? readCursor(cursorPath, connection.id)?.cursor
       : undefined;
     const since = resolveSince(options.since, storedCursor);
 
@@ -240,6 +319,59 @@ async function observeAgentDock(app: AppContext, options: ObserveOptions): Promi
       ...(observationCount > 0 ? { observationPath } : {}),
       ...(prunedBatch.window.cursor ? { cursorPath } : {}),
       batch: prunedBatch,
+    };
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
+function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResult {
+  if (!options.autoDryRun) {
+    throw new CommanderExit(
+      2,
+      '`haro propose` is currently read-only; pass `--auto-dry-run` to generate a persisted dry-run proposal.',
+    );
+  }
+
+  const limit = normalizeOptionalPositiveInt(options.limit, '--limit');
+  const lockDir = acquireProposeLock(app.paths.root);
+  try {
+    const consumedResult = readConsumedObservationBatchIds(app.paths.root);
+    const pendingResult = readUnconsumedObservationBatches(app.paths.root, consumedResult.consumed);
+    emitCorruptJsonWarnings(app, {
+      corruptObservationCount: pendingResult.corruptCount,
+      corruptProposalCount: consumedResult.corruptCount,
+    });
+    const pending = pendingResult.batches;
+    const selected = typeof limit === 'number' ? pending.slice(0, limit) : pending;
+    if (selected.length === 0) {
+      return {
+        command: 'propose',
+        mode: 'dry-run',
+        proposalCount: 0,
+        consumedObservationCount: 0,
+        pendingObservationCount: 0,
+        skippedCorruptObservationCount: pendingResult.corruptCount,
+        skippedCorruptProposalCount: consumedResult.corruptCount,
+        wroteProposal: false,
+      };
+    }
+
+    const proposal = createDryRunProposal(selected, app.now);
+    const path = proposalFilePath(app.paths.root, proposal);
+    mkdirSync(join(app.paths.root, 'evolution', 'proposals'), { recursive: true });
+    writeJsonFile(path, proposal);
+    return {
+      command: 'propose',
+      mode: 'dry-run',
+      proposalCount: 1,
+      consumedObservationCount: selected.length,
+      pendingObservationCount: pending.length - selected.length,
+      skippedCorruptObservationCount: pendingResult.corruptCount,
+      skippedCorruptProposalCount: consumedResult.corruptCount,
+      wroteProposal: true,
+      proposal,
+      proposalPath: path,
     };
   } finally {
     releaseConnectionLock(lockDir);
@@ -388,7 +520,34 @@ function validateConnectionRecord(path: string, key: string, value: unknown): Ag
       `Invalid AgentDock connection '${key}' in ${path}; remove it or rerun \`haro connect agent-dock\`.`,
     );
   }
-  return value as unknown as AgentDockConnectionRecord;
+  let authRef: string | undefined;
+  try {
+    authRef = normalizeAuthRef(value.authRef);
+  } catch {
+    throw new CommanderExit(
+      1,
+      `Invalid AgentDock connection '${key}' in ${path}; authRef must be env:VARNAME. Remove it or rerun \`haro connect agent-dock\`.`,
+    );
+  }
+  if (authRef) {
+    return {
+      ...value,
+      id: value.id,
+      baseUrl: value.baseUrl,
+      authRef,
+      createdAt: value.createdAt,
+      updatedAt: value.updatedAt,
+    };
+  }
+  const withoutAuthRef = { ...value };
+  delete withoutAuthRef.authRef;
+  return {
+    ...withoutAuthRef,
+    id: value.id,
+    baseUrl: value.baseUrl,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
 }
 
 function writeConnectionsFile(root: string, file: AgentDockConnectionsFile): void {
@@ -396,7 +555,7 @@ function writeConnectionsFile(root: string, file: AgentDockConnectionsFile): voi
   writeJsonFile(connectionsPath(root), file);
 }
 
-function readCursor(path: string): ObservationCursorRecord | undefined {
+function readCursor(path: string, expectedConnectionId?: string): ObservationCursorRecord | undefined {
   if (!existsSync(path)) return undefined;
   let value: unknown;
   try {
@@ -420,6 +579,12 @@ function readCursor(path: string): ObservationCursorRecord | undefined {
       `Invalid AgentDock cursor file at ${path}; expected { connectionId, cursor }. Remove it and rerun \`haro observe\`.`,
     );
   }
+  if (expectedConnectionId && value.connectionId !== expectedConnectionId) {
+    throw new CommanderExit(
+      1,
+      `Invalid AgentDock cursor file at ${path}; connectionId '${value.connectionId}' does not match '${expectedConnectionId}'. Remove it and rerun \`haro observe\`.`,
+    );
+  }
   return value as unknown as ObservationCursorRecord;
 }
 
@@ -438,6 +603,10 @@ function observationFilePath(root: string, batch: ObservationBatch): string {
     'observations',
     `${safePathSegment(batch.collectedAt)}-${encodedConnectionId(batch.connectionId)}-${safePathSegment(batch.id)}.json`,
   );
+}
+
+function proposalFilePath(root: string, proposal: EvolutionProposal): string {
+  return join(root, 'evolution', 'proposals', `${safePathSegment(proposal.id)}.json`);
 }
 
 function acquireConnectionLock(root: string, connectionId: string): string {
@@ -459,6 +628,25 @@ function acquireConnectionLock(root: string, connectionId: string): string {
   return dir;
 }
 
+function acquireProposeLock(root: string): string {
+  const parent = join(root, 'evolution', 'locks');
+  mkdirSync(parent, { recursive: true });
+  const dir = join(parent, 'propose.lock');
+  try {
+    mkdirSync(dir);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === 'EEXIST') {
+      throw new CommanderExit(
+        1,
+        'Another haro propose process is already running.',
+      );
+    }
+    throw error;
+  }
+  return dir;
+}
+
 function releaseConnectionLock(lockDir: string): void {
   rmSync(lockDir, { recursive: true, force: true });
 }
@@ -468,7 +656,15 @@ function safePathSegment(value: string): string {
 }
 
 function writeJsonFile(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`);
+    renameSync(tmpPath, path);
+  } catch (error) {
+    rmSync(tmpPath, { force: true });
+    throw error;
+  }
 }
 
 function pruneSeenObservations(root: string, batch: ObservationBatch): ObservationBatch {
@@ -514,6 +710,171 @@ function readSeenObservationIds(root: string, connectionId: string): Set<string>
   return ids;
 }
 
+function readUnconsumedObservationBatches(
+  root: string,
+  consumedBatchIds: ReadonlySet<string>,
+): { batches: ObservationBatch[]; corruptCount: number } {
+  const dir = join(root, 'evolution', 'observations');
+  if (!existsSync(dir)) return { batches: [], corruptCount: 0 };
+  const batches: ObservationBatch[] = [];
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    const path = join(dir, name);
+    try {
+      const batch = ObservationBatchSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+      if (!consumedBatchIds.has(batch.id)) batches.push(batch);
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { batches, corruptCount };
+}
+
+function readConsumedObservationBatchIds(root: string): { consumed: Set<string>; corruptCount: number } {
+  const dir = join(root, 'evolution', 'proposals');
+  const consumed = new Set<string>();
+  if (!existsSync(dir)) return { consumed, corruptCount: 0 };
+  let corruptCount = 0;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const proposal = EvolutionProposalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      for (const ref of proposal.sourceObservationRefs) {
+        if (ref.kind === 'observation-batch') consumed.add(ref.id);
+      }
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { consumed, corruptCount };
+}
+
+function emitCorruptJsonWarnings(
+  app: AppContext,
+  counts: { corruptObservationCount: number; corruptProposalCount: number },
+): void {
+  if (counts.corruptObservationCount > 0) {
+    app.stderr.write(
+      `Warning: skipped ${counts.corruptObservationCount} corrupt AgentDock observation file(s) under evolution/observations.\n`,
+    );
+  }
+  if (counts.corruptProposalCount > 0) {
+    app.stderr.write(
+      `Warning: skipped ${counts.corruptProposalCount} corrupt AgentDock proposal file(s) under evolution/proposals.\n`,
+    );
+  }
+}
+
+function createDryRunProposal(
+  batches: readonly ObservationBatch[],
+  now: () => Date,
+): EvolutionProposal {
+  const sourceObservationRefs = batches.map(observationBatchRef);
+  const summary = summarizeObservationBatches(batches);
+  const fingerprint = sha256(JSON.stringify({
+    refs: sourceObservationRefs.map((ref) => ref.id).sort(),
+    summary,
+  }));
+  const proposalId = `proposal_${fingerprint.slice(0, 24)}`;
+  const contentRef = `haro-sidecar://proposals/${proposalId}/dry-run`;
+  const contentHash = sha256(JSON.stringify({ sourceObservationRefs, summary, contentRef }));
+  const timestamp = now().toISOString();
+  return EvolutionProposalSchema.parse({
+    id: proposalId,
+    title: `Dry-run AgentDock sidecar proposal from ${batches.length} observation batch${batches.length === 1 ? '' : 'es'}`,
+    status: 'dry-run',
+    level: summary.runnerErrors > 0 ? 'L1' : 'L0',
+    targetKind: summary.scheduledTaskErrors > 0 ? 'schedule-config' : summary.runnerErrors > 0 ? 'runner-profile' : 'mcp-tool-config',
+    riskLevel: summary.runnerErrors > 0 || summary.scheduledTaskErrors > 0 ? 'medium' : 'low',
+    sourceObservationRefs,
+    changeSet: [
+      {
+        op: 'update',
+        targetRef: proposalTargetRef(summary),
+        contentRef,
+        contentHash,
+        summary: proposalSummary(summary),
+      },
+    ],
+    testPlan: {
+      requiredCommands: [
+        'pnpm -F @haro/agentdock-contract test',
+        'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
+      ],
+      manualChecks: [
+        'Run AgentDock scheduled script task for `haro observe` followed by `haro propose --auto-dry-run --json` and verify no runtime code is modified.',
+      ],
+      regressionRisks: [
+        'Observation schema drift can make persisted batches unreadable until doctor/status surfaces the corrupt file.',
+        'AgentDock scheduler task overlap can create duplicate proposals if the proposal lock is bypassed.',
+      ],
+    },
+    rollbackPlan: {
+      strategy:
+        'Dry-run proposal generation only writes a proposal JSON artifact; delete the proposal file to roll back before validation or approval.',
+      snapshotRequired: false,
+      rollbackRefs: sourceObservationRefs,
+    },
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+function observationBatchRef(batch: ObservationBatch): Ref {
+  return {
+    id: batch.id,
+    kind: 'observation-batch',
+    uri: `haro-sidecar://observations/${encodeURIComponent(batch.id)}`,
+  };
+}
+
+function summarizeObservationBatches(batches: readonly ObservationBatch[]) {
+  return {
+    batches: batches.length,
+    sessions: batches.reduce((sum, batch) => sum + batch.sessions.length, 0),
+    turns: batches.reduce((sum, batch) => sum + batch.turns.length, 0),
+    toolCalls: batches.reduce((sum, batch) => sum + batch.toolCalls.length, 0),
+    scheduledTaskRuns: batches.reduce((sum, batch) => sum + batch.scheduledTaskRuns.length, 0),
+    scheduledTaskErrors: batches.reduce(
+      (sum, batch) => sum + batch.scheduledTaskRuns.filter((item) => item.status === 'error').length,
+      0,
+    ),
+    memoryMaintenanceLogs: batches.reduce((sum, batch) => sum + batch.memoryMaintenanceLogs.length, 0),
+    runnerErrors: batches.reduce((sum, batch) => sum + batch.runnerErrors.length, 0),
+    usageRecords: batches.reduce((sum, batch) => sum + batch.usageRecords.length, 0),
+  };
+}
+
+function proposalTargetRef(summary: ReturnType<typeof summarizeObservationBatches>): Ref {
+  if (summary.scheduledTaskErrors > 0) {
+    return {
+      id: 'agentdock:haro-sidecar-schedule',
+      kind: 'schedule-config',
+      uri: 'agentdock://tasks/haro-sidecar',
+    };
+  }
+  if (summary.runnerErrors > 0) {
+    return {
+      id: 'agentdock:runner-profile',
+      kind: 'runner-profile',
+      uri: 'agentdock://runner-profiles/default',
+    };
+  }
+  return {
+    id: 'agentdock:haro-sidecar-registration',
+    kind: 'mcp-tool-config',
+    uri: 'agentdock://mcp-servers/haro',
+  };
+}
+
+function proposalSummary(summary: ReturnType<typeof summarizeObservationBatches>): string {
+  return [
+    'Review persisted AgentDock sidecar observations and prepare a dry-run self-optimization proposal.',
+    `Batches=${summary.batches}, sessions=${summary.sessions}, turns=${summary.turns}, toolCalls=${summary.toolCalls}, scheduledTaskRuns=${summary.scheduledTaskRuns}, scheduledTaskErrors=${summary.scheduledTaskErrors}, runnerErrors=${summary.runnerErrors}, usageRecords=${summary.usageRecords}.`,
+  ].join(' ');
+}
+
 function encodedConnectionId(connectionId: string): string {
   return Buffer.from(connectionId, 'utf8').toString('base64url');
 }
@@ -530,4 +891,8 @@ function countSemanticObservations(batch: ObservationBatch): number {
     batch.memoryMaintenanceLogs.length +
     batch.runnerErrors.length +
     batch.usageRecords.length;
+}
+
+function sha256(input: string): string {
+  return createHash('sha256').update(input).digest('hex');
 }
