@@ -382,6 +382,7 @@ function contractKindToCore(kind: AssetKind): EvolutionAssetKind | null {
       return 'mcp';
     case 'runner-profile':
     case 'schedule-config':
+    case 'frontier-source-ref':
       return null;
   }
 }

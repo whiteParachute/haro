@@ -5,7 +5,7 @@ status: draft
 phase: sidecar
 owner: whiteParachute
 created: 2026-05-09
-updated: 2026-05-09
+updated: 2026-05-13
 related:
   - FEAT-043-agentdock-contract-skeleton.md
   - FEAT-045-scheduled-sidecar-cli.md
@@ -84,6 +84,34 @@ AgentDock scheduler
 
 第一版可以先由人工/AgentDock skill 生成 source config；Haro 只负责读取、归一化、去重和作为 proposal evidence 使用。
 
+当前已落地的第一段 source config 形态是 curated signal 输入，而不是 Haro 直接抓外部源：
+
+```json
+{
+  "signals": [
+    {
+      "id": "frontier-signal-001",
+      "sourceType": "official-doc",
+      "sourceRef": {
+        "id": "mcp-changelog-2026-05-08",
+        "kind": "official-doc",
+        "uri": "https://modelcontextprotocol.io/changelog"
+      },
+      "title": "MCP tool capability update",
+      "publishedAt": "2026-05-08T10:00:00.000Z",
+      "collectedAt": "2026-05-08T12:00:00.000Z",
+      "summary": "A curated frontier signal relevant to Haro sidecar MCP tool configuration.",
+      "claims": ["Tool metadata can improve agent orchestration safety."],
+      "targetDomains": ["mcp-tools", "haro-sidecar"],
+      "confidence": "high",
+      "status": "active"
+    }
+  ]
+}
+```
+
+`haro intake frontier --source-config <file> --since last --json` 会校验 `FrontierSignal` schema，按 `sourceType + sourceRef` 去重，写入 `~/.haro/evolution/frontier-signals/`，并维护 `frontier-intake` cursor。损坏的既有 signal JSON 会在 stderr warning 和 JSON 输出中显式暴露。
+
 ## 6. Acceptance Criteria / 验收标准
 
 - AC1: 给定一个 public source fixture，当执行 `haro intake frontier --json` 时，应写入 schema-valid `FrontierSignal`。（对应 R1/R2/R4）
@@ -110,4 +138,5 @@ AgentDock scheduler
 
 ## 9. Changelog / 变更记录
 
+- 2026-05-13: Haro — 第一段实现：`FrontierSignal` contract schema、curated source-config intake、dedupe/cursor、status/doctor frontier signal 计数；尚未实现 `propose --include-frontier`。
 - 2026-05-09: Haro — 初稿，补齐外部前沿情报 intake 在 sidecar 闭环中的位置。

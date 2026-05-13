@@ -178,6 +178,7 @@ export type RunCliAction =
   | 'observe'
   | 'propose'
   | 'validate'
+  | 'intake'
   | 'channel'
   | 'skills'
   | 'eat'
@@ -1628,6 +1629,7 @@ async function bootstrapApp(
     input.argv?.[0] === 'observe' ||
     input.argv?.[0] === 'propose' ||
     input.argv?.[0] === 'validate' ||
+    input.argv?.[0] === 'intake' ||
     input.argv?.[0] === 'status' ||
     input.argv?.[0] === 'doctor';
   const legacyRunMemory =
@@ -2914,6 +2916,7 @@ async function createSidecarDoctorStage(
     { name: 'observations', path: sidecar.observations.path, required: false },
     { name: 'proposals', path: sidecar.proposals.path, required: false },
     { name: 'validations', path: sidecar.validations.path, required: false },
+    { name: 'frontier-signals', path: sidecar.frontierSignals.path, required: false },
   ].map((item) => ({
     ...item,
     exists: existsSync(item.path),
@@ -2971,6 +2974,7 @@ async function createSidecarDoctorStage(
     observations: sidecar.observations.corruptCount,
     proposals: sidecar.proposals.corruptCount,
     validations: sidecar.validations.corruptCount,
+    frontierSignals: sidecar.frontierSignals.corruptCount,
   };
   const corruptTotal = Object.values(corruptCounts).reduce((sum, count) => sum + count, 0);
   if (corruptTotal > 0) {
@@ -3122,7 +3126,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'intake' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

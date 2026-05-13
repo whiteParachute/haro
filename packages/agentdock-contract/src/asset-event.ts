@@ -8,6 +8,7 @@ export const AssetKindSchema = z.enum([
   'routing-rule',
   'mcp-tool-config',
   'schedule-config',
+  'frontier-source-ref',
   'archive',
 ]);
 

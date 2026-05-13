@@ -5,7 +5,7 @@ status: draft
 phase: sidecar
 owner: whiteParachute
 created: 2026-05-08
-updated: 2026-05-08
+updated: 2026-05-13
 related:
   - FEAT-043-agentdock-contract-skeleton.md
   - FEAT-048-frontier-intelligence-intake.md
@@ -98,5 +98,6 @@ rollback executed
 
 ## 9. Changelog / 变更记录
 
+- 2026-05-13: Haro — contract 层 `AssetKindSchema` 已补 `frontier-source-ref`，与 FEAT-048 第一段 signal intake 对齐；完整 registry adapter 仍待实现。
 - 2026-05-09: Haro — 补充 frontier-source-ref 与 FEAT-048 的关系。
 - 2026-05-08: Haro — 初稿。

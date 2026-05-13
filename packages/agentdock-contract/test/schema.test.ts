@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AssetEventSchema,
   EvolutionProposalSchema,
+  FrontierSignalSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
 } from '../src/index.js';
@@ -105,6 +106,53 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
 
   it('accepts a valid dry-run proposal fixture', () => {
     expect(EvolutionProposalSchema.parse(validProposal).id).toBe('proposal-001');
+  });
+
+  it('accepts a valid frontier signal fixture', () => {
+    const signal = FrontierSignalSchema.parse({
+      id: 'frontier-signal-001',
+      sourceType: 'official-doc',
+      sourceRef: {
+        id: 'mcp-2026-05-08',
+        kind: 'official-doc',
+        uri: 'https://modelcontextprotocol.io/changelog',
+      },
+      title: 'MCP changelog for agent tool capabilities',
+      publishedAt: now,
+      collectedAt: now,
+      summary: 'Official MCP changelog item relevant to tool orchestration.',
+      claims: ['Tool annotations can improve orchestration safety.'],
+      targetDomains: ['mcp-tools', 'agentdock-kernel'],
+      confidence: 'high',
+      rawRef: {
+        id: 'mcp-raw-2026-05-08',
+        kind: 'html',
+        uri: 'https://modelcontextprotocol.io/changelog',
+      },
+      status: 'active',
+    });
+
+    expect(signal.sourceType).toBe('official-doc');
+    expect(signal.targetDomains).toContain('mcp-tools');
+  });
+
+  it('rejects frontier signals without sourceRef or summary', () => {
+    const result = FrontierSignalSchema.safeParse({
+      id: 'frontier-signal-missing-fields',
+      sourceType: 'paper',
+      title: 'Incomplete signal',
+      collectedAt: now,
+      claims: [],
+      targetDomains: ['runner'],
+      confidence: 'medium',
+      status: 'active',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === 'sourceRef')).toBe(true);
+      expect(result.error.issues.some((issue) => issue.path[0] === 'summary')).toBe(true);
+    }
   });
 
   it('rejects memory as a Haro-owned proposal target', () => {

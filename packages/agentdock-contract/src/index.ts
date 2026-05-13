@@ -65,6 +65,21 @@ export { ValidationReportSchema } from './validation.js';
 export type { ValidationReport } from './validation.js';
 
 export {
+  FrontierConfidenceSchema,
+  FrontierSignalSchema,
+  FrontierSignalStatusSchema,
+  FrontierSourceTypeSchema,
+  FrontierTargetDomainSchema,
+} from './frontier-signal.js';
+export type {
+  FrontierConfidence,
+  FrontierSignal,
+  FrontierSignalStatus,
+  FrontierSourceType,
+  FrontierTargetDomain,
+} from './frontier-signal.js';
+
+export {
   AssetEventSchema,
   AssetEventTypeSchema,
   AssetKindSchema,

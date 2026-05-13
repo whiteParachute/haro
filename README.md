@@ -139,12 +139,12 @@ AgentDock runtime + Haro sidecar + external frontier sources
 
 | 组件 | 职责 | 第一版状态 |
 | --- | --- | --- |
-| `@haro/agentdock-contract` | AgentDock connection、observation、proposal、validation、asset event schema | 已实现 skeleton + fake source |
+| `@haro/agentdock-contract` | AgentDock connection、observation、proposal、validation、frontier signal、asset event schema | 已实现 skeleton + fake source；FrontierSignal schema 已落地 |
 | Haro MCP Server | 暴露 `haro_observe` / `haro_propose` / `haro_validate` / `haro_asset_query` | 已实现 read-only sidecar；AgentDock 注册 MCP live smoke 已通过（2026-05-08） |
-| Haro Scheduled CLI | 支持 `connect agent-dock`、`observe`、`propose`、`validate`、`status`、`doctor` | `connect agent-dock` + `observe --since last` + `propose --auto-dry-run` + `validate --pending` + `status` + `doctor --component sidecar` 已实现；propose/validate 均显式暴露损坏 JSON 计数并用原子写修复确定性 artifact；status/doctor 汇总 connection/cursor/evolution store 健康，不读写 memory |
-| Evolution Store | `~/.haro/evolution/*` 独立存储 observations/frontier-signals/proposals/validations/applications | observations/proposals/validations 第一段已落盘；frontier-signals/applications 待迁移 |
+| Haro Scheduled CLI | 支持 `connect agent-dock`、`observe`、`intake frontier`、`propose`、`validate`、`status`、`doctor` | `connect agent-dock` + `observe --since last` + `intake frontier --source-config` + `propose --auto-dry-run` + `validate --pending` + `status` + `doctor --component sidecar` 已实现；propose/validate/frontier intake 均显式暴露损坏 JSON 计数；status/doctor 汇总 connection/cursor/evolution store 健康，不读写 memory |
+| Evolution Store | `~/.haro/evolution/*` 独立存储 observations/frontier-signals/proposals/validations/applications | observations/frontier-signals/proposals/validations 第一段已落盘；applications 待迁移 |
 | Asset Registry | 管理 skills/prompts/profiles/rules/tool config 资产事件 | 复用并迁移；memory 由 AgentDock 提供，Haro 仅保存 observation refs |
-| Frontier Intelligence Intake | 从 X、YouTube、论文、release notes、官方文档等来源生成带 citation 的 external signals | spec 已起草，待实现 |
+| Frontier Intelligence Intake | 从 X、YouTube、论文、release notes、官方文档等来源生成带 citation 的 external signals | 第一段已实现：读取 curated source-config 中的 `FrontierSignal`，去重后写入 `~/.haro/evolution/frontier-signals/` |
 | Gated Apply | L0/L1 proposal + validation + snapshot + rollback 后应用 | 后续实现 |
 
 ## 自进化分级
@@ -199,7 +199,7 @@ scripts/                # 辅助脚本
 2. Contract skeleton：新增 AgentDock contract schema 与 fake source tests。
 3. Read-only MCP/CLI：`haro mcp` 已实现首批 observe/propose/validate/query，默认 dry-run；AgentDock 注册 MCP live smoke 已通过（2026-05-08，`haro_observe` 返回 `source=agentdock-http`）。
 4. Scheduled sidecar：`connect agent-dock` + `observe --since last` + `propose --auto-dry-run` + `validate --pending` + `status` + `doctor --component sidecar` 已落地，可由 AgentDock script task 周期触发；propose 的 `--limit` 限制单次 proposal 打包的 observation batch 数，validate 的 `--limit` 限制单次处理的 pending proposal 数，并在 JSON 结果中暴露损坏 observation/proposal/validation 计数；status/doctor 只统计和检查 sidecar evolution store，不读写 memory。
-5. Frontier intelligence：补外部前沿情报 intake，把 X / YouTube / paper / release note / official doc / benchmark 归一为带来源 signals。
+5. Frontier intelligence：`FrontierSignal` schema + `haro intake frontier --source-config <file> --since last --json` 第一段已落地，把 curated X / YouTube / paper / release note / official doc / benchmark refs 归一为带来源 signals，写入 sidecar store，不写 AgentDock DB 或 memory。
 6. Gated apply：只开放 L0/L1，必须有 validation、snapshot、rollback ref。
 
 每次开发任务结束按顺序执行：

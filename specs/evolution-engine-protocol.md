@@ -38,7 +38,7 @@ sidecar-era 映射如下：
 | Phase B | Observe contract | [FEAT-043](./sidecar/FEAT-043-agentdock-contract-skeleton.md) | observation / proposal / validation / asset event schema | 无写入 |
 | Phase C | Observe / Orient / Validate read-only | [FEAT-044](./sidecar/FEAT-044-read-only-mcp-sidecar.md) | Haro MCP read-only tools | dry-run |
 | Phase D | Observe / Propose scheduled | [FEAT-045](./sidecar/FEAT-045-scheduled-sidecar-cli.md) | AgentDock script task 周期触发 | dry-run |
-| Phase E | Signal + asset memory | [FEAT-048](./sidecar/FEAT-048-frontier-intelligence-intake.md) / [FEAT-046](./sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | external frontier signals + sidecar asset registry | 写 Haro 自有目录 |
+| Phase E | Signal + asset registry | [FEAT-048](./sidecar/FEAT-048-frontier-intelligence-intake.md) / [FEAT-046](./sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | external frontier signals + sidecar asset registry；frontier intake 第一段已落地 | 写 Haro 自有目录，不写 memory |
 | Phase F | Act gated | [FEAT-047](./sidecar/FEAT-047-gated-apply-l0-l1.md) | L0/L1 proposal + validation + snapshot + rollback apply | gated-write |
 
 ## 一、OODA 契约

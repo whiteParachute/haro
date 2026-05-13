@@ -84,6 +84,32 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     return root;
   }
 
+  function frontierSignal(id = 'frontier-signal-001', overrides: Record<string, unknown> = {}) {
+    return {
+      id,
+      sourceType: 'official-doc',
+      sourceRef: {
+        id: 'mcp-changelog-2026-05-08',
+        kind: 'official-doc',
+        uri: 'https://modelcontextprotocol.io/changelog',
+      },
+      title: 'MCP tool capability update',
+      publishedAt: '2026-05-08T10:00:00.000Z',
+      collectedAt: '2026-05-08T12:00:00.000Z',
+      summary: 'A curated frontier signal relevant to Haro sidecar MCP tool configuration.',
+      claims: ['Tool metadata can improve agent orchestration safety.'],
+      targetDomains: ['mcp-tools', 'haro-sidecar'],
+      confidence: 'high',
+      rawRef: {
+        id: 'mcp-changelog-html',
+        kind: 'html',
+        uri: 'https://modelcontextprotocol.io/changelog',
+      },
+      status: 'active',
+      ...overrides,
+    };
+  }
+
   it('connect agent-dock saves sanitized connection config without creating memory', async () => {
     const root = newHome('agentdock-connect');
     const stdout = captureStream();
@@ -648,6 +674,134 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.skippedCorruptProposalCount).toBe(1);
   });
 
+  it('intake frontier writes schema-valid signals and is idempotent by source ref', async () => {
+    const root = newHome('frontier-intake');
+    const sourceConfigPath = join(root, 'frontier-sources.json');
+    writeFileSync(sourceConfigPath, JSON.stringify({ signals: [frontierSignal()] }, null, 2));
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const first = await runCli(commonOpts(root, stdout, stderr, [
+      'intake',
+      'frontier',
+      '--source-config',
+      sourceConfigPath,
+      '--json',
+    ]));
+
+    expect(first.exitCode).toBe(0);
+    expect(first.action).toBe('intake');
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      command: string;
+      signalCount: number;
+      wroteSignalCount: number;
+      duplicateSignalCount: number;
+      pendingSignalCount: number;
+      signalIds: string[];
+      signalPaths: string[];
+      cursor: string;
+    } }).data;
+    expect(payload.command).toBe('intake frontier');
+    expect(payload.signalCount).toBe(1);
+    expect(payload.wroteSignalCount).toBe(1);
+    expect(payload.duplicateSignalCount).toBe(0);
+    expect(payload.pendingSignalCount).toBe(0);
+    expect(payload.signalIds).toEqual(['frontier-signal-001']);
+    expect(payload.cursor).toBe('2026-05-08T10:00:00.000Z');
+    expect(existsSync(payload.signalPaths[0]!)).toBe(true);
+    expect(readdirSync(join(root, 'evolution', 'frontier-signals'))).toHaveLength(1);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+
+    const repeatOut = captureStream();
+    const repeatErr = captureStream();
+    const repeat = await runCli(commonOpts(root, repeatOut, repeatErr, [
+      'intake',
+      'frontier',
+      '--source-config',
+      sourceConfigPath,
+      '--json',
+    ]));
+
+    expect(repeat.exitCode).toBe(0);
+    expect(repeatErr.read()).toBe('');
+    const repeatPayload = (JSON.parse(repeatOut.read()) as { data: {
+      wroteSignalCount: number;
+      duplicateSignalCount: number;
+      skippedBySinceCount: number;
+    } }).data;
+    expect(repeatPayload.wroteSignalCount).toBe(0);
+    expect(repeatPayload.duplicateSignalCount).toBe(1);
+    expect(repeatPayload.skippedBySinceCount).toBe(0);
+    expect(readdirSync(join(root, 'evolution', 'frontier-signals'))).toHaveLength(1);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('intake frontier reports corrupt existing signal files without silently ignoring them', async () => {
+    const root = newHome('frontier-intake-corrupt');
+    const sourceConfigPath = join(root, 'frontier-sources.json');
+    const frontierDir = join(root, 'evolution', 'frontier-signals');
+    mkdirSync(frontierDir, { recursive: true });
+    writeFileSync(join(frontierDir, 'broken.json'), '{ broken json');
+    writeFileSync(sourceConfigPath, JSON.stringify({ signals: [frontierSignal('frontier-signal-002', {
+      sourceRef: {
+        id: 'agent-benchmark-2026-05-08',
+        kind: 'benchmark-report',
+        uri: 'https://example.com/benchmarks/agent',
+      },
+      sourceType: 'benchmark-report',
+      title: 'Agent benchmark report',
+    })] }, null, 2));
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'intake',
+      'frontier',
+      '--source-config',
+      sourceConfigPath,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toContain('skipped 1 corrupt frontier signal');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      wroteSignalCount: number;
+      skippedCorruptSignalCount: number;
+    } }).data;
+    expect(payload.wroteSignalCount).toBe(1);
+    expect(payload.skippedCorruptSignalCount).toBe(1);
+    expect(readdirSync(frontierDir)).toHaveLength(2);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('intake frontier rejects invalid signals before writing', async () => {
+    const root = newHome('frontier-intake-invalid');
+    const sourceConfigPath = join(root, 'frontier-sources.json');
+    const invalid: Record<string, unknown> = { ...frontierSignal() };
+    delete invalid.sourceRef;
+    delete invalid.summary;
+    writeFileSync(sourceConfigPath, JSON.stringify({ signals: [invalid] }, null, 2));
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'intake',
+      'frontier',
+      '--source-config',
+      sourceConfigPath,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(1);
+    expect(stdout.read()).toBe('');
+    const error = JSON.parse(stderr.read()) as { error: { message: string } };
+    expect(error.error.message).toContain('sourceRef');
+    expect(error.error.message).toContain('summary');
+    expect(existsSync(join(root, 'evolution', 'frontier-signals'))).toBe(false);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
   it('status summarizes an empty sidecar store without creating memory', async () => {
     const root = newHome('agentdock-status-empty');
     const stdout = captureStream();
@@ -668,6 +822,13 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
       proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
       validations: { count: number; corruptCount: number };
+      frontierSignals: {
+        count: number;
+        activeCount: number;
+        rejectedCount: number;
+        supersededCount: number;
+        corruptCount: number;
+      };
     } } }).data.sidecar;
     expect(payload.command).toBe('status');
     expect(payload.connection).toMatchObject({ configured: false, valid: true, connectionCount: 0 });
@@ -675,6 +836,13 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.observations).toMatchObject({ batchCount: 0, corruptCount: 0, semanticObservationCount: 0 });
     expect(payload.proposals).toMatchObject({ count: 0, pendingCount: 0, validatedCount: 0, corruptCount: 0 });
     expect(payload.validations).toMatchObject({ count: 0, corruptCount: 0 });
+    expect(payload.frontierSignals).toMatchObject({
+      count: 0,
+      activeCount: 0,
+      rejectedCount: 0,
+      supersededCount: 0,
+      corruptCount: 0,
+    });
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
@@ -727,6 +895,10 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     writeFileSync(join(root, 'evolution', 'observations', 'broken.json'), '{ broken json');
     writeFileSync(join(root, 'evolution', 'proposals', 'broken.json'), '{ broken json');
     writeFileSync(join(root, 'evolution', 'validations', 'broken.json'), '{ broken json');
+    const frontierDir = join(root, 'evolution', 'frontier-signals');
+    mkdirSync(frontierDir, { recursive: true });
+    writeFileSync(join(frontierDir, 'frontier-signal-001.json'), `${JSON.stringify(frontierSignal(), null, 2)}\n`);
+    writeFileSync(join(frontierDir, 'broken.json'), '{ broken json');
 
     const statusOut = captureStream();
     const statusErr = captureStream();
@@ -749,6 +921,13 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
       proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
       validations: { count: number; corruptCount: number };
+      frontierSignals: {
+        count: number;
+        activeCount: number;
+        rejectedCount: number;
+        supersededCount: number;
+        corruptCount: number;
+      };
     } } }).data.sidecar;
     expect(payload.connection).toMatchObject({
       configured: true,
@@ -765,6 +944,13 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.observations.corruptCount).toBe(1);
     expect(payload.proposals).toMatchObject({ count: 1, pendingCount: 0, validatedCount: 1, corruptCount: 1 });
     expect(payload.validations).toMatchObject({ count: 1, corruptCount: 1 });
+    expect(payload.frontierSignals).toMatchObject({
+      count: 1,
+      activeCount: 1,
+      rejectedCount: 0,
+      supersededCount: 0,
+      corruptCount: 1,
+    });
     expect(existsSync(join(root, 'memory'))).toBe(false);
     expect(connectErr.read()).toBe('');
     expect(observeErr.read()).toBe('');

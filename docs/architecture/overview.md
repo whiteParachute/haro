@@ -236,11 +236,12 @@ Haro apply 阶段只允许写入低风险对象：
 | Phase B | Contract skeleton      | schema + fake source + contract tests            |
 | Phase C | Read-only MCP sidecar  | `haro mcp` 暴露 read-only tools                  |
 | Phase D | Scheduled sidecar      | `connect agent-dock` + `observe --since last` + `propose --auto-dry-run` + `validate --pending` + `status` + `doctor --component sidecar` 已落地；propose/validate 已显式报告损坏 JSON 并原子写 artifact；status/doctor 只读汇总和检查 sidecar store |
-| Phase E | Signal intake + asset registry | 外部前沿情报 intake + 资产事件写入 sidecar store |
+| Phase E | Signal intake + asset registry | `FrontierSignal` schema + `haro intake frontier --source-config` 第一段已落地，写入 `~/.haro/evolution/frontier-signals/`；资产事件写入 sidecar store 待实现 |
 | Phase F | Gated apply L0/L1      | proposal + validation + snapshot + rollback gate |
 
 ## 架构变更记录
 
+- **2026-05-13**：Phase E 第一段落地：`FrontierSignal` contract schema、curated source-config intake、frontier signal status/doctor 计数；仍不读写 Haro-owned memory 或 `aria-memory-vault`。
 - **2026-05-09**：补充 sidecar operating model：Haro 同时观察 AgentDock 使用、Haro 自身组件和外部前沿情报；所有建议在审批后才进入 gated apply 或 patch branch。
 - **2026-05-08**：架构基线切换为 AgentDock Kernel + Haro Sidecar。Haro 不再继续自建完整 workbench/runtime；通过 AgentDock 外部 MCP server 注册、定时任务和 skills/MCP 调用面接入。
 - **2026-05-07**：FEAT-034 流式 UX 升级 done。该能力作为历史 workbench 资产保留，不再决定后续主路径。

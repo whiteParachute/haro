@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import {
   EvolutionProposalSchema,
+  FrontierSignalSchema,
   ObservationBatchSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
   createHttpAgentDockSource,
   type EvolutionProposal,
+  type FrontierSignal,
   type ObservationBatch,
   type Ref,
   type ValidationReport,
@@ -62,6 +64,12 @@ interface ValidateOptions extends OutputFlags {
   limit?: string;
 }
 
+interface IntakeFrontierOptions extends OutputFlags {
+  sourceConfig: string;
+  since?: string;
+  limit?: string;
+}
+
 interface ObserveResult {
   command: 'observe';
   connectionId: string;
@@ -100,6 +108,21 @@ interface ValidateResult {
   wroteValidations: boolean;
   validations: ValidationReport[];
   validationPaths: string[];
+}
+
+interface IntakeFrontierResult {
+  command: 'intake frontier';
+  sourceConfigPath: string;
+  since?: string;
+  cursor?: string;
+  signalCount: number;
+  wroteSignalCount: number;
+  duplicateSignalCount: number;
+  skippedBySinceCount: number;
+  pendingSignalCount: number;
+  skippedCorruptSignalCount: number;
+  signalIds: string[];
+  signalPaths: string[];
 }
 
 interface SidecarStatusResult {
@@ -143,10 +166,19 @@ interface SidecarStatusResult {
     count: number;
     corruptCount: number;
   };
+  frontierSignals: {
+    path: string;
+    count: number;
+    corruptCount: number;
+    activeCount: number;
+    rejectedCount: number;
+    supersededCount: number;
+  };
 }
 
 const CONNECTIONS_FILE = 'agentdock-connections.json';
 const DEFAULT_CONNECTION_ID = 'agentdock-local';
+const FRONTIER_CURSOR_CONNECTION_ID = 'frontier-intake';
 
 export function registerAgentDockSidecarCommands(program: Command, app: AppContext): void {
   const connect = program.command('connect').description('Manage sidecar connections');
@@ -367,6 +399,45 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
       }
     });
 
+  const intake = program
+    .command('intake')
+    .description('Collect external sidecar signals for proposal evidence');
+
+  intake
+    .command('frontier')
+    .description('Normalize curated frontier intelligence signals into the sidecar store')
+    .requiredOption('--source-config <file>', 'JSON file containing FrontierSignal[] or { signals: FrontierSignal[] }')
+    .option('--since <cursor>', 'last | none | ISO timestamp', 'last')
+    .option('--limit <n>', 'maximum new frontier signals to write')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: IntakeFrontierOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = intakeFrontierSignals(app, options);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(
+          [
+            `Frontier signals read: ${result.signalCount}`,
+            `Wrote: ${result.wroteSignalCount}`,
+            `Duplicates: ${result.duplicateSignalCount}`,
+            `Skipped by since: ${result.skippedBySinceCount}`,
+            `Pending after limit: ${result.pendingSignalCount}`,
+            `Skipped corrupt existing signals: ${result.skippedCorruptSignalCount}`,
+            result.cursor ? `Cursor: ${result.cursor}` : 'Cursor: (unchanged)',
+            result.signalPaths.length > 0 ? `Files: ${result.signalPaths.join(', ')}` : 'Files: (none)',
+          ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
 }
 
 async function observeAgentDock(app: AppContext, options: ObserveOptions): Promise<ObserveResult> {
@@ -550,10 +621,94 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
   }
 }
 
+function intakeFrontierSignals(app: AppContext, options: IntakeFrontierOptions): IntakeFrontierResult {
+  const limit = normalizeOptionalPositiveInt(options.limit, '--limit');
+  const sourceConfigPath = resolve(options.sourceConfig);
+  const signals = readFrontierSourceConfig(sourceConfigPath);
+  const lockDir = acquireFrontierIntakeLock(app.paths.root);
+  try {
+    const storedCursor = options.since === undefined || options.since === 'last'
+      ? readCursor(frontierCursorFilePath(app.paths.root), FRONTIER_CURSOR_CONNECTION_ID)?.cursor
+      : undefined;
+    const since = resolveSince(options.since, storedCursor);
+    assertOptionalIsoDateTime(since, '--since');
+    const existingResult = readExistingFrontierSignalRefs(app.paths.root);
+    emitCorruptFrontierSignalWarnings(app, existingResult.corruptCount);
+
+    const selected: FrontierSignal[] = [];
+    let duplicateSignalCount = 0;
+    let skippedBySinceCount = 0;
+    let pendingSignalCount = 0;
+    const seenSourceKeys = new Set(existingResult.sourceKeys);
+    for (const signal of signals) {
+      const key = frontierSignalSourceKey(signal);
+      if (seenSourceKeys.has(key)) {
+        duplicateSignalCount += 1;
+        continue;
+      }
+      if (since && !frontierSignalIsAfter(signal, since)) {
+        skippedBySinceCount += 1;
+        continue;
+      }
+      if (typeof limit !== 'number' || selected.length < limit) {
+        selected.push(signal);
+        seenSourceKeys.add(key);
+      } else {
+        pendingSignalCount += 1;
+      }
+    }
+
+    const signalPaths: string[] = [];
+    for (const signal of selected) {
+      const path = frontierSignalFilePath(app.paths.root, signal);
+      writeJsonFile(path, signal);
+      signalPaths.push(path);
+    }
+
+    const cursor = nextFrontierCursor(
+      signals.filter((signal) => !since || frontierSignalIsAfter(signal, since)),
+      since ?? storedCursor,
+    );
+    if (cursor) {
+      mkdirSync(cursorsDir(app.paths.root), { recursive: true });
+      const cursorRecord: ObservationCursorRecord = {
+        connectionId: FRONTIER_CURSOR_CONNECTION_ID,
+        cursor,
+        updatedAt: app.now().toISOString(),
+      };
+      if (selected.length > 0) {
+        cursorRecord.lastObservationId = selected[selected.length - 1]!.id;
+      }
+      if (signalPaths.length > 0) {
+        cursorRecord.lastObservationPath = signalPaths[signalPaths.length - 1]!;
+      }
+      writeJsonFile(frontierCursorFilePath(app.paths.root), cursorRecord);
+    }
+
+    return {
+      command: 'intake frontier',
+      sourceConfigPath,
+      ...(since ? { since } : {}),
+      ...(cursor ? { cursor } : {}),
+      signalCount: signals.length,
+      wroteSignalCount: selected.length,
+      duplicateSignalCount,
+      skippedBySinceCount,
+      pendingSignalCount,
+      skippedCorruptSignalCount: existingResult.corruptCount,
+      signalIds: selected.map((signal) => signal.id),
+      signalPaths,
+    };
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
 export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult {
   const validationStats = readValidationStats(app.paths.root);
   const proposalStats = readProposalStats(app.paths.root, validationStats.validatedProposalIds);
   const observationStats = readObservationStats(app.paths.root);
+  const frontierSignalStats = readFrontierSignalStats(app.paths.root);
   return {
     command: 'status',
     root: app.paths.root,
@@ -576,6 +731,14 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
       path: validationsDir(app.paths.root),
       count: validationStats.count,
       corruptCount: validationStats.corruptCount,
+    },
+    frontierSignals: {
+      path: frontierSignalsDir(app.paths.root),
+      count: frontierSignalStats.count,
+      corruptCount: frontierSignalStats.corruptCount,
+      activeCount: frontierSignalStats.activeCount,
+      rejectedCount: frontierSignalStats.rejectedCount,
+      supersededCount: frontierSignalStats.supersededCount,
     },
   };
 }
@@ -821,6 +984,18 @@ function validationFilePath(root: string, report: ValidationReport): string {
   return join(validationsDir(root), `${safePathSegment(report.id)}.json`);
 }
 
+function frontierSignalFilePath(root: string, signal: FrontierSignal): string {
+  const fingerprint = sha256(frontierSignalSourceKey(signal)).slice(0, 12);
+  return join(
+    frontierSignalsDir(root),
+    `${safePathSegment(signal.collectedAt)}-${safePathSegment(signal.id)}-${fingerprint}.json`,
+  );
+}
+
+function frontierCursorFilePath(root: string): string {
+  return cursorFilePath(root, FRONTIER_CURSOR_CONNECTION_ID);
+}
+
 function cursorsDir(root: string): string {
   return join(root, 'evolution', 'cursors');
 }
@@ -835,6 +1010,10 @@ function proposalsDir(root: string): string {
 
 function validationsDir(root: string): string {
   return join(root, 'evolution', 'validations');
+}
+
+function frontierSignalsDir(root: string): string {
+  return join(root, 'evolution', 'frontier-signals');
 }
 
 function acquireConnectionLock(root: string, connectionId: string): string {
@@ -887,6 +1066,25 @@ function acquireValidateLock(root: string): string {
       throw new CommanderExit(
         1,
         'Another haro validate process is already running.',
+      );
+    }
+    throw error;
+  }
+  return dir;
+}
+
+function acquireFrontierIntakeLock(root: string): string {
+  const parent = join(root, 'evolution', 'locks');
+  mkdirSync(parent, { recursive: true });
+  const dir = join(parent, 'frontier-intake.lock');
+  try {
+    mkdirSync(dir);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === 'EEXIST') {
+      throw new CommanderExit(
+        1,
+        'Another haro intake frontier process is already running.',
       );
     }
     throw error;
@@ -1175,6 +1373,88 @@ function readValidationStats(root: string): {
   return { count, corruptCount, validatedProposalIds };
 }
 
+function readFrontierSourceConfig(path: string): FrontierSignal[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    throw new CommanderExit(
+      1,
+      `Invalid frontier source config at ${path}; expected JSON FrontierSignal[] or { signals: [...] }. ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const items = Array.isArray(value)
+    ? value
+    : isRecord(value) && Array.isArray(value.signals)
+      ? value.signals
+      : undefined;
+  if (!items) {
+    throw new CommanderExit(
+      1,
+      `Invalid frontier source config at ${path}; expected FrontierSignal[] or { signals: FrontierSignal[] }.`,
+    );
+  }
+  return items.map((item, index) => {
+    const parsed = FrontierSignalSchema.safeParse(item);
+    if (parsed.success) return parsed.data;
+    const details = parsed.error.issues
+      .map((issue) => `${issue.path.length > 0 ? issue.path.join('.') : '(root)'}: ${issue.message}`)
+      .join('; ');
+    throw new CommanderExit(
+      1,
+      `Invalid FrontierSignal at ${path}#signals[${index}]: ${details}`,
+    );
+  });
+}
+
+function readExistingFrontierSignalRefs(root: string): { sourceKeys: Set<string>; corruptCount: number } {
+  const dir = frontierSignalsDir(root);
+  const sourceKeys = new Set<string>();
+  if (!existsSync(dir)) return { sourceKeys, corruptCount: 0 };
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const signal = FrontierSignalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      sourceKeys.add(frontierSignalSourceKey(signal));
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { sourceKeys, corruptCount };
+}
+
+function readFrontierSignalStats(root: string): {
+  count: number;
+  corruptCount: number;
+  activeCount: number;
+  rejectedCount: number;
+  supersededCount: number;
+} {
+  const dir = frontierSignalsDir(root);
+  if (!existsSync(dir)) {
+    return { count: 0, corruptCount: 0, activeCount: 0, rejectedCount: 0, supersededCount: 0 };
+  }
+  let count = 0;
+  let corruptCount = 0;
+  let activeCount = 0;
+  let rejectedCount = 0;
+  let supersededCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const signal = FrontierSignalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+      if (signal.status === 'active') activeCount += 1;
+      if (signal.status === 'rejected') rejectedCount += 1;
+      if (signal.status === 'superseded') supersededCount += 1;
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount, activeCount, rejectedCount, supersededCount };
+}
+
 function emitCorruptJsonWarnings(
   app: AppContext,
   counts: { corruptObservationCount: number; corruptProposalCount: number },
@@ -1203,6 +1483,14 @@ function emitCorruptValidationWarnings(
   if (counts.corruptValidationCount > 0) {
     app.stderr.write(
       `Warning: skipped ${counts.corruptValidationCount} corrupt AgentDock validation file(s) under evolution/validations.\n`,
+    );
+  }
+}
+
+function emitCorruptFrontierSignalWarnings(app: AppContext, corruptSignalCount: number): void {
+  if (corruptSignalCount > 0) {
+    app.stderr.write(
+      `Warning: skipped ${corruptSignalCount} corrupt frontier signal file(s) under evolution/frontier-signals.\n`,
     );
   }
 }
@@ -1368,6 +1656,43 @@ function proposalSummary(summary: ReturnType<typeof summarizeObservationBatches>
     'Review persisted AgentDock sidecar observations and prepare a dry-run self-optimization proposal.',
     `Batches=${summary.batches}, sessions=${summary.sessions}, turns=${summary.turns}, toolCalls=${summary.toolCalls}, scheduledTaskRuns=${summary.scheduledTaskRuns}, scheduledTaskErrors=${summary.scheduledTaskErrors}, runnerErrors=${summary.runnerErrors}, usageRecords=${summary.usageRecords}.`,
   ].join(' ');
+}
+
+function frontierSignalSourceKey(signal: FrontierSignal): string {
+  return JSON.stringify({
+    sourceType: signal.sourceType,
+    sourceRef: {
+      id: signal.sourceRef.id,
+      kind: signal.sourceRef.kind,
+      uri: signal.sourceRef.uri ?? '',
+    },
+  });
+}
+
+function frontierSignalTimestamp(signal: FrontierSignal): string {
+  return signal.publishedAt ?? signal.collectedAt;
+}
+
+function frontierSignalIsAfter(signal: FrontierSignal, since: string): boolean {
+  return Date.parse(frontierSignalTimestamp(signal)) > Date.parse(since);
+}
+
+function nextFrontierCursor(signals: readonly FrontierSignal[], previous: string | undefined): string | undefined {
+  let cursor = previous;
+  for (const signal of signals) {
+    const timestamp = frontierSignalTimestamp(signal);
+    if (!cursor || Date.parse(timestamp) > Date.parse(cursor)) {
+      cursor = timestamp;
+    }
+  }
+  return cursor;
+}
+
+function assertOptionalIsoDateTime(value: string | undefined, label: string): void {
+  if (!value) return;
+  if (Number.isNaN(Date.parse(value))) {
+    throw new CommanderExit(2, `${label} must be last|none|ISO timestamp`);
+  }
 }
 
 function encodedConnectionId(connectionId: string): string {
