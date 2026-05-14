@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import {
   ApplicationRecordSchema,
+  ApprovalRequestRecordSchema,
   AssetSnapshotRecordSchema,
   AssetKindSchema,
   AssetEventSchema,
@@ -16,6 +17,7 @@ import {
   createFakeAgentDockSource,
   createHttpAgentDockSource,
   type ApplicationRecord,
+  type ApprovalRequestRecord,
   type ApplyGateCode,
   type AssetSnapshotRecord,
   type AssetEvent,
@@ -78,6 +80,11 @@ interface ProposeOptions extends OutputFlags {
 }
 
 interface ValidateOptions extends OutputFlags {
+  pending?: boolean;
+  limit?: string;
+}
+
+interface ApprovalRequestOptions extends OutputFlags {
   pending?: boolean;
   limit?: string;
 }
@@ -151,6 +158,20 @@ interface ValidateResult {
   assetEventIds: string[];
   validations: ValidationReport[];
   validationPaths: string[];
+}
+
+interface ApprovalRequestResult {
+  command: 'approval-request';
+  mode: 'pending';
+  approvalRequestCount: number;
+  requestedProposalCount: number;
+  pendingProposalCount: number;
+  skippedCorruptProposalCount: number;
+  skippedCorruptValidationCount: number;
+  skippedCorruptApprovalRequestCount: number;
+  wroteApprovalRequests: boolean;
+  approvalRequests: ApprovalRequestRecord[];
+  approvalRequestPaths: string[];
 }
 
 interface SnapshotResult {
@@ -380,6 +401,12 @@ interface SidecarStatusResult {
     path: string;
     count: number;
     corruptCount: number;
+  };
+  approvalRequests: {
+    path: string;
+    count: number;
+    corruptCount: number;
+    pendingCount: number;
   };
   snapshots: {
     path: string;
@@ -671,6 +698,58 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             `Proposal: ${result.proposalId}`,
             `Wrote: ${result.snapshotPath}`,
             `Wrote: ${result.rollbackPath}`,
+          ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+  program
+    .command('approval-request')
+    .description('Render validated proposals into human approval request artifacts')
+    .option('--pending', 'generate approval requests for validated proposals that do not yet have one')
+    .option('--limit <n>', 'maximum pending approval requests to write')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: ApprovalRequestOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = approvalRequestAgentDock(app, options);
+        if (mode === 'json') {
+          renderJson({
+            command: result.command,
+            mode: result.mode,
+            approvalRequestCount: result.approvalRequestCount,
+            requestedProposalCount: result.requestedProposalCount,
+            pendingProposalCount: result.pendingProposalCount,
+            skippedCorruptProposalCount: result.skippedCorruptProposalCount,
+            skippedCorruptValidationCount: result.skippedCorruptValidationCount,
+            skippedCorruptApprovalRequestCount: result.skippedCorruptApprovalRequestCount,
+            wroteApprovalRequests: result.wroteApprovalRequests,
+            approvalRequestIds: result.approvalRequests.map((request) => request.id),
+            approvalRequestPaths: result.approvalRequestPaths,
+            approvalRequests: result.approvalRequests,
+          }, { stdout: app.stdout });
+          return;
+        }
+        if (result.approvalRequests.length > 0) {
+          app.stdout.write(
+            [
+              `Approval requests: ${result.approvalRequestCount}`,
+              `Requested proposals: ${result.requestedProposalCount}`,
+              `Pending proposals after run: ${result.pendingProposalCount}`,
+              `Wrote: ${result.approvalRequestPaths.join(', ')}`,
+            ].join('\n') + '\n',
+          );
+          return;
+        }
+        app.stdout.write(
+          [
+            'No validated proposals need approval requests.',
+            `Pending proposals after run: ${result.pendingProposalCount}`,
           ].join('\n') + '\n',
         );
       } catch (error) {
@@ -1027,6 +1106,65 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
       assetEventIds,
       validations,
       validationPaths,
+    };
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
+function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptions): ApprovalRequestResult {
+  if (!options.pending) {
+    throw new CommanderExit(
+      2,
+      '`haro approval-request` is currently queue-based; pass `--pending` to render pending validated proposals.',
+    );
+  }
+
+  const limit = normalizeOptionalPositiveInt(options.limit, '--limit');
+  const lockDir = acquireApprovalRequestLock(app.paths.root);
+  try {
+    const requestedResult = readApprovalRequestedProposalIds(app.paths.root);
+    const validationStats = readValidationStats(app.paths.root);
+    const pendingResult = readValidatedProposalsNeedingApprovalRequest(
+      app.paths.root,
+      validationStats.validatedProposalIds,
+      requestedResult.requested,
+    );
+    const pending = pendingResult.proposals;
+    const selected = typeof limit === 'number' ? pending.slice(0, limit) : pending;
+    if (selected.length === 0) {
+      return {
+        command: 'approval-request',
+        mode: 'pending',
+        approvalRequestCount: 0,
+        requestedProposalCount: 0,
+        pendingProposalCount: 0,
+        skippedCorruptProposalCount: pendingResult.corruptCount,
+        skippedCorruptValidationCount: validationStats.corruptCount,
+        skippedCorruptApprovalRequestCount: requestedResult.corruptCount,
+        wroteApprovalRequests: false,
+        approvalRequests: [],
+        approvalRequestPaths: [],
+      };
+    }
+
+    const approvalRequests = selected.map(({ proposal, validation }) => createApprovalRequestRecord(app, proposal, validation));
+    const approvalRequestPaths = approvalRequests.map((record) => approvalRequestFilePath(app.paths.root, record));
+    for (let i = 0; i < approvalRequests.length; i += 1) {
+      writeJsonFile(approvalRequestPaths[i]!, approvalRequests[i]!);
+    }
+    return {
+      command: 'approval-request',
+      mode: 'pending',
+      approvalRequestCount: approvalRequests.length,
+      requestedProposalCount: selected.length,
+      pendingProposalCount: pending.length - selected.length,
+      skippedCorruptProposalCount: pendingResult.corruptCount,
+      skippedCorruptValidationCount: validationStats.corruptCount,
+      skippedCorruptApprovalRequestCount: requestedResult.corruptCount,
+      wroteApprovalRequests: true,
+      approvalRequests,
+      approvalRequestPaths,
     };
   } finally {
     releaseConnectionLock(lockDir);
@@ -1485,6 +1623,7 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
   const observationStats = readObservationStats(app.paths.root);
   const frontierSignalStats = readFrontierSignalStats(app.paths.root);
   const applicationStats = readApplicationStats(app.paths.root);
+  const approvalRequestStats = readApprovalRequestStats(app.paths.root);
   const snapshotStats = readSnapshotStats(app.paths.root);
   const rollbackStats = readRollbackStats(app.paths.root);
   const patchBranchStats = readPatchBranchPlanStats(app.paths.root);
@@ -1510,6 +1649,12 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
       path: validationsDir(app.paths.root),
       count: validationStats.count,
       corruptCount: validationStats.corruptCount,
+    },
+    approvalRequests: {
+      path: approvalRequestsDir(app.paths.root),
+      count: approvalRequestStats.count,
+      corruptCount: approvalRequestStats.corruptCount,
+      pendingCount: approvalRequestStats.pendingCount,
     },
     snapshots: {
       path: snapshotsDir(app.paths.root),
@@ -1787,6 +1932,10 @@ function validationFilePath(root: string, report: ValidationReport): string {
   return join(validationsDir(root), `${safePathSegment(report.id)}.json`);
 }
 
+function approvalRequestFilePath(root: string, record: ApprovalRequestRecord): string {
+  return join(approvalRequestsDir(root), `${safePathSegment(record.id)}.json`);
+}
+
 function applicationFilePath(root: string, record: ApplicationRecord): string {
   return join(applicationsDir(root), `${safePathSegment(record.id)}.json`);
 }
@@ -1829,6 +1978,10 @@ function proposalsDir(root: string): string {
 
 function validationsDir(root: string): string {
   return join(root, 'evolution', 'validations');
+}
+
+function approvalRequestsDir(root: string): string {
+  return join(root, 'evolution', 'approval-requests');
 }
 
 function applicationsDir(root: string): string {
@@ -1913,6 +2066,25 @@ function acquireValidateLock(root: string): string {
       throw new CommanderExit(
         1,
         'Another haro validate process is already running.',
+      );
+    }
+    throw error;
+  }
+  return dir;
+}
+
+function acquireApprovalRequestLock(root: string): string {
+  const parent = join(root, 'evolution', 'locks');
+  mkdirSync(parent, { recursive: true });
+  const dir = join(parent, 'approval-request.lock');
+  try {
+    mkdirSync(dir);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === 'EEXIST') {
+      throw new CommanderExit(
+        1,
+        'Another haro approval-request process is already running.',
       );
     }
     throw error;
@@ -2147,6 +2319,49 @@ function readValidatedProposalIds(root: string): { validated: Set<string>; corru
     }
   }
   return { validated, corruptCount };
+}
+
+function readApprovalRequestedProposalIds(root: string): { requested: Set<string>; corruptCount: number } {
+  const dir = approvalRequestsDir(root);
+  const requested = new Set<string>();
+  if (!existsSync(dir)) return { requested, corruptCount: 0 };
+  let corruptCount = 0;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = ApprovalRequestRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      requested.add(record.proposalId);
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { requested, corruptCount };
+}
+
+function readValidatedProposalsNeedingApprovalRequest(
+  root: string,
+  validatedProposalIds: ReadonlySet<string>,
+  requestedProposalIds: ReadonlySet<string>,
+): { proposals: Array<{ proposal: EvolutionProposal; validation: ValidationReport }>; corruptCount: number } {
+  const dir = proposalsDir(root);
+  if (!existsSync(dir)) return { proposals: [], corruptCount: 0 };
+  const proposals: Array<{ proposal: EvolutionProposal; validation: ValidationReport }> = [];
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const proposal = EvolutionProposalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (!validatedProposalIds.has(proposal.id)) continue;
+      if (requestedProposalIds.has(proposal.id)) continue;
+      if (proposal.humanApprovalRefs.length > 0) continue;
+      if (proposal.status === 'rejected' || proposal.status === 'superseded' || proposal.status === 'applied') continue;
+      const validation = readLatestValidationForProposal(root, proposal.id);
+      if (validation) proposals.push({ proposal, validation });
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { proposals, corruptCount };
 }
 
 function readProposalById(root: string, proposalId: string): EvolutionProposal | undefined {
@@ -2384,6 +2599,29 @@ function readApplicationStats(root: string): {
     }
   }
   return { count, corruptCount, readyCount, appliedCount, rolledBackCount };
+}
+
+function readApprovalRequestStats(root: string): {
+  count: number;
+  corruptCount: number;
+  pendingCount: number;
+} {
+  const dir = approvalRequestsDir(root);
+  if (!existsSync(dir)) return { count: 0, corruptCount: 0, pendingCount: 0 };
+  let count = 0;
+  let corruptCount = 0;
+  let pendingCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = ApprovalRequestRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+      if (record.status === 'pending') pendingCount += 1;
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount, pendingCount };
 }
 
 function readPatchBranchPlanStats(root: string): {
@@ -3376,6 +3614,90 @@ function createPatchBranchPlanRecord(
     createdAt: timestamp,
     updatedAt: timestamp,
   });
+}
+
+function createApprovalRequestRecord(
+  app: AppContext,
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+): ApprovalRequestRecord {
+  const timestamp = app.now().toISOString();
+  const changeRefs = proposal.changeSet.map((_change, index) => proposalChangeRef(proposal, index));
+  const id = `approval_request_${sha256(JSON.stringify({
+    proposalId: proposal.id,
+    validationId: validation.id,
+    proposalUpdatedAt: proposal.updatedAt,
+    validationCreatedAt: validation.createdAt,
+    changeSet: proposal.changeSet.map((change, index) => ({
+      index,
+      op: change.op,
+      targetRef: change.targetRef,
+      contentHash: change.contentHash,
+      summary: change.summary,
+    })),
+  })).slice(0, 24)}`;
+  return ApprovalRequestRecordSchema.parse({
+    id,
+    proposalId: proposal.id,
+    validationId: validation.id,
+    status: 'pending',
+    title: proposal.title,
+    level: proposal.level,
+    targetKind: proposal.targetKind,
+    riskLevel: proposal.riskLevel,
+    sourceRef: evolutionProposalRef(proposal),
+    validationRef: validationReportRef(validation),
+    whyChange: approvalWhyChange(proposal, validation),
+    howChange: approvalHowChange(proposal),
+    expectedBenefits: approvalExpectedBenefits(proposal),
+    requiredTests: validation.requiredTests.length > 0
+      ? validation.requiredTests
+      : proposal.testPlan.requiredCommands,
+    manualChecks: [
+      ...proposal.testPlan.manualChecks,
+      'Reviewer must decide approve, reject, or request-changes in AgentDock before Haro can continue.',
+    ],
+    regressionRisks: proposal.testPlan.regressionRisks,
+    rollbackPlan: proposal.rollbackPlan,
+    decisionOptions: ['approve', 'reject', 'request-changes'],
+    reviewerInstruction:
+      'Review why/how/benefit, evidence, tests, risks, and rollback plan. Reply approve, reject, or request-changes with direction.',
+    humanReviewRequired: true,
+    evidenceRefs: [
+      evolutionProposalRef(proposal),
+      validationReportRef(validation),
+      ...proposal.sourceObservationRefs,
+      ...validation.evidenceRefs,
+      ...changeRefs,
+    ],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+function approvalWhyChange(proposal: EvolutionProposal, validation: ValidationReport): string[] {
+  const sourceKinds = new Set(proposal.sourceObservationRefs.map((ref) => ref.kind));
+  return [
+    `Proposal is based on ${proposal.sourceObservationRefs.length} evidence ref(s): ${Array.from(sourceKinds).sort().join(', ')}.`,
+    `Validation verdict is ${validation.riskVerdict}; apply eligibility is ${validation.applyEligible ? 'eligible after approval' : 'not yet apply-eligible'}.`,
+    `Target is ${proposal.targetKind} at ${proposal.level} with ${proposal.riskLevel} proposal risk.`,
+  ];
+}
+
+function approvalHowChange(proposal: EvolutionProposal): string[] {
+  return proposal.changeSet.map((change, index) => (
+    `${index + 1}. ${change.op} ${change.targetRef.kind}:${change.targetRef.id} — ${change.summary}`
+  ));
+}
+
+function approvalExpectedBenefits(proposal: EvolutionProposal): string[] {
+  return [
+    `Keeps ${proposal.targetKind} evolution explicit and reviewable before execution.`,
+    'Preserves a structured test and rollback plan before any write path is allowed.',
+    proposal.level === 'L0' || proposal.level === 'L1'
+      ? 'Allows low-risk sidecar-owned changes to move through gated apply only after approval.'
+      : 'Keeps code-level changes on a patch branch path instead of direct apply.',
+  ];
 }
 
 function createSnapshotArtifacts(

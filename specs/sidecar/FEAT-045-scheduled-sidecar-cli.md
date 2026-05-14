@@ -43,7 +43,8 @@ Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。Agen
 - R3: `haro propose --auto-dry-run` 读取未消费 observations，生成 dry-run proposal，写入 `~/.haro/evolution/proposals/`，并为 proposal changeSet 写入 `proposed` asset events。
 - R3.1: 启动阶段自动生成的 proposal 必须 fail-closed：`humanReviewRequired=true` 且 `humanApprovalRefs=[]`，后续 apply 或真实 branch executor 必须等待 AgentDock 人审 approval ref。
 - R4: `haro validate --pending` 读取 pending proposals，生成 validation report，写入 `~/.haro/evolution/validations/`，并为 validated changeSet 写入 `validated` asset events。
-- R5: `haro status` 输出 connection、cursor、observation/proposal/validation 计数。
+- R4.1: `haro approval-request --pending` 读取已有 validation 的 proposal，生成包含 why/how/benefit 的 approval request artifact，写入 `~/.haro/evolution/approval-requests/`。
+- R5: `haro status` 输出 connection、cursor、observation/proposal/validation/approval-request 计数。
 - R6: `haro doctor` 检查 HARO_HOME、connection、AgentDock reachability、write permission、schema compatibility。
 - R7: 所有命令支持 `--json`，stdout 输出结构化结果；错误写 stderr，退出码非 0。
 - R8: 所有命令幂等。重复运行不得重复消费同一 observation。
@@ -53,7 +54,7 @@ Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。Agen
 AgentDock script task 示例：
 
 ```bash
-haro observe --since last && haro propose --auto-dry-run --include-frontier && haro validate --pending
+haro observe --since last && haro propose --auto-dry-run --include-frontier && haro validate --pending && haro approval-request --pending
 ```
 
 数据流：
@@ -97,8 +98,9 @@ cursor 存储建议：
 - AC4.1: 给定损坏的 observation/proposal JSON，当执行 `haro propose --auto-dry-run --json` 时，应在结果中暴露 `skippedCorruptObservationCount` / `skippedCorruptProposalCount` 并向 stderr 输出 warning；若确定性 proposal 文件已存在但损坏，应原子覆盖修复。（对应 R3/R7/R8）
 - AC5: 给定 pending proposal，当执行 `haro validate --pending` 时，应生成 advisory validation report 并写入 `validated` asset event；重复执行不重复验证同一 proposal；`--limit` 只限制单次处理的 pending proposal 数。（对应 R4/R8）
 - AC5.1: 给定损坏的 proposal/validation JSON，当执行 `haro validate --pending --json` 时，应在结果中暴露 `skippedCorruptProposalCount` / `skippedCorruptValidationCount` 并向 stderr 输出 warning；若确定性 validation 文件已存在但损坏，应原子覆盖修复。（对应 R4/R7/R8）
-- AC5.2: 给定 sidecar evolution store，当执行 `haro status --json` 时，应输出 connection、cursor、observation、proposal、validation 计数和 corrupt 文件计数；不得读取或写入 memory。（对应 R5/R7）
-- AC5.3: 给定 sidecar store，当执行 `haro doctor --component sidecar --json` 时，应检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock reachability、schema/corrupt artifacts，并输出 issues/nextActions；不得读取或写入 memory。（对应 R6/R7）
+- AC5.2: 给定 validated proposal，当执行 `haro approval-request --pending --json` 时，应生成包含 why/how/benefit 的 approval request；重复执行不重复生成。（对应 R4.1/R8）
+- AC5.3: 给定 sidecar evolution store，当执行 `haro status --json` 时，应输出 connection、cursor、observation、proposal、validation、approval request 计数和 corrupt 文件计数；不得读取或写入 memory。（对应 R5/R7）
+- AC5.4: 给定 sidecar store，当执行 `haro doctor --component sidecar --json` 时，应检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock reachability、schema/corrupt artifacts，并输出 issues/nextActions；不得读取或写入 memory。（对应 R6/R7）
 - AC6: 给定 `--json`，stdout 应为可解析 JSON，stderr 不应混入进度文本。（对应 R7）
 
 ## 7. Test Plan / 测试计划
@@ -128,3 +130,4 @@ cursor 存储建议：
 - 2026-05-12: Codex — 实现 `haro doctor --component sidecar`：复用现有 top-level doctor，新增 sidecar stage，检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts 与 memory 边界；默认 `haro doctor` 包含 sidecar stage，`doctor --fix` 不创建历史 Haro memory 目录。
 - 2026-05-13: Codex — 扩展 `haro propose --auto-dry-run --include-frontier`：在未消费 observation batch 触发 proposal 时引用 active frontier signal evidence refs，并显式暴露损坏 frontier signal 计数；仍只生成 dry-run proposal，不 apply、不写 memory。
 - 2026-05-14: Haro — 将 scheduled propose/validate 接入 sidecar asset registry：propose 写 `proposed` AssetEvent，validate 写 `validated` AssetEvent，JSON 输出 assetEventCount/assetEventIds；仍不 apply、不写 memory。
+- 2026-05-14: Haro — 新增 `haro approval-request --pending`：把 validated proposal 渲染为 pending approval request artifact，固定包含 why/how/benefit、风险、测试、回滚和 approve/reject/request-changes 决策选项；重复执行幂等，仍不创建 `$HARO_HOME/memory`。

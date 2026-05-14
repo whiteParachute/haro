@@ -183,6 +183,7 @@ export type RunCliAction =
   | 'observe'
   | 'propose'
   | 'validate'
+  | 'approval-request'
   | 'snapshot'
   | 'apply'
   | 'rollback'
@@ -1648,6 +1649,7 @@ async function bootstrapApp(
     input.argv?.[0] === 'observe' ||
     input.argv?.[0] === 'propose' ||
     input.argv?.[0] === 'validate' ||
+    input.argv?.[0] === 'approval-request' ||
     input.argv?.[0] === 'snapshot' ||
     input.argv?.[0] === 'apply' ||
     input.argv?.[0] === 'rollback' ||
@@ -2939,6 +2941,7 @@ async function createSidecarDoctorStage(
     { name: 'observations', path: sidecar.observations.path, required: false },
     { name: 'proposals', path: sidecar.proposals.path, required: false },
     { name: 'validations', path: sidecar.validations.path, required: false },
+    { name: 'approval-requests', path: sidecar.approvalRequests.path, required: false },
     { name: 'snapshots', path: sidecar.snapshots.path, required: false },
     { name: 'rollbacks', path: sidecar.rollbacks.path, required: false },
     { name: 'applications', path: sidecar.applications.path, required: false },
@@ -3001,6 +3004,7 @@ async function createSidecarDoctorStage(
     observations: sidecar.observations.corruptCount,
     proposals: sidecar.proposals.corruptCount,
     validations: sidecar.validations.corruptCount,
+    approvalRequests: sidecar.approvalRequests.corruptCount,
     snapshots: sidecar.snapshots.corruptCount,
     rollbacks: sidecar.rollbacks.corruptCount,
     applications: sidecar.applications.corruptCount,
@@ -3157,7 +3161,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'snapshot' || first === 'apply' || first === 'rollback' || first === 'patch-branch' || first === 'intake' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'approval-request' || first === 'snapshot' || first === 'apply' || first === 'rollback' || first === 'patch-branch' || first === 'intake' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

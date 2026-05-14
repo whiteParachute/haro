@@ -15,6 +15,7 @@
 | Phase E: Signal Intake + Asset Registry | 进行中，frontier evidence + registry adapter 已接入 propose/validate | 把外部前沿情报与 skills/prompts/profiles/rules/tool config 纳入进化证据和资产事件 | `FrontierSignal` schema、`haro intake frontier --source-config`、`haro propose --auto-dry-run --include-frontier`、frontier-signals sidecar 数据目录；`~/.haro/assets/manifests` + `events` file-backed registry；proposed/validated asset event 写入；memory 仅保存 AgentDock refs | Haro 自有目录，不写 memory |
 | Phase F: Gated Apply L0/L1 | sidecar-local apply/rollback + opt-in MCP bridge 已落地，人审 gate 已补强 | 在 validation + human review gate 后执行低风险变更 | `ApplicationRecord` / `AssetSnapshotRecord` / `RollbackRecord` contract、`humanReviewRequired` / `humanApprovalRefs`、`haro snapshot --proposal-id`、sidecar-local `snapshot-content`、`haro apply --proposal-id` / `haro rollback --application-id`、`haro mcp --enable-gated-write` 的 `haro_apply` / `haro_rollback` | 只改 Haro sidecar-owned `assets/current`，不改 AgentDock 内部资产；缺 approval ref 返回 `HUMAN_REVIEW_REQUIRED`；默认 MCP 仍 read-only |
 | Phase G: Patch Branch L2/L3 | plan artifact 第一段已落地 | 对 Haro 代码或 AgentDock contract 生成 patch branch 与验证报告 | `PatchBranchPlanRecord`、`haro patch-branch --proposal-id`、`~/.haro/evolution/patch-branches` plan artifacts；真实 branch executor 待实现 | 不直接 apply；不创建真实 branch；不写 memory |
+| Phase H: Approval Requests | approval artifact 第一段已落地 | 把 proposal 变成可给用户逐条审批的 why/how/benefit 请求 | `ApprovalRequestRecord`、`haro approval-request --pending`、`~/.haro/evolution/approval-requests` | 只产出审批请求；不签发 approval、不 apply、不写 memory |
 
 ## 关键判断
 
@@ -213,6 +214,12 @@ Asset registry 已改为 sidecar file-backed registry：manifest 写入 `~/.haro
 - 第一段只生成 patch branch plan artifact，不 checkout、不创建真实 branch、不修改代码。
 
 当前已实现 `haro patch-branch --proposal-id <id>`：要求 L2/L3 proposal 已验证，生成 deterministic `PatchBranchPlanRecord`，写入 `~/.haro/evolution/patch-branches/`，包含推荐 branchName、requiredTests、manualChecks、regressionRisks、rollbackPlan 和 evidence refs；L0/L1 调用会返回 `PATCH_BRANCH_NOT_REQUIRED`。
+
+## Phase H: Approval Requests
+
+**目标**：把每个 proposal 自动整理成用户可审批的结构化请求。
+
+当前已实现 `haro approval-request --pending`：读取已有 validation、尚未有 approval request、且缺少 `humanApprovalRefs` 的 proposal，写入 `~/.haro/evolution/approval-requests/`。每个 request 包含 whyChange、howChange、expectedBenefits、requiredTests、manualChecks、regressionRisks、rollbackPlan 和 `approve / reject / request-changes` 决策选项。下一步由 AgentDock 将这些 artifact 渲染为飞书/Web 审批消息，并在用户同意后签发 `humanApprovalRef`。
 
 ## 历史资产处理
 

@@ -6,11 +6,13 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApplicationRecordSchema,
+  ApprovalRequestRecordSchema,
   AssetSnapshotRecordSchema,
   AssetEventSchema,
   PatchBranchPlanRecordSchema,
   RollbackRecordSchema,
   type ApplicationRecord,
+  type ApprovalRequestRecord,
   type AssetSnapshotRecord,
   type AssetEvent,
   type PatchBranchPlanRecord,
@@ -135,6 +137,15 @@ function readApplicationRecords(root: string): ApplicationRecord[] {
     .filter((name) => name.endsWith('.json'))
     .sort()
     .map((name) => ApplicationRecordSchema.parse(readJson(join(dir, name))));
+}
+
+function readApprovalRequestRecords(root: string): ApprovalRequestRecord[] {
+  const dir = join(root, 'evolution', 'approval-requests');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .map((name) => ApprovalRequestRecordSchema.parse(readJson(join(dir, name))));
 }
 
 function readPatchBranchPlanRecords(root: string): PatchBranchPlanRecord[] {
@@ -774,6 +785,111 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(readAssetEvents(root)).toHaveLength(2);
     expect(observeErr.read()).toBe('');
     expect(proposeErr.read()).toBe('');
+  });
+
+  it('approval-request --pending writes human-review artifacts with why how and benefits', async () => {
+    const root = newHome('agentdock-approval-request');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(propose.exitCode).toBe(0);
+    const proposalPayload = (JSON.parse(proposeOut.read()) as { data: { proposalId: string } }).data;
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+    const validationPayload = (JSON.parse(validateOut.read()) as { data: { validationIds: string[] } }).data;
+
+    const approvalOut = captureStream();
+    const approvalErr = captureStream();
+    const approval = await runCli(commonOpts(root, approvalOut, approvalErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(approval.exitCode).toBe(0);
+    expect(approval.action).toBe('approval-request');
+    expect(approvalErr.read()).toBe('');
+    const payload = (JSON.parse(approvalOut.read()) as { data: {
+      approvalRequestCount: number;
+      requestedProposalCount: number;
+      pendingProposalCount: number;
+      wroteApprovalRequests: boolean;
+      approvalRequestIds: string[];
+      approvalRequestPaths: string[];
+      approvalRequests: Array<{
+        proposalId: string;
+        validationId: string;
+        whyChange: string[];
+        howChange: string[];
+        expectedBenefits: string[];
+        decisionOptions: string[];
+        humanReviewRequired: boolean;
+      }>;
+    } }).data;
+    expect(payload.approvalRequestCount).toBe(1);
+    expect(payload.requestedProposalCount).toBe(1);
+    expect(payload.pendingProposalCount).toBe(0);
+    expect(payload.wroteApprovalRequests).toBe(true);
+    expect(payload.approvalRequestIds).toHaveLength(1);
+    expect(existsSync(payload.approvalRequestPaths[0]!)).toBe(true);
+    expect(payload.approvalRequests[0]).toMatchObject({
+      proposalId: proposalPayload.proposalId,
+      validationId: validationPayload.validationIds[0],
+      humanReviewRequired: true,
+      decisionOptions: ['approve', 'reject', 'request-changes'],
+    });
+    expect(payload.approvalRequests[0]?.whyChange.join('\n')).toContain('Proposal is based on');
+    expect(payload.approvalRequests[0]?.howChange[0]).toContain('update');
+    expect(payload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('reviewable');
+    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+
+    const repeatOut = captureStream();
+    const repeatErr = captureStream();
+    const repeat = await runCli(commonOpts(root, repeatOut, repeatErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+    expect(repeat.exitCode).toBe(0);
+    expect(repeatErr.read()).toBe('');
+    const repeatPayload = (JSON.parse(repeatOut.read()) as { data: {
+      approvalRequestCount: number;
+      requestedProposalCount: number;
+      wroteApprovalRequests: boolean;
+    } }).data;
+    expect(repeatPayload.approvalRequestCount).toBe(0);
+    expect(repeatPayload.requestedProposalCount).toBe(0);
+    expect(repeatPayload.wroteApprovalRequests).toBe(false);
+    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+    expect(observeErr.read()).toBe('');
+    expect(proposeErr.read()).toBe('');
+    expect(validateErr.read()).toBe('');
   });
 
   it('validate --pending --limit only validates the selected pending proposal count', async () => {
@@ -2827,6 +2943,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
       proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
       validations: { count: number; corruptCount: number };
+      approvalRequests: { count: number; pendingCount: number; corruptCount: number };
       snapshots: { count: number; corruptCount: number };
       rollbacks: { count: number; corruptCount: number };
       applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
@@ -2845,6 +2962,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.observations).toMatchObject({ batchCount: 0, corruptCount: 0, semanticObservationCount: 0 });
     expect(payload.proposals).toMatchObject({ count: 0, pendingCount: 0, validatedCount: 0, corruptCount: 0 });
     expect(payload.validations).toMatchObject({ count: 0, corruptCount: 0 });
+    expect(payload.approvalRequests).toMatchObject({ count: 0, pendingCount: 0, corruptCount: 0 });
     expect(payload.snapshots).toMatchObject({ count: 0, corruptCount: 0 });
     expect(payload.rollbacks).toMatchObject({ count: 0, corruptCount: 0 });
     expect(payload.applications).toMatchObject({
@@ -2940,6 +3058,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
       proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
       validations: { count: number; corruptCount: number };
+      approvalRequests: { count: number; pendingCount: number; corruptCount: number };
       snapshots: { count: number; corruptCount: number };
       rollbacks: { count: number; corruptCount: number };
       applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
@@ -2967,6 +3086,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.observations.corruptCount).toBe(1);
     expect(payload.proposals).toMatchObject({ count: 1, pendingCount: 0, validatedCount: 1, corruptCount: 1 });
     expect(payload.validations).toMatchObject({ count: 1, corruptCount: 1 });
+    expect(payload.approvalRequests).toMatchObject({ count: 0, pendingCount: 0, corruptCount: 0 });
     expect(payload.snapshots).toMatchObject({ count: 0, corruptCount: 0 });
     expect(payload.rollbacks).toMatchObject({ count: 0, corruptCount: 0 });
     expect(payload.applications).toMatchObject({

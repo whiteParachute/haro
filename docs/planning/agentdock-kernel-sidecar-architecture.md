@@ -213,6 +213,7 @@ Haro 自己维护独立数据目录，不写入 AgentDock DB：
     frontier-signals/
     proposals/
     validations/
+    approval-requests/
     snapshots/
     snapshot-content/
     rollbacks/
@@ -365,7 +366,8 @@ User approves proposal
 - `haro observe --since last` 已实现：复用 HTTP observation source，写入 `~/.haro/evolution/observations/` 并更新 base64url-encoded connection cursor；去重与锁均按 connection 隔离。
 - `haro propose --auto-dry-run --include-frontier` 已实现：读取未消费 observation batches，按需引用 active frontier signals，写入 `~/.haro/evolution/proposals/` dry-run proposal，并为 proposal changeSet 写入 `proposed` asset events；启动阶段自动 proposal 显式带 `humanReviewRequired=true` 与空 `humanApprovalRefs`；observation source refs 作为 consumption marker，重复运行幂等；`--limit` 限制单次 proposal 打包的 observation batch 数，损坏 observation/proposal/frontier-signal 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report，并为通过验证的 changeSet 写入 `validated` asset events；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
-- `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation、snapshot、rollback、application gate record 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
+- `haro approval-request --pending` 已实现：把已有 validation 的 proposal 转成 `~/.haro/evolution/approval-requests/` 审批 artifact，包含 why/how/benefit、风险、测试和回滚计划，供 AgentDock 飞书/Web 渲染。
+- `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation、approval request、snapshot、rollback、application gate record 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
 - Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 已接入 propose/validate；Phase F gated apply 已落地 sidecar-local L0/L1 snapshot/apply/rollback：`haro snapshot --proposal-id` 生成 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0/L1 内容生成 `snapshot-content`；`haro apply --proposal-id` 已可把 sidecar-local proposal content 应用到 L0 `prompt` / `mcp-tool-config` 和 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 的 `assets/current`；`haro rollback --application-id` 已可恢复 snapshot-content 或删除 apply 创建的 sidecar-local current content；`haro mcp --enable-gated-write` 可把同一套能力暴露给 AgentDock MCP 编排面。
 - 通过 AgentDock script scheduled task 周期触发。
@@ -402,6 +404,13 @@ User approves proposal
 - `--base-branch <name>` 只作为 plan label 写入，不 checkout、不创建真实 git branch。
 - `haro status` / `haro doctor --component sidecar` 已纳入 patch-branches 计数和 corrupt artifact 检查。
 - 当前仍不修改 Haro / AgentDock 代码、不创建真实 branch、不读取或写入 memory；下一步才考虑真实 worktree/branch executor 或 AgentDock approval UX。
+
+### Phase H: Approval Request Workflow
+
+- `ApprovalRequestRecord` 已加入 `@haro/agentdock-contract`。
+- `haro approval-request --pending --json` 已实现：读取已验证、未批准、尚未生成审批请求的 proposal，写入 deterministic approval request。
+- 审批请求固定包含 `whyChange`、`howChange`、`expectedBenefits`、`requiredTests`、`manualChecks`、`regressionRisks`、`rollbackPlan` 和 `decisionOptions=['approve','reject','request-changes']`。
+- 该阶段只生成 AgentDock 可渲染的审批 artifact，不签发 approval ref、不 apply、不创建 branch、不读写 memory。
 
 ## Acceptance Criteria
 

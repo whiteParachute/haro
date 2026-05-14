@@ -65,6 +65,17 @@ export { ValidationReportSchema } from './validation.js';
 export type { ValidationReport } from './validation.js';
 
 export {
+  ApprovalDecisionOptionSchema,
+  ApprovalRequestRecordSchema,
+  ApprovalRequestStatusSchema,
+} from './approval-request.js';
+export type {
+  ApprovalDecisionOption,
+  ApprovalRequestRecord,
+  ApprovalRequestStatus,
+} from './approval-request.js';
+
+export {
   ApplicationRecordSchema,
   ApplicationStatusSchema,
   AssetSnapshotRecordSchema,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ApplicationRecordSchema,
+  ApprovalRequestRecordSchema,
   AssetSnapshotRecordSchema,
   AssetEventSchema,
   EvolutionProposalSchema,
@@ -137,6 +138,37 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
 
     expect(record.applied).toBe(false);
     expect(record.gateCode).toBe('READY');
+  });
+
+  it('accepts an approval request record with why/how/benefit review fields', () => {
+    const record = ApprovalRequestRecordSchema.parse({
+      id: 'approval-request-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      status: 'pending',
+      title: 'Approve prompt wording improvement',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceRef: { id: 'proposal-001', kind: 'evolution-proposal' },
+      validationRef: { id: 'validation-001', kind: 'validation-report' },
+      whyChange: ['AgentDock observation shows prompt clarity drift.'],
+      howChange: ['Update the target prompt text through sidecar-owned assets/current.'],
+      expectedBenefits: ['Improves operator understanding before apply.'],
+      requiredTests: ['git diff --check'],
+      manualChecks: ['Review the generated approval request.'],
+      regressionRisks: ['Prompt wording can drift.'],
+      rollbackPlan: validProposal.rollbackPlan,
+      decisionOptions: ['approve', 'reject', 'request-changes'],
+      reviewerInstruction: 'Reply with approve, reject, or request-changes plus optional direction.',
+      humanReviewRequired: true,
+      evidenceRefs: [{ id: 'proposal-001', kind: 'evolution-proposal' }],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(record.humanReviewRequired).toBe(true);
+    expect(record.decisionOptions).toContain('request-changes');
   });
 
   it('requires applied application records to set applied=true', () => {
