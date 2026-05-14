@@ -163,4 +163,58 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it('shipped binary mcp exposes gated-write tools only when explicitly enabled', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-mcp-gated-write-'));
+    try {
+      const res = spawnSync(process.execPath, [bin, 'mcp', '--enable-gated-write'], {
+        env: { ...process.env, HARO_HOME: home },
+        input: [
+          JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'tools/call',
+            params: {
+              name: 'haro_apply',
+              arguments: { proposalId: 'proposal-missing' },
+            },
+          }),
+          '',
+        ].join('\n'),
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      expect(res.stderr).toBe('');
+      const responses = res.stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as {
+          result: {
+            tools?: Array<{ name: string }>;
+            isError?: boolean;
+            structuredContent?: { command: string; gateStatus: string; gateCode: string };
+          };
+        });
+      const names = responses[0]!.result.tools!.map((tool) => tool.name).sort();
+      expect(names).toEqual([
+        'haro_apply',
+        'haro_asset_query',
+        'haro_observe',
+        'haro_propose',
+        'haro_rollback',
+        'haro_validate',
+      ]);
+      expect(responses[1]!.result.isError).toBe(false);
+      expect(responses[1]!.result.structuredContent).toMatchObject({
+        command: 'apply',
+        gateStatus: 'blocked',
+        gateCode: 'PROPOSAL_NOT_FOUND',
+      });
+      expect(existsSync(join(home, 'memory'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

@@ -64,7 +64,7 @@ ToolRegistry.invoke({ name, rawParams, session, deps })
 
 ## AgentDock sidecar observation source
 
-sidecar baseline 下，`haro mcp` 额外注册 4 个只读 Haro tools：`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。其中 `haro_observe` 的 source 选择规则是：
+sidecar baseline 下，`haro mcp` 默认注册 4 个只读 Haro tools：`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。只有显式 `haro mcp --enable-gated-write` 时，才额外注册 `haro_apply` / `haro_rollback`；这两个工具只接受 proposal/application id 并复用 CLI gated apply/rollback，不接受自由文本 patch。`haro_observe` 的 source 选择规则是：
 
 - 配置 `HARO_AGENTDOCK_BASE_URL` 且未设置 `HARO_AGENTDOCK_SOURCE=fake|fixture`：走 AgentDock HTTP API，只读访问 `/api/health`、`/api/status`、`/api/sessions`、session messages/turns 和 `/api/tasks`，返回 `ObservationBatch(source=agentdock-http)`。如目标 API 需要鉴权，通过 `HARO_AGENTDOCK_AUTH_HEADER` 传入完整 Authorization header；`HARO_AGENTDOCK_BASE_URL` 必须是 http(s) URL，且不允许携带 username/password。
 - 未配置 `HARO_AGENTDOCK_BASE_URL`，或显式设置 `HARO_AGENTDOCK_SOURCE=fake`：保留 FEAT-043 fake fixture，返回 `ObservationBatch(source=fake)`，用于离线 contract 测试。

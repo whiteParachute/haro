@@ -47,21 +47,30 @@ export {
 } from './tools/schedule-task.js';
 export {
   allowSidecarReadOnlyTools,
+  allowSidecarGatedWriteTools,
   createSidecarRegistry,
+  createHaroApplyTool,
+  createHaroRollbackTool,
   haroAssetQueryTool,
   haroObserveTool,
   haroProposeTool,
   haroValidateTool,
+  HaroApplyInputSchema,
   HaroAssetQueryInputSchema,
   HaroAssetQueryOutputSchema,
   HaroObserveInputSchema,
   HaroProposeInputSchema,
+  HaroRollbackInputSchema,
   HaroValidateInputSchema,
+  type HaroApplyInput,
   type HaroAssetQueryInput,
   type HaroAssetQueryOutput,
   type HaroObserveInput,
   type HaroProposeInput,
+  type HaroRollbackInput,
   type HaroValidateInput,
+  type SidecarGatedWriteHandlers,
+  type SidecarRegistryOptions,
 } from './sidecar-tools.js';
 
 export {

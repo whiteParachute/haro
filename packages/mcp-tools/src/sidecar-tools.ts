@@ -2,8 +2,9 @@
  * AgentDock sidecar MCP tools (FEAT-044).
  *
  * This is the AgentDock-facing registry used by `haro mcp`. It deliberately
- * exposes only read-only / dry-run tools and uses @haro/agentdock-contract
- * schemas for payload validation.
+ * exposes read-only / dry-run tools by default and uses
+ * @haro/agentdock-contract schemas for payload validation. Gated-write tools
+ * are opt-in so AgentDock deployments can choose when to expose apply/rollback.
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -40,6 +41,20 @@ const SIDECAR_TOOL_NAMES = [
 ] as const;
 
 const SIDECAR_TOOL_NAME_SET = new Set<string>(SIDECAR_TOOL_NAMES);
+const SIDECAR_GATED_WRITE_TOOL_NAMES = [
+  'haro_apply',
+  'haro_rollback',
+] as const;
+const SIDECAR_GATED_WRITE_TOOL_NAME_SET = new Set<string>(SIDECAR_GATED_WRITE_TOOL_NAMES);
+
+export interface SidecarGatedWriteHandlers {
+  apply(input: HaroApplyInput): Promise<unknown> | unknown;
+  rollback(input: HaroRollbackInput): Promise<unknown> | unknown;
+}
+
+export interface SidecarRegistryOptions extends RegistryOptions {
+  gatedWrite?: SidecarGatedWriteHandlers;
+}
 
 export const HaroObserveInputSchema = z.object({
   connectionId: z.string().min(1).optional(),
@@ -312,6 +327,47 @@ export const haroAssetQueryTool: ToolDefinition<
   },
 };
 
+export const HaroApplyInputSchema = z.object({
+  proposalId: z.string().trim().min(1),
+});
+
+export const HaroRollbackInputSchema = z.object({
+  applicationId: z.string().trim().min(1),
+});
+
+export type HaroApplyInput = z.infer<typeof HaroApplyInputSchema>;
+export type HaroRollbackInput = z.infer<typeof HaroRollbackInputSchema>;
+
+export function createHaroApplyTool(
+  handler: SidecarGatedWriteHandlers['apply'],
+): ToolDefinition<typeof HaroApplyInputSchema, unknown> {
+  return {
+    name: 'haro_apply',
+    description:
+      'Apply a validated L0/L1 sidecar proposal through gated proposal, validation, snapshot, and rollback checks. Gated-write.',
+    inputSchema: HaroApplyInputSchema,
+    timeoutMs: 10_000,
+    async execute(params): Promise<unknown> {
+      return handler(params);
+    },
+  };
+}
+
+export function createHaroRollbackTool(
+  handler: SidecarGatedWriteHandlers['rollback'],
+): ToolDefinition<typeof HaroRollbackInputSchema, unknown> {
+  return {
+    name: 'haro_rollback',
+    description:
+      'Rollback an applied L0/L1 sidecar application using its bound rollback record. Gated-write.',
+    inputSchema: HaroRollbackInputSchema,
+    timeoutMs: 10_000,
+    async execute(params): Promise<unknown> {
+      return handler(params);
+    },
+  };
+}
+
 export const allowSidecarReadOnlyTools: PermissionEvaluator = (input): PermissionDecisionOutput => {
   if (SIDECAR_TOOL_NAME_SET.has(input.toolName)) {
     return { decision: 'allowed' };
@@ -322,15 +378,31 @@ export const allowSidecarReadOnlyTools: PermissionEvaluator = (input): Permissio
   };
 };
 
-export function createSidecarRegistry(options: RegistryOptions): ToolRegistry {
+export const allowSidecarGatedWriteTools: PermissionEvaluator = (input): PermissionDecisionOutput => {
+  if (SIDECAR_TOOL_NAME_SET.has(input.toolName) || SIDECAR_GATED_WRITE_TOOL_NAME_SET.has(input.toolName)) {
+    return { decision: 'allowed' };
+  }
+  return {
+    decision: 'denied',
+    reason: `tool '${input.toolName}' is not part of the AgentDock sidecar surface`,
+  };
+};
+
+export function createSidecarRegistry(options: SidecarRegistryOptions): ToolRegistry {
   const registry = new ToolRegistry({
     ...options,
-    permissionEvaluator: options.permissionEvaluator ?? allowSidecarReadOnlyTools,
+    permissionEvaluator: options.permissionEvaluator ?? (
+      options.gatedWrite ? allowSidecarGatedWriteTools : allowSidecarReadOnlyTools
+    ),
   });
   registry.register(haroObserveTool);
   registry.register(haroProposeTool);
   registry.register(haroValidateTool);
   registry.register(haroAssetQueryTool);
+  if (options.gatedWrite) {
+    registry.register(createHaroApplyTool(options.gatedWrite.apply));
+    registry.register(createHaroRollbackTool(options.gatedWrite.rollback));
+  }
   return registry;
 }
 

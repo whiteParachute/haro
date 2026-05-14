@@ -989,7 +989,7 @@ function snapshotAgentDock(app: AppContext, options: SnapshotOptions): SnapshotR
   }
 }
 
-function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
+export function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
   const proposalId = options.proposalId.trim();
   if (!proposalId) {
     throw new CommanderExit(2, '`haro apply --proposal-id` requires a non-empty proposal id.');
@@ -1157,7 +1157,7 @@ function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
   }
 }
 
-function rollbackAgentDock(app: AppContext, options: RollbackOptions): RollbackResult {
+export function rollbackAgentDock(app: AppContext, options: RollbackOptions): RollbackResult {
   const applicationId = options.applicationId.trim();
   if (!applicationId) {
     throw new CommanderExit(2, '`haro rollback --application-id` requires a non-empty application id.');

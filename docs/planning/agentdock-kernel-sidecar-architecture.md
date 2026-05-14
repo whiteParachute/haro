@@ -76,7 +76,7 @@ Haro 接入 AgentDock 只走三条现有能力，不新增第四条主链路：
 
 | 接入面 | AgentDock 已有能力 | Haro 使用方式 | 禁止事项 |
 | --- | --- | --- | --- |
-| MCP server 注册 | 外部 MCP server 管理 | 注册 `haro mcp`，暴露 observe/propose/validate/query tools | 不在 AgentDock 内部 import Haro |
+| MCP server 注册 | 外部 MCP server 管理 | 注册 `haro mcp`，默认暴露 observe/propose/validate/query tools；需要写入时显式启用 gated apply/rollback | 不在 AgentDock 内部 import Haro |
 | 定时任务 | scheduler + script task | 周期执行 `haro observe/propose/validate` | 不把后台维护塞进普通聊天上下文 |
 | skills / agent 编排 | AgentDock skills + MCP 调用面 | 在 session 中显式调用 Haro tools 并通过原 channel 汇报 | Haro 不直接接管 IM/Web/Runner/Memory 主链路 |
 
@@ -173,17 +173,17 @@ Haro apply 阶段只允许改这些低风险对象：
 
 Haro 对 AgentDock 暴露一组 MCP tools：
 
-| Tool | 作用 | 初期权限 |
+| Tool | 作用 | 权限 / 开启方式 |
 | --- | --- | --- |
 | `haro_observe` | 收集 AgentDock 当前状态或增量状态 | read-only |
 | `haro_propose` | 基于观察结果生成 evolution proposal | read-only |
 | `haro_validate` | 验证 proposal 风险、测试计划、回滚路径 | read-only |
 | `haro_asset_query` | 查询资产、事件、版本和效果 | read-only |
 | `haro_asset_register` | 登记 prompt/skill/rule/tool config 为资产 | write-haro，Phase 4 后开放；memory 不登记为 Haro asset |
-| `haro_apply` | 应用 L0/L1 变更 | gated-write，Phase 5 后开放 |
-| `haro_rollback` | 回滚已应用的 L0/L1 变更 | gated-write，Phase 5 后开放 |
+| `haro_apply` | 应用 L0/L1 变更 | gated-write；仅 `haro mcp --enable-gated-write` 注册 |
+| `haro_rollback` | 回滚已应用的 L0/L1 变更 | gated-write；仅 `haro mcp --enable-gated-write` 注册 |
 
-首批 MCP tools 只开放 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。`haro_apply` 默认只接受 dry-run proposal id，不接受自由文本改动。
+默认 MCP tools 只开放 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。`haro_apply` 只接受 proposal id，`haro_rollback` 只接受 application id；二者复用 CLI gate，不接受自由文本改动。
 
 ### 2. Haro Daemon / Scheduled CLI
 
@@ -352,7 +352,7 @@ User approves proposal
 
 - 实现 `haro mcp` stdio server。（已完成首版）
 - 暴露 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。（已完成首版）
-- 首批 tools 全部 read-only，且 sidecar 启动不创建 Haro-owned MemoryFabric / `$HARO_HOME/memory`。
+- 默认 tools 全部 read-only，且 sidecar 启动不创建 Haro-owned MemoryFabric / `$HARO_HOME/memory`。显式 `--enable-gated-write` 时才额外注册 `haro_apply` / `haro_rollback`，并复用 CLI gated apply/rollback。
 
 ### Phase 3: Scheduled Sidecar
 
@@ -362,7 +362,7 @@ User approves proposal
 - `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report，并为通过验证的 changeSet 写入 `validated` asset events；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation、snapshot、rollback、application gate record 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
-- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 已接入 propose/validate；Phase F gated apply 前置骨架已启动，`haro snapshot --proposal-id` 生成 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0/L1 内容生成 `snapshot-content`；`haro apply --proposal-id` 已可把 sidecar-local proposal content 应用到 L0 `prompt` / `mcp-tool-config` 和 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 的 `assets/current`；`haro rollback --application-id` 已可恢复 snapshot-content 或删除 apply 创建的 sidecar-local current content。
+- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 已接入 propose/validate；Phase F gated apply 已落地 sidecar-local L0/L1 snapshot/apply/rollback：`haro snapshot --proposal-id` 生成 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0/L1 内容生成 `snapshot-content`；`haro apply --proposal-id` 已可把 sidecar-local proposal content 应用到 L0 `prompt` / `mcp-tool-config` 和 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 的 `assets/current`；`haro rollback --application-id` 已可恢复 snapshot-content 或删除 apply 创建的 sidecar-local current content；`haro mcp --enable-gated-write` 可把同一套能力暴露给 AgentDock MCP 编排面。
 - 通过 AgentDock script scheduled task 周期触发。
 
 ### Phase 4: Frontier Intelligence Intake
@@ -371,7 +371,7 @@ User approves proposal
 - `haro intake frontier --source-config <file> --since last --json` 第一段已实现：读取 curated `FrontierSignal[]` / `{ signals: [...] }` source config，按 sourceRef 去重，写入 `~/.haro/evolution/frontier-signals/`，并维护 frontier cursor。
 - `haro propose --auto-dry-run --include-frontier` 已实现：proposal 仍以未消费 observation batch 为触发源，同时把 active frontier signals 追加为 `frontier-signal` evidence refs；`rejected` / `superseded` signals 不会被引用。
 - `haro status` / `haro doctor --component sidecar` 已纳入 frontier signal 计数和 corrupt file 检查。
-- 下一步：把 CLI apply/rollback 能力接到后续 gated-write MCP/AgentDock 编排面，或继续补 AgentDock 原生 skill/profile/task config 的稳定写入口。
+- CLI apply/rollback 已接到 opt-in gated-write MCP 编排面；下一步是补 AgentDock 原生 skill/profile/task config 的稳定写入口，或做 AgentDock live approval UX smoke。
 
 ### Phase 5: Asset Registry Adapter
 
@@ -387,6 +387,7 @@ User approves proposal
 - 已实现 snapshot/rollback artifact：`haro snapshot --proposal-id <id>` 写 `~/.haro/evolution/snapshots/*` 与 `~/.haro/evolution/rollbacks/*`；当目标属于 allowlisted L0 `prompt` / `mcp-tool-config` 且存在 sidecar-local 当前内容时，会从 `~/.haro/assets/current/<kind>/<base64url(asset-id)>.{md,txt,json}` 复制到 `~/.haro/evolution/snapshot-content/<snapshot-id>/` 并记录 restore ref/hash；`haro apply --proposal-id` 缺 refs 时会先生成这些 refs。
 - 已实现 sidecar-local L0/L1 apply executor：`haro apply --proposal-id <id>` 只从 `~/.haro/evolution/proposal-content/<proposal-id>/<change-index>-<base64url(asset-id)>.<ext>` 读取拟应用内容，写回 allowlisted `~/.haro/assets/current/<kind>/`，校验可选 content hash，并写 `ApplicationRecord(status=applied, applied=true)` 与 `applied` asset event。
 - 已实现 sidecar-local L0/L1 rollback executor：`haro rollback --application-id <id>` 只对 `ApplicationRecord(status=applied)` 生效，基于 application 绑定的 snapshot/rollback artifact 恢复 `snapshot-content` 或删除 apply 创建的 current content，并写 `ApplicationRecord(status=rolled-back, applied=false)` 与 `rolled-back` asset event。
+- `haro mcp --enable-gated-write` 已可显式暴露 `haro_apply({ proposalId })` 与 `haro_rollback({ applicationId })`，二者复用 CLI gate；默认 `haro mcp` 仍 read-only。
 - 当前仍不修改 AgentDock 内部资产、不读取或写入 memory；后续补 AgentDock 原生 skill/profile/schedule/routing config 的稳定写入口。
 
 ## Acceptance Criteria

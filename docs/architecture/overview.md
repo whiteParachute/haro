@@ -58,7 +58,7 @@ Haro 旧设计把 workbench 和 self-evolution 放在同一仓库：
 | 定时任务是后台驱动面       | 周期性 observe/propose/validate 不依赖聊天上下文                    |
 | Skills 是编排辅助面        | Haro 可被 AgentDock 已有 skills/workflow 调用，不新增深度插件主链路 |
 | Contract 优先于内部依赖    | 只通过 schema、API、MCP、event export、filesystem contract 协作     |
-| 先只读，后可写             | 第一版全部 read-only / dry-run；L0/L1 apply 后置                    |
+| 先只读，后可写             | 默认 MCP surface 保持 read-only / dry-run；L0/L1 apply 只在显式 gated-write 下开放 |
 | 外部情报只作证据           | 最新趋势必须带 source ref / 时间 / 置信度，不直接触发 apply          |
 
 ## AgentDock 侧能力
@@ -93,7 +93,7 @@ Haro 不要求 AgentDock 内嵌 Haro，只要求 AgentDock 保持已有能力稳
 }
 ```
 
-首批 tools：
+默认 tools：
 
 | Tool               | 作用                                   | 权限      |
 | ------------------ | -------------------------------------- | --------- |
@@ -101,6 +101,15 @@ Haro 不要求 AgentDock 内嵌 Haro，只要求 AgentDock 保持已有能力稳
 | `haro_propose`     | 基于观察结果生成 evolution proposal    | read-only |
 | `haro_validate`    | 验证 proposal 风险、测试计划、回滚路径 | read-only |
 | `haro_asset_query` | 查询资产、事件、版本和效果             | read-only |
+
+显式以 `haro mcp --enable-gated-write` 启动时，额外注册 gated-write tools：
+
+| Tool | 作用 | 权限 |
+| --- | --- | --- |
+| `haro_apply` | 按 proposal id 调用同一套 L0/L1 proposal / validation / snapshot / rollback gate | gated-write，默认关闭 |
+| `haro_rollback` | 按 application id 调用同一套 rollback gate | gated-write，默认关闭 |
+
+`haro_apply` / `haro_rollback` 不接受自由文本 patch，也不绕过 CLI gate。
 
 `haro_observe` 的读取源由环境变量决定：配置 `HARO_AGENTDOCK_BASE_URL` 时读取 AgentDock HTTP API 并返回 `source=agentdock-http`；需要鉴权时用 `HARO_AGENTDOCK_AUTH_HEADER`，baseUrl 必须是 http(s) URL，且不要把凭据放进 baseUrl；未配置或显式 `HARO_AGENTDOCK_SOURCE=fake` 时只使用离线 fake fixture。Haro 不读取 AgentDock repo 内部文件，也不维护独立 memory authority。
 
@@ -235,13 +244,14 @@ Haro apply 阶段只允许写入低风险对象：
 | ------- | ---------------------- | ------------------------------------------------ |
 | Phase A | 文档基线重置           | README / roadmap / overview / planning 一致      |
 | Phase B | Contract skeleton      | schema + fake source + contract tests            |
-| Phase C | Read-only MCP sidecar  | `haro mcp` 暴露 read-only tools                  |
+| Phase C | Read-only MCP sidecar  | `haro mcp` 默认暴露 4 个 read-only tools；gated-write tools 必须显式开启 |
 | Phase D | Scheduled sidecar      | `connect agent-dock` + `observe --since last` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `status` + `doctor --component sidecar` 已落地；propose/validate 已显式报告损坏 JSON 并原子写 artifact；status/doctor 只读汇总和检查 sidecar store |
 | Phase E | Signal intake + asset registry | `FrontierSignal` schema + `haro intake frontier --source-config` + `propose --include-frontier` 已落地，active frontier signals 会作为 dry-run proposal evidence；file-backed asset registry 已接入 query 与 scheduled propose/validate，能写 `proposed` / `validated` events |
-| Phase F | Gated apply L0/L1      | gate preflight + snapshot + local apply/rollback 已落地：`haro snapshot --proposal-id` 写 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0/L1 内容生成 `snapshot-content`；`haro apply --proposal-id` 校验 proposal/validation/L0-L1/snapshot/rollback refs，从 sidecar-owned `proposal-content` 应用 L0 `prompt` / `mcp-tool-config` 与 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 到 `assets/current`，并写 `applied` application/asset event；`haro rollback --application-id` 可恢复 snapshot-content 或删除 apply 创建的 current content，并写 `rolled-back` event；暂不修改 AgentDock 内部资产 |
+| Phase F | Gated apply L0/L1      | gate preflight + snapshot + local apply/rollback 已落地：`haro snapshot --proposal-id` 写 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0/L1 内容生成 `snapshot-content`；`haro apply --proposal-id` 校验 proposal/validation/L0-L1/snapshot/rollback refs，从 sidecar-owned `proposal-content` 应用 L0 `prompt` / `mcp-tool-config` 与 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 到 `assets/current`，并写 `applied` application/asset event；`haro rollback --application-id` 可恢复 snapshot-content 或删除 apply 创建的 current content，并写 `rolled-back` event；`haro mcp --enable-gated-write` 可显式暴露同一套 `haro_apply` / `haro_rollback`；暂不修改 AgentDock 内部资产 |
 
 ## 架构变更记录
 
+- **2026-05-14**：Phase F gated-write MCP bridge 落地：`haro mcp` 默认仍只列出 4 个 read-only tools；只有显式 `--enable-gated-write` 时才注册 `haro_apply` / `haro_rollback`，并复用 CLI proposal/application id gate，不接受自由文本 patch，也不读写 memory。
 - **2026-05-14**：Phase E asset registry adapter 落地并接入 scheduled loop：新增 `~/.haro/assets/manifests` + `~/.haro/assets/events` file-backed sidecar registry，`haro_asset_query` 改为读取 sidecar registry，`haro propose` / `haro validate` 分别写 `proposed` / `validated` events；仍不读写 Haro-owned memory 或 `aria-memory-vault`。
 - **2026-05-14**：Phase F gated apply 前置骨架落地：新增 `ApplicationRecord` contract 与 `haro apply --proposal-id` gate preflight，只有 L0/L1 validated + applyEligible + snapshot/rollback refs 齐全时才进入 apply 流程；第一段只写 ready record，不写 memory。
 - **2026-05-14**：Phase F snapshot/rollback metadata 落地：新增 `AssetSnapshotRecord` / `RollbackRecord` contract 与 `haro snapshot --proposal-id`，`haro apply --proposal-id` 可在缺 refs 时生成 metadata-only snapshot/rollback artifacts；status/doctor 纳入 snapshots/rollbacks/applications 计数；该阶段尚未执行内容 apply。

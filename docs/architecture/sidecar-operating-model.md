@@ -4,7 +4,7 @@
 
 Haro 是 AgentDock 的 self-evolution sidecar，不是第二套 workbench。它通过 AgentDock 已有能力运行：
 
-1. **外部 MCP server 注册**：AgentDock 把 `haro mcp` 注册为普通 MCP server，Agent 在 session 中显式调用 `haro_observe` / `haro_propose` / `haro_validate` / `haro_asset_query`。
+1. **外部 MCP server 注册**：AgentDock 把 `haro mcp` 注册为普通 MCP server。默认只暴露 `haro_observe` / `haro_propose` / `haro_validate` / `haro_asset_query`；显式 `haro mcp --enable-gated-write` 时才额外暴露 `haro_apply` / `haro_rollback`，且仍复用 proposal / validation / snapshot / rollback gate。
 2. **AgentDock 定时任务**：AgentDock scheduler/script task 周期执行 Haro CLI，完成后台 observe / propose / validate / intake。
 3. **AgentDock skills / workflow 编排**：已有 skills 负责任务入口、用户汇报和审批，不新增 Haro 专用 AgentDock 内部插件链路。
 
@@ -98,7 +98,7 @@ Haro 生成的 proposal 必须明确目标域和风险级别：
 | L2 | Haro sidecar 代码 | 生成 patch branch / commit / test report，不通过 MCP 直接 apply |
 | L3 | AgentDock kernel 代码或跨项目 contract | 生成 proposal + patch branch + 人工决策；不得自动落地主分支 |
 
-审批必须通过 AgentDock 原有 channel 呈现，Haro 不直接接管 IM/Web 输出。每次 apply 后必须写 application event、asset event 和 rollback ref。
+审批必须通过 AgentDock 原有 channel 呈现，Haro 不直接接管 IM/Web 输出。每次 apply 后必须写 application event、asset event 和 rollback ref。MCP gated-write 入口只作为 AgentDock 编排面，默认关闭，不接受自由文本 patch。
 
 ## 与现有 specs 的对应关系
 

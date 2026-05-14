@@ -84,7 +84,12 @@ import { registerUserCommands } from './commands/user.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { registerConfigWriteCommands } from './commands/config.js';
 import { registerCronCommands } from './commands/cron.js';
-import { readAgentDockSidecarStatus, registerAgentDockSidecarCommands } from './commands/agentdock-sidecar.js';
+import {
+  applyAgentDock,
+  readAgentDockSidecarStatus,
+  registerAgentDockSidecarCommands,
+  rollbackAgentDock,
+} from './commands/agentdock-sidecar.js';
 import { buildServiceContext } from './commands/service-context.js';
 import { renderJson, renderJsonDiagnostic, renderListJson, resolveOutputMode } from './output/index.js';
 import {
@@ -1385,8 +1390,9 @@ function registerMcpCommand(program: Command, app: AppContext): void {
     'mcp',
     (cmd) => {
       cmd
-        .description('Start the read-only Haro AgentDock sidecar MCP server (FEAT-044)')
-        .action(async () => {
+        .description('Start the Haro AgentDock sidecar MCP server')
+        .option('--enable-gated-write', 'expose gated haro_apply/haro_rollback tools; default MCP surface stays read-only')
+        .action(async (options: { enableGatedWrite?: boolean }) => {
           const {
             McpServer,
             StdioTransport,
@@ -1399,7 +1405,16 @@ function registerMcpCommand(program: Command, app: AppContext): void {
             jsonlFile: join(app.paths.dirs.logs, 'mcp-invocations.jsonl'),
             now: app.now,
           });
-          const registry = createSidecarRegistry({ audit, now: app.now });
+          const registry = createSidecarRegistry({
+            audit,
+            now: app.now,
+            ...(options.enableGatedWrite ? {
+              gatedWrite: {
+                apply: (input) => applyAgentDock(app, { proposalId: input.proposalId }),
+                rollback: (input) => rollbackAgentDock(app, { applicationId: input.applicationId }),
+              },
+            } : {}),
+          });
           const evolution = createEvolutionAssetRegistry({
             root: app.paths.root,
             dbFile: app.paths.dbFile,

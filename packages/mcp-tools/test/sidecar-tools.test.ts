@@ -12,6 +12,7 @@ import {
   ToolInvocationAuditWriter,
   createSidecarAssetRegistry,
   createSidecarRegistry,
+  type SidecarGatedWriteHandlers,
 } from '../src/index.js';
 import { McpServer } from '../src/server.js';
 import { InMemoryTransport, type JsonRpcMessage } from '../src/transport.js';
@@ -47,7 +48,11 @@ afterEach(() => {
   env = null;
 });
 
-async function runSidecarWith(e: TestEnv, requests: JsonRpcMessage[]): Promise<JsonRpcMessage[]> {
+async function runSidecarWith(
+  e: TestEnv,
+  requests: JsonRpcMessage[],
+  options: { gatedWrite?: SidecarGatedWriteHandlers } = {},
+): Promise<JsonRpcMessage[]> {
   const transport = new InMemoryTransport();
   for (const req of requests) transport.push(req);
   const audit = new ToolInvocationAuditWriter({
@@ -58,6 +63,7 @@ async function runSidecarWith(e: TestEnv, requests: JsonRpcMessage[]): Promise<J
   const registry = createSidecarRegistry({
     audit,
     now: () => new Date('2026-05-08T06:00:00.000Z'),
+    ...(options.gatedWrite ? { gatedWrite: options.gatedWrite } : {}),
   });
   const server = new McpServer({
     transport,
@@ -105,6 +111,66 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
     expect(names).not.toContain('memory_query');
     expect(names).not.toContain('send_message');
     expect(names).not.toContain('schedule_task');
+  });
+
+  it('lists and invokes gated-write tools only when explicitly enabled', async () => {
+    const e = (env = setupEnv());
+    const responses = await runSidecarWith(
+      e,
+      [
+        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: {
+            name: 'haro_apply',
+            arguments: { proposalId: ' proposal-ready ' },
+          },
+        },
+        {
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'tools/call',
+          params: {
+            name: 'haro_rollback',
+            arguments: { applicationId: ' application-applied ' },
+          },
+        },
+      ],
+      {
+        gatedWrite: {
+          apply: (input) => ({
+            command: 'apply',
+            proposalId: input.proposalId,
+            gateStatus: 'applied',
+          }),
+          rollback: (input) => ({
+            command: 'rollback',
+            applicationId: input.applicationId,
+            gateStatus: 'rolled-back',
+          }),
+        },
+      },
+    );
+
+    const listed = responses[0]! as { result: { tools: Array<{ name: string }> } };
+    expect(listed.result.tools.map((tool) => tool.name).sort()).toEqual([
+      'haro_apply',
+      'haro_asset_query',
+      'haro_observe',
+      'haro_propose',
+      'haro_rollback',
+      'haro_validate',
+    ]);
+    expect(callResult<{ proposalId: string; gateStatus: string }>(responses[1]!)).toMatchObject({
+      proposalId: 'proposal-ready',
+      gateStatus: 'applied',
+    });
+    expect(callResult<{ applicationId: string; gateStatus: string }>(responses[2]!)).toMatchObject({
+      applicationId: 'application-applied',
+      gateStatus: 'rolled-back',
+    });
   });
 
   it('observes fake AgentDock source and returns ObservationBatch contract payload', async () => {
