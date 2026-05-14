@@ -362,7 +362,7 @@ User approves proposal
 - `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
-- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；下一步进入 sidecar asset registry adapter 或补更细的 doctor 自动修复。
+- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 第一段已落地，后续继续补 snapshot/rollback 与 gated apply。
 - 通过 AgentDock script scheduled task 周期触发。
 
 ### Phase 4: Frontier Intelligence Intake
@@ -371,11 +371,12 @@ User approves proposal
 - `haro intake frontier --source-config <file> --since last --json` 第一段已实现：读取 curated `FrontierSignal[]` / `{ signals: [...] }` source config，按 sourceRef 去重，写入 `~/.haro/evolution/frontier-signals/`，并维护 frontier cursor。
 - `haro propose --auto-dry-run --include-frontier` 已实现：proposal 仍以未消费 observation batch 为触发源，同时把 active frontier signals 追加为 `frontier-signal` evidence refs；`rejected` / `superseded` signals 不会被引用。
 - `haro status` / `haro doctor --component sidecar` 已纳入 frontier signal 计数和 corrupt file 检查。
-- 下一步：进入 sidecar asset registry adapter，把 prompt/skill/profile/tool config/frontier-source-ref 变更登记为可追溯资产事件。
+- 下一步：继续把 asset registry 与 gated apply/snapshot 串起来，让 validation/apply 阶段产生完整 rollback metadata。
 
 ### Phase 5: Asset Registry Adapter
 
-- 将 Haro Evolution Asset Registry 迁到 sidecar 数据目录。
+- 已新增 file-backed sidecar asset registry：manifest 写入 `~/.haro/assets/manifests`，event 写入 `~/.haro/assets/events`。
+- `haro_asset_query` 已改为读取 sidecar registry，并支持 kind/status/query/limit 过滤；不再查询旧 core EvolutionAssetRegistry。
 - skill/prompt/profile/task config/frontier source refs 的变更全部登记资产事件。
 
 ### Phase 6: Gated Apply

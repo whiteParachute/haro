@@ -85,7 +85,7 @@ AgentDock agent
 - `haro_observe` 默认在 `HARO_AGENTDOCK_BASE_URL` 存在时通过 AgentDock HTTP API 只读采集 `/api/health`、`/api/status`、`/api/sessions`、session messages/turns 和 `/api/tasks`，映射为 FEAT-043 `ObservationBatch`；需要鉴权时读取 `HARO_AGENTDOCK_AUTH_HEADER`，并拒绝非 http(s) 或携带 userinfo 的 baseUrl，避免凭据出现在 `rawRefs` / `metadata`；未配置 baseUrl 或显式 `HARO_AGENTDOCK_SOURCE=fake` 时回退 `FakeAgentDockSource`，用于离线 contract 测试。
 - `haro_propose` 第一版只生成 rule-based dry-run proposal，不调用 agent，不写 apply/application event。
 - `haro_validate` 只返回 advisory `ValidationReport`，`applyEligible=false`，不修改 proposal change set。
-- `haro_asset_query` 先通过只读 adapter 查询现有 Evolution Asset Registry，并映射成 FEAT-043 `AssetEvent` summary；FEAT-046 再迁移到 sidecar asset registry adapter。
+- `haro_asset_query` 首版曾通过只读 adapter 查询现有 Evolution Asset Registry；FEAT-046 第一段后已迁移为读取 `~/.haro/assets` sidecar asset registry，并返回 FEAT-043 `AssetEvent` summary。
 - MCP audit 同时保留历史 SQLite `tool_invocation_log` 行，并写 `~/.haro/logs/mcp-invocations.jsonl`；JSONL 只保存参数 hash，不保存原始参数。
 
 ## 6. Acceptance Criteria / 验收标准
@@ -112,11 +112,12 @@ AgentDock agent
 
 - D1: 第一版 `haro_propose` 只做 rule-based dry-run proposal，不引入 agent generation。
 - D2: MCP audit JSONL 只记录参数 hash，避免 AgentDock session / user payload 泄露到 Haro 日志。
-- D3: `haro_asset_query` 第一版读取现有 Evolution Asset Registry 并输出 FEAT-043 `AssetEvent` summary；sidecar registry adapter 留给 FEAT-046。
+- D3: `haro_asset_query` 第一版读取现有 Evolution Asset Registry 并输出 FEAT-043 `AssetEvent` summary；2026-05-14 起由 FEAT-046 接管，读取 `~/.haro/assets` sidecar registry manifests/events。
 - D4: AgentDock 真实 observation source 只走 AgentDock HTTP API 契约，不读取、不 import AgentDock repo 内部源码；如果 API 不可达，应按 401/403、404、网络/5xx/JSON 失败分类返回结构化错误，而不是静默写入 Haro memory 或切换到 AgentDock 内部文件。
 
 ## 9. Changelog / 变更记录
 
+- 2026-05-14: Haro — `haro_asset_query` 迁移到 FEAT-046 sidecar asset registry adapter，读取 `~/.haro/assets` manifests/events，不再查询旧 core EvolutionAssetRegistry。
 - 2026-05-08: Codex — 完成 `haro mcp` 只读 sidecar 首版：新增 4 个 read-only tools、JSONL audit、fake-source observe/propose/validate/asset query 测试；sidecar registry 不暴露历史 memory/send_message tools，启动路径不创建 Haro-owned MemoryFabric 或 `$HARO_HOME/memory`。
 - 2026-05-08: Codex — 修复 `tools/call` wire result：`content` 改为 MCP 标准 content block 数组，结构化 payload 进入 `structuredContent`，避免 AgentDock/Codex MCP client 报 `Unexpected response type`。
 - 2026-05-08: Codex — `haro_observe` 接入真实 AgentDock HTTP observation source：配置 `HARO_AGENTDOCK_BASE_URL` 时采集 health/status/sessions/messages/turns/tasks 并返回 `source=agentdock-http`；未配置或 `HARO_AGENTDOCK_SOURCE=fake` 时保留 fake fixture fallback；错误码、limit、cursor、baseUrl 凭据边界已补回归。

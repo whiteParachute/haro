@@ -12,7 +12,7 @@ Haro 的自我改进机制将平台本身作为被改进的对象，实现从单
 
 - **eat**（摄入）：把外部知识 / 用户反馈 / 调研产出沉淀为 rules / skills / Agent 配置提案；memory 证据只引用 AgentDock observation refs。带质量门槛（四问验证）和防膨胀检查。
 - **shit**（排出）：扫描现有外挂组件（rules / skills / MCP / frontier source refs / historical memory refs），评估必要性，归档冗余项（可回滚）。
-- **Evolution Asset Registry**（资产注册表）：Phase 1 起记录 eat/shit 影响的 skill、prompt、routing rule、memory 与 archive，提供版本、来源和审计日志。
+- **Evolution Asset Registry**（资产注册表）：Phase 1 起记录 eat/shit 影响的 skill、prompt、routing rule、frontier source ref 与 archive，提供版本、来源和审计日志；memory 只保存 AgentDock observation/source refs，不作为 Haro asset kind。
 
 两者与四层改进的关系：
 

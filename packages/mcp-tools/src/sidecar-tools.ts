@@ -9,10 +9,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type {
-  AssetEvent,
-  AssetEventType,
-  AssetKind,
-  AssetStatus,
   EvolutionProposal,
   ObservationBatch,
   Ref,
@@ -30,14 +26,10 @@ import {
   createHttpAgentDockSource,
   AgentDockHttpSourceError,
 } from '@haro/agentdock-contract';
-import type {
-  EvolutionAsset,
-  EvolutionAssetKind,
-  EvolutionAssetStatus,
-} from '@haro/core/evolution';
 import { McpToolError } from './error.js';
 import type { PermissionEvaluator } from './permission.js';
 import { ToolRegistry, type RegistryOptions } from './registry.js';
+import { createSidecarAssetRegistry } from './sidecar-asset-registry.js';
 import type { PermissionDecisionOutput, ToolDefinition, ToolErrorCode } from './types.js';
 
 const SIDECAR_TOOL_NAMES = [
@@ -291,31 +283,25 @@ export const haroAssetQueryTool: ToolDefinition<
   inputSchema: HaroAssetQueryInputSchema,
   timeoutMs: 5_000,
   async execute(params, ctx): Promise<HaroAssetQueryOutput> {
-    const evolution = ctx.deps.evolution;
-    if (!evolution) {
+    const root = ctx.deps.serviceContext.root;
+    if (!root) {
       throw new McpToolError(
         'TARGET_NOT_FOUND',
-        'EvolutionAssetRegistry is unavailable for haro_asset_query',
+        'Haro serviceContext.root is unavailable for sidecar asset registry queries',
       );
     }
 
     const limit = params.limit ?? 100;
-    const coreKind = params.kind ? contractKindToCore(params.kind) : undefined;
-    const coreStatus = params.status ? contractStatusToCore(params.status) : undefined;
-    const unsupportedFilter = (params.kind && !coreKind) || (params.status && !coreStatus);
-    const assets = unsupportedFilter
-      ? []
-      : evolution.listAssets({
-          ...(coreKind ? { kind: coreKind } : {}),
-          ...(coreStatus ? { status: coreStatus } : {}),
-          includeArchived: true,
-          limit: Math.max(limit * 2, limit),
-        });
-    const filtered = filterAssets(assets, params.query).slice(0, limit);
-    const contractAssets = filtered.map(assetToContractEvent);
+    const registry = createSidecarAssetRegistry(root);
+    const assets = registry.query({
+      ...(params.kind ? { kind: params.kind } : {}),
+      ...(params.status ? { status: params.status } : {}),
+      ...(params.query ? { query: params.query } : {}),
+      limit,
+    });
     return HaroAssetQueryOutputSchema.parse({
-      assets: contractAssets,
-      count: contractAssets.length,
+      assets,
+      count: assets.length,
       limit,
       query: {
         ...(params.kind ? { kind: params.kind } : {}),
@@ -369,119 +355,6 @@ function defaultObservationRef(): Ref {
     kind: 'observation-batch',
     uri: 'fake://agentdock/observation/obs-fake-agentdock-001',
   };
-}
-
-function contractKindToCore(kind: AssetKind): EvolutionAssetKind | null {
-  switch (kind) {
-    case 'skill':
-    case 'prompt':
-    case 'routing-rule':
-    case 'archive':
-      return kind;
-    case 'mcp-tool-config':
-      return 'mcp';
-    case 'runner-profile':
-    case 'schedule-config':
-    case 'frontier-source-ref':
-      return null;
-  }
-}
-
-function coreKindToContract(kind: EvolutionAssetKind): AssetKind {
-  switch (kind) {
-    case 'skill':
-    case 'prompt':
-    case 'routing-rule':
-    case 'archive':
-      return kind;
-    case 'mcp':
-      return 'mcp-tool-config';
-  }
-}
-
-function contractStatusToCore(status: AssetStatus): EvolutionAssetStatus | null {
-  switch (status) {
-    case 'proposed':
-      return 'proposed';
-    case 'applied':
-      return 'active';
-    case 'archived':
-      return 'archived';
-    case 'rejected':
-      return 'rejected';
-    case 'superseded':
-      return 'superseded';
-    case 'validated':
-    case 'rolled-back':
-      return null;
-  }
-}
-
-function coreStatusToContract(status: EvolutionAssetStatus): AssetStatus {
-  switch (status) {
-    case 'proposed':
-      return 'proposed';
-    case 'active':
-      return 'applied';
-    case 'archived':
-      return 'archived';
-    case 'rejected':
-      return 'rejected';
-    case 'superseded':
-      return 'superseded';
-  }
-}
-
-function eventTypeForStatus(status: AssetStatus): AssetEventType {
-  switch (status) {
-    case 'proposed':
-    case 'validated':
-    case 'applied':
-    case 'rolled-back':
-    case 'archived':
-    case 'rejected':
-    case 'superseded':
-      return status;
-  }
-}
-
-function filterAssets(assets: readonly EvolutionAsset[], query?: string): EvolutionAsset[] {
-  if (!query) return [...assets];
-  const needle = query.toLowerCase();
-  return assets.filter((asset) =>
-    [asset.id, asset.name, asset.sourceRef, asset.contentRef, asset.contentHash]
-      .join('\n')
-      .toLowerCase()
-      .includes(needle),
-  );
-}
-
-function assetToContractEvent(asset: EvolutionAsset): AssetEvent {
-  const status = coreStatusToContract(asset.status);
-  return AssetEventSchema.parse({
-    id: `asset_event_summary_${sha256(`${asset.id}:${asset.version}:${asset.updatedAt}`).slice(0, 24)}`,
-    assetId: asset.id,
-    kind: coreKindToContract(asset.kind),
-    version: String(asset.version),
-    sourceRef: stringToRef(asset.sourceRef, 'haro-source-ref'),
-    contentRef: stringToRef(asset.contentRef, 'haro-content-ref'),
-    contentHash: asset.contentHash,
-    status,
-    eventType: eventTypeForStatus(status),
-    actor: 'haro',
-    createdAt: asset.updatedAt,
-  });
-}
-
-function stringToRef(value: string, kind: string): Ref {
-  const ref: Ref = {
-    id: value,
-    kind,
-  };
-  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
-    ref.uri = value;
-  }
-  return ref;
 }
 
 function sha256(input: string): string {

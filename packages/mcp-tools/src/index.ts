@@ -64,6 +64,14 @@ export {
   type HaroValidateInput,
 } from './sidecar-tools.js';
 
+export {
+  SidecarAssetManifestSchema,
+  SidecarAssetRegistry,
+  createSidecarAssetRegistry,
+  type SidecarAssetManifest,
+  type SidecarAssetQuery,
+} from './sidecar-asset-registry.js';
+
 export type {
   SessionContext,
   ToolDependencies,

@@ -7,7 +7,12 @@ import {
   ObservationBatchSchema,
   ValidationReportSchema,
 } from '@haro/agentdock-contract';
-import { ToolInvocationAuditWriter, createSidecarRegistry } from '../src/index.js';
+import {
+  SidecarAssetManifestSchema,
+  ToolInvocationAuditWriter,
+  createSidecarAssetRegistry,
+  createSidecarRegistry,
+} from '../src/index.js';
 import { McpServer } from '../src/server.js';
 import { InMemoryTransport, type JsonRpcMessage } from '../src/transport.js';
 import { setupEnv, type TestEnv } from './helpers.js';
@@ -283,21 +288,83 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
     expect(e.evolution.listEvents()).toEqual(beforeEvents);
   });
 
-  it('queries assets as AgentDock contract AssetEvent summaries', async () => {
+  it('writes sidecar asset manifests/events and queries them as AgentDock contract summaries', async () => {
     const e = (env = setupEnv());
-    e.evolution.recordEvent({
-      type: 'proposed',
-      actor: 'agent',
-      asset: {
-        id: 'mcp:haro-sidecar',
-        kind: 'mcp',
-        name: 'haro-sidecar',
-        sourceRef: 'specs/sidecar/FEAT-044-read-only-mcp-sidecar.md',
-        contentRef: 'haro-sidecar://mcp/haro',
-        contentHash: 'sha256-sidecar',
-        createdBy: 'agent',
+    const registry = createSidecarAssetRegistry(e.root);
+    registry.recordEvent(AssetEventSchema.parse({
+      id: 'asset-event-frontier-source-proposed',
+      assetId: 'frontier-source:openai-release-notes',
+      kind: 'frontier-source-ref',
+      version: '1',
+      sourceRef: {
+        id: 'frontier-signal-openai-release-notes',
+        kind: 'frontier-signal',
+        uri: 'haro-sidecar://frontier-signals/frontier-signal-openai-release-notes',
       },
-    });
+      contentRef: {
+        id: 'source-config-openai-release-notes',
+        kind: 'frontier-source-ref',
+        uri: 'https://openai.com/news/',
+      },
+      contentHash: 'sha256-frontier-source',
+      status: 'proposed',
+      eventType: 'proposed',
+      actor: 'agent',
+      createdAt: '2026-05-08T05:59:00.000Z',
+    }));
+    const recorded = registry.recordEvent(AssetEventSchema.parse({
+      id: 'asset-event-frontier-source-1',
+      assetId: 'frontier-source:openai-release-notes',
+      kind: 'frontier-source-ref',
+      version: '1',
+      sourceRef: {
+        id: 'frontier-signal-openai-release-notes',
+        kind: 'frontier-signal',
+        uri: 'haro-sidecar://frontier-signals/frontier-signal-openai-release-notes',
+      },
+      contentRef: {
+        id: 'source-config-openai-release-notes',
+        kind: 'frontier-source-ref',
+        uri: 'https://openai.com/news/',
+      },
+      contentHash: 'sha256-frontier-source',
+      status: 'validated',
+      eventType: 'validated',
+      actor: 'haro',
+      proposalRef: {
+        id: 'proposal-frontier-source',
+        kind: 'evolution-proposal',
+        uri: 'haro-sidecar://proposals/proposal-frontier-source',
+      },
+      validationRef: {
+        id: 'validation-frontier-source',
+        kind: 'validation-report',
+        uri: 'haro-sidecar://validations/validation-frontier-source',
+      },
+      createdAt: '2026-05-08T06:00:00.000Z',
+    }));
+    registry.recordEvent(AssetEventSchema.parse({
+      id: 'asset-event-skill-1',
+      assetId: 'skill:unrelated',
+      kind: 'skill',
+      version: '1',
+      sourceRef: { id: 'proposal-skill', kind: 'evolution-proposal' },
+      contentRef: { id: 'skill-unrelated', kind: 'skill', uri: 'haro-sidecar://skills/unrelated' },
+      contentHash: 'sha256-skill',
+      status: 'proposed',
+      eventType: 'proposed',
+      actor: 'agent',
+      createdAt: '2026-05-08T05:59:00.000Z',
+    }));
+
+    expect(existsSync(recorded.eventPath)).toBe(true);
+    expect(existsSync(recorded.manifestPath)).toBe(true);
+    const manifest = SidecarAssetManifestSchema.parse(
+      JSON.parse(readFileSync(recorded.manifestPath, 'utf8')),
+    );
+    expect(manifest.id).toBe('frontier-source:openai-release-notes');
+    expect(manifest.status).toBe('validated');
+    expect(manifest.latestEventRef.id).toBe('asset-event-frontier-source-1');
 
     const responses = await runSidecarWith(e, [
       {
@@ -306,16 +373,57 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
         method: 'tools/call',
         params: {
           name: 'haro_asset_query',
-          arguments: { kind: 'mcp-tool-config', query: 'sidecar' },
+          arguments: { kind: 'frontier-source-ref', status: 'validated', query: 'openai' },
         },
       },
     ]);
     const payload = callResult<{ assets: unknown[]; count: number }>(responses[0]!);
     expect(payload.count).toBe(1);
     const event = AssetEventSchema.parse(payload.assets[0]);
-    expect(event.assetId).toBe('mcp:haro-sidecar');
-    expect(event.kind).toBe('mcp-tool-config');
-    expect(event.status).toBe('proposed');
+    expect(event.assetId).toBe('frontier-source:openai-release-notes');
+    expect(event.kind).toBe('frontier-source-ref');
+    expect(event.status).toBe('validated');
+
+    const allFrontierResponses = await runSidecarWith(e, [
+      {
+        jsonrpc: '2.0',
+        id: 50,
+        method: 'tools/call',
+        params: {
+          name: 'haro_asset_query',
+          arguments: { kind: 'frontier-source-ref', query: 'openai' },
+        },
+      },
+    ]);
+    const allFrontierPayload = callResult<{ assets: unknown[]; count: number }>(allFrontierResponses[0]!);
+    expect(allFrontierPayload.count).toBe(1);
+    expect(AssetEventSchema.parse(allFrontierPayload.assets[0]).status).toBe('validated');
+
+    e.evolution.recordEvent({
+      type: 'proposed',
+      actor: 'agent',
+      asset: {
+        id: 'mcp:legacy-core-sidecar',
+        kind: 'mcp',
+        name: 'legacy-core-sidecar',
+        sourceRef: 'legacy-core-registry',
+        contentRef: 'haro-sidecar://mcp/legacy-core-sidecar',
+        contentHash: 'sha256-legacy-core',
+        createdBy: 'agent',
+      },
+    });
+    const legacyResponses = await runSidecarWith(e, [
+      {
+        jsonrpc: '2.0',
+        id: 51,
+        method: 'tools/call',
+        params: {
+          name: 'haro_asset_query',
+          arguments: { kind: 'mcp-tool-config', query: 'legacy-core-sidecar' },
+        },
+      },
+    ]);
+    expect(callResult<{ assets: unknown[]; count: number }>(legacyResponses[0]!).count).toBe(0);
   });
 
   it('audits failed calls to JSONL with hashed params', async () => {
