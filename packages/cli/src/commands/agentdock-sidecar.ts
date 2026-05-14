@@ -4,16 +4,19 @@ import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import {
   ApplicationRecordSchema,
+  AssetSnapshotRecordSchema,
   AssetKindSchema,
   AssetEventSchema,
   EvolutionProposalSchema,
   FrontierSignalSchema,
   ObservationBatchSchema,
+  RollbackRecordSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
   createHttpAgentDockSource,
   type ApplicationRecord,
   type ApplyGateCode,
+  type AssetSnapshotRecord,
   type AssetEvent,
   type AssetKind,
   type ChangeOperation,
@@ -21,6 +24,7 @@ import {
   type FrontierSignal,
   type ObservationBatch,
   type Ref,
+  type RollbackRecord,
   type ValidationReport,
 } from '@haro/agentdock-contract';
 import { createSidecarAssetRegistry } from '@haro/mcp-tools';
@@ -72,6 +76,10 @@ interface ProposeOptions extends OutputFlags {
 interface ValidateOptions extends OutputFlags {
   pending?: boolean;
   limit?: string;
+}
+
+interface SnapshotOptions extends OutputFlags {
+  proposalId: string;
 }
 
 interface ApplyOptions extends OutputFlags {
@@ -132,6 +140,19 @@ interface ValidateResult {
   validationPaths: string[];
 }
 
+interface SnapshotResult {
+  command: 'snapshot';
+  proposalId: string;
+  snapshotId: string;
+  rollbackId: string;
+  snapshotPath: string;
+  rollbackPath: string;
+  snapshotRef: Ref;
+  rollbackRef: Ref;
+  snapshot: AssetSnapshotRecord;
+  rollback: RollbackRecord;
+}
+
 interface ApplyResult {
   command: 'apply';
   proposalId: string;
@@ -142,6 +163,11 @@ interface ApplyResult {
   applicationRecordCount: number;
   blockingReasons: string[];
   validationId?: string;
+  snapshotId?: string;
+  rollbackId?: string;
+  snapshotPath?: string;
+  rollbackPath?: string;
+  generatedSnapshot?: boolean;
   applicationRecord?: ApplicationRecord;
   applicationRecordPath?: string;
 }
@@ -198,6 +224,16 @@ interface SidecarStatusResult {
     validatedCount: number;
   };
   validations: {
+    path: string;
+    count: number;
+    corruptCount: number;
+  };
+  snapshots: {
+    path: string;
+    count: number;
+    corruptCount: number;
+  };
+  rollbacks: {
     path: string;
     count: number;
     corruptCount: number;
@@ -446,6 +482,36 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
           [
             'No pending AgentDock sidecar proposals found.',
             `Pending proposals after run: ${result.pendingProposalCount}`,
+          ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+  program
+    .command('snapshot')
+    .description('Generate sidecar snapshot and rollback metadata for an L0/L1 proposal')
+    .requiredOption('--proposal-id <id>', 'proposal id to snapshot')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: SnapshotOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = snapshotAgentDock(app, options);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(
+          [
+            `Snapshot: ${result.snapshotId}`,
+            `Rollback: ${result.rollbackId}`,
+            `Proposal: ${result.proposalId}`,
+            `Wrote: ${result.snapshotPath}`,
+            `Wrote: ${result.rollbackPath}`,
           ].join('\n') + '\n',
         );
       } catch (error) {
@@ -739,6 +805,30 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
   }
 }
 
+function snapshotAgentDock(app: AppContext, options: SnapshotOptions): SnapshotResult {
+  const proposalId = options.proposalId.trim();
+  if (!proposalId) {
+    throw new CommanderExit(2, '`haro snapshot --proposal-id` requires a non-empty proposal id.');
+  }
+
+  const lockDir = acquireSnapshotLock(app.paths.root);
+  try {
+    const proposal = readProposalById(app.paths.root, proposalId);
+    if (!proposal) {
+      throw new CommanderExit(
+        1,
+        `No proposal artifact found for ${proposalId} under evolution/proposals.`,
+      );
+    }
+    assertSnapshotAllowedProposal(proposal);
+    const validation = readLatestValidationForProposal(app.paths.root, proposal.id);
+    const artifacts = createSnapshotArtifacts(app, proposal, validation);
+    return writeSnapshotArtifacts(app.paths.root, artifacts);
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
 function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
   const proposalId = options.proposalId.trim();
   if (!proposalId) {
@@ -791,12 +881,22 @@ function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
       ], validation.id);
     }
 
-    const snapshotRef = findSnapshotRef(proposal);
-    const rollbackRef = findRollbackRef(proposal);
+    let snapshotRef = findSnapshotRef(proposal);
+    let rollbackRef = findRollbackRef(proposal);
+    let generatedSnapshot: SnapshotResult | undefined;
     if (!snapshotRef || !rollbackRef) {
-      return blockedApplyResult(proposal.id, 'ROLLBACK_REF_REQUIRED', [
-        'Gated apply requires both snapshot and rollback refs before content mutation can be enabled.',
-      ], validation.id);
+      try {
+        generatedSnapshot = writeSnapshotArtifacts(
+          app.paths.root,
+          createSnapshotArtifacts(app, proposal, validation),
+        );
+        snapshotRef = generatedSnapshot.snapshotRef;
+        rollbackRef = generatedSnapshot.rollbackRef;
+      } catch (error) {
+        return blockedApplyResult(proposal.id, 'SNAPSHOT_FAILED', [
+          error instanceof Error ? error.message : String(error),
+        ], validation.id);
+      }
     }
 
     const applicationRecord = createReadyApplicationRecord(app, proposal, validation, snapshotRef, rollbackRef);
@@ -812,6 +912,13 @@ function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
       applicationRecordCount: 1,
       blockingReasons: [],
       validationId: validation.id,
+      snapshotId: snapshotRef.id,
+      rollbackId: rollbackRef.id,
+      ...(generatedSnapshot ? {
+        snapshotPath: generatedSnapshot.snapshotPath,
+        rollbackPath: generatedSnapshot.rollbackPath,
+        generatedSnapshot: true,
+      } : { generatedSnapshot: false }),
       applicationRecord,
       applicationRecordPath,
     };
@@ -909,6 +1016,8 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
   const observationStats = readObservationStats(app.paths.root);
   const frontierSignalStats = readFrontierSignalStats(app.paths.root);
   const applicationStats = readApplicationStats(app.paths.root);
+  const snapshotStats = readSnapshotStats(app.paths.root);
+  const rollbackStats = readRollbackStats(app.paths.root);
   return {
     command: 'status',
     root: app.paths.root,
@@ -931,6 +1040,16 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
       path: validationsDir(app.paths.root),
       count: validationStats.count,
       corruptCount: validationStats.corruptCount,
+    },
+    snapshots: {
+      path: snapshotsDir(app.paths.root),
+      count: snapshotStats.count,
+      corruptCount: snapshotStats.corruptCount,
+    },
+    rollbacks: {
+      path: rollbacksDir(app.paths.root),
+      count: rollbackStats.count,
+      corruptCount: rollbackStats.corruptCount,
     },
     applications: {
       path: applicationsDir(app.paths.root),
@@ -1196,6 +1315,14 @@ function applicationFilePath(root: string, record: ApplicationRecord): string {
   return join(applicationsDir(root), `${safePathSegment(record.id)}.json`);
 }
 
+function snapshotFilePath(root: string, record: AssetSnapshotRecord): string {
+  return join(snapshotsDir(root), `${safePathSegment(record.id)}.json`);
+}
+
+function rollbackFilePath(root: string, record: RollbackRecord): string {
+  return join(rollbacksDir(root), `${safePathSegment(record.id)}.json`);
+}
+
 function frontierSignalFilePath(root: string, signal: FrontierSignal): string {
   const fingerprint = sha256(frontierSignalSourceKey(signal)).slice(0, 12);
   return join(
@@ -1226,6 +1353,14 @@ function validationsDir(root: string): string {
 
 function applicationsDir(root: string): string {
   return join(root, 'evolution', 'applications');
+}
+
+function snapshotsDir(root: string): string {
+  return join(root, 'evolution', 'snapshots');
+}
+
+function rollbacksDir(root: string): string {
+  return join(root, 'evolution', 'rollbacks');
 }
 
 function frontierSignalsDir(root: string): string {
@@ -1282,6 +1417,25 @@ function acquireValidateLock(root: string): string {
       throw new CommanderExit(
         1,
         'Another haro validate process is already running.',
+      );
+    }
+    throw error;
+  }
+  return dir;
+}
+
+function acquireSnapshotLock(root: string): string {
+  const parent = join(root, 'evolution', 'locks');
+  mkdirSync(parent, { recursive: true });
+  const dir = join(parent, 'snapshot.lock');
+  try {
+    mkdirSync(dir);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === 'EEXIST') {
+      throw new CommanderExit(
+        1,
+        'Another haro snapshot process is already running.',
       );
     }
     throw error;
@@ -1672,6 +1826,40 @@ function readApplicationStats(root: string): {
   return { count, corruptCount, readyCount, appliedCount, rolledBackCount };
 }
 
+function readSnapshotStats(root: string): { count: number; corruptCount: number } {
+  const dir = snapshotsDir(root);
+  if (!existsSync(dir)) return { count: 0, corruptCount: 0 };
+  let count = 0;
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      AssetSnapshotRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount };
+}
+
+function readRollbackStats(root: string): { count: number; corruptCount: number } {
+  const dir = rollbacksDir(root);
+  if (!existsSync(dir)) return { count: 0, corruptCount: 0 };
+  let count = 0;
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      RollbackRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount };
+}
+
 function readFrontierSourceConfig(path: string): FrontierSignal[] {
   let value: unknown;
   try {
@@ -1835,6 +2023,19 @@ function blockedApplyResult(
   };
 }
 
+function assertSnapshotAllowedProposal(proposal: EvolutionProposal): void {
+  if (proposal.level === 'L2' || proposal.level === 'L3') {
+    throw new CommanderExit(
+      1,
+      'Direct snapshot/apply is forbidden for L2/L3 proposals; generate a patch branch and require human review.',
+    );
+  }
+  const unsupportedTargetReason = unsupportedL0L1TargetReason(proposal);
+  if (unsupportedTargetReason) {
+    throw new CommanderExit(1, unsupportedTargetReason);
+  }
+}
+
 function unsupportedL0L1TargetReason(proposal: EvolutionProposal): string | undefined {
   const allowedL0 = new Set(['prompt', 'mcp-tool-config']);
   const allowedL1 = new Set(['skill', 'runner-profile', 'schedule-config', 'routing-rule']);
@@ -1887,6 +2088,136 @@ function createReadyApplicationRecord(
     createdAt: timestamp,
     updatedAt: timestamp,
   });
+}
+
+function createSnapshotArtifacts(
+  app: AppContext,
+  proposal: EvolutionProposal,
+  validation?: ValidationReport,
+): { snapshot: AssetSnapshotRecord; rollback: RollbackRecord } {
+  assertSnapshotAllowedProposal(proposal);
+  const registry = createSidecarAssetRegistry(app.paths.root);
+  const baselineEvents = registry.listEvents();
+  const entries = proposal.changeSet.map((change, index) => {
+    const baseline = latestRollbackBaselineEvent(baselineEvents, proposal, change);
+    return {
+      changeIndex: index,
+      targetRef: change.targetRef,
+      assetId: change.targetRef.id,
+      existed: Boolean(baseline),
+      ...(baseline ? {
+        latestEventRef: assetEventRef(baseline),
+        contentRef: baseline.contentRef,
+        contentHash: baseline.contentHash,
+        version: baseline.version,
+        status: baseline.status,
+      } : {}),
+    };
+  });
+  const snapshotId = `snapshot_${sha256(JSON.stringify({
+    proposalId: proposal.id,
+    validationId: validation?.id,
+    entries,
+  })).slice(0, 24)}`;
+  const snapshotRef = assetSnapshotRef(snapshotId);
+  const timestamp = app.now().toISOString();
+  const snapshot = AssetSnapshotRecordSchema.parse({
+    id: snapshotId,
+    proposalId: proposal.id,
+    ...(validation ? { validationId: validation.id } : {}),
+    level: proposal.level,
+    targetKind: proposal.targetKind,
+    sourceRef: evolutionProposalRef(proposal),
+    entries,
+    createdAt: timestamp,
+  });
+  const rollbackEntries = snapshot.entries.map((entry) => ({
+    changeIndex: entry.changeIndex,
+    targetRef: entry.targetRef,
+    assetId: entry.assetId,
+    action: entry.existed ? 'restore-latest-event' : 'delete-created-asset',
+    existedBefore: entry.existed,
+    ...(entry.latestEventRef ? { restoreEventRef: entry.latestEventRef } : {}),
+    ...(entry.contentRef ? { restoreContentRef: entry.contentRef } : {}),
+    ...(entry.contentHash ? { restoreContentHash: entry.contentHash } : {}),
+    ...(entry.version ? { restoreVersion: entry.version } : {}),
+  }));
+  const rollbackId = `rollback_${sha256(JSON.stringify({
+    proposalId: proposal.id,
+    validationId: validation?.id,
+    snapshotId,
+    entries: rollbackEntries,
+  })).slice(0, 24)}`;
+  const rollback = RollbackRecordSchema.parse({
+    id: rollbackId,
+    proposalId: proposal.id,
+    ...(validation ? { validationId: validation.id } : {}),
+    snapshotRef,
+    sourceRef: snapshotRef,
+    reversible: true,
+    entries: rollbackEntries,
+    createdAt: timestamp,
+  });
+  return { snapshot, rollback };
+}
+
+function writeSnapshotArtifacts(
+  root: string,
+  artifacts: { snapshot: AssetSnapshotRecord; rollback: RollbackRecord },
+): SnapshotResult {
+  const snapshotPath = snapshotFilePath(root, artifacts.snapshot);
+  const rollbackPath = rollbackFilePath(root, artifacts.rollback);
+  writeJsonFile(snapshotPath, artifacts.snapshot);
+  writeJsonFile(rollbackPath, artifacts.rollback);
+  return {
+    command: 'snapshot',
+    proposalId: artifacts.snapshot.proposalId,
+    snapshotId: artifacts.snapshot.id,
+    rollbackId: artifacts.rollback.id,
+    snapshotPath,
+    rollbackPath,
+    snapshotRef: assetSnapshotRef(artifacts.snapshot.id),
+    rollbackRef: rollbackRecordRef(artifacts.rollback),
+    snapshot: artifacts.snapshot,
+    rollback: artifacts.rollback,
+  };
+}
+
+function latestRollbackBaselineEvent(
+  events: readonly AssetEvent[],
+  proposal: EvolutionProposal,
+  change: ChangeOperation,
+): AssetEvent | undefined {
+  const baselineStatuses = new Set(['applied', 'rolled-back', 'archived']);
+  return events
+    .filter((event) => event.assetId === change.targetRef.id)
+    .filter((event) => baselineStatuses.has(event.status))
+    .filter((event) => event.proposalRef?.id !== proposal.id)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id))[0];
+}
+
+function assetEventRef(event: AssetEvent): Ref {
+  return {
+    id: event.id,
+    kind: 'asset-event',
+    uri: `haro-sidecar://assets/events/${encodeURIComponent(event.id)}`,
+  };
+}
+
+function assetSnapshotRef(snapshotId: string): Ref {
+  return {
+    id: snapshotId,
+    kind: 'asset-snapshot',
+    uri: `haro-sidecar://snapshots/${encodeURIComponent(snapshotId)}`,
+  };
+}
+
+function rollbackRecordRef(record: RollbackRecord): Ref {
+  return {
+    id: record.id,
+    kind: 'rollback-ref',
+    uri: `haro-sidecar://rollbacks/${encodeURIComponent(record.id)}`,
+  };
 }
 
 function createDryRunProposal(

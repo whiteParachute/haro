@@ -67,12 +67,22 @@ export type { ValidationReport } from './validation.js';
 export {
   ApplicationRecordSchema,
   ApplicationStatusSchema,
+  AssetSnapshotRecordSchema,
   ApplyGateCodeSchema,
+  RollbackActionSchema,
+  RollbackEntrySchema,
+  RollbackRecordSchema,
+  SnapshotEntrySchema,
 } from './application.js';
 export type {
   ApplicationRecord,
   ApplicationStatus,
+  AssetSnapshotRecord,
   ApplyGateCode,
+  RollbackAction,
+  RollbackEntry,
+  RollbackRecord,
+  SnapshotEntry,
 } from './application.js';
 
 export {

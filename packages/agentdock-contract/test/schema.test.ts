@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   ApplicationRecordSchema,
+  AssetSnapshotRecordSchema,
   AssetEventSchema,
   EvolutionProposalSchema,
   FrontierSignalSchema,
+  RollbackRecordSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
 } from '../src/index.js';
@@ -130,6 +132,47 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
 
     expect(record.applied).toBe(false);
     expect(record.gateCode).toBe('READY');
+  });
+
+  it('accepts snapshot and rollback metadata records for gate preflight', () => {
+    const snapshot = AssetSnapshotRecordSchema.parse({
+      id: 'snapshot-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      level: 'L0',
+      targetKind: 'prompt',
+      sourceRef: { id: 'proposal-001', kind: 'evolution-proposal' },
+      entries: [
+        {
+          changeIndex: 0,
+          targetRef: { id: 'prompt-default', kind: 'prompt' },
+          assetId: 'prompt-default',
+          existed: false,
+        },
+      ],
+      createdAt: now,
+    });
+    const rollback = RollbackRecordSchema.parse({
+      id: 'rollback-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      snapshotRef: { id: snapshot.id, kind: 'asset-snapshot' },
+      sourceRef: { id: snapshot.id, kind: 'asset-snapshot' },
+      reversible: true,
+      entries: [
+        {
+          changeIndex: 0,
+          targetRef: { id: 'prompt-default', kind: 'prompt' },
+          assetId: 'prompt-default',
+          action: 'delete-created-asset',
+          existedBefore: false,
+        },
+      ],
+      createdAt: now,
+    });
+
+    expect(snapshot.entries[0]?.existed).toBe(false);
+    expect(rollback.entries[0]?.action).toBe('delete-created-asset');
   });
 
   it('rejects ready application records with blocking reasons', () => {

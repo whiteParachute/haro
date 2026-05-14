@@ -178,6 +178,7 @@ export type RunCliAction =
   | 'observe'
   | 'propose'
   | 'validate'
+  | 'snapshot'
   | 'apply'
   | 'intake'
   | 'channel'
@@ -1630,6 +1631,7 @@ async function bootstrapApp(
     input.argv?.[0] === 'observe' ||
     input.argv?.[0] === 'propose' ||
     input.argv?.[0] === 'validate' ||
+    input.argv?.[0] === 'snapshot' ||
     input.argv?.[0] === 'apply' ||
     input.argv?.[0] === 'intake' ||
     input.argv?.[0] === 'status' ||
@@ -2918,6 +2920,9 @@ async function createSidecarDoctorStage(
     { name: 'observations', path: sidecar.observations.path, required: false },
     { name: 'proposals', path: sidecar.proposals.path, required: false },
     { name: 'validations', path: sidecar.validations.path, required: false },
+    { name: 'snapshots', path: sidecar.snapshots.path, required: false },
+    { name: 'rollbacks', path: sidecar.rollbacks.path, required: false },
+    { name: 'applications', path: sidecar.applications.path, required: false },
     { name: 'frontier-signals', path: sidecar.frontierSignals.path, required: false },
   ].map((item) => ({
     ...item,
@@ -2976,6 +2981,9 @@ async function createSidecarDoctorStage(
     observations: sidecar.observations.corruptCount,
     proposals: sidecar.proposals.corruptCount,
     validations: sidecar.validations.corruptCount,
+    snapshots: sidecar.snapshots.corruptCount,
+    rollbacks: sidecar.rollbacks.corruptCount,
+    applications: sidecar.applications.corruptCount,
     frontierSignals: sidecar.frontierSignals.corruptCount,
   };
   const corruptTotal = Object.values(corruptCounts).reduce((sum, count) => sum + count, 0);
@@ -3128,7 +3136,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'apply' || first === 'intake' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'snapshot' || first === 'apply' || first === 'intake' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

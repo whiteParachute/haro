@@ -20,6 +20,57 @@ export const ApplicationStatusSchema = z.enum([
   'rolled-back',
 ]);
 
+export const SnapshotEntrySchema = z.object({
+  changeIndex: z.number().int().nonnegative(),
+  targetRef: RefSchema,
+  assetId: NonEmptyStringSchema,
+  existed: z.boolean(),
+  latestEventRef: RefSchema.optional(),
+  contentRef: RefSchema.optional(),
+  contentHash: NonEmptyStringSchema.optional(),
+  version: NonEmptyStringSchema.optional(),
+  status: NonEmptyStringSchema.optional(),
+});
+
+export const AssetSnapshotRecordSchema = z.object({
+  id: NonEmptyStringSchema,
+  proposalId: NonEmptyStringSchema,
+  validationId: NonEmptyStringSchema.optional(),
+  level: EvolutionLevelSchema,
+  targetKind: ProposalTargetKindSchema,
+  sourceRef: RefSchema,
+  entries: z.array(SnapshotEntrySchema).min(1),
+  createdAt: IsoDateTimeSchema,
+});
+
+export const RollbackActionSchema = z.enum([
+  'restore-latest-event',
+  'delete-created-asset',
+]);
+
+export const RollbackEntrySchema = z.object({
+  changeIndex: z.number().int().nonnegative(),
+  targetRef: RefSchema,
+  assetId: NonEmptyStringSchema,
+  action: RollbackActionSchema,
+  existedBefore: z.boolean(),
+  restoreEventRef: RefSchema.optional(),
+  restoreContentRef: RefSchema.optional(),
+  restoreContentHash: NonEmptyStringSchema.optional(),
+  restoreVersion: NonEmptyStringSchema.optional(),
+});
+
+export const RollbackRecordSchema = z.object({
+  id: NonEmptyStringSchema,
+  proposalId: NonEmptyStringSchema,
+  validationId: NonEmptyStringSchema.optional(),
+  snapshotRef: RefSchema,
+  sourceRef: RefSchema,
+  reversible: z.boolean(),
+  entries: z.array(RollbackEntrySchema).min(1),
+  createdAt: IsoDateTimeSchema,
+});
+
 export const ApplicationRecordSchema = z.object({
   id: NonEmptyStringSchema,
   proposalId: NonEmptyStringSchema,
@@ -72,4 +123,9 @@ export const ApplicationRecordSchema = z.object({
 
 export type ApplyGateCode = z.infer<typeof ApplyGateCodeSchema>;
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
+export type SnapshotEntry = z.infer<typeof SnapshotEntrySchema>;
+export type AssetSnapshotRecord = z.infer<typeof AssetSnapshotRecordSchema>;
+export type RollbackAction = z.infer<typeof RollbackActionSchema>;
+export type RollbackEntry = z.infer<typeof RollbackEntrySchema>;
+export type RollbackRecord = z.infer<typeof RollbackRecordSchema>;
 export type ApplicationRecord = z.infer<typeof ApplicationRecordSchema>;

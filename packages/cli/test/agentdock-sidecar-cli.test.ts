@@ -5,9 +5,13 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApplicationRecordSchema,
+  AssetSnapshotRecordSchema,
   AssetEventSchema,
+  RollbackRecordSchema,
   type ApplicationRecord,
+  type AssetSnapshotRecord,
   type AssetEvent,
+  type RollbackRecord,
 } from '@haro/agentdock-contract';
 import { AgentRegistry, ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
@@ -107,6 +111,24 @@ function readApplicationRecords(root: string): ApplicationRecord[] {
     .filter((name) => name.endsWith('.json'))
     .sort()
     .map((name) => ApplicationRecordSchema.parse(readJson(join(dir, name))));
+}
+
+function readSnapshotRecords(root: string): AssetSnapshotRecord[] {
+  const dir = join(root, 'evolution', 'snapshots');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .map((name) => AssetSnapshotRecordSchema.parse(readJson(join(dir, name))));
+}
+
+function readRollbackRecords(root: string): RollbackRecord[] {
+  const dir = join(root, 'evolution', 'rollbacks');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .map((name) => RollbackRecordSchema.parse(readJson(join(dir, name))));
 }
 
 describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
@@ -1100,6 +1122,185 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
+  it('snapshot --proposal-id writes deterministic snapshot and rollback metadata without applying content', async () => {
+    const root = newHome('agentdock-snapshot');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(propose.exitCode).toBe(0);
+    const proposalPayload = (JSON.parse(proposeOut.read()) as { data: { proposalId: string } }).data;
+
+    const snapshotOut = captureStream();
+    const snapshotErr = captureStream();
+    const snapshot = await runCli(commonOpts(root, snapshotOut, snapshotErr, [
+      'snapshot',
+      '--proposal-id',
+      proposalPayload.proposalId,
+      '--json',
+    ]));
+
+    expect(snapshot.exitCode).toBe(0);
+    expect(snapshot.action).toBe('snapshot');
+    expect(snapshotErr.read()).toBe('');
+    const payload = (JSON.parse(snapshotOut.read()) as { data: {
+      proposalId: string;
+      snapshotId: string;
+      rollbackId: string;
+      snapshotPath: string;
+      rollbackPath: string;
+      snapshot: { entries: Array<{ existed: boolean; assetId: string }> };
+      rollback: { entries: Array<{ action: string; existedBefore: boolean }> };
+    } }).data;
+    expect(payload.proposalId).toBe(proposalPayload.proposalId);
+    expect(payload.snapshotId).toMatch(/^snapshot_/);
+    expect(payload.rollbackId).toMatch(/^rollback_/);
+    expect(existsSync(payload.snapshotPath)).toBe(true);
+    expect(existsSync(payload.rollbackPath)).toBe(true);
+    expect(payload.snapshot.entries[0]).toMatchObject({ existed: false });
+    expect(payload.rollback.entries[0]).toMatchObject({
+      action: 'delete-created-asset',
+      existedBefore: false,
+    });
+    expect(readSnapshotRecords(root)).toHaveLength(1);
+    expect(readRollbackRecords(root)).toHaveLength(1);
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(readAssetEvents(root).filter((event) => event.status === 'applied')).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+
+    const repeatOut = captureStream();
+    const repeatErr = captureStream();
+    const repeat = await runCli(commonOpts(root, repeatOut, repeatErr, [
+      'snapshot',
+      '--proposal-id',
+      proposalPayload.proposalId,
+      '--json',
+    ]));
+    expect(repeat.exitCode).toBe(0);
+    expect(repeatErr.read()).toBe('');
+    const repeatPayload = (JSON.parse(repeatOut.read()) as { data: { snapshotId: string; rollbackId: string } }).data;
+    expect(repeatPayload.snapshotId).toBe(payload.snapshotId);
+    expect(repeatPayload.rollbackId).toBe(payload.rollbackId);
+    expect(readSnapshotRecords(root)).toHaveLength(1);
+    expect(readRollbackRecords(root)).toHaveLength(1);
+    expect(observeErr.read()).toBe('');
+    expect(proposeErr.read()).toBe('');
+  });
+
+  it('apply --proposal-id auto-generates snapshot and rollback metadata before writing a ready record', async () => {
+    const root = newHome('agentdock-apply-autosnapshot');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    const proposal = {
+      id: 'proposal_autosnapshot_l0',
+      title: 'Tune prompt wording with generated snapshot',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-autosnapshot-l0', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'prompt-autosnapshot', kind: 'prompt' },
+          contentRef: 'haro-sidecar://proposals/proposal_autosnapshot_l0/content',
+          contentHash: 'sha256:prompt-autosnapshot',
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: ['Review prompt wording'],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_autosnapshot_l0.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_autosnapshot_l0.json'), `${JSON.stringify({
+      id: 'validation_autosnapshot_l0',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      generatedSnapshot: boolean;
+      snapshotId: string;
+      rollbackId: string;
+      snapshotPath: string;
+      rollbackPath: string;
+      applicationRecord: {
+        status: string;
+        applied: boolean;
+        snapshotRef: { id: string };
+        rollbackRef: { id: string };
+      };
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'ready',
+      gateCode: 'READY',
+      generatedSnapshot: true,
+    });
+    expect(payload.snapshotId).toMatch(/^snapshot_/);
+    expect(payload.rollbackId).toMatch(/^rollback_/);
+    expect(existsSync(payload.snapshotPath)).toBe(true);
+    expect(existsSync(payload.rollbackPath)).toBe(true);
+    expect(payload.applicationRecord).toMatchObject({
+      status: 'ready',
+      applied: false,
+      snapshotRef: { id: payload.snapshotId },
+      rollbackRef: { id: payload.rollbackId },
+    });
+    expect(readSnapshotRecords(root)).toHaveLength(1);
+    expect(readRollbackRecords(root)).toHaveLength(1);
+    expect(readApplicationRecords(root)).toHaveLength(1);
+    expect(readAssetEvents(root).filter((event) => event.status === 'applied')).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
   it('apply --proposal-id writes a ready gate record for eligible L0 proposals without mutating assets', async () => {
     const root = newHome('agentdock-apply-ready-l0');
     const proposalDir = join(root, 'evolution', 'proposals');
@@ -1352,6 +1553,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
       proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
       validations: { count: number; corruptCount: number };
+      snapshots: { count: number; corruptCount: number };
+      rollbacks: { count: number; corruptCount: number };
       applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
       frontierSignals: {
         count: number;
@@ -1367,6 +1570,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.observations).toMatchObject({ batchCount: 0, corruptCount: 0, semanticObservationCount: 0 });
     expect(payload.proposals).toMatchObject({ count: 0, pendingCount: 0, validatedCount: 0, corruptCount: 0 });
     expect(payload.validations).toMatchObject({ count: 0, corruptCount: 0 });
+    expect(payload.snapshots).toMatchObject({ count: 0, corruptCount: 0 });
+    expect(payload.rollbacks).toMatchObject({ count: 0, corruptCount: 0 });
     expect(payload.applications).toMatchObject({
       count: 0,
       readyCount: 0,
@@ -1459,6 +1664,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
       proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
       validations: { count: number; corruptCount: number };
+      snapshots: { count: number; corruptCount: number };
+      rollbacks: { count: number; corruptCount: number };
       applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
       frontierSignals: {
         count: number;
@@ -1483,6 +1690,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.observations.corruptCount).toBe(1);
     expect(payload.proposals).toMatchObject({ count: 1, pendingCount: 0, validatedCount: 1, corruptCount: 1 });
     expect(payload.validations).toMatchObject({ count: 1, corruptCount: 1 });
+    expect(payload.snapshots).toMatchObject({ count: 0, corruptCount: 0 });
+    expect(payload.rollbacks).toMatchObject({ count: 0, corruptCount: 0 });
     expect(payload.applications).toMatchObject({
       count: 0,
       readyCount: 0,
