@@ -24,6 +24,7 @@ import {
   type FrontierSignal,
   type ObservationBatch,
   type Ref,
+  type RollbackAction,
   type RollbackRecord,
   type SnapshotSource,
   type ValidationReport,
@@ -85,6 +86,10 @@ interface SnapshotOptions extends OutputFlags {
 
 interface ApplyOptions extends OutputFlags {
   proposalId: string;
+}
+
+interface RollbackOptions extends OutputFlags {
+  applicationId: string;
 }
 
 interface IntakeFrontierOptions extends OutputFlags {
@@ -213,6 +218,32 @@ interface BlockedApply {
   blockingReasons: string[];
 }
 
+interface PreparedRollback {
+  ok: true;
+  changes: RollbackAssetContent[];
+}
+
+interface BlockedRollback {
+  ok: false;
+  gateCode: Exclude<RollbackGateCode, 'READY'>;
+  blockingReasons: string[];
+}
+
+interface RollbackAssetContent {
+  changeIndex: number;
+  targetRef: Ref;
+  assetId: string;
+  kind: AssetKind;
+  action: RollbackAction;
+  sourceContentRef: Ref;
+  targetContentRef: Ref;
+  contentHash: string;
+  version: string;
+  restorePath?: string;
+  content?: Buffer;
+  removePaths: string[];
+}
+
 interface ApplyResult {
   command: 'apply';
   proposalId: string;
@@ -231,6 +262,38 @@ interface ApplyResult {
   rollbackPath?: string;
   generatedSnapshot?: boolean;
   appliedContentRefs?: Ref[];
+  applicationRecord?: ApplicationRecord;
+  applicationRecordPath?: string;
+}
+
+type RollbackGateCode =
+  | 'READY'
+  | 'APPLICATION_NOT_FOUND'
+  | 'APPLICATION_NOT_APPLIED'
+  | 'SNAPSHOT_FAILED'
+  | 'ROLLBACK_REF_REQUIRED'
+  | 'ROLLBACK_NOT_REVERSIBLE'
+  | 'UNSUPPORTED_ROLLBACK_EXECUTOR'
+  | 'ROLLBACK_CONTENT_REQUIRED'
+  | 'ROLLBACK_CONTENT_HASH_MISMATCH'
+  | 'ROLLBACK_EXECUTION_FAILED';
+
+interface RollbackResult {
+  command: 'rollback';
+  applicationId: string;
+  proposalId?: string;
+  gateStatus: 'rolled-back' | 'blocked';
+  gateCode: RollbackGateCode;
+  gatePassed: boolean;
+  rolledBack: boolean;
+  applicationRecordCount: number;
+  assetEventCount: number;
+  assetEventIds: string[];
+  blockingReasons: string[];
+  validationId?: string;
+  snapshotId?: string;
+  rollbackId?: string;
+  rolledBackContentRefs?: Ref[];
   applicationRecord?: ApplicationRecord;
   applicationRecordPath?: string;
 }
@@ -607,6 +670,40 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               ].join('\n') + '\n'
             : [
                 `Apply gate blocked: ${result.proposalId}`,
+                `Code: ${result.gateCode}`,
+                ...result.blockingReasons.map((reason) => `- ${reason}`),
+              ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+  program
+    .command('rollback')
+    .description('Rollback an applied sidecar-local L0 application using its rollback record')
+    .requiredOption('--application-id <id>', 'applied application record id to roll back')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: RollbackOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = rollbackAgentDock(app, options);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(
+          result.gatePassed
+            ? [
+                `Rolled back: ${result.applicationId}`,
+                `Asset events: ${result.assetEventCount}`,
+                `Application record: ${result.applicationRecordPath}`,
+              ].join('\n') + '\n'
+            : [
+                `Rollback gate blocked: ${result.applicationId}`,
                 `Code: ${result.gateCode}`,
                 ...result.blockingReasons.map((reason) => `- ${reason}`),
               ].join('\n') + '\n',
@@ -1052,6 +1149,119 @@ function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
         generatedSnapshot: true,
       } : { generatedSnapshot: false }),
       appliedContentRefs,
+      applicationRecord,
+      applicationRecordPath,
+    };
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
+function rollbackAgentDock(app: AppContext, options: RollbackOptions): RollbackResult {
+  const applicationId = options.applicationId.trim();
+  if (!applicationId) {
+    throw new CommanderExit(2, '`haro rollback --application-id` requires a non-empty application id.');
+  }
+
+  const lockDir = acquireApplyLock(app.paths.root);
+  try {
+    const application = readApplicationById(app.paths.root, applicationId);
+    if (!application) {
+      return blockedRollbackResult(applicationId, 'APPLICATION_NOT_FOUND', [
+        `No application record found for ${applicationId} under evolution/applications.`,
+      ]);
+    }
+
+    if (application.status !== 'applied' || !application.applied) {
+      return blockedRollbackResult(application.id, 'APPLICATION_NOT_APPLIED', [
+        `Application ${application.id} has status=${application.status}; rollback requires status=applied.`,
+      ], application);
+    }
+
+    if (!application.snapshotRef) {
+      return blockedRollbackResult(application.id, 'SNAPSHOT_FAILED', [
+        `Application ${application.id} does not contain a snapshotRef.`,
+      ], application);
+    }
+    if (!application.rollbackRef) {
+      return blockedRollbackResult(application.id, 'ROLLBACK_REF_REQUIRED', [
+        `Application ${application.id} does not contain a rollbackRef.`,
+      ], application);
+    }
+
+    const snapshot = readSnapshotById(app.paths.root, application.snapshotRef.id);
+    if (!snapshot) {
+      return blockedRollbackResult(application.id, 'SNAPSHOT_FAILED', [
+        `Snapshot artifact ${application.snapshotRef.id} was not found under evolution/snapshots.`,
+      ], application);
+    }
+    const rollback = readRollbackById(app.paths.root, application.rollbackRef.id);
+    if (!rollback) {
+      return blockedRollbackResult(application.id, 'ROLLBACK_REF_REQUIRED', [
+        `Rollback artifact ${application.rollbackRef.id} was not found under evolution/rollbacks.`,
+      ], application);
+    }
+
+    const evidenceProblem = validateRollbackEvidenceRefs(application, snapshot, rollback);
+    if (evidenceProblem) {
+      return blockedRollbackResult(
+        application.id,
+        evidenceProblem.gateCode,
+        [evidenceProblem.reason],
+        application,
+      );
+    }
+
+    const preparedRollback = prepareSidecarLocalRollback(app.paths.root, application, snapshot, rollback);
+    if (!preparedRollback.ok) {
+      return blockedRollbackResult(
+        application.id,
+        preparedRollback.gateCode,
+        preparedRollback.blockingReasons,
+        application,
+      );
+    }
+
+    try {
+      applySidecarLocalRollbackChanges(preparedRollback.changes);
+    } catch (error) {
+      return blockedRollbackResult(application.id, 'ROLLBACK_EXECUTION_FAILED', [
+        error instanceof Error ? error.message : String(error),
+      ], application);
+    }
+
+    const assetEvents = recordRolledBackAssetEvents(
+      app.paths.root,
+      application,
+      rollback,
+      preparedRollback.changes,
+      app.now().toISOString(),
+    );
+    const rolledBackContentRefs = preparedRollback.changes.map((change) => change.targetContentRef);
+    const applicationRecord = createRolledBackApplicationRecord(
+      app,
+      application,
+      assetEvents.map(assetEventRef),
+      rolledBackContentRefs,
+    );
+    const applicationRecordPath = applicationFilePath(app.paths.root, applicationRecord);
+    writeJsonFile(applicationRecordPath, applicationRecord);
+    return {
+      command: 'rollback',
+      applicationId: application.id,
+      proposalId: application.proposalId,
+      gateStatus: 'rolled-back',
+      gateCode: 'READY',
+      gatePassed: true,
+      rolledBack: true,
+      applicationRecordCount: 1,
+      assetEventCount: assetEvents.length,
+      assetEventIds: assetEvents.map((event) => event.id),
+      blockingReasons: [],
+      validationId: application.validationId,
+      snapshotId: snapshot.id,
+      rollbackId: rollback.id,
+      rolledBackContentRefs,
       applicationRecord,
       applicationRecordPath,
     };
@@ -1599,7 +1809,7 @@ function acquireApplyLock(root: string): string {
     if (code === 'EEXIST') {
       throw new CommanderExit(
         1,
-        'Another haro apply process is already running.',
+        'Another haro apply/rollback process is already running.',
       );
     }
     throw error;
@@ -1793,6 +2003,17 @@ function readProposalById(root: string, proposalId: string): EvolutionProposal |
     }
   }
   return undefined;
+}
+
+function readApplicationById(root: string, applicationId: string): ApplicationRecord | undefined {
+  const path = join(applicationsDir(root), `${safePathSegment(applicationId)}.json`);
+  if (!existsSync(path)) return undefined;
+  try {
+    const record = ApplicationRecordSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+    return record.id === applicationId ? record : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function readLatestValidationForProposal(root: string, proposalId: string): ValidationReport | undefined {
@@ -2204,6 +2425,32 @@ function blockedApplyResult(
   };
 }
 
+function blockedRollbackResult(
+  applicationId: string,
+  gateCode: Exclude<RollbackGateCode, 'READY'>,
+  blockingReasons: string[],
+  application?: ApplicationRecord,
+): RollbackResult {
+  return {
+    command: 'rollback',
+    applicationId,
+    ...(application ? {
+      proposalId: application.proposalId,
+      validationId: application.validationId,
+      snapshotId: application.snapshotRef?.id,
+      rollbackId: application.rollbackRef?.id,
+    } : {}),
+    gateStatus: 'blocked',
+    gateCode,
+    gatePassed: false,
+    rolledBack: false,
+    applicationRecordCount: 0,
+    assetEventCount: 0,
+    assetEventIds: [],
+    blockingReasons,
+  };
+}
+
 function assertSnapshotAllowedProposal(proposal: EvolutionProposal): void {
   if (proposal.level === 'L2' || proposal.level === 'L3') {
     throw new CommanderExit(
@@ -2330,6 +2577,80 @@ function validateApplyEvidenceRefs(
   return undefined;
 }
 
+function validateRollbackEvidenceRefs(
+  application: ApplicationRecord,
+  snapshot: AssetSnapshotRecord,
+  rollback: RollbackRecord,
+): { gateCode: Exclude<RollbackGateCode, 'READY'>; reason: string } | undefined {
+  if (application.snapshotRef?.id !== snapshot.id) {
+    return {
+      gateCode: 'SNAPSHOT_FAILED',
+      reason: `Application ${application.id} points to snapshot ${application.snapshotRef?.id ?? '(missing)'}, not ${snapshot.id}.`,
+    };
+  }
+  if (application.rollbackRef?.id !== rollback.id) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Application ${application.id} points to rollback ${application.rollbackRef?.id ?? '(missing)'}, not ${rollback.id}.`,
+    };
+  }
+  if (snapshot.proposalId !== application.proposalId) {
+    return {
+      gateCode: 'SNAPSHOT_FAILED',
+      reason: `Snapshot ${snapshot.id} belongs to proposal ${snapshot.proposalId}, not ${application.proposalId}.`,
+    };
+  }
+  if (snapshot.validationId && snapshot.validationId !== application.validationId) {
+    return {
+      gateCode: 'SNAPSHOT_FAILED',
+      reason: `Snapshot ${snapshot.id} belongs to validation ${snapshot.validationId}, not ${application.validationId}.`,
+    };
+  }
+  if (snapshot.level !== application.level || snapshot.targetKind !== application.targetKind) {
+    return {
+      gateCode: 'SNAPSHOT_FAILED',
+      reason: `Snapshot ${snapshot.id} target ${snapshot.level}/${snapshot.targetKind} does not match application ${application.level}/${application.targetKind}.`,
+    };
+  }
+  if (rollback.proposalId !== application.proposalId) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Rollback ${rollback.id} belongs to proposal ${rollback.proposalId}, not ${application.proposalId}.`,
+    };
+  }
+  if (rollback.validationId && rollback.validationId !== application.validationId) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Rollback ${rollback.id} belongs to validation ${rollback.validationId}, not ${application.validationId}.`,
+    };
+  }
+  if (rollback.snapshotRef.id !== snapshot.id) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Rollback ${rollback.id} points to snapshot ${rollback.snapshotRef.id}, not ${snapshot.id}.`,
+    };
+  }
+  if (rollback.entries.length !== snapshot.entries.length) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Rollback ${rollback.id} entry count ${rollback.entries.length} does not match snapshot entry count ${snapshot.entries.length}.`,
+    };
+  }
+  for (const entry of rollback.entries) {
+    if (!snapshot.entries.some((snapshotEntry) => (
+      snapshotEntry.changeIndex === entry.changeIndex &&
+      snapshotEntry.assetId === entry.assetId &&
+      snapshotEntry.targetRef.kind === entry.targetRef.kind
+    ))) {
+      return {
+        gateCode: 'ROLLBACK_REF_REQUIRED',
+        reason: `Rollback ${rollback.id} contains target ${entry.targetRef.kind}:${entry.assetId} that is not covered by snapshot ${snapshot.id}.`,
+      };
+    }
+  }
+  return undefined;
+}
+
 function prepareSidecarLocalApply(root: string, proposal: EvolutionProposal): PreparedApply | BlockedApply {
   if (proposal.level !== 'L0' || !['prompt', 'mcp-tool-config'].includes(proposal.targetKind)) {
     return {
@@ -2435,6 +2756,132 @@ function applySidecarLocalChanges(changes: readonly ProposedAssetContent[]): voi
   }
 }
 
+function prepareSidecarLocalRollback(
+  root: string,
+  application: ApplicationRecord,
+  snapshot: AssetSnapshotRecord,
+  rollback: RollbackRecord,
+): PreparedRollback | BlockedRollback {
+  if (application.level !== 'L0' || !['prompt', 'mcp-tool-config'].includes(application.targetKind)) {
+    return {
+      ok: false,
+      gateCode: 'UNSUPPORTED_ROLLBACK_EXECUTOR',
+      blockingReasons: [
+        `The Phase F local rollback executor only supports L0 prompt/mcp-tool-config targets; received ${application.level}/${application.targetKind}.`,
+      ],
+    };
+  }
+  if (!rollback.reversible) {
+    return {
+      ok: false,
+      gateCode: 'ROLLBACK_NOT_REVERSIBLE',
+      blockingReasons: [`Rollback ${rollback.id} is marked reversible=false.`],
+    };
+  }
+
+  const changes: RollbackAssetContent[] = [];
+  for (const entry of rollback.entries) {
+    const kind = assetKindForRollbackEntry(application, entry);
+    if (kind !== 'prompt' && kind !== 'mcp-tool-config') {
+      return {
+        ok: false,
+        gateCode: 'UNSUPPORTED_ROLLBACK_EXECUTOR',
+        blockingReasons: [
+          `Rollback entry ${entry.changeIndex} targets kind=${entry.targetRef.kind}; the Phase F local rollback executor only supports prompt/mcp-tool-config.`,
+        ],
+      };
+    }
+
+    if (entry.action === 'delete-created-asset') {
+      const contentHash = sha256(JSON.stringify({
+        rollbackId: rollback.id,
+        assetId: entry.assetId,
+        action: entry.action,
+      }));
+      changes.push({
+        changeIndex: entry.changeIndex,
+        targetRef: entry.targetRef,
+        assetId: entry.assetId,
+        kind,
+        action: entry.action,
+        sourceContentRef: rollbackRecordRef(rollback),
+        targetContentRef: rollbackRecordRef(rollback),
+        contentHash,
+        version: contentHash.slice(0, 16),
+        removePaths: currentAssetContentPaths(root, kind, entry.assetId),
+      });
+      continue;
+    }
+
+    if (!entry.restoreContentRef) {
+      return {
+        ok: false,
+        gateCode: 'ROLLBACK_CONTENT_REQUIRED',
+        blockingReasons: [
+          `Rollback entry ${entry.changeIndex} does not include a restoreContentRef; this rollback executor only restores sidecar-local snapshot content.`,
+        ],
+      };
+    }
+    const restoreContent = readSnapshotRestoreContent(root, snapshot.id, entry.restoreContentRef, kind);
+    if (!restoreContent) {
+      return {
+        ok: false,
+        gateCode: 'ROLLBACK_CONTENT_REQUIRED',
+        blockingReasons: [
+          `No sidecar-local snapshot content found for rollback entry ${entry.changeIndex} at ${entry.restoreContentRef.uri ?? entry.restoreContentRef.id}.`,
+        ],
+      };
+    }
+    const contentHash = sha256(restoreContent.content);
+    if (entry.restoreContentHash && !contentHashMatches(entry.restoreContentHash, contentHash)) {
+      return {
+        ok: false,
+        gateCode: 'ROLLBACK_CONTENT_HASH_MISMATCH',
+        blockingReasons: [
+          `Rollback content hash mismatch for entry ${entry.changeIndex}: expected ${entry.restoreContentHash}, got ${contentHash}.`,
+        ],
+      };
+    }
+    const targetFileName = `${encodedAssetPathSegment(entry.assetId)}${restoreContent.extension}`;
+    const restorePath = join(currentAssetContentDir(root, kind), targetFileName);
+    const alternatePaths = currentAssetContentExtensions(kind)
+      .filter((candidateExtension) => candidateExtension !== restoreContent.extension)
+      .map((candidateExtension) => join(
+        currentAssetContentDir(root, kind),
+        `${encodedAssetPathSegment(entry.assetId)}${candidateExtension}`,
+      ));
+    changes.push({
+      changeIndex: entry.changeIndex,
+      targetRef: entry.targetRef,
+      assetId: entry.assetId,
+      kind,
+      action: entry.action,
+      sourceContentRef: entry.restoreContentRef,
+      targetContentRef: currentAssetContentRef(kind, targetFileName, entry.assetId),
+      contentHash,
+      version: entry.restoreVersion ?? contentHash.slice(0, 16),
+      restorePath,
+      content: restoreContent.content,
+      removePaths: alternatePaths,
+    });
+  }
+  return { ok: true, changes };
+}
+
+function applySidecarLocalRollbackChanges(changes: readonly RollbackAssetContent[]): void {
+  for (const change of changes) {
+    if (change.action === 'restore-latest-event') {
+      if (!change.restorePath || !change.content) {
+        throw new Error(`Rollback entry ${change.changeIndex} is missing restore content.`);
+      }
+      writeContentFile(change.restorePath, change.content);
+    }
+    for (const path of change.removePaths) {
+      rmSync(path, { force: true });
+    }
+  }
+}
+
 function proposalContentHint(
   proposal: EvolutionProposal,
   change: ChangeOperation,
@@ -2453,10 +2900,64 @@ function contentHashMatches(expected: string, actual: string): boolean {
   return expected === actual || expected === `sha256:${actual}`;
 }
 
+function assetKindForRollbackEntry(
+  application: ApplicationRecord,
+  entry: RollbackRecord['entries'][number],
+): AssetKind | undefined {
+  const targetRefKind = AssetKindSchema.safeParse(entry.targetRef.kind);
+  if (targetRefKind.success) return targetRefKind.data;
+  const applicationKind = AssetKindSchema.safeParse(application.targetKind);
+  if (applicationKind.success) return applicationKind.data;
+  return undefined;
+}
+
 function currentAssetContentExtensions(kind: string): readonly string[] {
   if (kind === 'prompt') return ['.md', '.txt', '.json'];
   if (kind === 'mcp-tool-config') return ['.json', '.md', '.txt'];
   return [];
+}
+
+function currentAssetContentPaths(root: string, kind: string, assetId: string): string[] {
+  return currentAssetContentExtensions(kind)
+    .map((extension) => join(
+      currentAssetContentDir(root, kind),
+      `${encodedAssetPathSegment(assetId)}${extension}`,
+    ));
+}
+
+function readSnapshotRestoreContent(
+  root: string,
+  snapshotId: string,
+  ref: Ref,
+  kind: AssetKind,
+): { content: Buffer; extension: string } | undefined {
+  const fileName = snapshotContentFileNameFromRef(ref, snapshotId);
+  if (!fileName) return undefined;
+  const extension = currentAssetContentExtensions(kind).find((candidate) => fileName.endsWith(candidate));
+  if (!extension) return undefined;
+  const path = join(snapshotContentDir(root, snapshotId), fileName);
+  if (!existsSync(path) || !lstatSync(path).isFile()) return undefined;
+  return {
+    content: readFileSync(path),
+    extension,
+  };
+}
+
+function snapshotContentFileNameFromRef(ref: Ref, snapshotId: string): string | undefined {
+  if (ref.kind !== 'snapshot-content' || !ref.uri) return undefined;
+  const prefix = 'haro-sidecar://snapshot-content/';
+  if (!ref.uri.startsWith(prefix)) return undefined;
+  const parts = ref.uri.slice(prefix.length).split('/');
+  if (parts.length !== 2) return undefined;
+  try {
+    const decodedSnapshotId = decodeURIComponent(parts[0]!);
+    const fileName = decodeURIComponent(parts[1]!);
+    if (decodedSnapshotId !== snapshotId) return undefined;
+    if (!fileName || fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) return undefined;
+    return fileName;
+  } catch {
+    return undefined;
+  }
 }
 
 function snapshotEntryFingerprint(entry: SnapshotEntryDraft): Record<string, unknown> {
@@ -2569,6 +3070,33 @@ function createAppliedApplicationRecord(
     ],
     blockingReasons: [],
     createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+function createRolledBackApplicationRecord(
+  app: AppContext,
+  application: ApplicationRecord,
+  rollbackAssetEventRefs: Ref[],
+  rolledBackContentRefs: Ref[],
+): ApplicationRecord {
+  const timestamp = app.now().toISOString();
+  return ApplicationRecordSchema.parse({
+    ...application,
+    status: 'rolled-back',
+    gateCode: 'READY',
+    applied: false,
+    assetEventRefs: [
+      ...application.assetEventRefs,
+      ...rollbackAssetEventRefs,
+    ],
+    evidenceRefs: [
+      ...application.evidenceRefs,
+      ...(application.rollbackRef ? [application.rollbackRef] : []),
+      ...rolledBackContentRefs,
+      ...rollbackAssetEventRefs,
+    ],
+    blockingReasons: [],
     updatedAt: timestamp,
   });
 }
@@ -2893,6 +3421,48 @@ function recordAppliedAssetEvents(
   return events;
 }
 
+function recordRolledBackAssetEvents(
+  root: string,
+  application: ApplicationRecord,
+  rollback: RollbackRecord,
+  changes: readonly RollbackAssetContent[],
+  createdAt: string,
+): AssetEvent[] {
+  const registry = createSidecarAssetRegistry(root);
+  const events = changes.map((change) => AssetEventSchema.parse({
+    id: rolledBackAssetEventId({ application, rollback, change }),
+    assetId: change.assetId,
+    kind: change.kind,
+    version: change.version,
+    sourceRef: applicationRecordRef(application.id),
+    contentRef: change.targetContentRef,
+    contentHash: change.contentHash,
+    status: 'rolled-back',
+    eventType: 'rolled-back',
+    actor: 'haro',
+    proposalRef: {
+      id: application.proposalId,
+      kind: 'evolution-proposal',
+      uri: `haro-sidecar://proposals/${encodeURIComponent(application.proposalId)}`,
+    },
+    validationRef: {
+      id: application.validationId,
+      kind: 'validation-report',
+      uri: `haro-sidecar://validations/${encodeURIComponent(application.validationId)}`,
+    },
+    rollbackMetadata: {
+      rollbackRef: rollbackRecordRef(rollback),
+      snapshotRef: rollback.snapshotRef,
+      reversible: rollback.reversible,
+    },
+    createdAt,
+  }));
+  for (const event of events) {
+    registry.recordEvent(event);
+  }
+  return events;
+}
+
 function recordAssetEvents(
   root: string,
   proposal: EvolutionProposal,
@@ -2983,6 +3553,24 @@ function appliedAssetEventId(input: {
     changeIndex: input.change.changeIndex,
     assetId: input.change.assetId,
     status: 'applied',
+    contentHash: input.change.contentHash,
+  })).slice(0, 24)}`;
+}
+
+function rolledBackAssetEventId(input: {
+  application: ApplicationRecord;
+  rollback: RollbackRecord;
+  change: RollbackAssetContent;
+}): string {
+  return `asset_event_${sha256(JSON.stringify({
+    proposalId: input.application.proposalId,
+    validationId: input.application.validationId,
+    applicationId: input.application.id,
+    rollbackId: input.rollback.id,
+    changeIndex: input.change.changeIndex,
+    assetId: input.change.assetId,
+    status: 'rolled-back',
+    action: input.change.action,
     contentHash: input.change.contentHash,
   })).slice(0, 24)}`;
 }

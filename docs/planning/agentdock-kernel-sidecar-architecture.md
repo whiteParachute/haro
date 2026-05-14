@@ -362,7 +362,7 @@ User approves proposal
 - `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report，并为通过验证的 changeSet 写入 `validated` asset events；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation、snapshot、rollback、application gate record 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
-- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 已接入 propose/validate；Phase F gated apply 前置骨架已启动，`haro snapshot --proposal-id` 生成 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0 内容生成 `snapshot-content`；`haro apply --proposal-id` 已可把 sidecar-local proposal content 应用到 `prompt` / `mcp-tool-config` 的 `assets/current`。
+- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 已接入 propose/validate；Phase F gated apply 前置骨架已启动，`haro snapshot --proposal-id` 生成 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0 内容生成 `snapshot-content`；`haro apply --proposal-id` 已可把 sidecar-local proposal content 应用到 `prompt` / `mcp-tool-config` 的 `assets/current`；`haro rollback --application-id` 已可恢复 snapshot-content 或删除 apply 创建的 sidecar-local current content。
 - 通过 AgentDock script scheduled task 周期触发。
 
 ### Phase 4: Frontier Intelligence Intake
@@ -371,7 +371,7 @@ User approves proposal
 - `haro intake frontier --source-config <file> --since last --json` 第一段已实现：读取 curated `FrontierSignal[]` / `{ signals: [...] }` source config，按 sourceRef 去重，写入 `~/.haro/evolution/frontier-signals/`，并维护 frontier cursor。
 - `haro propose --auto-dry-run --include-frontier` 已实现：proposal 仍以未消费 observation batch 为触发源，同时把 active frontier signals 追加为 `frontier-signal` evidence refs；`rejected` / `superseded` signals 不会被引用。
 - `haro status` / `haro doctor --component sidecar` 已纳入 frontier signal 计数和 corrupt file 检查。
-- 下一步：继续补 rollback executor，并再扩展 L1 skill/profile/schedule/routing config 的稳定写入口。
+- 下一步：继续扩展 L1 skill/profile/schedule/routing config 的稳定写入口，并把 CLI apply/rollback 能力接到后续 gated-write MCP/AgentDock 编排面。
 
 ### Phase 5: Asset Registry Adapter
 
@@ -386,7 +386,8 @@ User approves proposal
 - Gate 已覆盖 proposal 存在性、L2/L3 直接拒绝、L0/L1 target allowlist、`proposal.status=validated`、validation report、`applyEligible=true`、`rollbackReady=true`、snapshot ref、rollback ref。
 - 已实现 snapshot/rollback artifact：`haro snapshot --proposal-id <id>` 写 `~/.haro/evolution/snapshots/*` 与 `~/.haro/evolution/rollbacks/*`；当目标属于 allowlisted L0 `prompt` / `mcp-tool-config` 且存在 sidecar-local 当前内容时，会从 `~/.haro/assets/current/<kind>/<base64url(asset-id)>.{md,txt,json}` 复制到 `~/.haro/evolution/snapshot-content/<snapshot-id>/` 并记录 restore ref/hash；`haro apply --proposal-id` 缺 refs 时会先生成这些 refs。
 - 已实现 sidecar-local L0 apply executor：`haro apply --proposal-id <id>` 只从 `~/.haro/evolution/proposal-content/<proposal-id>/<change-index>-<base64url(asset-id)>.{md,txt,json}` 读取拟应用内容，写回 `~/.haro/assets/current/{prompt,mcp-tool-config}/`，校验可选 content hash，并写 `ApplicationRecord(status=applied, applied=true)` 与 `applied` asset event。
-- 当前仍不修改 AgentDock 内部资产、不读取或写入 memory；后续补 rollback executor，以及 L1 skill/profile/schedule/routing config 的稳定写入口。
+- 已实现 sidecar-local L0 rollback executor：`haro rollback --application-id <id>` 只对 `ApplicationRecord(status=applied)` 生效，基于 application 绑定的 snapshot/rollback artifact 恢复 `snapshot-content` 或删除 apply 创建的 current content，并写 `ApplicationRecord(status=rolled-back, applied=false)` 与 `rolled-back` asset event。
+- 当前仍不修改 AgentDock 内部资产、不读取或写入 memory；后续补 L1 skill/profile/schedule/routing config 的稳定写入口。
 
 ## Acceptance Criteria
 

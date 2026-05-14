@@ -95,6 +95,7 @@ function readAssetEvents(root: string): AssetEvent[] {
 function readAssetManifests(root: string): Array<{
   id: string;
   status: string;
+  contentHash: string;
   latestEventRef: { id: string };
 }> {
   const dir = join(root, 'assets', 'manifests');
@@ -105,6 +106,7 @@ function readAssetManifests(root: string): Array<{
     .map((name) => readJson<{
       id: string;
       status: string;
+      contentHash: string;
       latestEventRef: { id: string };
     }>(join(dir, name)));
 }
@@ -1628,6 +1630,320 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         reversible: true,
       },
     });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('rollback --application-id restores sidecar-local prompt snapshot content and records rollback events', async () => {
+    const root = newHome('agentdock-rollback-restore-l0');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', 'proposal_rollback_restore_l0');
+    const currentPromptDir = join(root, 'assets', 'current', 'prompt');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    mkdirSync(proposalContentDir, { recursive: true });
+    mkdirSync(currentPromptDir, { recursive: true });
+    const assetId = 'prompt-rollback-restore';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    const previousContent = 'old rollback prompt\n';
+    const nextContent = 'new rollback prompt\n';
+    writeFileSync(join(currentPromptDir, `${encodedAssetId}.md`), previousContent);
+    writeFileSync(join(proposalContentDir, `0000-${encodedAssetId}.md`), nextContent);
+    const proposal = {
+      id: 'proposal_rollback_restore_l0',
+      title: 'Tune prompt then roll it back',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-rollback-restore-l0', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: assetId, kind: 'prompt' },
+          contentHash: sha256(nextContent),
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: ['Review prompt wording'],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_rollback_restore_l0.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_rollback_restore_l0.json'), `${JSON.stringify({
+      id: 'validation_rollback_restore_l0',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const applyOut = captureStream();
+    const applyErr = captureStream();
+
+    const apply = await runCli(commonOpts(root, applyOut, applyErr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(apply.exitCode).toBe(0);
+    expect(applyErr.read()).toBe('');
+    const appliedPayload = (JSON.parse(applyOut.read()) as { data: {
+      applicationRecord: { id: string };
+      snapshotId: string;
+      rollbackId: string;
+    } }).data;
+    expect(readFileSync(join(currentPromptDir, `${encodedAssetId}.md`), 'utf8')).toBe(nextContent);
+    const rollbackOut = captureStream();
+    const rollbackErr = captureStream();
+
+    const rollback = await runCli(commonOpts(root, rollbackOut, rollbackErr, [
+      'rollback',
+      '--application-id',
+      appliedPayload.applicationRecord.id,
+      '--json',
+    ]));
+
+    expect(rollback.exitCode).toBe(0);
+    expect(rollback.action).toBe('rollback');
+    expect(rollbackErr.read()).toBe('');
+    const payload = (JSON.parse(rollbackOut.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      gatePassed: boolean;
+      rolledBack: boolean;
+      applicationRecordCount: number;
+      assetEventCount: number;
+      assetEventIds: string[];
+      snapshotId: string;
+      rollbackId: string;
+      rolledBackContentRefs: Array<{ uri: string }>;
+      applicationRecord: { status: string; applied: boolean; assetEventRefs: Array<{ id: string }> };
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'rolled-back',
+      gateCode: 'READY',
+      gatePassed: true,
+      rolledBack: true,
+      applicationRecordCount: 1,
+      assetEventCount: 1,
+      snapshotId: appliedPayload.snapshotId,
+      rollbackId: appliedPayload.rollbackId,
+    });
+    expect(payload.rolledBackContentRefs[0]?.uri).toBe(`haro-sidecar://assets/current/prompt/${encodedAssetId}.md`);
+    expect(payload.applicationRecord).toMatchObject({
+      status: 'rolled-back',
+      applied: false,
+    });
+    expect(payload.applicationRecord.assetEventRefs.map((ref) => ref.id)).toEqual(expect.arrayContaining(payload.assetEventIds));
+    expect(readFileSync(join(currentPromptDir, `${encodedAssetId}.md`), 'utf8')).toBe(previousContent);
+    const records = readApplicationRecords(root);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ status: 'rolled-back', applied: false });
+    const events = readAssetEvents(root);
+    expect(events.filter((event) => event.status === 'applied')).toHaveLength(1);
+    const rolledBackEvents = events.filter((event) => event.status === 'rolled-back');
+    expect(rolledBackEvents).toHaveLength(1);
+    expect(rolledBackEvents[0]).toMatchObject({
+      assetId,
+      contentHash: sha256(previousContent),
+      rollbackMetadata: {
+        snapshotRef: { id: appliedPayload.snapshotId },
+        rollbackRef: { id: appliedPayload.rollbackId },
+        reversible: true,
+      },
+    });
+    const manifest = readAssetManifests(root).find((item) => item.id === assetId);
+    expect(manifest).toMatchObject({
+      status: 'rolled-back',
+      contentHash: sha256(previousContent),
+      latestEventRef: { id: payload.assetEventIds[0] },
+    });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('rollback --application-id deletes sidecar-local content for assets created by apply', async () => {
+    const root = newHome('agentdock-rollback-delete-created-l0');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', 'proposal_rollback_delete_l0');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    mkdirSync(proposalContentDir, { recursive: true });
+    const assetId = 'prompt-rollback-delete';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    const nextContent = 'brand new prompt\n';
+    writeFileSync(join(proposalContentDir, `0000-${encodedAssetId}.md`), nextContent);
+    const proposal = {
+      id: 'proposal_rollback_delete_l0',
+      title: 'Create prompt then roll it back',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-rollback-delete-l0', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'create',
+          targetRef: { id: assetId, kind: 'prompt' },
+          contentHash: sha256(nextContent),
+          summary: 'Create prompt content',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: ['Review prompt wording'],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'delete created prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_rollback_delete_l0.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_rollback_delete_l0.json'), `${JSON.stringify({
+      id: 'validation_rollback_delete_l0',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const applyOut = captureStream();
+    const applyErr = captureStream();
+
+    const apply = await runCli(commonOpts(root, applyOut, applyErr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(apply.exitCode).toBe(0);
+    expect(applyErr.read()).toBe('');
+    const appliedPayload = (JSON.parse(applyOut.read()) as { data: {
+      applicationRecord: { id: string };
+      snapshotId: string;
+      rollbackId: string;
+    } }).data;
+    expect(readFileSync(join(root, 'assets', 'current', 'prompt', `${encodedAssetId}.md`), 'utf8')).toBe(nextContent);
+    const rollbackOut = captureStream();
+    const rollbackErr = captureStream();
+
+    const rollback = await runCli(commonOpts(root, rollbackOut, rollbackErr, [
+      'rollback',
+      '--application-id',
+      appliedPayload.applicationRecord.id,
+      '--json',
+    ]));
+
+    expect(rollback.exitCode).toBe(0);
+    expect(rollbackErr.read()).toBe('');
+    const payload = (JSON.parse(rollbackOut.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      rolledBack: boolean;
+      assetEventCount: number;
+      assetEventIds: string[];
+      applicationRecord: { status: string; applied: boolean };
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'rolled-back',
+      gateCode: 'READY',
+      rolledBack: true,
+      assetEventCount: 1,
+    });
+    expect(payload.applicationRecord).toMatchObject({ status: 'rolled-back', applied: false });
+    expect(existsSync(join(root, 'assets', 'current', 'prompt', `${encodedAssetId}.md`))).toBe(false);
+    const rolledBackEvents = readAssetEvents(root).filter((event) => event.status === 'rolled-back');
+    expect(rolledBackEvents).toHaveLength(1);
+    expect(rolledBackEvents[0]).toMatchObject({
+      assetId,
+      contentRef: { id: appliedPayload.rollbackId, kind: 'rollback-ref' },
+      rollbackMetadata: {
+        snapshotRef: { id: appliedPayload.snapshotId },
+        rollbackRef: { id: appliedPayload.rollbackId },
+      },
+    });
+    expect(readAssetManifests(root).find((item) => item.id === assetId)).toMatchObject({
+      status: 'rolled-back',
+      latestEventRef: { id: payload.assetEventIds[0] },
+    });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('rollback --application-id blocks non-applied application records without side effects', async () => {
+    const root = newHome('agentdock-rollback-not-applied');
+    const applicationDir = join(root, 'evolution', 'applications');
+    mkdirSync(applicationDir, { recursive: true });
+    const application = ApplicationRecordSchema.parse({
+      id: 'application_not_applied',
+      proposalId: 'proposal_not_applied',
+      validationId: 'validation_not_applied',
+      status: 'ready',
+      gateCode: 'READY',
+      level: 'L0',
+      targetKind: 'prompt',
+      applied: false,
+      snapshotRef: { id: 'snapshot_not_applied', kind: 'asset-snapshot' },
+      rollbackRef: { id: 'rollback_not_applied', kind: 'rollback-ref' },
+      assetEventRefs: [],
+      evidenceRefs: [{ id: 'proposal_not_applied', kind: 'evolution-proposal' }],
+      blockingReasons: [],
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    });
+    writeFileSync(join(applicationDir, 'application_not_applied.json'), `${JSON.stringify(application, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'rollback',
+      '--application-id',
+      application.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      rolledBack: boolean;
+      applicationRecordCount: number;
+      assetEventCount: number;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'blocked',
+      gateCode: 'APPLICATION_NOT_APPLIED',
+      rolledBack: false,
+      applicationRecordCount: 0,
+      assetEventCount: 0,
+    });
+    expect(payload.blockingReasons.join('\n')).toContain('status=ready');
+    expect(readApplicationRecords(root)[0]).toMatchObject({ status: 'ready', applied: false });
+    expect(readAssetEvents(root)).toHaveLength(0);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
