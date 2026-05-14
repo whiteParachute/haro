@@ -683,7 +683,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
 
   program
     .command('rollback')
-    .description('Rollback an applied sidecar-local L0 application using its rollback record')
+    .description('Rollback an applied sidecar-local L0/L1 application using its rollback record')
     .requiredOption('--application-id <id>', 'applied application record id to roll back')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
@@ -2652,12 +2652,12 @@ function validateRollbackEvidenceRefs(
 }
 
 function prepareSidecarLocalApply(root: string, proposal: EvolutionProposal): PreparedApply | BlockedApply {
-  if (proposal.level !== 'L0' || !['prompt', 'mcp-tool-config'].includes(proposal.targetKind)) {
+  if (!isSidecarLocalExecutableTarget(proposal.level, proposal.targetKind)) {
     return {
       ok: false,
       gateCode: 'UNSUPPORTED_APPLY_EXECUTOR',
       blockingReasons: [
-        `The Phase F local apply executor only supports L0 prompt/mcp-tool-config targets; received ${proposal.level}/${proposal.targetKind}.`,
+        `The Phase F local apply executor only supports sidecar-local L0 prompt/mcp-tool-config and L1 skill/runner-profile/schedule-config/routing-rule targets; received ${proposal.level}/${proposal.targetKind}.`,
       ],
     };
   }
@@ -2676,12 +2676,12 @@ function prepareSidecarLocalApply(root: string, proposal: EvolutionProposal): Pr
     }
 
     const kind = assetKindForChange(proposal, change);
-    if (kind !== 'prompt' && kind !== 'mcp-tool-config') {
+    if (!kind || !isSidecarLocalExecutableTarget(proposal.level, kind)) {
       return {
         ok: false,
         gateCode: 'UNSUPPORTED_APPLY_EXECUTOR',
         blockingReasons: [
-          `Change ${index} targets kind=${change.targetRef.kind}; the Phase F local apply executor only supports prompt/mcp-tool-config.`,
+          `Change ${index} targets kind=${change.targetRef.kind}; the Phase F local apply executor only supports sidecar-local L0 prompt/mcp-tool-config and L1 skill/runner-profile/schedule-config/routing-rule.`,
         ],
       };
     }
@@ -2762,12 +2762,12 @@ function prepareSidecarLocalRollback(
   snapshot: AssetSnapshotRecord,
   rollback: RollbackRecord,
 ): PreparedRollback | BlockedRollback {
-  if (application.level !== 'L0' || !['prompt', 'mcp-tool-config'].includes(application.targetKind)) {
+  if (!isSidecarLocalExecutableTarget(application.level, application.targetKind)) {
     return {
       ok: false,
       gateCode: 'UNSUPPORTED_ROLLBACK_EXECUTOR',
       blockingReasons: [
-        `The Phase F local rollback executor only supports L0 prompt/mcp-tool-config targets; received ${application.level}/${application.targetKind}.`,
+        `The Phase F local rollback executor only supports sidecar-local L0 prompt/mcp-tool-config and L1 skill/runner-profile/schedule-config/routing-rule targets; received ${application.level}/${application.targetKind}.`,
       ],
     };
   }
@@ -2782,12 +2782,12 @@ function prepareSidecarLocalRollback(
   const changes: RollbackAssetContent[] = [];
   for (const entry of rollback.entries) {
     const kind = assetKindForRollbackEntry(application, entry);
-    if (kind !== 'prompt' && kind !== 'mcp-tool-config') {
+    if (!kind || !isSidecarLocalExecutableTarget(application.level, kind)) {
       return {
         ok: false,
         gateCode: 'UNSUPPORTED_ROLLBACK_EXECUTOR',
         blockingReasons: [
-          `Rollback entry ${entry.changeIndex} targets kind=${entry.targetRef.kind}; the Phase F local rollback executor only supports prompt/mcp-tool-config.`,
+          `Rollback entry ${entry.changeIndex} targets kind=${entry.targetRef.kind}; the Phase F local rollback executor only supports sidecar-local L0 prompt/mcp-tool-config and L1 skill/runner-profile/schedule-config/routing-rule.`,
         ],
       };
     }
@@ -2914,7 +2914,23 @@ function assetKindForRollbackEntry(
 function currentAssetContentExtensions(kind: string): readonly string[] {
   if (kind === 'prompt') return ['.md', '.txt', '.json'];
   if (kind === 'mcp-tool-config') return ['.json', '.md', '.txt'];
+  if (kind === 'skill') return ['.md', '.json', '.txt'];
+  if (kind === 'runner-profile') return ['.json', '.yaml', '.yml', '.toml', '.md', '.txt'];
+  if (kind === 'schedule-config' || kind === 'routing-rule') {
+    return ['.json', '.yaml', '.yml', '.md', '.txt'];
+  }
   return [];
+}
+
+function isSidecarLocalExecutableTarget(level: string, targetKind: string): boolean {
+  if (level === 'L0') return targetKind === 'prompt' || targetKind === 'mcp-tool-config';
+  if (level === 'L1') {
+    return targetKind === 'skill' ||
+      targetKind === 'runner-profile' ||
+      targetKind === 'schedule-config' ||
+      targetKind === 'routing-rule';
+  }
+  return false;
 }
 
 function currentAssetContentPaths(root: string, kind: string, assetId: string): string[] {

@@ -108,6 +108,7 @@ rollback executed
 - 2026-05-14: Haro — Phase F target-specific content snapshot 第一段已落地：`prompt` / `mcp-tool-config` 当前内容只从 sidecar-owned `~/.haro/assets/current/<kind>/` 读取并复制到 `snapshot-content`，registry ledger 继续作为缺内容时的 fallback baseline。
 - 2026-05-14: Haro — Phase F sidecar-local apply executor 第一段已落地：`haro apply --proposal-id` 成功应用 L0 `prompt` / `mcp-tool-config` 后写 `applied` asset event，event 带 snapshot/rollback metadata；仍不触碰 memory 或 AgentDock internals。
 - 2026-05-14: Haro — Phase F sidecar-local rollback executor 第一段已落地：`haro rollback --application-id` 成功回滚 L0 `prompt` / `mcp-tool-config` 后写 `rolled-back` asset event，并更新 sidecar asset manifest；仍不触碰 memory 或 AgentDock internals。
+- 2026-05-14: Haro — Phase F sidecar-local L1 executor 第一段已落地：L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 也通过 sidecar-owned apply/rollback 写 `applied` / `rolled-back` asset event；仍不触碰 memory 或 AgentDock internals。
 - 2026-05-13: Haro — contract 层 `AssetKindSchema` 已补 `frontier-source-ref`，与 FEAT-048 第一段 signal intake 对齐；完整 registry adapter 仍待实现。
 - 2026-05-09: Haro — 补充 frontier-source-ref 与 FEAT-048 的关系。
 - 2026-05-08: Haro — 初稿。

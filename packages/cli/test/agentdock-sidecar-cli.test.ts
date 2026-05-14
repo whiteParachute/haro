@@ -1947,6 +1947,154 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
+  it('apply and rollback support sidecar-local L1 runner-profile content', async () => {
+    const root = newHome('agentdock-l1-runner-profile');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', 'proposal_l1_runner_profile');
+    const currentProfileDir = join(root, 'assets', 'current', 'runner-profile');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    mkdirSync(proposalContentDir, { recursive: true });
+    mkdirSync(currentProfileDir, { recursive: true });
+    const assetId = 'runner-profile-default';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    const previousContent = `${JSON.stringify({ model: 'stable', maxTurns: 4 }, null, 2)}\n`;
+    const nextContent = `${JSON.stringify({ model: 'stable', maxTurns: 6 }, null, 2)}\n`;
+    writeFileSync(join(currentProfileDir, `${encodedAssetId}.json`), previousContent);
+    writeFileSync(join(proposalContentDir, `0000-${encodedAssetId}.json`), nextContent);
+    const proposal = {
+      id: 'proposal_l1_runner_profile',
+      title: 'Tune runner profile max turns',
+      status: 'validated',
+      level: 'L1',
+      targetKind: 'runner-profile',
+      riskLevel: 'medium',
+      sourceObservationRefs: [{ id: 'obs-l1-runner-profile', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: assetId, kind: 'runner-profile' },
+          contentHash: sha256(nextContent),
+          summary: 'Adjust bounded runner turn count',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: ['Review runner profile bounds'],
+        regressionRisks: ['runner behavior drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous runner profile',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_l1_runner_profile.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_l1_runner_profile.json'), `${JSON.stringify({
+      id: 'validation_l1_runner_profile',
+      proposalId: proposal.id,
+      riskVerdict: 'medium',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const applyOut = captureStream();
+    const applyErr = captureStream();
+
+    const apply = await runCli(commonOpts(root, applyOut, applyErr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(apply.exitCode).toBe(0);
+    expect(applyErr.read()).toBe('');
+    const appliedPayload = (JSON.parse(applyOut.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      applicationRecord: { id: string; level: string; targetKind: string; status: string; applied: boolean };
+      snapshotId: string;
+      rollbackId: string;
+      appliedContentRefs: Array<{ uri: string }>;
+    } }).data;
+    expect(appliedPayload).toMatchObject({
+      gateStatus: 'applied',
+      gateCode: 'READY',
+      applicationRecord: {
+        level: 'L1',
+        targetKind: 'runner-profile',
+        status: 'applied',
+        applied: true,
+      },
+    });
+    expect(appliedPayload.appliedContentRefs[0]?.uri).toBe(`haro-sidecar://assets/current/runner-profile/${encodedAssetId}.json`);
+    expect(readFileSync(join(currentProfileDir, `${encodedAssetId}.json`), 'utf8')).toBe(nextContent);
+    const snapshot = readSnapshotRecords(root)[0]!;
+    expect(snapshot).toMatchObject({ level: 'L1', targetKind: 'runner-profile' });
+    expect(snapshot.entries[0]).toMatchObject({
+      snapshotSource: 'target-content',
+      contentHash: sha256(previousContent),
+    });
+    const appliedEvents = readAssetEvents(root).filter((event) => event.status === 'applied');
+    expect(appliedEvents).toHaveLength(1);
+    expect(appliedEvents[0]).toMatchObject({
+      kind: 'runner-profile',
+      contentHash: sha256(nextContent),
+    });
+    const rollbackOut = captureStream();
+    const rollbackErr = captureStream();
+
+    const rollback = await runCli(commonOpts(root, rollbackOut, rollbackErr, [
+      'rollback',
+      '--application-id',
+      appliedPayload.applicationRecord.id,
+      '--json',
+    ]));
+
+    expect(rollback.exitCode).toBe(0);
+    expect(rollbackErr.read()).toBe('');
+    const rollbackPayload = (JSON.parse(rollbackOut.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      snapshotId: string;
+      rollbackId: string;
+      applicationRecord: { level: string; targetKind: string; status: string; applied: boolean };
+      rolledBackContentRefs: Array<{ uri: string }>;
+    } }).data;
+    expect(rollbackPayload).toMatchObject({
+      gateStatus: 'rolled-back',
+      gateCode: 'READY',
+      snapshotId: appliedPayload.snapshotId,
+      rollbackId: appliedPayload.rollbackId,
+      applicationRecord: {
+        level: 'L1',
+        targetKind: 'runner-profile',
+        status: 'rolled-back',
+        applied: false,
+      },
+    });
+    expect(rollbackPayload.rolledBackContentRefs[0]?.uri).toBe(`haro-sidecar://assets/current/runner-profile/${encodedAssetId}.json`);
+    expect(readFileSync(join(currentProfileDir, `${encodedAssetId}.json`), 'utf8')).toBe(previousContent);
+    const rolledBackEvents = readAssetEvents(root).filter((event) => event.status === 'rolled-back');
+    expect(rolledBackEvents).toHaveLength(1);
+    expect(rolledBackEvents[0]).toMatchObject({
+      kind: 'runner-profile',
+      contentHash: sha256(previousContent),
+    });
+    expect(readAssetManifests(root).find((item) => item.id === assetId)).toMatchObject({
+      status: 'rolled-back',
+      contentHash: sha256(previousContent),
+    });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
   it('apply --proposal-id blocks when sidecar-local proposal content is missing', async () => {
     const root = newHome('agentdock-apply-missing-content');
     const proposalDir = join(root, 'evolution', 'proposals');
