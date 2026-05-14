@@ -103,9 +103,10 @@ rollback executed
 
 - 2026-05-14: Haro — 完成 file-backed sidecar asset registry 第一段：`SidecarAssetRegistry.recordEvent` 写 manifest/event，`haro_asset_query` 读取 sidecar registry manifests/events 并支持 kind/status/query/limit；不读旧 core EvolutionAssetRegistry，不触碰 memory。
 - 2026-05-14: Haro — 将 scheduled propose/validate 接入 registry lifecycle：proposal changeSet 自动登记 `proposed` event，validation report 自动登记 `validated` event，manifest latest status 随之更新。
-- 2026-05-14: Haro — Phase F gate preflight 已能在 snapshot/rollback refs 齐全时写 `ApplicationRecord(status=ready, applied=false)`；真实 `applied` asset event 仍待 apply executor 落地。
+- 2026-05-14: Haro — Phase F gate preflight 第一段已能在 snapshot/rollback refs 齐全时写 `ApplicationRecord(status=ready, applied=false)`。
 - 2026-05-14: Haro — Phase F metadata snapshot 已落地：`haro snapshot --proposal-id` 生成 `AssetSnapshotRecord` / `RollbackRecord`，`haro apply --proposal-id` 缺 refs 时自动生成 metadata refs；该阶段仍不执行真实内容 apply。
 - 2026-05-14: Haro — Phase F target-specific content snapshot 第一段已落地：`prompt` / `mcp-tool-config` 当前内容只从 sidecar-owned `~/.haro/assets/current/<kind>/` 读取并复制到 `snapshot-content`，registry ledger 继续作为缺内容时的 fallback baseline。
+- 2026-05-14: Haro — Phase F sidecar-local apply executor 第一段已落地：`haro apply --proposal-id` 成功应用 L0 `prompt` / `mcp-tool-config` 后写 `applied` asset event，event 带 snapshot/rollback metadata；仍不触碰 memory 或 AgentDock internals。
 - 2026-05-13: Haro — contract 层 `AssetKindSchema` 已补 `frontier-source-ref`，与 FEAT-048 第一段 signal intake 对齐；完整 registry adapter 仍待实现。
 - 2026-05-09: Haro — 补充 frontier-source-ref 与 FEAT-048 的关系。
 - 2026-05-08: Haro — 初稿。

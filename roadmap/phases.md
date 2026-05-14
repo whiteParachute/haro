@@ -13,7 +13,7 @@
 | Phase C: Read-only MCP Sidecar | 已实现，live smoke 已通过 | 让 AgentDock agent 可以显式调用 Haro 观察与提案 | `haro mcp`、`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`；sidecar 启动不创建 Haro-owned memory 目录 | Haro 自有日志/资产目录 |
 | Phase D: Scheduled Sidecar | 核心闭环已落地 | 通过 AgentDock 定时任务后台驱动 observe/propose/validate/status/doctor | `haro connect agent-dock`、`haro observe --since last`、`haro propose --auto-dry-run`、`haro validate --pending`、`haro status`、`haro doctor --component sidecar` | Haro 自有目录，不写 memory |
 | Phase E: Signal Intake + Asset Registry | 进行中，frontier evidence + registry adapter 已接入 propose/validate | 把外部前沿情报与 skills/prompts/profiles/rules/tool config 纳入进化证据和资产事件 | `FrontierSignal` schema、`haro intake frontier --source-config`、`haro propose --auto-dry-run --include-frontier`、frontier-signals sidecar 数据目录；`~/.haro/assets/manifests` + `events` file-backed registry；proposed/validated asset event 写入；memory 仅保存 AgentDock refs | Haro 自有目录，不写 memory |
-| Phase F: Gated Apply L0/L1 | 已启动 gate + content snapshot | 在 validation gate 后执行低风险变更 | `ApplicationRecord` / `AssetSnapshotRecord` / `RollbackRecord` contract、`haro snapshot --proposal-id`、sidecar-local `snapshot-content`、`haro apply --proposal-id` gate preflight；真实 apply/rollback executor 待实现 | Haro 自有 snapshot/application record，不改目标资产 |
+| Phase F: Gated Apply L0/L1 | 已启动 gate + content snapshot + local apply | 在 validation gate 后执行低风险变更 | `ApplicationRecord` / `AssetSnapshotRecord` / `RollbackRecord` contract、`haro snapshot --proposal-id`、sidecar-local `snapshot-content`、`haro apply --proposal-id` local apply executor；rollback executor 待实现 | 只改 Haro sidecar-owned `assets/current`，不改 AgentDock 内部资产 |
 | Phase G: Patch Branch L2/L3 | 规划中 | 对 Haro 代码或 AgentDock contract 生成 patch branch 与验证报告 | proposal、patch branch、test report、rollback plan | 不直接 apply |
 
 ## 关键判断
@@ -192,7 +192,7 @@ Asset registry 已改为 sidecar file-backed registry：manifest 写入 `~/.haro
 - snapshot / rollback ref 缺失不允许 apply。
 - apply 事件必须写入 Evolution Store 和 Asset Registry。
 
-当前已实现 CLI gate preflight 与 snapshot artifacts：`haro snapshot --proposal-id <id>` 写 `~/.haro/evolution/snapshots/*` 和 `rollbacks/*`，并对 `prompt` / `mcp-tool-config` 从 Haro sidecar-owned `~/.haro/assets/current/<kind>/` 复制当前内容到 `~/.haro/evolution/snapshot-content/<snapshot-id>/`；`haro apply --proposal-id <id>` 会拒绝 L2/L3、未验证 proposal、`applyEligible=false` 的请求，缺 snapshot/rollback ref 时先生成 refs；gate 通过时只写 `~/.haro/evolution/applications/*` ready record，`applied=false`，暂不修改目标资产、暂不写 `applied` asset event。
+当前已实现 CLI gate preflight、snapshot artifacts 与 sidecar-local apply：`haro snapshot --proposal-id <id>` 写 `~/.haro/evolution/snapshots/*` 和 `rollbacks/*`，并对 `prompt` / `mcp-tool-config` 从 Haro sidecar-owned `~/.haro/assets/current/<kind>/` 复制当前内容到 `~/.haro/evolution/snapshot-content/<snapshot-id>/`；`haro apply --proposal-id <id>` 会拒绝 L2/L3、未验证 proposal、`applyEligible=false` 的请求，缺 snapshot/rollback ref 时先生成 refs，然后从 `~/.haro/evolution/proposal-content/<proposal-id>/` 读取拟应用内容，写入 `~/.haro/assets/current/{prompt,mcp-tool-config}/`，并写 `~/.haro/evolution/applications/*` applied record 与 `applied` asset event。当前仍不修改 AgentDock 内部资产、不写 memory。
 
 ## Phase G: Patch Branch L2/L3
 

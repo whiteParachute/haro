@@ -11,6 +11,11 @@ export const ApplyGateCodeSchema = z.enum([
   'SNAPSHOT_FAILED',
   'ROLLBACK_REF_REQUIRED',
   'UNSUPPORTED_TARGET_KIND',
+  'UNSUPPORTED_APPLY_EXECUTOR',
+  'UNSUPPORTED_CHANGE_OPERATION',
+  'APPLY_CONTENT_REQUIRED',
+  'APPLY_CONTENT_HASH_MISMATCH',
+  'APPLY_EXECUTION_FAILED',
 ]);
 
 export const ApplicationStatusSchema = z.enum([
@@ -104,6 +109,14 @@ export const ApplicationRecordSchema = z.object({
     });
   }
 
+  if (record.status !== 'blocked' && record.gateCode !== 'READY') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['gateCode'],
+      message: 'non-blocked application records require gateCode=READY',
+    });
+  }
+
   if (record.status === 'blocked' && record.gateCode === 'READY') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -125,6 +138,22 @@ export const ApplicationRecordSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['snapshotRef'],
       message: 'non-blocked application records require snapshotRef and rollbackRef',
+    });
+  }
+
+  if (record.status === 'applied' && !record.applied) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['applied'],
+      message: 'applied application records require applied=true',
+    });
+  }
+
+  if (record.status !== 'applied' && record.applied) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['applied'],
+      message: 'only status=applied may set applied=true',
     });
   }
 });

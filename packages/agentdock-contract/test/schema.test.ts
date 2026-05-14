@@ -134,6 +134,31 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
     expect(record.gateCode).toBe('READY');
   });
 
+  it('requires applied application records to set applied=true', () => {
+    const result = ApplicationRecordSchema.safeParse({
+      id: 'application-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      status: 'applied',
+      gateCode: 'READY',
+      level: 'L0',
+      targetKind: 'prompt',
+      applied: false,
+      snapshotRef: { id: 'snapshot-001', kind: 'asset-snapshot' },
+      rollbackRef: { id: 'rollback-001', kind: 'rollback-ref' },
+      assetEventRefs: [],
+      evidenceRefs: [{ id: 'proposal-001', kind: 'evolution-proposal' }],
+      blockingReasons: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === 'applied')).toBe(true);
+    }
+  });
+
   it('accepts snapshot and rollback metadata records for gate preflight', () => {
     const snapshot = AssetSnapshotRecordSchema.parse({
       id: 'snapshot-001',

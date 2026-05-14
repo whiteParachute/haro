@@ -188,14 +188,41 @@ interface SnapshotEntryDraft {
   contentExtension?: string;
 }
 
+interface ProposedAssetContent {
+  changeIndex: number;
+  targetRef: Ref;
+  assetId: string;
+  kind: AssetKind;
+  sourceContentRef: Ref;
+  targetContentRef: Ref;
+  targetPath: string;
+  alternateTargetPaths: string[];
+  content: Buffer;
+  contentHash: string;
+  extension: string;
+}
+
+interface PreparedApply {
+  ok: true;
+  changes: ProposedAssetContent[];
+}
+
+interface BlockedApply {
+  ok: false;
+  gateCode: Exclude<ApplyGateCode, 'READY'>;
+  blockingReasons: string[];
+}
+
 interface ApplyResult {
   command: 'apply';
   proposalId: string;
-  gateStatus: 'ready' | 'blocked';
+  gateStatus: 'applied' | 'blocked';
   gateCode: ApplyGateCode;
   gatePassed: boolean;
-  applied: false;
+  applied: boolean;
   applicationRecordCount: number;
+  assetEventCount: number;
+  assetEventIds: string[];
   blockingReasons: string[];
   validationId?: string;
   snapshotId?: string;
@@ -203,6 +230,7 @@ interface ApplyResult {
   snapshotPath?: string;
   rollbackPath?: string;
   generatedSnapshot?: boolean;
+  appliedContentRefs?: Ref[];
   applicationRecord?: ApplicationRecord;
   applicationRecordPath?: string;
 }
@@ -558,8 +586,8 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
 
   program
     .command('apply')
-    .description('Run the L0/L1 gated apply preflight for a validated sidecar proposal')
-    .requiredOption('--proposal-id <id>', 'validated proposal id to gate')
+    .description('Apply a validated L0/L1 sidecar proposal through gated snapshot/rollback checks')
+    .requiredOption('--proposal-id <id>', 'validated proposal id to apply')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
     .action((options: ApplyOptions) => {
@@ -573,8 +601,8 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
         app.stdout.write(
           result.gatePassed
             ? [
-                `Apply gate ready: ${result.proposalId}`,
-                'Applied: false (gate-only preflight; content mutation is not implemented in this slice)',
+                `Applied: ${result.proposalId}`,
+                `Asset events: ${result.assetEventCount}`,
                 `Application record: ${result.applicationRecordPath}`,
               ].join('\n') + '\n'
             : [
@@ -934,17 +962,77 @@ function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
       }
     }
 
-    const applicationRecord = createReadyApplicationRecord(app, proposal, validation, snapshotRef, rollbackRef);
+    const snapshot = readSnapshotById(app.paths.root, snapshotRef.id);
+    if (!snapshot) {
+      return blockedApplyResult(proposal.id, 'SNAPSHOT_FAILED', [
+        `Snapshot artifact ${snapshotRef.id} was not found under evolution/snapshots.`,
+      ], validation.id);
+    }
+    const rollback = readRollbackById(app.paths.root, rollbackRef.id);
+    if (!rollback) {
+      return blockedApplyResult(proposal.id, 'ROLLBACK_REF_REQUIRED', [
+        `Rollback artifact ${rollbackRef.id} was not found under evolution/rollbacks.`,
+      ], validation.id);
+    }
+
+    const preparedApply = prepareSidecarLocalApply(app.paths.root, proposal);
+    if (!preparedApply.ok) {
+      return blockedApplyResult(
+        proposal.id,
+        preparedApply.gateCode,
+        preparedApply.blockingReasons,
+        validation.id,
+      );
+    }
+
+    const applicationId = applicationRecordId(
+      proposal,
+      validation,
+      snapshotRef,
+      rollbackRef,
+      preparedApply.changes,
+    );
+    try {
+      applySidecarLocalChanges(preparedApply.changes);
+    } catch (error) {
+      return blockedApplyResult(proposal.id, 'APPLY_EXECUTION_FAILED', [
+        error instanceof Error ? error.message : String(error),
+      ], validation.id);
+    }
+
+    const appliedContentRefs = preparedApply.changes.map((change) => change.targetContentRef);
+    const assetEvents = recordAppliedAssetEvents(
+      app.paths.root,
+      proposal,
+      validation,
+      applicationId,
+      preparedApply.changes,
+      snapshotRef,
+      rollbackRef,
+      app.now().toISOString(),
+    );
+    const applicationRecord = createAppliedApplicationRecord(
+      app,
+      proposal,
+      validation,
+      snapshotRef,
+      rollbackRef,
+      applicationId,
+      assetEvents.map(assetEventRef),
+      appliedContentRefs,
+    );
     const applicationRecordPath = applicationFilePath(app.paths.root, applicationRecord);
     writeJsonFile(applicationRecordPath, applicationRecord);
     return {
       command: 'apply',
       proposalId: proposal.id,
-      gateStatus: 'ready',
+      gateStatus: 'applied',
       gateCode: 'READY',
       gatePassed: true,
-      applied: false,
+      applied: true,
       applicationRecordCount: 1,
+      assetEventCount: assetEvents.length,
+      assetEventIds: assetEvents.map((event) => event.id),
       blockingReasons: [],
       validationId: validation.id,
       snapshotId: snapshotRef.id,
@@ -954,6 +1042,7 @@ function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
         rollbackPath: generatedSnapshot.rollbackPath,
         generatedSnapshot: true,
       } : { generatedSnapshot: false }),
+      appliedContentRefs,
       applicationRecord,
       applicationRecordPath,
     };
@@ -1406,6 +1495,10 @@ function currentAssetContentDir(root: string, kind: string): string {
   return join(root, 'assets', 'current', kind);
 }
 
+function proposalContentDir(root: string, proposalId: string): string {
+  return join(root, 'evolution', 'proposal-content', safePathSegment(proposalId));
+}
+
 function frontierSignalsDir(root: string): string {
   return join(root, 'evolution', 'frontier-signals');
 }
@@ -1708,6 +1801,28 @@ function readLatestValidationForProposal(root: string, proposalId: string): Vali
     }
   }
   return reports.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id))[0];
+}
+
+function readSnapshotById(root: string, snapshotId: string): AssetSnapshotRecord | undefined {
+  const path = join(snapshotsDir(root), `${safePathSegment(snapshotId)}.json`);
+  if (!existsSync(path)) return undefined;
+  try {
+    const snapshot = AssetSnapshotRecordSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+    return snapshot.id === snapshotId ? snapshot : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readRollbackById(root: string, rollbackId: string): RollbackRecord | undefined {
+  const path = join(rollbacksDir(root), `${safePathSegment(rollbackId)}.json`);
+  if (!existsSync(path)) return undefined;
+  try {
+    const rollback = RollbackRecordSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+    return rollback.id === rollbackId ? rollback : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function readConnectionStatus(root: string): SidecarStatusResult['connection'] {
@@ -2073,6 +2188,8 @@ function blockedApplyResult(
     gatePassed: false,
     applied: false,
     applicationRecordCount: 0,
+    assetEventCount: 0,
+    assetEventIds: [],
     blockingReasons,
     ...(validationId ? { validationId } : {}),
   };
@@ -2130,6 +2247,129 @@ function readCurrentAssetContent(
   return undefined;
 }
 
+function prepareSidecarLocalApply(root: string, proposal: EvolutionProposal): PreparedApply | BlockedApply {
+  if (proposal.level !== 'L0' || !['prompt', 'mcp-tool-config'].includes(proposal.targetKind)) {
+    return {
+      ok: false,
+      gateCode: 'UNSUPPORTED_APPLY_EXECUTOR',
+      blockingReasons: [
+        `The Phase F local apply executor only supports L0 prompt/mcp-tool-config targets; received ${proposal.level}/${proposal.targetKind}.`,
+      ],
+    };
+  }
+
+  const changes: ProposedAssetContent[] = [];
+  for (let index = 0; index < proposal.changeSet.length; index += 1) {
+    const change = proposal.changeSet[index]!;
+    if (change.op !== 'create' && change.op !== 'update') {
+      return {
+        ok: false,
+        gateCode: 'UNSUPPORTED_CHANGE_OPERATION',
+        blockingReasons: [
+          `Change ${index} uses op=${change.op}; the Phase F local apply executor only supports create/update.`,
+        ],
+      };
+    }
+
+    const kind = assetKindForChange(proposal, change);
+    if (kind !== 'prompt' && kind !== 'mcp-tool-config') {
+      return {
+        ok: false,
+        gateCode: 'UNSUPPORTED_APPLY_EXECUTOR',
+        blockingReasons: [
+          `Change ${index} targets kind=${change.targetRef.kind}; the Phase F local apply executor only supports prompt/mcp-tool-config.`,
+        ],
+      };
+    }
+
+    const proposedContent = readProposedAssetContent(root, proposal, change, index, kind);
+    if (!proposedContent) {
+      return {
+        ok: false,
+        gateCode: 'APPLY_CONTENT_REQUIRED',
+        blockingReasons: [
+          `No sidecar-local proposal content found for change ${index}. Expected ${proposalContentHint(proposal, change, index, kind)}.`,
+        ],
+      };
+    }
+
+    if (change.contentHash && !contentHashMatches(change.contentHash, proposedContent.contentHash)) {
+      return {
+        ok: false,
+        gateCode: 'APPLY_CONTENT_HASH_MISMATCH',
+        blockingReasons: [
+          `Proposal content hash mismatch for change ${index}: expected ${change.contentHash}, got ${proposedContent.contentHash}.`,
+        ],
+      };
+    }
+    changes.push(proposedContent);
+  }
+  return { ok: true, changes };
+}
+
+function readProposedAssetContent(
+  root: string,
+  proposal: EvolutionProposal,
+  change: ChangeOperation,
+  changeIndex: number,
+  kind: AssetKind,
+): ProposedAssetContent | undefined {
+  for (const extension of currentAssetContentExtensions(kind)) {
+    const proposalFileName = proposalContentFileName(changeIndex, change.targetRef.id, extension);
+    const sourcePath = join(proposalContentDir(root, proposal.id), proposalFileName);
+    if (!existsSync(sourcePath) || !lstatSync(sourcePath).isFile()) continue;
+    const content = readFileSync(sourcePath);
+    const targetFileName = `${encodedAssetPathSegment(change.targetRef.id)}${extension}`;
+    const alternateTargetPaths = currentAssetContentExtensions(kind)
+      .filter((candidateExtension) => candidateExtension !== extension)
+      .map((candidateExtension) => join(
+        currentAssetContentDir(root, kind),
+        `${encodedAssetPathSegment(change.targetRef.id)}${candidateExtension}`,
+      ));
+    return {
+      changeIndex,
+      targetRef: change.targetRef,
+      assetId: change.targetRef.id,
+      kind,
+      sourceContentRef: proposalContentRef(proposal.id, proposalFileName, change.targetRef.id),
+      targetContentRef: currentAssetContentRef(kind, targetFileName, change.targetRef.id),
+      targetPath: join(currentAssetContentDir(root, kind), targetFileName),
+      alternateTargetPaths,
+      content,
+      contentHash: sha256(content),
+      extension,
+    };
+  }
+  return undefined;
+}
+
+function applySidecarLocalChanges(changes: readonly ProposedAssetContent[]): void {
+  for (const change of changes) {
+    writeContentFile(change.targetPath, change.content);
+    for (const alternatePath of change.alternateTargetPaths) {
+      rmSync(alternatePath, { force: true });
+    }
+  }
+}
+
+function proposalContentHint(
+  proposal: EvolutionProposal,
+  change: ChangeOperation,
+  changeIndex: number,
+  kind: AssetKind,
+): string {
+  const candidates = currentAssetContentExtensions(kind)
+    .map((extension) => join(
+      proposalContentDir('$HARO_HOME', proposal.id),
+      proposalContentFileName(changeIndex, change.targetRef.id, extension),
+    ));
+  return candidates.join(' or ');
+}
+
+function contentHashMatches(expected: string, actual: string): boolean {
+  return expected === actual || expected === `sha256:${actual}`;
+}
+
 function currentAssetContentExtensions(kind: string): readonly string[] {
   if (kind === 'prompt') return ['.md', '.txt', '.json'];
   if (kind === 'mcp-tool-config') return ['.json', '.md', '.txt'];
@@ -2157,6 +2397,10 @@ function snapshotContentFileName(changeIndex: number, assetId: string, extension
   return `${String(changeIndex).padStart(4, '0')}-${encodedAssetPathSegment(assetId)}${extension}`;
 }
 
+function proposalContentFileName(changeIndex: number, assetId: string, extension: string): string {
+  return `${String(changeIndex).padStart(4, '0')}-${encodedAssetPathSegment(assetId)}${extension}`;
+}
+
 function currentAssetContentRef(kind: string, fileName: string, assetId: string): Ref {
   return {
     id: `${kind}:${assetId}:${fileName}`,
@@ -2173,37 +2417,72 @@ function snapshotContentRef(snapshotId: string, fileName: string, assetId: strin
   };
 }
 
-function createReadyApplicationRecord(
+function proposalContentRef(proposalId: string, fileName: string, assetId: string): Ref {
+  return {
+    id: `${proposalId}:${assetId}:${fileName}`,
+    kind: 'proposal-content',
+    uri: `haro-sidecar://proposal-content/${encodeURIComponent(proposalId)}/${encodeURIComponent(fileName)}`,
+  };
+}
+
+function applicationRecordRef(applicationId: string): Ref {
+  return {
+    id: applicationId,
+    kind: 'application-record',
+    uri: `haro-sidecar://applications/${encodeURIComponent(applicationId)}`,
+  };
+}
+
+function applicationRecordId(
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+  snapshotRef: Ref,
+  rollbackRef: Ref,
+  changes: readonly ProposedAssetContent[],
+): string {
+  return `application_${sha256(JSON.stringify({
+    proposalId: proposal.id,
+    validationId: validation.id,
+    snapshotRef,
+    rollbackRef,
+    appliedContent: changes.map((change) => ({
+      changeIndex: change.changeIndex,
+      assetId: change.assetId,
+      contentHash: change.contentHash,
+    })),
+  })).slice(0, 24)}`;
+}
+
+function createAppliedApplicationRecord(
   app: AppContext,
   proposal: EvolutionProposal,
   validation: ValidationReport,
   snapshotRef: Ref,
   rollbackRef: Ref,
+  applicationId: string,
+  assetEventRefs: Ref[],
+  appliedContentRefs: Ref[],
 ): ApplicationRecord {
   const timestamp = app.now().toISOString();
-  const id = `application_${sha256(JSON.stringify({
-    proposalId: proposal.id,
-    validationId: validation.id,
-    snapshotRef,
-    rollbackRef,
-  })).slice(0, 24)}`;
   return ApplicationRecordSchema.parse({
-    id,
+    id: applicationId,
     proposalId: proposal.id,
     validationId: validation.id,
-    status: 'ready',
+    status: 'applied',
     gateCode: 'READY',
     level: proposal.level,
     targetKind: proposal.targetKind,
-    applied: false,
+    applied: true,
     snapshotRef,
     rollbackRef,
-    assetEventRefs: [],
+    assetEventRefs,
     evidenceRefs: [
       evolutionProposalRef(proposal),
       validationReportRef(validation),
       snapshotRef,
       rollbackRef,
+      ...appliedContentRefs,
+      ...assetEventRefs,
     ],
     blockingReasons: [],
     createdAt: timestamp,
@@ -2494,6 +2773,43 @@ function recordValidationAssetEvents(
   return recordAssetEvents(root, proposal, 'validated', validation);
 }
 
+function recordAppliedAssetEvents(
+  root: string,
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+  applicationId: string,
+  changes: readonly ProposedAssetContent[],
+  snapshotRef: Ref,
+  rollbackRef: Ref,
+  createdAt: string,
+): AssetEvent[] {
+  const registry = createSidecarAssetRegistry(root);
+  const events = changes.map((change) => AssetEventSchema.parse({
+    id: appliedAssetEventId({ proposal, validation, applicationId, change }),
+    assetId: change.assetId,
+    kind: change.kind,
+    version: change.contentHash.slice(0, 16),
+    sourceRef: applicationRecordRef(applicationId),
+    contentRef: change.targetContentRef,
+    contentHash: change.contentHash,
+    status: 'applied',
+    eventType: 'applied',
+    actor: 'haro',
+    proposalRef: evolutionProposalRef(proposal),
+    validationRef: validationReportRef(validation),
+    rollbackMetadata: {
+      rollbackRef,
+      snapshotRef,
+      reversible: true,
+    },
+    createdAt,
+  }));
+  for (const event of events) {
+    registry.recordEvent(event);
+  }
+  return events;
+}
+
 function recordAssetEvents(
   root: string,
   proposal: EvolutionProposal,
@@ -2568,6 +2884,23 @@ function assetEventId(input: {
     assetId: input.change.targetRef.id,
     status: input.status,
     contentHash: input.contentHash,
+  })).slice(0, 24)}`;
+}
+
+function appliedAssetEventId(input: {
+  proposal: EvolutionProposal;
+  validation: ValidationReport;
+  applicationId: string;
+  change: ProposedAssetContent;
+}): string {
+  return `asset_event_${sha256(JSON.stringify({
+    proposalId: input.proposal.id,
+    validationId: input.validation.id,
+    applicationId: input.applicationId,
+    changeIndex: input.change.changeIndex,
+    assetId: input.change.assetId,
+    status: 'applied',
+    contentHash: input.change.contentHash,
   })).slice(0, 24)}`;
 }
 

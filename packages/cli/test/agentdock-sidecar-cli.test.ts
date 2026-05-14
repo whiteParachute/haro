@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -76,6 +77,10 @@ function jsonResponse(value: unknown) {
 
 function readJson<T = unknown>(path: string): T {
   return JSON.parse(readFileSync(path, 'utf8')) as T;
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 function readAssetEvents(root: string): AssetEvent[] {
@@ -1375,12 +1380,18 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
-  it('apply --proposal-id auto-generates snapshot and rollback metadata before writing a ready record', async () => {
+  it('apply --proposal-id auto-generates snapshot and rollback metadata before applying sidecar-local content', async () => {
     const root = newHome('agentdock-apply-autosnapshot');
     const proposalDir = join(root, 'evolution', 'proposals');
     const validationDir = join(root, 'evolution', 'validations');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', 'proposal_autosnapshot_l0');
     mkdirSync(proposalDir, { recursive: true });
     mkdirSync(validationDir, { recursive: true });
+    mkdirSync(proposalContentDir, { recursive: true });
+    const assetId = 'prompt-autosnapshot';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    const nextContent = 'new autosnapshot prompt\n';
+    writeFileSync(join(proposalContentDir, `0000-${encodedAssetId}.md`), nextContent);
     const proposal = {
       id: 'proposal_autosnapshot_l0',
       title: 'Tune prompt wording with generated snapshot',
@@ -1392,9 +1403,9 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       changeSet: [
         {
           op: 'update',
-          targetRef: { id: 'prompt-autosnapshot', kind: 'prompt' },
-          contentRef: 'haro-sidecar://proposals/proposal_autosnapshot_l0/content',
-          contentHash: 'sha256:prompt-autosnapshot',
+          targetRef: { id: assetId, kind: 'prompt' },
+          contentRef: `haro-sidecar://proposal-content/proposal_autosnapshot_l0/0000-${encodedAssetId}.md`,
+          contentHash: sha256(nextContent),
           summary: 'Clarify prompt wording',
         },
       ],
@@ -1439,45 +1450,66 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       gateStatus: string;
       gateCode: string;
       generatedSnapshot: boolean;
+      applied: boolean;
+      assetEventCount: number;
+      assetEventIds: string[];
       snapshotId: string;
       rollbackId: string;
       snapshotPath: string;
       rollbackPath: string;
+      appliedContentRefs: Array<{ uri: string }>;
       applicationRecord: {
         status: string;
         applied: boolean;
         snapshotRef: { id: string };
         rollbackRef: { id: string };
+        assetEventRefs: Array<{ id: string }>;
       };
     } }).data;
     expect(payload).toMatchObject({
-      gateStatus: 'ready',
+      gateStatus: 'applied',
       gateCode: 'READY',
+      applied: true,
       generatedSnapshot: true,
+      assetEventCount: 1,
     });
     expect(payload.snapshotId).toMatch(/^snapshot_/);
     expect(payload.rollbackId).toMatch(/^rollback_/);
     expect(existsSync(payload.snapshotPath)).toBe(true);
     expect(existsSync(payload.rollbackPath)).toBe(true);
+    expect(payload.appliedContentRefs[0]?.uri).toBe(`haro-sidecar://assets/current/prompt/${encodedAssetId}.md`);
     expect(payload.applicationRecord).toMatchObject({
-      status: 'ready',
-      applied: false,
+      status: 'applied',
+      applied: true,
       snapshotRef: { id: payload.snapshotId },
       rollbackRef: { id: payload.rollbackId },
     });
+    expect(payload.applicationRecord.assetEventRefs[0]?.id).toBe(payload.assetEventIds[0]);
+    expect(readFileSync(join(root, 'assets', 'current', 'prompt', `${encodedAssetId}.md`), 'utf8')).toBe(nextContent);
     expect(readSnapshotRecords(root)).toHaveLength(1);
     expect(readRollbackRecords(root)).toHaveLength(1);
     expect(readApplicationRecords(root)).toHaveLength(1);
-    expect(readAssetEvents(root).filter((event) => event.status === 'applied')).toHaveLength(0);
+    expect(readAssetEvents(root).filter((event) => event.status === 'applied')).toHaveLength(1);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
-  it('apply --proposal-id writes a ready gate record for eligible L0 proposals without mutating assets', async () => {
+  it('apply --proposal-id writes an applied record and mutates only sidecar-local prompt content', async () => {
     const root = newHome('agentdock-apply-ready-l0');
     const proposalDir = join(root, 'evolution', 'proposals');
     const validationDir = join(root, 'evolution', 'validations');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', 'proposal_ready_l0');
+    const currentPromptDir = join(root, 'assets', 'current', 'prompt');
     mkdirSync(proposalDir, { recursive: true });
     mkdirSync(validationDir, { recursive: true });
+    mkdirSync(proposalContentDir, { recursive: true });
+    mkdirSync(currentPromptDir, { recursive: true });
+    const assetId = 'prompt-default';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    const previousContent = 'old prompt\n';
+    const nextContent = 'new prompt\n';
+    writeFileSync(join(currentPromptDir, `${encodedAssetId}.txt`), 'stale alternate prompt\n');
+    writeFileSync(join(currentPromptDir, `${encodedAssetId}.md`), previousContent);
+    writeFileSync(join(proposalContentDir, `0000-${encodedAssetId}.md`), nextContent);
     const proposal = {
       id: 'proposal_ready_l0',
       title: 'Tune prompt wording',
@@ -1489,9 +1521,9 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       changeSet: [
         {
           op: 'update',
-          targetRef: { id: 'prompt-default', kind: 'prompt' },
-          contentRef: 'haro-sidecar://proposals/proposal_ready_l0/content',
-          contentHash: 'sha256:prompt-ready',
+          targetRef: { id: assetId, kind: 'prompt' },
+          contentRef: `haro-sidecar://proposal-content/proposal_ready_l0/0000-${encodedAssetId}.md`,
+          contentHash: `sha256:${sha256(nextContent)}`,
           summary: 'Clarify prompt wording',
         },
       ],
@@ -1503,10 +1535,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       rollbackPlan: {
         strategy: 'restore previous prompt content',
         snapshotRequired: true,
-        rollbackRefs: [
-          { id: 'snapshot-ready-l0', kind: 'asset-snapshot', uri: 'haro-sidecar://snapshots/snapshot-ready-l0' },
-          { id: 'rollback-ready-l0', kind: 'rollback-ref', uri: 'haro-sidecar://rollbacks/rollback-ready-l0' },
-        ],
+        rollbackRefs: [],
       },
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
@@ -1541,7 +1570,12 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       gatePassed: boolean;
       applied: boolean;
       applicationRecordCount: number;
+      assetEventCount: number;
+      assetEventIds: string[];
       validationId: string;
+      snapshotId: string;
+      rollbackId: string;
+      generatedSnapshot: boolean;
       applicationRecordPath: string;
       applicationRecord: {
         proposalId: string;
@@ -1551,27 +1585,210 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         applied: boolean;
         snapshotRef: { id: string };
         rollbackRef: { id: string };
+        assetEventRefs: Array<{ id: string }>;
       };
     } }).data;
     expect(payload).toMatchObject({
-      gateStatus: 'ready',
+      gateStatus: 'applied',
       gateCode: 'READY',
       gatePassed: true,
-      applied: false,
+      applied: true,
       applicationRecordCount: 1,
+      assetEventCount: 1,
       validationId: 'validation_ready_l0',
+      generatedSnapshot: true,
     });
     expect(payload.applicationRecord).toMatchObject({
       proposalId: proposal.id,
       validationId: 'validation_ready_l0',
-      status: 'ready',
+      status: 'applied',
       gateCode: 'READY',
-      applied: false,
-      snapshotRef: { id: 'snapshot-ready-l0' },
-      rollbackRef: { id: 'rollback-ready-l0' },
+      applied: true,
+      snapshotRef: { id: payload.snapshotId },
+      rollbackRef: { id: payload.rollbackId },
     });
+    expect(payload.applicationRecord.assetEventRefs[0]?.id).toBe(payload.assetEventIds[0]);
     expect(existsSync(payload.applicationRecordPath)).toBe(true);
+    expect(readFileSync(join(currentPromptDir, `${encodedAssetId}.md`), 'utf8')).toBe(nextContent);
+    expect(existsSync(join(currentPromptDir, `${encodedAssetId}.txt`))).toBe(false);
+    const snapshot = readSnapshotRecords(root)[0]!;
+    expect(snapshot.entries[0]).toMatchObject({
+      snapshotSource: 'target-content',
+      contentHash: sha256(previousContent),
+    });
     expect(readApplicationRecords(root)).toHaveLength(1);
+    const appliedEvents = readAssetEvents(root).filter((event) => event.status === 'applied');
+    expect(appliedEvents).toHaveLength(1);
+    expect(appliedEvents[0]).toMatchObject({
+      assetId,
+      contentHash: sha256(nextContent),
+      rollbackMetadata: {
+        snapshotRef: { id: payload.snapshotId },
+        rollbackRef: { id: payload.rollbackId },
+        reversible: true,
+      },
+    });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('apply --proposal-id blocks when sidecar-local proposal content is missing', async () => {
+    const root = newHome('agentdock-apply-missing-content');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    const proposal = {
+      id: 'proposal_missing_apply_content',
+      title: 'Tune prompt wording without content',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-missing-content', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'prompt-missing-content', kind: 'prompt' },
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: [],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_missing_apply_content.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_missing_apply_content.json'), `${JSON.stringify({
+      id: 'validation_missing_apply_content',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      applied: boolean;
+      applicationRecordCount: number;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'blocked',
+      gateCode: 'APPLY_CONTENT_REQUIRED',
+      applied: false,
+      applicationRecordCount: 0,
+    });
+    expect(payload.blockingReasons.join('\n')).toContain('No sidecar-local proposal content');
+    expect(readSnapshotRecords(root)).toHaveLength(1);
+    expect(readRollbackRecords(root)).toHaveLength(1);
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(readAssetEvents(root).filter((event) => event.status === 'applied')).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('apply --proposal-id does not follow sidecar proposal-content symlinks', async () => {
+    const root = newHome('agentdock-apply-symlink-content');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', 'proposal_symlink_apply_content');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    mkdirSync(proposalContentDir, { recursive: true });
+    const assetId = 'prompt-symlink-apply';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    const outsidePath = join(root, 'outside-proposal-secret.md');
+    writeFileSync(outsidePath, 'must not be applied\n');
+    symlinkSync(outsidePath, join(proposalContentDir, `0000-${encodedAssetId}.md`));
+    const proposal = {
+      id: 'proposal_symlink_apply_content',
+      title: 'Reject symlinked apply content source',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-symlink-apply-content', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: assetId, kind: 'prompt' },
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: [],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_symlink_apply_content.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_symlink_apply_content.json'), `${JSON.stringify({
+      id: 'validation_symlink_apply_content',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      applied: boolean;
+      applicationRecordCount: number;
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'blocked',
+      gateCode: 'APPLY_CONTENT_REQUIRED',
+      applied: false,
+      applicationRecordCount: 0,
+    });
+    expect(existsSync(join(root, 'assets', 'current', 'prompt', `${encodedAssetId}.md`))).toBe(false);
+    expect(readApplicationRecords(root)).toHaveLength(0);
     expect(readAssetEvents(root).filter((event) => event.status === 'applied')).toHaveLength(0);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
