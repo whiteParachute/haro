@@ -142,9 +142,9 @@ AgentDock runtime + Haro sidecar + external frontier sources
 | --- | --- | --- |
 | `@haro/agentdock-contract` | AgentDock connection、observation、proposal、validation、frontier signal、asset event schema | 已实现 skeleton + fake source；FrontierSignal schema 已落地 |
 | Haro MCP Server | 暴露 `haro_observe` / `haro_propose` / `haro_validate` / `haro_asset_query` | 已实现 read-only sidecar；AgentDock 注册 MCP live smoke 已通过（2026-05-08） |
-| Haro Scheduled CLI | 支持 `connect agent-dock`、`observe`、`intake frontier`、`propose`、`validate`、`status`、`doctor` | `connect agent-dock` + `observe --since last` + `intake frontier --source-config` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `status` + `doctor --component sidecar` 已实现；propose/validate/frontier intake 均显式暴露损坏 JSON 计数；status/doctor 汇总 connection/cursor/evolution store 健康，不读写 memory |
+| Haro Scheduled CLI | 支持 `connect agent-dock`、`observe`、`intake frontier`、`propose`、`validate`、`status`、`doctor` | `connect agent-dock` + `observe --since last` + `intake frontier --source-config` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `status` + `doctor --component sidecar` 已实现；propose/validate 会写入 sidecar asset events；frontier intake/propose/validate 均显式暴露损坏 JSON 计数；status/doctor 汇总 connection/cursor/evolution store 健康，不读写 memory |
 | Evolution Store | `~/.haro/evolution/*` 独立存储 observations/frontier-signals/proposals/validations/applications | observations/frontier-signals/proposals/validations 第一段已落盘；applications 待迁移 |
-| Asset Registry | 管理 skills/prompts/profiles/rules/tool config/frontier source ref 资产事件 | 第一段已实现：file-backed sidecar registry 写入 `~/.haro/assets/manifests` + `~/.haro/assets/events`，`haro_asset_query` 读取 sidecar registry；memory 由 AgentDock 提供，Haro 仅保存 refs |
+| Asset Registry | 管理 skills/prompts/profiles/rules/tool config/frontier source ref 资产事件 | 已实现：file-backed sidecar registry 写入 `~/.haro/assets/manifests` + `~/.haro/assets/events`，`haro_asset_query` 读取 sidecar registry；scheduled propose/validate 会登记 `proposed` / `validated` event；memory 由 AgentDock 提供，Haro 仅保存 refs |
 | Frontier Intelligence Intake | 从 X、YouTube、论文、release notes、官方文档等来源生成带 citation 的 external signals | 已实现：读取 curated source-config 中的 `FrontierSignal`，去重后写入 `~/.haro/evolution/frontier-signals/`；`propose --include-frontier` 会把 active signals 作为 proposal evidence |
 | Gated Apply | L0/L1 proposal + validation + snapshot + rollback 后应用 | 后续实现 |
 
@@ -199,9 +199,9 @@ scripts/                # 辅助脚本
 1. 文档基线清理：README、roadmap、architecture overview、planning 文档对齐 sidecar 定位。
 2. Contract skeleton：新增 AgentDock contract schema 与 fake source tests。
 3. Read-only MCP/CLI：`haro mcp` 已实现首批 observe/propose/validate/query，默认 dry-run；AgentDock 注册 MCP live smoke 已通过（2026-05-08，`haro_observe` 返回 `source=agentdock-http`）。
-4. Scheduled sidecar：`connect agent-dock` + `observe --since last` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `status` + `doctor --component sidecar` 已落地，可由 AgentDock script task 周期触发；propose 的 `--limit` 限制单次 proposal 打包的 observation batch 数，validate 的 `--limit` 限制单次处理的 pending proposal 数，并在 JSON 结果中暴露损坏 observation/proposal/validation/frontier-signal 计数；status/doctor 只统计和检查 sidecar evolution store，不读写 memory。
+4. Scheduled sidecar：`connect agent-dock` + `observe --since last` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `status` + `doctor --component sidecar` 已落地，可由 AgentDock script task 周期触发；propose 的 `--limit` 限制单次 proposal 打包的 observation batch 数，validate 的 `--limit` 限制单次处理的 pending proposal 数，且 propose/validate 会同步写入 sidecar asset events；JSON 结果暴露损坏 observation/proposal/validation/frontier-signal 计数；status/doctor 只统计和检查 sidecar evolution store，不读写 memory。
 5. Frontier intelligence：`FrontierSignal` schema + `haro intake frontier --source-config <file> --since last --json` + `haro propose --auto-dry-run --include-frontier` 已落地，把 curated X / YouTube / paper / release note / official doc / benchmark refs 归一为带来源 signals，并在 dry-run proposal 中引用 active frontier evidence；不写 AgentDock DB 或 memory。
-6. Asset registry adapter：新增 file-backed sidecar asset registry，资产 event/manifest 写入 `~/.haro/assets/*`，`haro_asset_query` 直接查询 sidecar registry，不再读取旧 core EvolutionAssetRegistry。
+6. Asset registry adapter：新增 file-backed sidecar asset registry，资产 event/manifest 写入 `~/.haro/assets/*`，`haro_asset_query` 直接查询 sidecar registry，不再读取旧 core EvolutionAssetRegistry；scheduled propose/validate 已接入 `proposed` / `validated` event 写入。
 7. Gated apply：只开放 L0/L1，必须有 validation、snapshot、rollback ref。
 
 每次开发任务结束按顺序执行：

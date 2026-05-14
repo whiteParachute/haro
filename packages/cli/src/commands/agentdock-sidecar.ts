@@ -3,18 +3,24 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import {
+  AssetKindSchema,
+  AssetEventSchema,
   EvolutionProposalSchema,
   FrontierSignalSchema,
   ObservationBatchSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
   createHttpAgentDockSource,
+  type AssetEvent,
+  type AssetKind,
+  type ChangeOperation,
   type EvolutionProposal,
   type FrontierSignal,
   type ObservationBatch,
   type Ref,
   type ValidationReport,
 } from '@haro/agentdock-contract';
+import { createSidecarAssetRegistry } from '@haro/mcp-tools';
 import { CommanderExit, type AppContext } from '../index.js';
 import { renderError, renderJson, resolveOutputMode } from '../output/index.js';
 
@@ -98,6 +104,8 @@ interface ProposeResult {
   skippedCorruptProposalCount: number;
   skippedCorruptFrontierSignalCount: number;
   wroteProposal: boolean;
+  assetEventCount: number;
+  assetEventIds: string[];
   proposal?: EvolutionProposal;
   proposalPath?: string;
 }
@@ -111,6 +119,8 @@ interface ValidateResult {
   skippedCorruptProposalCount: number;
   skippedCorruptValidationCount: number;
   wroteValidations: boolean;
+  assetEventCount: number;
+  assetEventIds: string[];
   validations: ValidationReport[];
   validationPaths: string[];
 }
@@ -327,6 +337,8 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
             skippedCorruptFrontierSignalCount: result.skippedCorruptFrontierSignalCount,
             wroteProposal: result.wroteProposal,
+            assetEventCount: result.assetEventCount,
+            assetEventIds: result.assetEventIds,
             proposalId: result.proposal?.id,
             proposalPath: result.proposalPath,
             proposal: result.proposal,
@@ -340,6 +352,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `Mode: ${result.mode}`,
               `Source observations: ${result.consumedObservationCount}`,
               `Frontier signals: ${result.includedFrontierSignalCount}`,
+              `Asset events: ${result.assetEventCount}`,
               `Pending observations after run: ${result.pendingObservationCount}`,
               `Wrote: ${result.proposalPath}`,
             ].join('\n') + '\n',
@@ -380,6 +393,8 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
             skippedCorruptValidationCount: result.skippedCorruptValidationCount,
             wroteValidations: result.wroteValidations,
+            assetEventCount: result.assetEventCount,
+            assetEventIds: result.assetEventIds,
             validationIds: result.validations.map((report) => report.id),
             validationPaths: result.validationPaths,
             validations: result.validations,
@@ -391,6 +406,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             [
               `Validations: ${result.validationCount}`,
               `Validated proposals: ${result.validatedProposalCount}`,
+              `Asset events: ${result.assetEventCount}`,
               `Pending proposals after run: ${result.pendingProposalCount}`,
               `Wrote: ${result.validationPaths.join(', ')}`,
             ].join('\n') + '\n',
@@ -561,12 +577,15 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
         wroteProposal: false,
+        assetEventCount: 0,
+        assetEventIds: [],
       };
     }
 
     const proposal = createDryRunProposal(selected, app.now, frontierResult.signals);
     const path = proposalFilePath(app.paths.root, proposal);
     writeJsonFile(path, proposal);
+    const assetEventIds = recordProposalAssetEvents(app.paths.root, proposal).map((event) => event.id);
     return {
       command: 'propose',
       mode: 'dry-run',
@@ -580,6 +599,8 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       skippedCorruptProposalCount: consumedResult.corruptCount,
       skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
       wroteProposal: true,
+      assetEventCount: assetEventIds.length,
+      assetEventIds,
       proposal,
       proposalPath: path,
     };
@@ -617,6 +638,8 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
         skippedCorruptProposalCount: pendingProposalResult.corruptCount,
         skippedCorruptValidationCount: existingValidationResult.corruptCount,
         wroteValidations: false,
+        assetEventCount: 0,
+        assetEventIds: [],
         validations: [],
         validationPaths: [],
       };
@@ -624,10 +647,15 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
 
     const validations = selected.map((proposal) => createValidationReport(proposal, app.now));
     const validationPaths = validations.map((report) => validationFilePath(app.paths.root, report));
+    const assetEventIds: string[] = [];
     for (let i = 0; i < validations.length; i += 1) {
       const report = validations[i]!;
       const path = validationPaths[i]!;
       writeJsonFile(path, report);
+      const proposal = selected[i]!;
+      assetEventIds.push(
+        ...recordValidationAssetEvents(app.paths.root, proposal, report).map((event) => event.id),
+      );
     }
     return {
       command: 'validate',
@@ -638,6 +666,8 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
       skippedCorruptProposalCount: pendingProposalResult.corruptCount,
       skippedCorruptValidationCount: existingValidationResult.corruptCount,
       wroteValidations: true,
+      assetEventCount: assetEventIds.length,
+      assetEventIds,
       validations,
       validationPaths,
     };
@@ -1647,6 +1677,119 @@ function createValidationReport(
     evidenceRefs,
     createdAt: now().toISOString(),
   });
+}
+
+function recordProposalAssetEvents(root: string, proposal: EvolutionProposal): AssetEvent[] {
+  return recordAssetEvents(root, proposal, 'proposed');
+}
+
+function recordValidationAssetEvents(
+  root: string,
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+): AssetEvent[] {
+  return recordAssetEvents(root, proposal, 'validated', validation);
+}
+
+function recordAssetEvents(
+  root: string,
+  proposal: EvolutionProposal,
+  status: 'proposed' | 'validated',
+  validation?: ValidationReport,
+): AssetEvent[] {
+  const registry = createSidecarAssetRegistry(root);
+  const events = proposal.changeSet
+    .map((change, index) => createAssetEventForChange(proposal, change, index, status, validation))
+    .filter((event): event is AssetEvent => Boolean(event));
+  for (const event of events) {
+    registry.recordEvent(event);
+  }
+  return events;
+}
+
+function createAssetEventForChange(
+  proposal: EvolutionProposal,
+  change: ChangeOperation,
+  index: number,
+  status: 'proposed' | 'validated',
+  validation?: ValidationReport,
+): AssetEvent | undefined {
+  const kind = assetKindForChange(proposal, change);
+  if (!kind) return undefined;
+  const contentRefValue = change.contentRef ?? `haro-sidecar://proposals/${encodeURIComponent(proposal.id)}/changes/${index}`;
+  const contentHash = change.contentHash ?? sha256(JSON.stringify({
+    proposalId: proposal.id,
+    change,
+  }));
+  const validationRef = validation ? validationReportRef(validation) : undefined;
+  return AssetEventSchema.parse({
+    id: assetEventId({ proposal, change, index, status, contentHash, validation }),
+    assetId: change.targetRef.id,
+    kind,
+    version: contentHash.slice(0, 16),
+    sourceRef: validationRef ?? evolutionProposalRef(proposal),
+    contentRef: stringToRef(contentRefValue, `${kind}-content`),
+    contentHash,
+    status,
+    eventType: status,
+    actor: 'haro',
+    proposalRef: evolutionProposalRef(proposal),
+    ...(validationRef ? { validationRef } : {}),
+    createdAt: validation?.createdAt ?? proposal.createdAt,
+  });
+}
+
+function assetKindForChange(
+  proposal: EvolutionProposal,
+  change: ChangeOperation,
+): AssetKind | undefined {
+  const targetRefKind = AssetKindSchema.safeParse(change.targetRef.kind);
+  if (targetRefKind.success) return targetRefKind.data;
+  const proposalKind = AssetKindSchema.safeParse(proposal.targetKind);
+  if (proposalKind.success) return proposalKind.data;
+  return undefined;
+}
+
+function assetEventId(input: {
+  proposal: EvolutionProposal;
+  change: ChangeOperation;
+  index: number;
+  status: 'proposed' | 'validated';
+  contentHash: string;
+  validation?: ValidationReport;
+}): string {
+  return `asset_event_${sha256(JSON.stringify({
+    proposalId: input.proposal.id,
+    validationId: input.validation?.id,
+    changeIndex: input.index,
+    assetId: input.change.targetRef.id,
+    status: input.status,
+    contentHash: input.contentHash,
+  })).slice(0, 24)}`;
+}
+
+function evolutionProposalRef(proposal: EvolutionProposal): Ref {
+  return {
+    id: proposal.id,
+    kind: 'evolution-proposal',
+    uri: `haro-sidecar://proposals/${encodeURIComponent(proposal.id)}`,
+  };
+}
+
+function validationReportRef(report: ValidationReport): Ref {
+  return {
+    id: report.id,
+    kind: 'validation-report',
+    uri: `haro-sidecar://validations/${encodeURIComponent(report.id)}`,
+  };
+}
+
+function stringToRef(value: string, kind: string): Ref {
+  const ref: Ref = { id: value, kind };
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
+    ref.uri = value;
+  }
+  return ref;
 }
 
 function validationBlockingReasons(proposal: EvolutionProposal, rollbackReady: boolean): string[] {

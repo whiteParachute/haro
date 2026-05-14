@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AssetEventSchema, type AssetEvent } from '@haro/agentdock-contract';
 import { AgentRegistry, ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
@@ -62,6 +63,36 @@ function jsonResponse(value: unknown) {
       return value;
     },
   };
+}
+
+function readJson<T = unknown>(path: string): T {
+  return JSON.parse(readFileSync(path, 'utf8')) as T;
+}
+
+function readAssetEvents(root: string): AssetEvent[] {
+  const dir = join(root, 'assets', 'events');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .map((name) => AssetEventSchema.parse(readJson(join(dir, name))));
+}
+
+function readAssetManifests(root: string): Array<{
+  id: string;
+  status: string;
+  latestEventRef: { id: string };
+}> {
+  const dir = join(root, 'assets', 'manifests');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .map((name) => readJson<{
+      id: string;
+      status: string;
+      latestEventRef: { id: string };
+    }>(join(dir, name)));
 }
 
 describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
@@ -279,20 +310,48 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       consumedObservationCount: number;
       pendingObservationCount: number;
       wroteProposal: boolean;
+      assetEventCount: number;
+      assetEventIds: string[];
       proposalId: string;
       proposalPath: string;
-      proposal: { status: string; sourceObservationRefs: Array<{ id: string; kind: string }> };
+      proposal: {
+        status: string;
+        targetKind: string;
+        sourceObservationRefs: Array<{ id: string; kind: string }>;
+        changeSet: Array<{ targetRef: { id: string }; contentHash?: string }>;
+      };
     } }).data;
     expect(payload.proposalCount).toBe(1);
     expect(payload.consumedObservationCount).toBe(1);
     expect(payload.pendingObservationCount).toBe(0);
     expect(payload.wroteProposal).toBe(true);
+    expect(payload.assetEventCount).toBe(1);
+    expect(payload.assetEventIds).toHaveLength(1);
     expect(payload.proposal.status).toBe('dry-run');
     expect(payload.proposal.sourceObservationRefs).toEqual([
       { id: observePayload.batchId, kind: 'observation-batch', uri: `haro-sidecar://observations/${encodeURIComponent(observePayload.batchId)}` },
     ]);
     expect(existsSync(payload.proposalPath)).toBe(true);
     expect(readdirSync(join(root, 'evolution', 'proposals'))).toHaveLength(1);
+    const proposedEvents = readAssetEvents(root);
+    expect(proposedEvents).toHaveLength(1);
+    expect(proposedEvents[0]).toMatchObject({
+      id: payload.assetEventIds[0],
+      assetId: payload.proposal.changeSet[0]?.targetRef.id,
+      kind: payload.proposal.targetKind,
+      status: 'proposed',
+      eventType: 'proposed',
+      actor: 'haro',
+      proposalRef: { id: payload.proposalId, kind: 'evolution-proposal' },
+    });
+    expect(proposedEvents[0]?.validationRef).toBeUndefined();
+    expect(readAssetManifests(root)).toEqual([
+      expect.objectContaining({
+        id: payload.proposal.changeSet[0]?.targetRef.id,
+        status: 'proposed',
+        latestEventRef: expect.objectContaining({ id: payload.assetEventIds[0] }),
+      }),
+    ]);
     expect(existsSync(join(root, 'memory'))).toBe(false);
 
     const repeatOut = captureStream();
@@ -308,11 +367,14 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       proposalCount: number;
       consumedObservationCount: number;
       wroteProposal: boolean;
+      assetEventCount: number;
     } }).data;
     expect(repeatPayload.proposalCount).toBe(0);
     expect(repeatPayload.consumedObservationCount).toBe(0);
     expect(repeatPayload.wroteProposal).toBe(false);
+    expect(repeatPayload.assetEventCount).toBe(0);
     expect(readdirSync(join(root, 'evolution', 'proposals'))).toHaveLength(1);
+    expect(readAssetEvents(root)).toHaveLength(1);
   });
 
   it('propose --auto-dry-run reports corrupt proposals and repairs deterministic proposal files', async () => {
@@ -548,6 +610,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     ]));
     expect(propose.exitCode).toBe(0);
     const proposalPayload = (JSON.parse(proposeOut.read()) as { data: { proposalId: string } }).data;
+    expect(readAssetEvents(root).filter((event) => event.status === 'proposed')).toHaveLength(1);
 
     const validateOut = captureStream();
     const validateErr = captureStream();
@@ -565,6 +628,9 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       validatedProposalCount: number;
       pendingProposalCount: number;
       wroteValidations: boolean;
+      assetEventCount: number;
+      assetEventIds: string[];
+      validationIds: string[];
       validationPaths: string[];
       validations: Array<{
         proposalId: string;
@@ -579,6 +645,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.validatedProposalCount).toBe(1);
     expect(payload.pendingProposalCount).toBe(0);
     expect(payload.wroteValidations).toBe(true);
+    expect(payload.assetEventCount).toBe(1);
+    expect(payload.assetEventIds).toHaveLength(1);
     expect(payload.validations[0]).toMatchObject({
       proposalId: proposalPayload.proposalId,
       riskVerdict: 'medium',
@@ -592,6 +660,22 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     });
     expect(existsSync(payload.validationPaths[0]!)).toBe(true);
     expect(readdirSync(join(root, 'evolution', 'validations'))).toHaveLength(1);
+    const assetEvents = readAssetEvents(root);
+    expect(assetEvents).toHaveLength(2);
+    const validatedEvent = assetEvents.find((event) => event.status === 'validated');
+    expect(validatedEvent).toMatchObject({
+      id: payload.assetEventIds[0],
+      eventType: 'validated',
+      proposalRef: { id: proposalPayload.proposalId, kind: 'evolution-proposal' },
+      validationRef: { id: payload.validationIds[0], kind: 'validation-report' },
+    });
+    expect(readAssetManifests(root)).toEqual([
+      expect.objectContaining({
+        id: validatedEvent?.assetId,
+        status: 'validated',
+        latestEventRef: expect.objectContaining({ id: payload.assetEventIds[0] }),
+      }),
+    ]);
     expect(existsSync(join(root, 'memory'))).toBe(false);
 
     const repeatOut = captureStream();
@@ -607,11 +691,14 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       validationCount: number;
       validatedProposalCount: number;
       wroteValidations: boolean;
+      assetEventCount: number;
     } }).data;
     expect(repeatPayload.validationCount).toBe(0);
     expect(repeatPayload.validatedProposalCount).toBe(0);
     expect(repeatPayload.wroteValidations).toBe(false);
+    expect(repeatPayload.assetEventCount).toBe(0);
     expect(readdirSync(join(root, 'evolution', 'validations'))).toHaveLength(1);
+    expect(readAssetEvents(root)).toHaveLength(2);
     expect(observeErr.read()).toBe('');
     expect(proposeErr.read()).toBe('');
   });

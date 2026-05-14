@@ -358,11 +358,11 @@ User approves proposal
 
 - `haro connect agent-dock` 已实现：保存 AgentDock HTTP connection。
 - `haro observe --since last` 已实现：复用 HTTP observation source，写入 `~/.haro/evolution/observations/` 并更新 base64url-encoded connection cursor；去重与锁均按 connection 隔离。
-- `haro propose --auto-dry-run --include-frontier` 已实现：读取未消费 observation batches，按需引用 active frontier signals，写入 `~/.haro/evolution/proposals/` dry-run proposal；observation source refs 作为 consumption marker，重复运行幂等；`--limit` 限制单次 proposal 打包的 observation batch 数，损坏 observation/proposal/frontier-signal 会在 JSON 结果和 stderr warning 中显式暴露。
-- `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
+- `haro propose --auto-dry-run --include-frontier` 已实现：读取未消费 observation batches，按需引用 active frontier signals，写入 `~/.haro/evolution/proposals/` dry-run proposal，并为 proposal changeSet 写入 `proposed` asset events；observation source refs 作为 consumption marker，重复运行幂等；`--limit` 限制单次 proposal 打包的 observation batch 数，损坏 observation/proposal/frontier-signal 会在 JSON 结果和 stderr warning 中显式暴露。
+- `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report，并为通过验证的 changeSet 写入 `validated` asset events；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
-- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 第一段已落地，后续继续补 snapshot/rollback 与 gated apply。
+- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 已接入 propose/validate，后续继续补 snapshot/rollback 与 gated apply。
 - 通过 AgentDock script scheduled task 周期触发。
 
 ### Phase 4: Frontier Intelligence Intake
@@ -377,6 +377,7 @@ User approves proposal
 
 - 已新增 file-backed sidecar asset registry：manifest 写入 `~/.haro/assets/manifests`，event 写入 `~/.haro/assets/events`。
 - `haro_asset_query` 已改为读取 sidecar registry，并支持 kind/status/query/limit 过滤；不再查询旧 core EvolutionAssetRegistry。
+- `haro propose --auto-dry-run` / `haro validate --pending` 已分别自动写入 `proposed` / `validated` asset events。
 - skill/prompt/profile/task config/frontier source refs 的变更全部登记资产事件。
 
 ### Phase 6: Gated Apply
