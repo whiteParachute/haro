@@ -4,7 +4,7 @@
  * Read paths (list / show / show --tail) call `services.sessions` directly.
  * `delete` runs the same service-layer transaction as Web API but emits
  * a CLI-side audit event-type ('cli.session.delete') so RBAC tracking
- * stays distinct from the Dashboard's own delete flow.
+ * stays distinct from other UI/delete flows.
  *
  * `export` and `resume` are thin wrappers — `resume` enters the existing
  * REPL with `continueLatestSession=true` against the chosen session id.

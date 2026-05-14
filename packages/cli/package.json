@@ -30,7 +30,6 @@
     "@haro/channel": "workspace:*",
     "@haro/channel-feishu": "workspace:*",
     "@haro/channel-telegram": "workspace:*",
-    "@haro/channel-web": "workspace:*",
     "@haro/mcp-tools": "workspace:*",
     "@haro/skills": "workspace:*",
     "@haro/web-api": "workspace:*",

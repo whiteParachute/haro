@@ -33,7 +33,7 @@ AgentDock 不 import Haro。Haro 不 import AgentDock 内部 `src/*`。
 
 Haro 旧设计把 workbench 和 self-evolution 放在同一仓库：
 
-- Workbench：CLI、Web Channel、飞书、Telegram、Agent Runtime、Memory、Skills、MCP、Cron（历史基线）。
+- Workbench：CLI、飞书、Telegram、Agent Runtime、Memory、Skills、MCP、Cron 以及旧 Web Channel（历史基线；Web Channel 已在 sidecar cleanup 中移除）。
 - Evolution：Self-Monitor、Industry Intel、Pattern Miner、Proposal、Auto-Refactorer。
 
 2026-05-08 的判断是：Workbench/runtime 与 AgentDock 主线高度重叠。继续在 Haro 内维护 Provider、Channel、Session runtime、Web API、CLI parity，会把 Haro 的差异化消耗在基础设施上。
@@ -242,7 +242,7 @@ Haro apply 阶段只允许写入低风险对象：
 | Evolution Asset Registry             | 保留并迁移      | 移入 sidecar 数据目录                                                    |
 | eat/shit                             | 保留思想        | 作为 asset metabolism 使用                                               |
 | CLI parity                           | 降级            | admin/debug/control surface                                              |
-| Web API / Dashboard                  | 降级            | 可选控制面                                                               |
+| Web API / Dashboard                  | 收缩            | 只保留 proposal review 工作台                                            |
 | Scenario Router / Team Orchestrator  | 冻结            | 只保留 validation 相关能力                                               |
 | Provider / Channel / Session runtime | 废弃主路径      | 不再继续扩展                                                             |
 
@@ -275,5 +275,5 @@ Haro apply 阶段只允许写入低风险对象：
 - **2026-05-08**：架构基线切换为 AgentDock Kernel + Haro Sidecar。Haro 不再继续自建完整 workbench/runtime；通过 AgentDock 外部 MCP server 注册、定时任务和 skills/MCP 调用面接入。
 - **2026-05-07**：FEAT-034 流式 UX 升级 done。该能力作为历史 workbench 资产保留，不再决定后续主路径。
 - **2026-05-06**：FEAT-032 MCP 工具层实现交付。permission / timeout / audit 经验保留，tool 语义后续迁移到 Haro sidecar。
-- **2026-05-06**：FEAT-031 Web Channel 实现交付。后续冻结为历史 channel 资产。
+- **2026-05-14**：Haro Web 收缩为 proposal review 工作台；旧 Web Channel / Dashboard Chat 代码删除。
 - **2026-05-01**：双层架构（workbench + 进化）+ 三层解耦重写。该路线已归档，见 `docs/planning/archive/redesign-2026-05-01.md`。

@@ -77,7 +77,7 @@ haro doctor --fix
 
 ### 4. Web / systemd user service
 
-Web Dashboard 相关问题可单独诊断：
+Haro proposal review Web 相关问题可单独诊断：
 
 ```bash
 haro doctor --component web --json
@@ -128,51 +128,10 @@ haro channel doctor telegram
 - 在 `config.yaml` 显式设置 `providers.codex.authMode: chatgpt` 强制走 ChatGPT 路径，避免 `auto` 模式因 env key 残留误判
 - token 永远不会出现在 Haro 的 yaml / log / audit 里；不要从 doctor 输出里找 access_token，正常情况下只有 redacted account_id 和 last_refresh
 
-#### 症状：Dashboard chat 列出了模型但点 Run 必失败
+#### 症状：打开旧 Dashboard 路由返回 404 或提示已下线
 
-- 多半是 `authMode=env` 但 `OPENAI_API_KEY` 没设。FEAT-029 follow-up（dd2d6b2）已经在 `/api/v1/providers` 把这种情况折叠成 `liveModelsFailed: true`，前端会禁用提交并给出原因；如果你看到的是旧版本行为（显示模型但提交报错），升级到 dd2d6b2 之后即可。
+这是预期行为。Haro Web 只保留 proposal review 工作台；旧 `/chat`、`/sessions`、`/config`、`/cron` 等页面已经下线。
 
-### OPENAI_API_KEY 模式
-
-### 症状：setup 报告 "未检测到 OPENAI_API_KEY"
-
-```bash
-haro setup
-# ...
-# PROVIDER_SECRET_MISSING: 未检测到 OPENAI_API_KEY
-```
-
-**排查步骤**：
-
-1. 运行 `haro provider env codex` 查看当前进程、provider env file、systemd `EnvironmentFile` 来源摘要
-2. 确认已导出：`echo $OPENAI_API_KEY`
-3. 确认值非空且非纯空格
-4. 如果使用 `sudo` 或 `su` 切换用户，环境变量会丢失；改用同一用户会话执行
-5. 在 Windows PowerShell 中使用 `$env:OPENAI_API_KEY = '<your-key>'` 而非 `export`
-6. 需要写入长期 env file 时，先在当前进程设置 secret，再显式运行 `haro provider setup codex --write-env-file`；Haro 不会把 key 写入 YAML
-
-### 症状：run 时报 auth 错误
-
-```bash
-haro run "..."
-# Error: Codex Provider: OPENAI_API_KEY is not set
-```
-
-即使 `echo $OPENAI_API_KEY` 有值，也可能因为：
-
-- Haro 是在另一个 shell 会话（如 VS Code 内置终端 vs 系统终端）中启动的
-- 环境变量只写入了 `.bashrc` 但未 `source ~/.bashrc`
-- IDE 的启动配置未继承当前 shell 的环境变量
-
-**建议**：在运行 Haro 的同一个终端中先执行 `export OPENAI_API_KEY=<your-key>`，再运行 `haro provider doctor codex`。如是 systemd 服务，确认 provider env file 已被 unit 的 `EnvironmentFile` 引用。
-
-### 症状：key 已设置但 doctor 仍报 unhealthy
-
-可能是网络或 API 侧问题：
-
-- Key 是否过期或被撤销
-- 账户余额是否充足
-- 是否使用了不支持 Codex 的 key（Codex 需要特定权限的 OpenAI key）
 
 ## Node.js / pnpm 版本不足
 

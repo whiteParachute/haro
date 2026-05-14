@@ -73,7 +73,7 @@ export class CodexProvider implements AgentProvider {
       const listerDeps: ListModelsDeps = { ...(deps.modelListerDeps ?? {}) };
       // FEAT-029 follow-up: route the lister's source through resolveAuth() so
       // that authMode=env without a key throws (the existing soft-fall would
-      // otherwise display models from the local cache and let Dashboard accept
+      // otherwise display models from the local cache and let UI callers accept
       // a request that runtime is guaranteed to fail).
       if (!listerDeps.readApiKey) {
         listerDeps.readApiKey = () => {

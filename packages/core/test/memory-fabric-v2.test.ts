@@ -67,14 +67,14 @@ describe('Memory Fabric v2 file store [FEAT-035]', () => {
       scope: 'shared',
       topic: 'web-channel history search',
       summary: 'D4 决议历史搜索走 Memory Fabric',
-      content: 'FEAT-031 D4: Web Channel 历史搜索 = 文件存储内的搜索（aria-memory 风格）。',
+      content: '历史 MemoryFabric 文件搜索 = aria-memory 风格。',
       sourceRef: 'spec:FEAT-031#8',
       tags: ['feat-031', 'd4'],
       verificationStatus: 'verified',
       confidence: 0.9,
     });
 
-    const results = fabric.searchMemoryFiles('Web Channel 历史搜索', {
+    const results = fabric.searchMemoryFiles('历史 MemoryFabric 文件搜索', {
       scopes: ['shared'],
       limit: 5,
     });

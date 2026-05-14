@@ -1,232 +1,112 @@
-# Web Dashboard 设计
+# Haro Web Proposal Review Workbench
 
-> **2026-05-08 状态：historical workbench baseline。**
+> **2026-05-14 状态：Haro Web 已从历史 Dashboard 收缩为提案 Review 工作台。**
 >
-> 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
+> Haro 的主定位是 AgentDock self-evolution sidecar。AgentDock 负责 runtime / workbench / IM / scheduler / memory；Haro Web 不再提供 chat、agent run、cron、config、memory、skill、logs、provider、session 等通用控制面。
 
+## 目标
 
-## 概述
+Haro Web 只解决一个问题：当 Haro 自动生成需要人审的 `ApprovalRequestRecord` 时，维护者可以像看 issue 一样查看提案并作出决策。
 
-Web Dashboard 是 Haro 的可视化呈现层。FEAT-015 交付的是基础框架：`packages/web` 前端包、嵌入在 CLI 内的 Hono HTTP 服务，以及 `haro web` 启动命令。该模块遵守可插拔原则，不改动 `packages/core` 的执行语义；关闭或移除 Dashboard 后，既有 CLI 命令仍独立工作。
+每个提案必须清楚展示：
+
+- 为什么改（whyChange）
+- 怎么改（howChange）
+- 预期收益（expectedBenefits）
+- 风险等级、回归风险、必须测试、人工检查
+- rollback plan
+- reviewer instruction
+
+维护者可以给出三类决策：
+
+| 决策 | 行为 |
+| --- | --- |
+| approve | 写入 `approval-decisions/*.json`，并向对应 proposal 追加 `human-approval` ref |
+| reject | 写入 decision，并把对应 proposal 标记为 `rejected` |
+| request-changes | 写入带 direction 的 decision，要求 Haro 后续按方向重做 proposal |
 
 ## 组成
 
 | 层 | 路径 | 职责 |
 | --- | --- | --- |
-| 前端 | `packages/web/` | React 19 + Vite 8 + Tailwind 4 + shadcn/ui 风格组件，提供 Dashboard shell、bootstrap/login、Chat、Sessions、Users、Logs、Knowledge、Skills、主题切换、轻量 i18n、API/WS client、auth/list stores，以及 FEAT-034 的 `MessageStream` / `MarkdownRenderer` / `ThinkingPanel` / `ToolTimeline` / `ImageLightbox` Chat UX 管线。 |
-| 后端 | `packages/cli/src/web/` | Hono app factory、本地用户/session + legacy API key 认证、RBAC middleware、统一分页 REST、`/ws` WebSocket 协议、HTTP server 启停、生产静态文件服务。 |
-| CLI | `packages/cli/src/index.ts` | 通过 `registerCommand()` 注册 `haro web`，支持 `--port` 与 `--host`。 |
-| 根脚本 | `package.json` | `pnpm dev:web` 同时启动 Vite dev server 与 Hono API server。 |
+| 前端 | `packages/web/` | React + Vite + Tailwind。只保留 login/bootstrap、layout、theme toggle、proposal review list/cards。 |
+| 后端 | `packages/web-api/` | Hono app。只挂载 `/api/health`、`/api/v1/auth`、`/api/v1/approval-requests`。 |
+| CLI | `packages/cli/src/index.ts` | `haro web --port <n> --host <addr>` 薄启动器，只启动 review Web，不启动 channels/runtime。 |
 
-## 开发模式
+## API surface
+
+```http
+GET  /api/health
+GET  /api/v1/auth/status
+POST /api/v1/auth/bootstrap
+POST /api/v1/auth/login
+GET  /api/v1/auth/me
+POST /api/v1/auth/logout
+
+GET  /api/v1/approval-requests?status=pending|decided|all
+GET  /api/v1/approval-requests/:id
+POST /api/v1/approval-requests/:id/decision
+```
+
+`POST /decision` body:
+
+```json
+{
+  "decision": "approve | reject | request-changes",
+  "direction": "request-changes 时必填"
+}
+```
+
+## 数据边界
+
+Haro Web 只读写 Haro sidecar-owned evolution store：
+
+```text
+~/.haro/evolution/
+├── approval-requests/
+├── approval-decisions/
+└── proposals/
+```
+
+它不写 AgentDock DB、不写 AgentDock memory、不启动 Haro runner、不调度 cron、不接管任何 IM channel。
+
+## 已删除的历史 Dashboard 能力
+
+以下能力属于旧 Haro workbench 路线，已从当前代码面删除或下线：
+
+- Web Chat / Web Channel / WebSocket streaming
+- Agent CRUD / run
+- Sessions UI/API
+- Cron HTTP management
+- Channel / Gateway management
+- Provider / monitor / invocation stats
+- Logs / Knowledge / Memory pages
+- Skills management pages
+- Generic config editor
+- Web user management UI/API
+- Workflow dispatch debugger UI
+- i18n / pagination / chat streaming UI infrastructure
+
+保留最小 Web auth 是为了保护 proposal review decision；不代表 Haro Web 重新成为通用控制面。
+
+## 与 AgentDock 审批路径的关系
+
+Haro Web review 与 AgentDock/飞书中的审批呈现是并行入口：
+
+- Haro scheduled loop 负责生成 proposal / validation / approval request。
+- AgentDock 可以通过 MCP/skill/IM 把 approval request 发给用户审批。
+- Haro Web 可以直接查看同一批 approval request artifacts。
+- 所有 apply 仍必须经过 validation + human approval refs + snapshot/rollback gate。
+
+## 启动
+
+```bash
+pnpm -F @haro/web build
+haro web --port 3456 --host 127.0.0.1
+```
+
+源码开发：
 
 ```bash
 pnpm dev:web
 ```
-
-- 前端：Vite dev server 固定使用 `http://127.0.0.1:5173`
-- 后端：Hono API server 固定使用 `http://127.0.0.1:3456`
-- Vite proxy：`/api` → `http://localhost:3456`
-- 健康检查：访问 `http://127.0.0.1:5173/api/health` 会经 Vite proxy 转发到 Hono，返回 `service=haro-web` 与 `status=ok`
-
-根脚本使用 `concurrently -k`，任一进程失败时会停止另一侧，避免开发服务器残留。
-
-## 生产模式
-
-```bash
-pnpm -F @haro/web build
-pnpm -F @haro/cli exec haro web --port 3456 --host 127.0.0.1
-```
-
-生产模式由 Hono 直接 serve `packages/web/dist/`：
-
-- `GET /` 返回 Dashboard HTML，占位首页挂载在 `<div id="root"></div>`
-- `GET /assets/*.js` 与 `GET /assets/*.css` 返回 Vite 构建产物
-- `GET /chat`、`GET /sessions`、`GET /status` 等 BrowserRouter 深链会 fallback 到
-  `index.html`，便于直接打开或刷新客户端路由
-- `GET /api/health` 返回基础健康检查 JSON
-- `GET /api/v1/agents` / `GET /api/v1/agents/:id` 返回 Agent 只读 read-model；列表仅暴露 `id`、`name`、`summary`、`defaultProvider`、`defaultModel`，详情额外暴露 `systemPrompt` 与 `tools`
-- `POST /api/v1/agents/:id/run` 与 `/chat` 使用严格请求体 schema，未知字段返回 400；执行事件通过 `/ws` 推送
-- `GET /api/v1/sessions`、`GET /api/v1/sessions/:id`、`GET /api/v1/sessions/:id/events`、`DELETE /api/v1/sessions/:id` 提供 session 浏览、详情与删除能力
-- `GET /api/v1/status` 返回系统概览：SQLite/FTS5、session 统计、provider health、Channel 只读健康摘要（`id/enabled/health/lastCheckedAt/config`）
-- `GET /api/v1/doctor` 返回按 filesystem/database/config/providers/channels 分组的 doctor 报告；Channel 分组仅诊断展示，不提供 lifecycle 操作
-- `GET /api/v1/config`、`PUT /api/v1/config`、`GET /api/v1/config/sources` 提供合并配置、项目级 `.haro/config.yaml` 写入、字段来源展示；PUT 写入前通过现有 config schema/loading path 校验，失败返回字段级 issues
-- `GET /api/v1/guard/workflows`、`GET /api/v1/guard/workflows/:workflowId` 提供 FEAT-023 权限/预算只读 read model，返回 workflow budget state、`budgetExceeded`、`blockedReason`、branch token ledger 与 permission audit 摘要；该 API 不提供 Web 审批队列或写操作。
-- `GET /api/v1/workflows`、`GET /api/v1/workflows/:id`、`GET /api/v1/workflows/:id/checkpoints` 提供 FEAT-018 Orchestration Debugger 只读 read model，返回 workflow summary、branch ledger、merge envelope、checkpoint metadata / JSON、leafSessionRefs、rawContextRefs 与 stalled branch 信息。
-- `GET /api/v1/logs/session-events` 支持 `sessionId/agentId/eventType/from/to/limit` 查询并返回结构化 payload；`GET /api/v1/logs/provider-fallbacks` 返回 original/fallback provider、trigger、ruleId 与时间。
-- `GET /api/v1/providers` 返回当前注册的 provider 列表（`id` / `enabled` / `authMode` / `defaultModel` / `liveModels`），用于 ChatPage run-config 卡片的 provider/model 下拉；`listModels()` 抛错时折叠成 `liveModelsFailed: true`，错误文本（含 env-var 名 / filesystem path）不进响应体（FEAT-029 follow-up）。
-- `GET /api/v1/providers/stats` 按 `24h`、`7d`、`all` 三个固定窗口聚合 `session_events`、`provider_fallback_log` 与 FEAT-023 `token_budget_ledger`，返回 provider/model 调用、成功/失败、fallback、`avgLatencyMs`、token 和估算成本。
-- `GET /api/v1/memory/query`、`POST /api/v1/memory/write`、`GET /api/v1/memory/stats`、`POST /api/v1/memory/maintenance` 提供 FEAT-024 Knowledge contract。查询支持 `keyword/scope/agentId/layer/verificationStatus/limit`；写入仅允许 `shared` 和当前 agent scope，`platform` scope 一律拒绝；maintenance 返回 `202 + taskId` 异步 contract。
-- `GET /api/v1/skills`、`GET /api/v1/skills/:id`、`POST /api/v1/skills/:id/enable|disable`、`POST /api/v1/skills/install`、`DELETE /api/v1/skills/:id` 提供 FEAT-024 Skills contract。列表展示 enabled/source/installedAt/preinstalled/usage/asset status；预装 skill 不可卸载；user skill install/uninstall 必须返回 asset audit 结果或显式 `unsupported`。
-- `GET /api/v1/users`、`POST /api/v1/users`、`PATCH /api/v1/users/:id` 提供 FEAT-028 本地 Web 用户管理；创建/禁用/改角色等写操作需要 admin 及以上并写入 `web_audit_events`。
-
-## 认证、分页、i18n 与日志（FEAT-028）
-
-### 多用户与登录流程
-
-- 新实例首次访问 `/` 或受保护路由时，如果 `web_users` 为空，前端会跳转到
-  `/bootstrap`，由浏览器创建第一个 `owner` 用户。bootstrap 成功后后端写入
-  `web_users` 与 `web_sessions`，设置 httpOnly `haro_web_session` cookie，并自动进入
-  `/chat`。
-- 已有用户实例访问受保护路由时会跳到 `/login`。登录成功后同样设置 session cookie；
-  `/api/v1/auth/me` 返回当前用户、角色与权限摘要，前端 `AuthGuard` 据此决定渲染、
-  跳转或展示 403。
-- 角色层级为 `viewer < operator < admin < owner`。`/users` 需要 admin 及以上；
-  viewer 在 Sessions 页面只能读取列表/详情，删除按钮不渲染，直接调用
-  `DELETE /api/v1/sessions/:id` 会返回 403。
-- WebSocket `authenticate` 同时支持 cookie session 和 legacy API key：前端先发送无
-  token 的 cookie 认证消息，失败后才降级读取 `localStorage["haro:web-api-key"]`。
-
-### legacy `HARO_WEB_API_KEY` 兼容窗口
-
-- 旧部署配置 `HARO_WEB_API_KEY` 后，`x-api-key` 仍可访问 legacy API 路径，避免升级后
-  直接失效；未携带 key 的受保护 API 仍返回 401。
-- API key 兼容只作为迁移窗口和自动化脚本入口。长期交互式 Dashboard 主路径是本地用户
-  + Web session；建议迁移步骤是：启动新版 Dashboard → bootstrap owner → 创建 admin /
-  operator / viewer → 将脚本逐步迁移到用户 session 或明确保留 `x-api-key` 自动化入口。
-- token、密码和 refresh token 不写入日志、YAML 或 audit metadata。
-
-### 统一分页 contract
-
-Sessions、Logs、Knowledge、Skills、Users 五类列表统一支持：
-
-```http
-GET /api/v1/sessions?page=1&pageSize=25&sort=createdAt&order=desc&q=keyword
-```
-
-响应统一为：
-
-```json
-{
-  "items": [],
-  "pageInfo": {
-    "page": 1,
-    "pageSize": 25,
-    "totalPages": 0,
-    "hasNextPage": false,
-    "hasPreviousPage": false
-  },
-  "total": 0
-}
-```
-
-- 后端统一通过 `parsePageQuery()` 钳制 `page/pageSize/q`，并对 `sort` 做 allowlist；
-  SQL `ORDER BY` 只使用服务端映射后的列名与 `asc|desc`，用户输入不参与拼接。
-- 兼容旧调用方：仍接受 `limit/offset`，服务端会转换为等价 `page/pageSize`。
-- 前端五个列表页共用 `PaginatedTable` / `PaginationControls`，状态覆盖
-  loading、empty、error、ok，并同步 URL search params，方便刷新和分享。
-
-### zh-CN baseline 与 en-US fallback
-
-- 默认 locale 为 `zh-CN`，`packages/web/src/i18n/keys.ts` 提供 key 常量，
-  `locales/zh-CN.ts` 为主资源，`locales/en-US.ts` 作为 fallback。
-- `I18nProvider` 在 `main.tsx` 包裹全应用；Settings 页面提供语言选择并持久化到
-  `localStorage`。技术标识（如 provider/model/status 字段值）允许保留英文，但页面标题、
-  表单校验、按钮、空态与错误摘要默认显示中文。
-
-### 日志与审计
-
-- 所有 HTTP 请求通过 `createLogger()` 写入 `~/.haro/logs/haro.log`，日志为 pino JSON
-  格式，至少包含 `method`、`path`、`statusCode`、`durationMs`。
-- 用户创建、用户状态/角色变更、session 删除等写操作通过 `DashboardAuthStore.recordAudit`
-  写入 `web_audit_events`，包含 actor user、target scope/ref、operation class、outcome
-  与 reason。
-- FEAT-029 Codex ChatGPT auth 与 FEAT-028 用户体系保持分层：ChatGPT provider 的
-  `chatgptAuth` / provider fallback audit 仍归 sessions/logs read model；Dashboard Web
-  登录只保护控制面访问，不修改 Codex provider 的 ChatGPT mode 输出结构。
-
-## Agent Interaction（FEAT-016 → FEAT-031 重写）
-
-FEAT-016 最初通过 WebSocket `chat.start` / `chat.message` 直接驱动 runtime；FEAT-031（2026-05-06）把 Chat 页改为 Web Channel 客户端，所有 send / receive / upload / history 都走 `/api/v1/channels/web/*`，与飞书 / Telegram 同等公民。
-
-- Chat 入口流程：首次发送时 POST `/api/v1/channels/web/sessions` 创建 session，再 POST `/sessions/:id/messages`（content + 可选 metadata.agentId/providerId/modelId 传给 runtime）；前端再通过 `/ws` 发 `subscribe { channel: 'channels:web' }` + `subscribe { channel: 'sessions', sessionId }` 订阅事件。
-- 服务端推送 `channels.web.event` 消息，载荷 kind 包括 `message`（用户消息已落库，前端用以替换 optimistic 占位）/ `agent`（legacy agent 输出 delta，给旧客户端迁移窗口）/ `stream`（FEAT-034 structured `StreamEvent`，新 Chat store 优先消费）/ `session.update`（状态切换）。Cancel 仍走 `chat.cancel` WS，保留兼容路径；旧的 `event.stream` 协议仅用于 cancel 路径。
-- 历史浏览：`useChatStore.loadOlder()` / `loadSession()` 调用 `GET .../sessions/:id/messages?before&beforeId&limit`（cursor 分页，复合 cursor 防同毫秒丢行）。
-- Disabled 模式（AC3）：`useChatStore.connect()` 启动时 `GET /api/v1/channels`，若 web 被 disable，store 把 `status` 切到 `disabled`、`channelEnabled = false`；ChatInput 按钮 disabled 并展示「Web Channel 已禁用，Dashboard 进入只读模式」。读路由（list sessions / 历史 / 文件下载）仍可用。
-- Sessions 列表默认仅展示 `sessionId`、`agentId`、`status`、`createdAt`，详情页将连续 text delta 折叠为消息，tool_call/tool_result 默认收起 JSON。
-- Chat 最近选择持久化到 `localStorage["haro:lastChatConfig"]`，包括 `agentId`、`providerId`、`modelId`。
-- ChatPage 顶部有可折叠的 run-config 卡片（默认收起），provider/model 下拉来自 `/api/v1/providers`；当无可用 (provider, model) 组合时提交按钮禁用并展示原因（FEAT-029 follow-up）。Runner 在 FE pin 住 provider+model 时短路 `resolveSelection`，绕过基于规则的 provider 选择并直接执行用户指定的组合；这些选择通过 message metadata 传给 runtime（`handleExternalInbound` 消费 `meta.agentId/providerId/modelId`）。
-
-## Chat Streaming UX（FEAT-034）
-
-FEAT-034（2026-05-07 done）把 Chat 页从单一 text delta 升级为分轨流式体验，但保持 FEAT-031 的 Web Channel 边界：history 加载和实时推送都进入同一套前端渲染管线，不绕过 Channel 抽象。
-
-- 协议：`@haro/core/stream` 定义 12 类 `StreamEvent`（message / thinking / tool / hook / usage / status / error）。CLI executor 将 legacy `AgentEvent` 通过 `agentEventToStream()` 翻译后调用 Web Channel `publishStreamEvent()`；WebSocket envelope 为 `channels.web.event` + `kind: 'stream'`。
-- 兼容：迁移窗口内服务端仍会并行发送 legacy `kind: 'agent'`。`useChatStore` 以 structured stream 为准，对相同 `messageId` / 相同最终内容的 legacy payload 做 ignore 或 replace，避免 UI 和 CLI 重复显示最终回答。
-- 渲染：Chat 主区使用 `MessageStream`，消息内容统一走 `MarkdownRenderer` + `CodeBlock` + `ImageLightbox`。GFM 覆盖表格、任务列表、引用、删除线；已识别代码块保留 `rehype-highlight` spans，未知语言 fallback 为纯文本 + copy 按钮，不显示假语言标签或行号。
-- 过程可见性：`ThinkingPanel` 按消息折叠展示 thinking；`ToolTimeline` 展示当前 session 最近 30 个 tool/hook 事件，状态色只用 shadcn/ui 既有 token。桌面为右侧栏，`< 768px` 降级为可关闭抽屉。
-- 性能：`MessageStream` 在长会话下使用 `react-window` 虚拟化，保留 Web Channel cursor 分页加载历史；多图消息 lightbox 支持方向键、触屏滑动、序号和 ESC/背景关闭。
-
-已知后续：provider-codex 尚未把 reasoning 原生拆成 `thinking_delta`；runtime hook pre/post 的真实事件源也等待后续 hook 流接通。FEAT-034 先提供协议和 UI 消费面，保证后续事件源接入时不再改 Chat 渲染边界。
-
-
-## Orchestration Debugger（FEAT-018）
-
-FEAT-018 将 `/dispatch` 从占位页升级为 Team workflow 只读调试面：
-
-- Workflows 列表展示 `workflowId`、`executionMode`、`orchestrationMode`、`templateId`、`status`、`currentNodeId`、`blockedReason` 与最新 checkpoint。
-- 详情页用 fork-and-merge 图展示并行 branch 和统一 merge 点，禁止把 branch 渲染为串行 chain。
-- Branch Ledger 表格展示 `branchId/memberKey/status/attempt/lastError/leafSessionRef/outputRef/consumedByMerge`，用于定位 stalled branch。
-- Checkpoint Timeline 可打开只读 Debug Drawer，分区展示 `rawContextRefs`、`sceneDescriptor/routingDecision`、`branchState.branches`、`branchState.merge`、`leafSessionRefs`、`budgetState/permissionState` 与完整 checkpoint JSON。
-- 对 budget/permission 阻断仅展示“需要人类介入”和详情，不渲染 approve、continue、stop、retry、skip 等写操作按钮。
-
-数据来源优先级保持 Phase 1 边界：workflow/checkpoint 以 SQLite `workflow_checkpoints.state` JSON 为主 read model；预算/权限摘要复用 `PermissionBudgetStore` / `/guard` read model；不修改 `TeamOrchestrator`、`ScenarioRouter`、`PermissionBudgetStore` 的核心执行语义。
-
-## Runtime Logs & Provider Monitoring（FEAT-025）
-
-FEAT-025 将 `/logs`、`/invoke` 与 `/monitor` 从占位升级为运维可观测面：
-
-- Logs 页面读取 `/api/v1/logs/session-events`，可按 sessionId、agentId、eventType、时间范围筛选，并用格式化 JSON 展示原始事件 payload。
-- 同页读取 `/api/v1/logs/provider-fallbacks`，展示 originalProvider/originalModel、fallbackProvider/fallbackModel、trigger、ruleId、createdAt。
-- Invoke / Provider Monitoring 页面读取 `/api/v1/providers/stats`，同时展示 `24h`、`7d`、`all` 三个窗口的调用次数、成功率、fallback 次数、平均延迟、input/output tokens 和 estimatedCost。
-- Monitor 页面通过 WebSocket 订阅 `system.status` 与 `session.update`，WebSocket client 断线后会重连并恢复 `system`、`sessions` 以及已观察 session 订阅。
-- provider unhealthy / fallback spike 仅作为只读告警展示；页面不自动修改 provider selection rules，也不提供 provider 切换写操作。
-
-Runtime latency 来源保持在 Runner 边界：Provider adapter 仍只实现 `provider.query()` 协议，Runner 对 terminal `result/error` 事件补充 provider/model/latencyMs 并落库 `session_events.latency_ms`，不改变 ProviderRegistry 或 AgentRunner 核心调用语义。
-
-## Knowledge & Skills（FEAT-024）
-
-FEAT-024 将 `/knowledge` 与 `/skills` 从占位升级为可用管理面：
-
-- Knowledge 页面是历史 workbench 设计；sidecar baseline 下 Memory/Knowledge UI 由 AgentDock 提供，Haro 只消费 observation refs。
-- Knowledge 写入表单默认 `shared`；选择 `agent` 时必须填写 `agentId`；页面不提供 `platform` 写入入口，后端也会拒绝 platform 写入，避免绕过治理边界。
-- Skills 页面按 `Preinstalled skills` 与 `User skills` 分组展示，包含 enabled/source/installedAt/isPreinstalled/assetStatus/lastUsedAt/useCount。
-- enable/disable 是低风险操作，会走 SkillsManager 现有 lifecycle；install/uninstall 返回 Evolution Asset Registry audit 结果。
-- 预装 skill 的 uninstall 按钮禁用；user skill uninstall 使用 archive/uninstall 语义，不直接绕过审计删除文件。
-- 页面只提示 `haro shit` 代谢流程，不在浏览器中直接执行代谢清理。
-
-## System Management（FEAT-017）
-
-FEAT-017 在 Web Dashboard 中补齐系统管理页面：
-
-- Status 页面展示健康卡片网格（数据库、目录可写性、providers、channels、sessions）以及 grouped doctor report。
-- Settings 页面展示常用配置表单（`logging.level`、`defaultAgent`、`runtime.taskTimeoutMs`）、配置来源层级、字段生效来源以及 Channel 配置摘要。
-- 高级 YAML 模式使用现有 `<textarea>` 原语实现，未引入 CodeMirror/Monaco 等新依赖；保存仍走同一后端 schema/loading 校验。
-- Config API 只写项目级 `.haro/config.yaml`，不修改全局配置、默认配置或 CLI overrides。
-- Channel 在 FEAT-017 中仅作为 Status/Doctor/Config response 内嵌的只读摘要出现；独立 `/api/v1/channels*` contract、enable/disable/setup/remove、Gateway 控制与 Channel 专属页面仍由 FEAT-019 拥有。
-
-## Orchestration Debugger（FEAT-018）
-
-FEAT-018 在 Web Dashboard 中新增 Dispatch / Orchestration Debugger 页面，用于只读排查 team workflow：
-
-- 列出 workflows，并突出 `blocked`、`needs-human-intervention`、`stalled` 等需要关注的状态。
-- 选择 workflow 后展示 fork-and-merge 拓扑：branch 平行排列，merge 位于所有 branch 下游；不得渲染成 branch-to-branch chain。
-- 展示 checkpoint timeline、branch ledger、merge envelope、leafSessionRefs 与 latest checkpoint ref。
-- stalled branch 需要突出展示 `branchId`、`memberKey`、`status`、`attempt`、`lastEventAt`、`lastError`、`leafSessionRef`、`outputRef`、`consumedByMerge`。
-- 点击 checkpoint 打开只读 debug drawer，分区展示完整结构化 JSON：`rawContextRefs`、`sceneDescriptor/routingDecision`、`branchState.branches`、`branchState.merge`、`leafSessionRefs`、`budgetState/permissionState`。
-- 预算/权限摘要来自 FEAT-023 `/api/v1/guard/workflows*`；页面只展示阻断原因，不提供 approve/continue/stop、重跑 branch、跳过 branch 或策略修改。
-
-## 与后续 FEAT 的边界
-
-FEAT-015 交付 Dashboard foundation，FEAT-016 交付 Chat/Sessions/WebSocket。后续 FEAT 在该基础上扩展：
-
-- FEAT-016：Agent Interaction（Chat、Sessions、WebSocket）— 已完成。
-- FEAT-017：System Management（Status、Settings、Status/Doctor/Config REST）— done；仅通过 `/status`/`/doctor`/config sources 内嵌 Channel Health，只读消费，不拥有独立 `/api/v1/channels*`；真实 provider 连通测试暂无 harness，已按 owner 指示跳过。
-- FEAT-018：Orchestration Debugger（Dispatch、workflow graph、checkpoint timeline、stalled branch debug）— done；只读消费 `workflow_checkpoints` 与 FEAT-023 guard summary，不提供 workflow 写操作。
-- FEAT-019：Channel & Agent Management（独立 `/api/v1/channels*`、Channel 操作、Gateway、Agent YAML 管理）
-- FEAT-023：Permission & Token Budget Guard（done；Dashboard 只消费 `/api/v1/guard/*` read model，页面与审批队列仍不在本 FEAT 内）
-- FEAT-024：Knowledge & Skills（done；Memory 搜索/安全写入、Skills 生命周期、asset 追溯）
-- FEAT-025：Runtime Logs & Provider Monitoring（done；Session events、provider fallback、Provider/token/latency 三窗口统计、Monitor 只读告警）
-- FEAT-026：Provider Onboarding Wizard（由 CLI/PAL 拥有；Dashboard 只消费 provider status/config read model）
-- FEAT-027：Guided Setup & Doctor Remediation（由 CLI 拥有；Dashboard 只消费 doctor/setup JSON report）
-- FEAT-028：Web Dashboard Product Maturity（本地多用户、统一服务端分页、中文本地化、角色化操作）

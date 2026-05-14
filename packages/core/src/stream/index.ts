@@ -1,9 +1,8 @@
 /**
  * `@haro/core/stream` — explicit StreamEvent protocol (FEAT-034).
  *
- * The 12-kind protocol replaces the implicit text-only delta stream the
- * Dashboard used before. Re-exported here so adapters (web-api, channel-web)
- * and consumers (Dashboard chat store) can import a single canonical surface.
+ * This remains as historical protocol utility for adapters that still want a
+ * structured stream surface. The Haro Web sidecar cleanup removed the old chat consumer; Haro Web now only reviews proposals.
  */
 
 export {

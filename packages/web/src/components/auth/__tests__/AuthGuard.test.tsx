@@ -6,8 +6,8 @@ import { canAccessRole } from '@/router/roles';
 import type { AuthStatus } from '@/stores/auth';
 import type { WebUserRole } from '@/types';
 
-describe('FEAT-028 AuthGuard', () => {
-  it('covers four statuses without allowing protected content before authentication', () => {
+describe('AuthGuard', () => {
+  it('covers protected-route states without allowing content before auth', () => {
     const matrix: Array<[AuthStatus, ReturnType<typeof resolveAuthGuardDecision>]> = [
       ['initial', 'loading'],
       ['needs-bootstrap', 'bootstrap'],
@@ -20,7 +20,7 @@ describe('FEAT-028 AuthGuard', () => {
     expect(renderToString(<MemoryRouter><AuthGuard><span>protected-child</span></AuthGuard></MemoryRouter>)).toContain('加载中');
   });
 
-  it('checks 4 roles against role hierarchy and returns forbidden when insufficient', () => {
+  it('checks role hierarchy and returns forbidden when insufficient', () => {
     const roles: WebUserRole[] = ['viewer', 'operator', 'admin', 'owner'];
     for (const role of roles) {
       for (const required of roles) {

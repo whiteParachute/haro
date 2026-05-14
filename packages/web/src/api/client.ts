@@ -3,27 +3,7 @@ import {
   readPersistedApiKey,
   useAuthStore,
 } from '@/stores/auth';
-import type {
-  ApiResponse,
-  MemoryMaintenanceTask,
-  MemoryQueryFilters,
-  MemoryQueryResponse,
-  MemoryStats,
-  MemoryWriteInput,
-  MemoryEntry,
-  SkillListResponse,
-  SkillMutationResponse,
-  SkillDetail,
-  LogSessionEventFilters,
-  LogSessionEventRecord,
-  ProviderFallbackRecord,
-  ProviderStatsResponse,
-  WorkflowDebugDetail,
-  WorkflowListResponse,
-  PaginatedQuery,
-  PaginatedResponse,
-  WebUser,
-} from '@/types';
+import type { ApiResponse, ApprovalDecisionOption, ApprovalRequestView } from '@/types';
 
 interface ErrorPayload {
   error?: string;
@@ -68,9 +48,8 @@ function createRequestError(
   const message = payload.message ?? ('error' in payload ? payload.error : undefined);
   const error = response.status === 401
     ? new Error(
-      `${message ?? 'Unauthorized'}: Dashboard API key is missing or invalid. ` +
-        `Set the key in the Dashboard auth card or localStorage key "${AUTH_API_KEY_STORAGE_KEY}" ` +
-        'to match HARO_WEB_API_KEY.',
+      `${message ?? 'Unauthorized'}: Haro Web API key is missing or invalid. ` +
+        `Set localStorage key "${AUTH_API_KEY_STORAGE_KEY}" to match HARO_WEB_API_KEY, or log in with a Web user.`,
     )
     : new Error(message ?? `Request failed with status ${response.status}`);
   if ('issues' in payload && Array.isArray(payload.issues)) {
@@ -123,178 +102,23 @@ export function post<T>(path: string, body?: unknown, init?: RequestInit) {
   });
 }
 
-export function put<T>(path: string, body?: unknown, init?: RequestInit) {
-  return request<T>(path, {
-    ...init,
-    method: 'PUT',
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+export function listApprovalRequests(status: 'pending' | 'decided' | 'all' = 'pending', init?: RequestInit) {
+  const query = new URLSearchParams({ status }).toString();
+  return get<{ items: ApprovalRequestView[]; total: number }>(`/v1/approval-requests?${query}`, init);
 }
 
-export function patch<T>(path: string, body?: unknown, init?: RequestInit) {
-  return request<T>(path, {
-    ...init,
-    method: 'PATCH',
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+export function getApprovalRequest(id: string, init?: RequestInit) {
+  return get<ApprovalRequestView>(`/v1/approval-requests/${encodeURIComponent(id)}`, init);
 }
 
-export function del<T>(path: string, init?: RequestInit) {
-  return request<T>(path, {
-    ...init,
-    method: 'DELETE',
-  });
-}
-
-function encodePathSegment(value: string) {
-  return encodeURIComponent(value);
-}
-
-function encodePaginatedQuery(filters: PaginatedQuery = {}) {
-  const searchParams = new URLSearchParams();
-  for (const [key, value] of Object.entries(filters)) {
-    if (value !== undefined && value !== '') searchParams.set(key, String(value));
-  }
-  const query = searchParams.toString();
-  return query ? `?${query}` : '';
-}
-
-export function listWorkflows(filters: { limit?: number } = {}, init?: RequestInit) {
-  const searchParams = new URLSearchParams();
-  if (filters.limit !== undefined) {
-    searchParams.set('limit', String(filters.limit));
-  }
-  const query = searchParams.toString();
-  return get<WorkflowListResponse>(`/v1/workflows${query ? `?${query}` : ''}`, init);
-}
-
-export function getWorkflow(workflowId: string, init?: RequestInit) {
-  return get<WorkflowDebugDetail>(`/v1/workflows/${encodePathSegment(workflowId)}`, init);
-}
-
-export function getWorkflowCheckpoints<T>(
-  workflowId: string,
-  options: { checkpointId?: string } = {},
+export function decideApprovalRequest(
+  id: string,
+  input: { decision: ApprovalDecisionOption; direction?: string },
   init?: RequestInit,
 ) {
-  const searchParams = new URLSearchParams();
-  if (options.checkpointId) {
-    searchParams.set('checkpointId', options.checkpointId);
-  }
-  const query = searchParams.toString();
-  const path = `/v1/workflows/${encodePathSegment(workflowId)}/checkpoints${query ? `?${query}` : ''}`;
-  return get<T>(path, init);
-}
-
-export function queryMemory(filters: MemoryQueryFilters = {}, init?: RequestInit) {
-  const searchParams = new URLSearchParams();
-  if (filters.keyword) searchParams.set('keyword', filters.keyword);
-  if (filters.scope) searchParams.set('scope', filters.scope);
-  if (filters.agentId) searchParams.set('agentId', filters.agentId);
-  if (filters.layer) searchParams.set('layer', filters.layer);
-  if (filters.verificationStatus) searchParams.set('verificationStatus', filters.verificationStatus);
-  if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
-  if ('page' in filters && filters.page !== undefined) searchParams.set('page', String(filters.page));
-  if ('pageSize' in filters && filters.pageSize !== undefined) searchParams.set('pageSize', String(filters.pageSize));
-  if ('sort' in filters && filters.sort) searchParams.set('sort', String(filters.sort));
-  if ('order' in filters && filters.order) searchParams.set('order', String(filters.order));
-  if ('q' in filters && filters.q) searchParams.set('q', String(filters.q));
-  const query = searchParams.toString();
-  return get<MemoryQueryResponse>(`/v1/memory/query${query ? `?${query}` : ''}`, init);
-}
-
-export function queryMemoryPage(filters: MemoryQueryFilters & PaginatedQuery = {}, init?: RequestInit) {
-  return get<PaginatedResponse<MemoryQueryResponse['items'][number]>>(`/v1/memory/query${encodePaginatedQuery(filters)}`, init);
-}
-
-export function writeMemory(input: MemoryWriteInput, init?: RequestInit) {
-  return post<MemoryEntry>('/v1/memory/write', input, init);
-}
-
-export function getMemoryStats(init?: RequestInit) {
-  return get<MemoryStats>('/v1/memory/stats', init);
-}
-
-export function runMemoryMaintenance(input: { scope?: string; agentId?: string } = {}, init?: RequestInit) {
-  return post<MemoryMaintenanceTask>('/v1/memory/maintenance', input, init);
-}
-
-export function listSkills(init?: RequestInit): Promise<ApiResponse<SkillListResponse>>;
-export function listSkills(filters: PaginatedQuery, init?: RequestInit): Promise<ApiResponse<PaginatedResponse<SkillListResponse['items'][number]>>>;
-export function listSkills(filtersOrInit?: PaginatedQuery | RequestInit, init?: RequestInit) {
-  const hasQuery = filtersOrInit && !('headers' in filtersOrInit) && !('method' in filtersOrInit) && !('body' in filtersOrInit);
-  if (hasQuery) return get<PaginatedResponse<SkillListResponse['items'][number]>>(`/v1/skills${encodePaginatedQuery(filtersOrInit as PaginatedQuery)}`, init);
-  return get<SkillListResponse>('/v1/skills', filtersOrInit as RequestInit | undefined);
-}
-
-export function getSkill(id: string, init?: RequestInit) {
-  return get<SkillDetail>(`/v1/skills/${encodePathSegment(id)}`, init);
-}
-
-export function enableSkill(id: string, init?: RequestInit) {
-  return post<SkillMutationResponse>(`/v1/skills/${encodePathSegment(id)}/enable`, undefined, init);
-}
-
-export function disableSkill(id: string, init?: RequestInit) {
-  return post<SkillMutationResponse>(`/v1/skills/${encodePathSegment(id)}/disable`, undefined, init);
-}
-
-export function installSkill(source: string, init?: RequestInit) {
-  return post<SkillMutationResponse>('/v1/skills/install', { source }, init);
-}
-
-export function uninstallSkill(id: string, init?: RequestInit) {
-  return del<SkillMutationResponse>(`/v1/skills/${encodePathSegment(id)}`, init);
-}
-
-export function listSessionEvents(filters: LogSessionEventFilters = {}, init?: RequestInit) {
-  const searchParams = new URLSearchParams();
-  if (filters.sessionId) searchParams.set('sessionId', filters.sessionId);
-  if (filters.agentId) searchParams.set('agentId', filters.agentId);
-  if (filters.eventType) searchParams.set('eventType', filters.eventType);
-  if (filters.from) searchParams.set('from', filters.from);
-  if (filters.to) searchParams.set('to', filters.to);
-  if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
-  if ('page' in filters && filters.page !== undefined) searchParams.set('page', String(filters.page));
-  if ('pageSize' in filters && filters.pageSize !== undefined) searchParams.set('pageSize', String(filters.pageSize));
-  if ('sort' in filters && filters.sort) searchParams.set('sort', String(filters.sort));
-  if ('order' in filters && filters.order) searchParams.set('order', String(filters.order));
-  if ('q' in filters && filters.q) searchParams.set('q', String(filters.q));
-  const query = searchParams.toString();
-  return get<PaginatedResponse<LogSessionEventRecord> & { limit?: number }>(`/v1/logs/session-events${query ? `?${query}` : ''}`, init);
-}
-
-export function listProviderFallbacks(filters: Pick<LogSessionEventFilters, 'sessionId' | 'from' | 'to' | 'limit'> = {}, init?: RequestInit) {
-  const searchParams = new URLSearchParams();
-  if (filters.sessionId) searchParams.set('sessionId', filters.sessionId);
-  if (filters.from) searchParams.set('from', filters.from);
-  if (filters.to) searchParams.set('to', filters.to);
-  if (filters.limit !== undefined) searchParams.set('limit', String(filters.limit));
-  if ('page' in filters && filters.page !== undefined) searchParams.set('page', String(filters.page));
-  if ('pageSize' in filters && filters.pageSize !== undefined) searchParams.set('pageSize', String(filters.pageSize));
-  if ('sort' in filters && filters.sort) searchParams.set('sort', String(filters.sort));
-  if ('order' in filters && filters.order) searchParams.set('order', String(filters.order));
-  if ('q' in filters && filters.q) searchParams.set('q', String(filters.q));
-  const query = searchParams.toString();
-  return get<PaginatedResponse<ProviderFallbackRecord> & { limit?: number }>(`/v1/logs/provider-fallbacks${query ? `?${query}` : ''}`, init);
-}
-
-export function getProviderStats(init?: RequestInit) {
-  return get<ProviderStatsResponse>('/v1/providers/stats', init);
-}
-
-export function listSessionsPage<T>(filters: PaginatedQuery = {}, init?: RequestInit) {
-  return get<PaginatedResponse<T>>(`/v1/sessions${encodePaginatedQuery(filters)}`, init);
-}
-
-export function listUsersPage(filters: PaginatedQuery = {}, init?: RequestInit) {
-  return get<PaginatedResponse<WebUser>>(`/v1/users${encodePaginatedQuery(filters)}`, init);
-}
-
-export function createWebUser(input: { username: string; displayName?: string; password: string; role: string }, init?: RequestInit) {
-  return post<WebUser>('/v1/users', input, init);
-}
-
-export function updateWebUser(id: string, input: Partial<Pick<WebUser, 'displayName' | 'role' | 'status'>>, init?: RequestInit) {
-  return patch<WebUser>(`/v1/users/${encodePathSegment(id)}`, input, init);
+  return post<{
+    request: ApprovalRequestView['request'];
+    decision: ApprovalRequestView['latestDecision'];
+    proposalUpdated: boolean;
+  }>(`/v1/approval-requests/${encodeURIComponent(id)}/decision`, input, init);
 }

@@ -1458,58 +1458,24 @@ function registerWebCommand(program: Command, app: AppContext): void {
     'web',
     (cmd) => {
       cmd
-        .description('Start Haro web dashboard')
+        .description('Start Haro proposal review web UI')
         .option('--port <port>', 'HTTP port', '3456')
         .option('--host <host>', 'bind address', '127.0.0.1')
         .action(async (options: { port: string; host: string }) => {
           const port = parseWebPort(options.port);
-          const [{ createWebApp, startWebServer }, { runDiagnostics }] = await Promise.all([
-            import('@haro/web-api'),
-            import('./diagnostics.js'),
-          ]);
-          // FEAT-031 — Web Channel routes need the channel to be started so
-          // they can dispatch inbound messages to the agent runner. Same
-          // contract as `startEnabledBackgroundChannels` for REPL mode.
-          await startEnabledBackgroundChannels(app);
+          const { createWebApp, startWebServer } = await import('@haro/web-api');
           const handle = startWebServer(
             createWebApp({
               runtime: {
-                agentRegistry: app.agentRegistry,
-                reloadAgentRegistry: async () => {
-                  const next = app.opts.loadAgentRegistry
-                    ? await app.opts.loadAgentRegistry({
-                        agentsDir: app.paths.dirs.agents,
-                        providerRegistry: app.providerRegistry,
-                        logger: app.logger,
-                      })
-                    : (
-                        await loadAgentsFromDir({
-                          agentsDir: app.paths.dirs.agents,
-                          providerRegistry: app.providerRegistry,
-                          logger: app.logger,
-                        })
-                      ).registry;
-                  app.agentRegistry = next;
-                  app.runner = app.createRunner();
-                  return next;
-                },
-                createRunner: app.createRunner,
                 root: app.opts.root,
                 projectRoot: app.opts.projectRoot ?? process.cwd(),
                 dbFile: app.paths.dbFile,
-                providerRegistry: app.providerRegistry,
-                channelRegistry: app.channelRegistry,
-                skillsManager: app.skills,
-                skillAssetAuditSupported: true,
-                loaded: app.loaded,
-                runDiagnostics: (input) =>
-                  runDiagnostics(input) as unknown as Promise<Record<string, unknown>>,
               },
             }),
             { port, host: options.host },
           );
           await handle.ready;
-          app.stdout.write(`Haro web dashboard listening on ${handle.url}\n`);
+          app.stdout.write(`Haro proposal review web listening on ${handle.url}\n`);
         });
     },
     program,
@@ -1857,7 +1823,7 @@ async function handleCliInbound(app: AppContext, msg: InboundMessage): Promise<v
 async function handleExternalInbound(app: AppContext, channel: MessageChannel, msg: InboundMessage): Promise<void> {
   const task = typeof msg.content === 'string' ? msg.content : String(msg.content ?? '');
   // FEAT-031 — channels (notably Web) carry per-message agent/provider/model
-  // overrides in `meta`. Honor them so Dashboard chat selectors actually
+  // overrides in `meta`. Honor them so channel-specific selectors actually
   // route to the chosen agent instead of always using the CLI defaults.
   const meta = (msg.meta ?? {}) as Record<string, unknown>;
   const overrideAgentId = typeof meta.agentId === 'string' ? meta.agentId : undefined;
@@ -1979,7 +1945,7 @@ async function executeTask(
   };
   const queueLiveEvent = (event: AgentEvent, _sessionId: string): void => {
     // FEAT-034: regardless of channel.id, fan out structured StreamEvents to
-    // any channel that exposes a `publishStreamEvent` hook (e.g. WebChannel).
+    // any channel that exposes a `publishStreamEvent` hook.
     // Old clients keep getting the legacy `agent` deltas via the existing
     // `outputChannel.send` path further down, so this is purely additive.
     publishStreamEventsForChannel(outputChannel, channelSessionId, event, streamCtx);
@@ -2081,8 +2047,8 @@ async function executeTask(
           agentId: input.agentId,
           channel: outputChannel,
           // Address channels by their channel-side session ID (e.g. Feishu
-          // chat mapping, Web Channel persistence key) so outbound replies
-          // land in the same Dashboard/Feishu/Telegram thread the user
+          // chat mapping) so outbound replies
+          // land in the same Feishu/Telegram thread the user
           // actually started. The agent runner's `result.sessionId` is the
           // runtime/leaf session — that's the right key for memory and
           // audit, but the wrong key for IM-side delivery.
@@ -2130,7 +2096,7 @@ async function executeTask(
  * FEAT-034 bridge: translate the legacy `AgentEvent` callback into the
  * structured `StreamEvent` envelope and forward it to channels that opt-in
  * via a `publishStreamEvent` method. Channels without the method are simply
- * skipped — keeps CLI / Feishu / Telegram unchanged while the Web Channel
+ * skipped — keeps CLI / Feishu / Telegram unchanged while stream-aware channels
  * picks up the new feed alongside its existing `agent` deltas.
  */
 interface StreamPublishingChannel {
@@ -2740,32 +2706,6 @@ async function createDefaultAdditionalChannels(input: {
         'Optional channel package @haro/channel-telegram is unavailable; continuing without Telegram',
       );
     }
-  }
-
-  // FEAT-031 — Web Channel is a first-class IM adapter for the Dashboard
-  // chat. Always register it so the channels admin surface and Dashboard
-  // routing can find it, even on the first run before any config exists.
-  // Defaults to enabled unless the operator opts out in config.
-  const webConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'web');
-  try {
-    const { WebChannel } = await import('@haro/channel-web');
-    registrations.push({
-      channel: new WebChannel({
-        root: input.root,
-        logger: input.logger,
-        config: webConfig,
-        ...(input.createSessionId ? { createSessionId: input.createSessionId } : {}),
-      }),
-      enabled: webConfig.enabled !== false,
-      removable: false,
-      source: 'builtin',
-      displayName: 'Web',
-    });
-  } catch (error) {
-    input.logger.warn(
-      { error: error instanceof Error ? error.message : String(error) },
-      'Built-in channel package @haro/channel-web failed to load; Dashboard chat will be unavailable',
-    );
   }
 
   return registrations;

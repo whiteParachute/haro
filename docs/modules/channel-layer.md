@@ -1,161 +1,53 @@
-# Channel Layer 设计
+# Channel Layer（historical compatibility）
 
-> **2026-05-08 状态：historical workbench baseline。**
->
-> 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
+> **2026-05-14 状态**：Haro 不再以自建 Channel Layer 作为主路径。AgentDock 负责日用 IM / Web / workbench；Haro sidecar 通过 MCP、AgentDock scheduler 和 AgentDock skills/agent 编排接入。
 
+## 当前保留范围
 
-## 概述
+| Channel | 当前状态 | 用途 |
+| --- | --- | --- |
+| `cli` | 保留 | 本地 REPL / debug。 |
+| `feishu` | 历史兼容 | 保留 adapter 经验；新审批呈现优先走 AgentDock 侧 IM。 |
+| `telegram` | 历史兼容 | 保留 adapter 经验；不是 sidecar 主路径。 |
+| `web` | 已移除 | 旧 Web Channel / Dashboard Chat / WebSocket streaming 已下线。 |
 
-Channel Layer 是 Haro 的消息渠道抽象，负责对接外部消息入口（飞书、Telegram、Slack、Web、邮件…），将外部消息统一转成 `InboundMessage` 投递给 Runner/Router，并把 Agent 的执行结果反向回写。
+## 新边界
 
-**Channel Layer 与 Provider Abstraction Layer 的区分**：
-- **PAL** 抽象“谁在回答”（Claude / Codex / …）
-- **Channel** 抽象“从哪里来”（飞书 / Telegram / CLI / …）
+- Haro 不新增自有 IM channel 作为主产品面。
+- Haro 不再把浏览器作为 chat channel。
+- Haro Web 只做 proposal review，不做消息收发、session history、文件上传或 streaming。
+- sidecar 输出应通过 AgentDock 已有 channel 或 Haro Web approval request review 呈现。
 
-两层均受 [可插拔原则](../architecture/overview.md#设计原则) 约束，对 Haro 核心模块零侵入。
+## Agent 主动出站（历史兼容）
 
-## 六层架构中的位置
+`@haro/mcp-tools` 的 `send_message` 仍通过 `ChannelRegistry.get(channelId).send(channelSessionId, OutboundMessage)` 调用已启用 channel。该能力是历史兼容层，不是 sidecar 新主线。
 
-Channel 层位于 Tool & Service Layer 之上、Agent & Team Runtime 之下，是六层架构中的接入层。
-
-## 核心职责
-
-- **连接管理**：建立/断开与外部系统的连接，处理重连
-- **消息转换**：外部格式 ↔ Haro 统一 `InboundMessage` / `OutboundMessage`
-- **会话映射**：外部 `chat_id` / `user_id` ↔ Haro `sessionId`
-- **渲染降级**：按 Channel 能力决定 Markdown / 纯文本 / 渐进输出
-- **事件回调**：delta、工具调用进度、错误，按 Channel 能力暴露
-
-## Channel adapter 清单
-
-| Channel | 实现 | 连接方式 | 阶段 | 备注 |
-|---------|------|---------|------|------|
-| `cli` | Haro 内置 | 本地 stdin/stdout | Phase 0 | 首个 adapter，不可移除 |
-| `feishu` | 基于 `lark-bridge-service` 已验证 client 路径的薄封装 | websocket | Phase 0 | 终态发送 |
-| `telegram` | 新实现 | long-polling | Phase 0 | 私聊支持流式，群聊降级 |
-| `web` | `@haro/channel-web`（builtin） | 复用 Web API HTTP + WebSocket | Phase 1.5 (FEAT-031 / FEAT-034) | Dashboard Chat 入口；不开监听端口（端口由 web-api 提供）；可 disable，不可 remove；FEAT-034 后通过 structured `StreamEvent` envelope 承载流式 UX |
-
-## Agent 主动出站（FEAT-032 send_message）
-
-Agent 通过 [`@haro/mcp-tools`](mcp-tools.md) 的 `send_message` 工具向 Channel session 主动投递消息。该工具最终调用 `ChannelRegistry.get(channelId).send(channelSessionId, OutboundMessage)`，跨 channel 调用（caller `session.channelId !== params.channelId`）会被 permission 守门挂为 `external-service` 审批，禁用的 channel 返回 `TARGET_DISABLED`。详见 [MCP 工具层](mcp-tools.md)。
-
-## 与 lark-bridge 的关系
-
-- Phase 0 **不等待** lark-bridge 先发布稳定 npm SDK
-- Haro 直接以 `lark-bridge-service` 已验证的 Feishu client 代码路径为基线封装 `@haro/channel-feishu`
-- Phase 1 再决定是否抽共享 SDK 包
-
-## Channel 配置
+## 配置示例
 
 ```yaml
 channels:
   cli:
     enabled: true
-
-  web:
-    enabled: true              # 默认启用；FEAT-031 builtin
-    upload:                    # 可选，覆盖默认值
-      imageMaxBytes: 10485760     # 10 MB
-      documentMaxBytes: 31457280  # 30 MB
-      perSessionQuotaBytes: 52428800  # 50 MB
-
   feishu:
     enabled: false
     appId: "${FEISHU_APP_ID}"
     appSecret: "${FEISHU_APP_SECRET}"
     transport: websocket
     sessionScope: per-chat
-
   telegram:
     enabled: false
     botToken: "${TELEGRAM_BOT_TOKEN}"
     transport: long-polling
-    allowedUpdates:
-      - message
-      - callback_query
 ```
 
-## 目录结构
+`channels.web` 已废弃；不要再依赖 `~/.haro/channels/web` 或 `/api/v1/channels/web/*`。
 
-```
-~/.haro/
-├── channels/
-│   ├── feishu/
-│   │   ├── state.json         # 非敏感运行态
-│   │   └── sessions.sqlite    # 外部会话 → Haro session 映射
-│   ├── telegram/
-│   │   ├── state.json
-│   │   └── sessions.sqlite
-│   └── web/                   # FEAT-031
-│       ├── state.json         # enabled / lastInboundAt / lastOutboundAt
-│       ├── sessions.sqlite    # web_sessions / web_messages / web_files
-│       └── files/             # 上传附件（0600，目录 0700）
-│           └── <sessionId>/
-│               └── <fileId>-<filename>
-└── logs/
-    └── channel-<id>.log
-```
+## 与 Haro Web 的关系
 
-> 约束：`state.json` 不得落 access token / app secret / bot token。Web Channel 不持久化任何凭据——它复用 Web API 已有的 RBAC（FEAT-028）。
+Haro Web 当前不是 Channel，而是 [Proposal Review Workbench](web-dashboard.md)：
 
-## Session 映射
+- 读取 `~/.haro/evolution/approval-requests/*.json`
+- 写入 `~/.haro/evolution/approval-decisions/*.json`
+- 在 approve 时给 proposal 增加 `human-approval` ref
 
-| sessionScope | 映射规则 | 适用场景 |
-|--------------|---------|---------|
-| `per-chat` | 每个外部群聊/私聊对应一个 Haro session | 群机器人 |
-| `per-user` | 每个外部用户对应一个 Haro session（跨群共享） | 个人助手 |
-| `per-thread` | 每个外部 thread 一个 session | 需隔离话题的群 |
-
-## 会话生命周期策略（Phase 2）
-
-OpenClaw 的 Gateway 模型验证了“渠道隔离 + 会话生命周期管理”的必要性。Haro 不照搬固定 Gateway 结构，但 Phase 2 Channel 层需要补充可配置 reset/retention 策略：
-
-| 策略 | 含义 | 适用场景 |
-|------|------|----------|
-| idle reset | 会话超过 N 分钟无消息后关闭或写入 wrapup | 私聊、临时任务 |
-| daily reset | 每日固定时间结束旧 session，下一条消息开启新 session | 工作助理、群机器人 |
-| retention | session/event/channel log 保留周期 | 合规、磁盘控制 |
-| shared context boundary | 团队共享上下文可见范围 | 多 Agent / 多 Channel 协作 |
-
-这些策略必须作用在 Channel session 层，不得把 `channel sessionId`、`workflowId` 和 leaf `sessionId` 混用。
-
-## 流式消息处理
-
-| Channel | 流式支持 | 策略 |
-|---------|---------|------|
-| `cli` | 原生支持 | 直接打印 delta |
-| `feishu` | Phase 0 关闭 | 本地 buffer，终态一次性发送 |
-| `telegram` | 私聊支持 | `@grammyjs/stream` + `@grammyjs/auto-retry` |
-| `web` | 原生支持 | 通过 Web API `/ws` 推 `channels.web.event`；新客户端优先消费 kind=`stream` 的 12 类 `StreamEvent`，legacy kind=`agent` 仅作为迁移兼容 |
-
-### channelSessionId vs runner sessionId
-
-外部 Channel（`feishu` / `telegram` / `web`）的 outbound 必须按 **channel-side** session ID 路由，不能用 runner 的 `result.sessionId`。`executeTask` / `handleExternalInbound` 在调用 `channel.send(sessionId, ...)` 时传 `channelSessionId`，让 Feishu chat 映射、Web Channel 持久化键和 Dashboard 订阅 key 全部对齐。runner 的 leaf session ID 仍是 memory / audit / checkpointing 的唯一来源——把这两组 ID 混用会导致 Dashboard 收不到 agent 回复（codex review 2026-05-06 §J）。
-
-## 入站命令路由
-
-- 纯文本消息：转成 `InboundMessage(type='text')`
-- Channel 原生命令：转成 `InboundMessage(type='command')`
-- CLI slash：仅在 CLI 本地消费，不跨 Channel 传播
-
-## 可插拔与卸载
-
-```bash
-haro channel list
-haro channel enable feishu
-haro channel disable telegram
-haro channel remove telegram
-haro channel doctor feishu
-```
-
-移除 Channel 不得影响其他 Channel 和核心功能；session 映射数据归档到 `~/.haro/archive/channels/<id>-<timestamp>/`，可回滚。
-
-## 违规检测
-
-| 违规行为 | 检测方式 | 处理 |
-|---------|---------|------|
-| Channel 直接 import Agent Runtime 内部 | 静态依赖扫描 | 拒绝加载 |
-| 核心模块出现 `channelId` 特判 | grep / lint | 拒绝合并 |
-| Channel 把消息压缩成摘要后投递 | fixture + 代码评审 | 拒绝合并 |
-| state 文件持久化敏感凭据 | 集成测试 | 拒绝合并 |
+这与消息 channel、Agent runtime、session history 无关。

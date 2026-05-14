@@ -8,8 +8,8 @@ import type { WebRuntime } from './runtime.js';
 
 export const WEB_SESSION_COOKIE_NAME = 'haro_web_session';
 
-export const UNAUTHENTICATED_DASHBOARD_WARNING =
-  'Dashboard running in unauthenticated mode — set HARO_WEB_API_KEY to enable auth';
+export const UNAUTHENTICATED_WEB_WARNING =
+  'Haro proposal review Web running in unauthenticated mode — set HARO_WEB_API_KEY to enable auth';
 
 const ROLE_LEVEL: Record<WebUserRole, number> = {
   viewer: 0,
@@ -42,7 +42,7 @@ function getRequestLogger(c: Context<ApiKeyAuthEnv>): WebLogger {
 
 function warnUnauthenticatedMode(logger: WebLogger): void {
   if (warnedLoggers.has(logger)) return;
-  logger.warn(UNAUTHENTICATED_DASHBOARD_WARNING);
+  logger.warn(UNAUTHENTICATED_WEB_WARNING);
   warnedLoggers.add(logger);
 }
 
@@ -70,7 +70,7 @@ export function requireWebPermission(operationClass: WebOperationClass) {
   });
 }
 
-export function createDashboardAuth(runtime: WebRuntime) {
+export function createWebAuth(runtime: WebRuntime) {
   return createMiddleware<ApiKeyAuthEnv>(async (c, next) => {
     const configuredApiKey = process.env.HARO_WEB_API_KEY;
     const requestApiKey = c.req.header('x-api-key');
@@ -142,7 +142,7 @@ function isPublicRequest(path: string, legacyApiKeyEnabled: boolean): boolean {
   // FEAT-028 critical fix — bootstrap is NOT public when HARO_WEB_API_KEY is
   // configured. A legacy-key deployment with no users yet would otherwise be
   // taken over by the first anonymous visitor (creating an `owner`). Require
-  // the legacy key to flow through `createDashboardAuth`'s api-key branch,
+  // the legacy key to flow through `createWebAuth`'s api-key branch,
   // which keeps bootstrap reachable only from operators who already hold the
   // shared secret.
   if (path === '/api/v1/auth/bootstrap' && !legacyApiKeyEnabled) return true;

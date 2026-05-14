@@ -68,7 +68,7 @@ Profile 差异：
 |---------|----------|----------|
 | `dev` | 源码仓库内使用 `pnpm haro` | 不要求全局 `haro` 在 PATH |
 | `global` | npm/pnpm 全局安装后日常使用 | 要求 `haro` 全局命令可执行 |
-| `systemd` | user-level Web Dashboard 服务 | 检查/可修复 `~/.config/systemd/user/haro-web.service`、监听端口、env file、`HARO_WEB_API_KEY` 模式 |
+| `systemd` | user-level Haro proposal review Web 服务 | 检查/可修复 `~/.config/systemd/user/haro-web.service`、监听端口、env file、`HARO_WEB_API_KEY` 模式 |
 
 安全边界：`--repair` / `--fix` 不会安装 Node/pnpm、不修改 shell profile、不写 provider secret、不创建系统级 systemd unit、不开放防火墙。
 

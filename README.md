@@ -121,12 +121,11 @@ AgentDock runtime + Haro sidecar + external frontier sources
 - eat/shit 代谢思想。
 - Evolution Proposal / Validation / Auto-Refactorer specs 中与 sidecar 相关的部分。
 
-### 降级为 admin/debug/control surface
+### 降级/收缩为 sidecar 辅助面
 
-- CLI 等价能力。
-- Web API。
-- Cron 任务。
-- Web Dashboard。
+- CLI：保留 sidecar admin/debug/verification 命令。
+- Web：只保留 proposal review 工作台，用于查看 Haro 自动提案并写入人审 decision；不再作为通用 Dashboard / 执行控制面。
+- Cron：保留 CLI scheduled sidecar 命令，由 AgentDock scheduler 触发；Haro Web 不再提供 cron 管理面。
 - Scenario Router / Team Orchestrator 中可服务 validation 的片段。
 
 ### 不再作为主路径继续建设
@@ -147,6 +146,7 @@ AgentDock runtime + Haro sidecar + external frontier sources
 | Asset Registry | 管理 skills/prompts/profiles/rules/tool config/frontier source ref 资产事件 | 已实现：file-backed sidecar registry 写入 `~/.haro/assets/manifests` + `~/.haro/assets/events`，`haro_asset_query` 读取 sidecar registry；scheduled propose/validate 会登记 `proposed` / `validated` event；memory 由 AgentDock 提供，Haro 仅保存 refs |
 | Frontier Intelligence Intake | 从 X、YouTube、论文、release notes、官方文档等来源生成带 citation 的 external signals | 已实现：读取 curated source-config 中的 `FrontierSignal`，去重后写入 `~/.haro/evolution/frontier-signals/`；`propose --include-frontier` 会把 active signals 作为 proposal evidence |
 | Gated Apply | L0/L1 proposal + validation + human approval + snapshot + rollback 后应用 | 已实现 gate preflight、human-review gate、snapshot/rollback metadata、L0/L1 sidecar-local content snapshot，以及 sidecar-local apply/rollback executor；AgentDock 原生写入口后续实现 |
+| Haro Web Proposal Review | 类 issue 页面的人审工作台，只 review approval request | 已收缩为 `/api/v1/approval-requests` + 前端 proposal cards；旧 Chat/WebSocket/cron/config/memory/skills/users 等 Dashboard 控制面已删除 |
 
 ## 自进化分级
 
@@ -168,9 +168,9 @@ packages/
 ├── cli/                # 后续降级为 sidecar admin/debug CLI
 ├── mcp-tools/          # Haro MCP 工具层；默认 sidecar registry 暴露 4 个 read-only/dry-run tools，显式开启后才暴露 gated apply/rollback
 ├── skills/             # Skills 与 eat/shit 代谢能力
-├── web-api/            # 历史控制面；后续按需保留
-├── web/                # 历史 Dashboard；不再作为主产品面扩展
-├── channel*/           # 历史 channel adapter；冻结主路径
+├── web-api/            # Haro Web proposal review API；只保留 auth + approval-requests
+├── web/                # Haro Web proposal review 前端；旧 Dashboard 已收缩删除
+├── channel*/           # Feishu / Telegram 等历史 channel adapter；Web Channel 已移除
 └── provider*/          # 历史 provider adapter；冻结主路径
 
 docs/                   # 架构、模块、规划文档
@@ -199,11 +199,12 @@ scripts/                # 辅助脚本
 1. 文档基线清理：README、roadmap、architecture overview、planning 文档对齐 sidecar 定位。
 2. Contract skeleton：新增 AgentDock contract schema 与 fake source tests。
 3. Read-only MCP/CLI：`haro mcp` 默认只暴露 observe/propose/validate/query 4 个 read-only tools；AgentDock 注册 MCP live smoke 已通过（2026-05-08，`haro_observe` 返回 `source=agentdock-http`）。如显式使用 `haro mcp --enable-gated-write`，才会额外暴露 `haro_apply` / `haro_rollback`，且只接受 proposal/application id。
-4. Scheduled sidecar：`connect agent-dock` + `observe --since last` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `approval-request --pending` + `status` + `doctor --component sidecar` 已落地，可由 AgentDock script task 周期触发；propose 的 `--limit` 限制单次 proposal 打包的 observation batch 数，validate/approval-request 的 `--limit` 限制单次处理的 pending proposal 数，且 propose/validate 会同步写入 sidecar asset events；启动阶段自动 proposal 均写入 `humanReviewRequired=true` 和空 `humanApprovalRefs`；approval-request 会产出 why/how/benefit、风险、测试和回滚计划，供 AgentDock/飞书渲染审批；JSON 结果暴露损坏 observation/proposal/validation/frontier-signal 计数；status/doctor 只统计和检查 sidecar evolution store，不读写 memory。
+4. Scheduled sidecar：`connect agent-dock` + `observe --since last` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `approval-request --pending` + `status` + `doctor --component sidecar` 已落地，可由 AgentDock script task 周期触发；propose 的 `--limit` 限制单次 proposal 打包的 observation batch 数，validate/approval-request 的 `--limit` 限制单次处理的 pending proposal 数，且 propose/validate 会同步写入 sidecar asset events；启动阶段自动 proposal 均写入 `humanReviewRequired=true` 和空 `humanApprovalRefs`；approval-request 会产出 why/how/benefit、风险、测试和回滚计划，供 AgentDock/飞书或 Haro Web proposal review 工作台渲染审批；JSON 结果暴露损坏 observation/proposal/validation/frontier-signal 计数；status/doctor 只统计和检查 sidecar evolution store，不读写 memory。
 5. Frontier intelligence：`FrontierSignal` schema + `haro intake frontier --source-config <file> --since last --json` + `haro propose --auto-dry-run --include-frontier` 已落地，把 curated X / YouTube / paper / release note / official doc / benchmark refs 归一为带来源 signals，并在 dry-run proposal 中引用 active frontier evidence；不写 AgentDock DB 或 memory。
 6. Asset registry adapter：新增 file-backed sidecar asset registry，资产 event/manifest 写入 `~/.haro/assets/*`，`haro_asset_query` 直接查询 sidecar registry，不再读取旧 core EvolutionAssetRegistry；scheduled propose/validate 已接入 `proposed` / `validated` event 写入。
 7. Gated apply：Phase F 已落地 sidecar-local L0/L1 gated apply/rollback。`haro snapshot --proposal-id <id>` 生成 snapshot/rollback artifacts，并会把 sidecar-owned `~/.haro/assets/current/<kind>/` 中的当前内容复制到 `~/.haro/evolution/snapshot-content/`；`haro apply --proposal-id <id>` 会执行 L0/L1 gate，若 proposal 缺少 `humanApprovalRefs` 会返回 `HUMAN_REVIEW_REQUIRED` 且不生成 snapshot/application；通过人审 gate 后，缺 refs 时先生成 snapshot/rollback refs，然后从 sidecar-owned `~/.haro/evolution/proposal-content/<proposal-id>/` 读取拟应用内容并写回 `~/.haro/assets/current/<kind>/`，同时写 `ApplicationRecord(status=applied)` 和 `applied` asset event；`haro rollback --application-id <id>` 可基于 rollback record 恢复 snapshot-content 或删除 apply 创建的 sidecar-local 内容，并写 `rolled-back` event。`haro mcp --enable-gated-write` 可把同一套 gate 暴露为 `haro_apply({proposalId})` / `haro_rollback({applicationId})`；默认 MCP surface 仍为 read-only，当前仍不修改 AgentDock 内部资产、不写 memory。
 8. Patch branch：Phase G 第一段已落地 `haro patch-branch --proposal-id <id>`，只为 validated L2/L3 proposal 写入 `~/.haro/evolution/patch-branches/` plan artifact；不创建真实 git branch、不修改代码、不写 memory。
+9. Web proposal review：Haro Web 已收缩为 issue-like review 工作台，只读取 `approval-requests` 并写入 approve/reject/request-changes decision artifact；旧 Dashboard chat/WebSocket/cron/config/memory/skills/users/workflow UI 与 Web Channel 包已清理删除。
 
 
 每次开发任务结束按顺序执行：

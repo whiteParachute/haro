@@ -15,7 +15,7 @@
 | Phase E: Signal Intake + Asset Registry | 进行中，frontier evidence + registry adapter 已接入 propose/validate | 把外部前沿情报与 skills/prompts/profiles/rules/tool config 纳入进化证据和资产事件 | `FrontierSignal` schema、`haro intake frontier --source-config`、`haro propose --auto-dry-run --include-frontier`、frontier-signals sidecar 数据目录；`~/.haro/assets/manifests` + `events` file-backed registry；proposed/validated asset event 写入；memory 仅保存 AgentDock refs | Haro 自有目录，不写 memory |
 | Phase F: Gated Apply L0/L1 | sidecar-local apply/rollback + opt-in MCP bridge 已落地，人审 gate 已补强 | 在 validation + human review gate 后执行低风险变更 | `ApplicationRecord` / `AssetSnapshotRecord` / `RollbackRecord` contract、`humanReviewRequired` / `humanApprovalRefs`、`haro snapshot --proposal-id`、sidecar-local `snapshot-content`、`haro apply --proposal-id` / `haro rollback --application-id`、`haro mcp --enable-gated-write` 的 `haro_apply` / `haro_rollback` | 只改 Haro sidecar-owned `assets/current`，不改 AgentDock 内部资产；缺 approval ref 返回 `HUMAN_REVIEW_REQUIRED`；默认 MCP 仍 read-only |
 | Phase G: Patch Branch L2/L3 | plan artifact 第一段已落地 | 对 Haro 代码或 AgentDock contract 生成 patch branch 与验证报告 | `PatchBranchPlanRecord`、`haro patch-branch --proposal-id`、`~/.haro/evolution/patch-branches` plan artifacts；真实 branch executor 待实现 | 不直接 apply；不创建真实 branch；不写 memory |
-| Phase H: Approval Requests | approval artifact 第一段已落地 | 把 proposal 变成可给用户逐条审批的 why/how/benefit 请求 | `ApprovalRequestRecord`、`haro approval-request --pending`、`~/.haro/evolution/approval-requests` | 只产出审批请求；不签发 approval、不 apply、不写 memory |
+| Phase H: Approval Requests | approval artifact + Web review 第一段已落地 | 把 proposal 变成可给用户逐条审批的 why/how/benefit 请求 | `ApprovalRequestRecord`、`haro approval-request --pending`、`~/.haro/evolution/approval-requests`、Haro Web proposal review | 产出审批请求；Haro Web 可写 approve/reject/request-changes decision；apply 仍需 human approval refs + snapshot/rollback gate；不写 memory |
 
 ## 关键判断
 
@@ -26,7 +26,7 @@ Haro 后续价值不在重新实现 AgentDock 已经具备的 runtime/workbench 
 3. 生成可验证、可回滚、需审批的进化提案。
 4. 将 prompt、skill、rule、tool config、frontier source ref 的变化资产化；memory 由 AgentDock 侧提供，Haro 不生成 memory asset。
 
-因此后续路线按 sidecar 接入面推进，而不是继续扩大 Haro 自建 Provider、Channel、Session runtime、Web Dashboard。
+因此后续路线按 sidecar 接入面推进，而不是继续扩大 Haro 自建 Provider、Channel、Session runtime、Web Dashboard。Haro Web 仅保留 proposal review 工作台。
 
 ## 接入原则
 
@@ -230,7 +230,7 @@ Asset registry 已改为 sidecar file-backed registry：manifest 写入 `~/.haro
 | Evolution Asset Registry | 保留并迁移 | 移到 sidecar 数据目录 |
 | eat/shit | 保留思想 | 作为 asset metabolism 继续使用 |
 | CLI parity | 降级 | admin/debug/control surface |
-| Web API / Dashboard | 降级 | 可选控制面，不再主推 |
+| Web API / Dashboard | 收缩 | 只保留 Haro proposal review 工作台；旧通用 Dashboard / Web Channel / WebSocket / cron/config/memory/skills/users 控制面删除 |
 | Scenario Router / Team Orchestrator | 冻结 | 只保留 validation 相关经验 |
 | Provider / Channel / Session runtime | 废弃主路径 | 不再继续扩展 |
 

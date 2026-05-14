@@ -1,8 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
-import { K } from '@/i18n/keys';
-import { useT } from '@/i18n/provider';
 import { canAccessRole } from '@/router/roles';
 import { useAuthStore } from '@/stores/auth';
 import type { WebUserRole } from '@/types';
@@ -30,7 +28,6 @@ export function resolveAuthGuardDecision(input: {
 }
 
 export function AuthGuard({ children, requireRole }: AuthGuardProps) {
-  const t = useT();
   const location = useLocation();
   const { status, user, mustChangePassword, checking, checkAuth } = useAuthStore();
 
@@ -41,7 +38,7 @@ export function AuthGuard({ children, requireRole }: AuthGuardProps) {
   const decision = resolveAuthGuardDecision({ status, checking, role: user?.role, requireRole, mustChangePassword });
 
   if (decision === 'loading') {
-    return <p className="p-6 text-sm text-muted-foreground">{t(K.COMMON.LOADING)}</p>;
+    return <p className="p-6 text-sm text-muted-foreground">加载中…</p>;
   }
 
   if (decision === 'bootstrap') {
@@ -53,7 +50,19 @@ export function AuthGuard({ children, requireRole }: AuthGuardProps) {
   }
 
   if (decision === 'password-change') {
-    return <Navigate to="/settings?tab=security" replace state={{ from: location }} />;
+    return (
+      <div className="mx-auto flex w-full max-w-3xl">
+        <Card className="w-full">
+          <CardHeader>
+            <CardTitle>需要重置密码</CardTitle>
+            <CardDescription>当前 Haro Web 已收缩为提案 Review 工作台，不再提供通用设置页面。</CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            请联系 owner 通过 CLI 或受控运维流程重置密码。
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   if (decision === 'forbidden') {
@@ -61,11 +70,11 @@ export function AuthGuard({ children, requireRole }: AuthGuardProps) {
       <div className="mx-auto flex w-full max-w-3xl">
         <Card className="w-full">
           <CardHeader>
-            <CardTitle>403 · {t(K.COMMON.FORBIDDEN_TITLE)}</CardTitle>
-            <CardDescription>{t(K.COMMON.FORBIDDEN_DESC)}</CardDescription>
+            <CardTitle>403 · 权限不足</CardTitle>
+            <CardDescription>当前账号不能访问这个 Haro Web 操作。</CardDescription>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            {t(K.COMMON.ROLE)}: {user?.role ?? 'anonymous'} / {t(K.COMMON.REQUIRED_ROLE)}: {requireRole}
+            当前角色：{user?.role ?? 'anonymous'} / 需要角色：{requireRole}
           </CardContent>
         </Card>
       </div>

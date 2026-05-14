@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Sidecar-era Web cleanup — Haro Web is now only a proposal review workbench for `approval-requests`; the old Dashboard chat/WebSocket/cron/config/memory/skills/users/workflow control surface and `@haro/channel-web` package were removed. Verification: `pnpm lint`, `pnpm -F @haro/web lint`, `pnpm build`, `pnpm test`, `pnpm smoke`.
 - FEAT-020 scope is Codex-only; non-Codex runtime sync and discovery work are no longer part of Haro.
 
 ## [0.1.0] - 2026-04-21

@@ -349,7 +349,7 @@ function resultStreamEvents(event: AgentResultEvent, sessionId: string): StreamE
   // message_delta + message_done driven by AgentTextEvent, plus the
   // session-level usage/status events below. Emitting message_done from
   // result.content would double-write the content (legacy + structured) and
-  // produce duplicated bubbles in the Dashboard.
+  // produce duplicated final-message bubbles.
   const out: StreamEvent[] = [
     { kind: 'session_status', sessionId, status: 'completed' },
   ];
@@ -400,7 +400,7 @@ function summarizeResult(result: unknown): string | undefined {
   return text.length > 240 ? `${text.slice(0, 237)}...` : text;
 }
 
-// ---- helpers used by both Web Channel and ChatPage host -----------------
+// ---- helpers for stream-capable hosts --------------------------------------
 
 /** Group structured events into per-message buckets so a virtualized list can
  *  render each MessageBubble independently. */

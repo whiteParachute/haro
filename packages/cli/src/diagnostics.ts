@@ -513,7 +513,7 @@ function writeUserSystemdUnit(ctx: { paths: HaroPaths; deps: RequiredDeps }): { 
   const unitPath = userSystemdUnitPath(ctx.deps.env);
   mkdirSync(dirname(unitPath), { recursive: true });
   const envFile = join(ctx.paths.root, 'web.env');
-  const content = `[Unit]\nDescription=Haro Web Dashboard\nAfter=network.target\n\n[Service]\nType=simple\nEnvironment=HARO_HOME=${ctx.paths.root}\nEnvironmentFile=-${envFile}\nExecStart=haro web --host ${host} --port ${port}\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n`;
+  const content = `[Unit]\nDescription=Haro Proposal Review Web\nAfter=network.target\n\n[Service]\nType=simple\nEnvironment=HARO_HOME=${ctx.paths.root}\nEnvironmentFile=-${envFile}\nExecStart=haro web --host ${host} --port ${port}\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n`;
   writeFileSync(unitPath, content, { encoding: 'utf8', mode: 0o644 });
   fixed.push(`wrote-user-systemd-unit:${unitPath}`);
   const reload = ctx.deps.runCommand('systemctl', ['--user', 'daemon-reload']);

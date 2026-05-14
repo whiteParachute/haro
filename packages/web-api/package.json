@@ -1,7 +1,7 @@
 {
   "name": "@haro/web-api",
   "version": "0.1.0",
-  "description": "Haro Web API — decoupled HTTP / WS service backing the Web Dashboard (FEAT-038)",
+  "description": "Haro Web API — proposal review workbench for the AgentDock sidecar",
   "engines": {
     "node": ">=22.0.0"
   },
@@ -36,20 +36,14 @@
     "test": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" vitest run"
   },
   "dependencies": {
-    "@haro/channel": "workspace:*",
-    "@haro/channel-web": "workspace:*",
+    "@haro/agentdock-contract": "workspace:*",
     "@haro/core": "workspace:*",
-    "@haro/skills": "workspace:*",
     "@hono/node-server": "^1.19.14",
-    "better-sqlite3": "^11.7.0",
     "hono": "^4.12.14",
-    "ws": "^8.18.0",
-    "yaml": "^2.8.3"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.18.0",
-    "@types/ws": "^8.5.13",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
   }
