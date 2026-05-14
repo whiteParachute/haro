@@ -45,6 +45,8 @@ export const EvolutionProposalSchema = z.object({
   changeSet: z.array(ChangeOperationSchema).min(1),
   testPlan: TestPlanSchema,
   rollbackPlan: RollbackPlanSchema,
+  humanReviewRequired: z.boolean().default(true),
+  humanApprovalRefs: z.array(RefSchema).default([]),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });

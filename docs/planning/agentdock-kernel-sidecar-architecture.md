@@ -363,7 +363,7 @@ User approves proposal
 
 - `haro connect agent-dock` 已实现：保存 AgentDock HTTP connection。
 - `haro observe --since last` 已实现：复用 HTTP observation source，写入 `~/.haro/evolution/observations/` 并更新 base64url-encoded connection cursor；去重与锁均按 connection 隔离。
-- `haro propose --auto-dry-run --include-frontier` 已实现：读取未消费 observation batches，按需引用 active frontier signals，写入 `~/.haro/evolution/proposals/` dry-run proposal，并为 proposal changeSet 写入 `proposed` asset events；observation source refs 作为 consumption marker，重复运行幂等；`--limit` 限制单次 proposal 打包的 observation batch 数，损坏 observation/proposal/frontier-signal 会在 JSON 结果和 stderr warning 中显式暴露。
+- `haro propose --auto-dry-run --include-frontier` 已实现：读取未消费 observation batches，按需引用 active frontier signals，写入 `~/.haro/evolution/proposals/` dry-run proposal，并为 proposal changeSet 写入 `proposed` asset events；启动阶段自动 proposal 显式带 `humanReviewRequired=true` 与空 `humanApprovalRefs`；observation source refs 作为 consumption marker，重复运行幂等；`--limit` 限制单次 proposal 打包的 observation batch 数，损坏 observation/proposal/frontier-signal 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report，并为通过验证的 changeSet 写入 `validated` asset events；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation、snapshot、rollback、application gate record 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
@@ -388,7 +388,7 @@ User approves proposal
 ### Phase 6: Gated Apply
 
 - 已实现第一段 L0/L1 gate preflight：`haro apply --proposal-id <id>` 只接受 proposal id，不接受自由文本 patch。
-- Gate 已覆盖 proposal 存在性、L2/L3 直接拒绝、L0/L1 target allowlist、`proposal.status=validated`、validation report、`applyEligible=true`、`rollbackReady=true`、snapshot ref、rollback ref。
+- Gate 已覆盖 proposal 存在性、L2/L3 直接拒绝、L0/L1 target allowlist、`proposal.status=validated`、validation report、`humanReviewRequired` / `humanApprovalRefs`、`applyEligible=true`、`rollbackReady=true`、snapshot ref、rollback ref；缺少 approval ref 时返回 `HUMAN_REVIEW_REQUIRED` 且不生成 snapshot/application。
 - 已实现 snapshot/rollback artifact：`haro snapshot --proposal-id <id>` 写 `~/.haro/evolution/snapshots/*` 与 `~/.haro/evolution/rollbacks/*`；当目标属于 allowlisted L0 `prompt` / `mcp-tool-config` 且存在 sidecar-local 当前内容时，会从 `~/.haro/assets/current/<kind>/<base64url(asset-id)>.{md,txt,json}` 复制到 `~/.haro/evolution/snapshot-content/<snapshot-id>/` 并记录 restore ref/hash；`haro apply --proposal-id` 缺 refs 时会先生成这些 refs。
 - 已实现 sidecar-local L0/L1 apply executor：`haro apply --proposal-id <id>` 只从 `~/.haro/evolution/proposal-content/<proposal-id>/<change-index>-<base64url(asset-id)>.<ext>` 读取拟应用内容，写回 allowlisted `~/.haro/assets/current/<kind>/`，校验可选 content hash，并写 `ApplicationRecord(status=applied, applied=true)` 与 `applied` asset event。
 - 已实现 sidecar-local L0/L1 rollback executor：`haro rollback --application-id <id>` 只对 `ApplicationRecord(status=applied)` 生效，基于 application 绑定的 snapshot/rollback artifact 恢复 `snapshot-content` 或删除 apply 创建的 current content，并写 `ApplicationRecord(status=rolled-back, applied=false)` 与 `rolled-back` asset event。

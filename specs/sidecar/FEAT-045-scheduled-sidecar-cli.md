@@ -41,6 +41,7 @@ Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。Agen
 - R1: `haro connect agent-dock --base-url <url> [--auth-ref <ref>] [--id <id>]` 写入 `~/.haro/agentdock-connections.json`。
 - R2: `haro observe --since last` 根据 connection cursor 采集增量 observation，并写入 `~/.haro/evolution/observations/`。
 - R3: `haro propose --auto-dry-run` 读取未消费 observations，生成 dry-run proposal，写入 `~/.haro/evolution/proposals/`，并为 proposal changeSet 写入 `proposed` asset events。
+- R3.1: 启动阶段自动生成的 proposal 必须 fail-closed：`humanReviewRequired=true` 且 `humanApprovalRefs=[]`，后续 apply 或真实 branch executor 必须等待 AgentDock 人审 approval ref。
 - R4: `haro validate --pending` 读取 pending proposals，生成 validation report，写入 `~/.haro/evolution/validations/`，并为 validated changeSet 写入 `validated` asset events。
 - R5: `haro status` 输出 connection、cursor、observation/proposal/validation 计数。
 - R6: `haro doctor` 检查 HARO_HOME、connection、AgentDock reachability、write permission、schema compatibility。
@@ -92,7 +93,7 @@ cursor 存储建议：
 - AC2.1: 给定 `HARO_AGENTDOCK_BASE_URL`，当通过 `haro mcp` 调用 `haro_observe` 时，应采集真实 AgentDock HTTP API 并返回 `source=agentdock-http` 的 schema-valid `ObservationBatch`，不创建 `$HARO_HOME/memory`。（对应 R2/R5/R8）
 - AC3: 给定同一 cursor 重复执行 observe，不应生成重复 observation；跨 connection 的相同 observation id 不应互相去重。（对应 R8）
 - AC3.1: 给定 `prod:us` 与 `prod-us` 等可归一成同一路径的 connection id，cursor/lock 文件名应使用可逆编码隔离，不发生路径碰撞。
-- AC4: 给定未消费 observation，当执行 `haro propose --auto-dry-run` 时，应生成 dry-run proposal 并写入 `proposed` asset event；重复执行不重复消费同一 observation batch；`--limit` 只限制单次打包进 proposal 的 observation batch 数，不表示 proposal 数。（对应 R3/R8）
+- AC4: 给定未消费 observation，当执行 `haro propose --auto-dry-run` 时，应生成 dry-run proposal、设置 `humanReviewRequired=true` / 空 approval refs，并写入 `proposed` asset event；重复执行不重复消费同一 observation batch；`--limit` 只限制单次打包进 proposal 的 observation batch 数，不表示 proposal 数。（对应 R3/R3.1/R8）
 - AC4.1: 给定损坏的 observation/proposal JSON，当执行 `haro propose --auto-dry-run --json` 时，应在结果中暴露 `skippedCorruptObservationCount` / `skippedCorruptProposalCount` 并向 stderr 输出 warning；若确定性 proposal 文件已存在但损坏，应原子覆盖修复。（对应 R3/R7/R8）
 - AC5: 给定 pending proposal，当执行 `haro validate --pending` 时，应生成 advisory validation report 并写入 `validated` asset event；重复执行不重复验证同一 proposal；`--limit` 只限制单次处理的 pending proposal 数。（对应 R4/R8）
 - AC5.1: 给定损坏的 proposal/validation JSON，当执行 `haro validate --pending --json` 时，应在结果中暴露 `skippedCorruptProposalCount` / `skippedCorruptValidationCount` 并向 stderr 输出 warning；若确定性 validation 文件已存在但损坏，应原子覆盖修复。（对应 R4/R7/R8）

@@ -210,6 +210,7 @@ export const haroProposeTool: ToolDefinition<typeof HaroProposeInputSchema, Evol
       testPlan: {
         requiredCommands: ['pnpm -F @haro/agentdock-contract test', 'pnpm -F @haro/mcp-tools test'],
         manualChecks: [
+          'Human review in AgentDock is required before this automatic proposal can be applied.',
           'Register `haro mcp` as an external AgentDock MCP server and verify tools/list shows read-only tools only.',
         ],
         regressionRisks: [
@@ -222,6 +223,8 @@ export const haroProposeTool: ToolDefinition<typeof HaroProposeInputSchema, Evol
         snapshotRequired: false,
         rollbackRefs: [],
       },
+      humanReviewRequired: true,
+      humanApprovalRefs: [],
       createdAt: now,
       updatedAt: now,
     });
@@ -254,6 +257,7 @@ export const haroValidateTool: ToolDefinition<typeof HaroValidateInputSchema, Va
       applyEligible: false,
       blockingReasons: [
         'FEAT-044 is read-only; validation reports are advisory and cannot make a proposal apply-eligible.',
+        'Automatic proposals require human review before any apply gate can be considered.',
       ],
       evidenceRefs: [
         {
@@ -344,7 +348,7 @@ export function createHaroApplyTool(
   return {
     name: 'haro_apply',
     description:
-      'Apply a validated L0/L1 sidecar proposal through gated proposal, validation, snapshot, and rollback checks. Gated-write.',
+      'Apply a validated and human-approved L0/L1 sidecar proposal through gated proposal, validation, snapshot, and rollback checks. Gated-write.',
     inputSchema: HaroApplyInputSchema,
     timeoutMs: 10_000,
     async execute(params): Promise<unknown> {

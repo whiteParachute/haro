@@ -336,6 +336,8 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
     const proposal = EvolutionProposalSchema.parse(callResult(proposeResponses[0]!));
     expect(proposal.status).toBe('dry-run');
     expect(proposal.targetKind).toBe('mcp-tool-config');
+    expect(proposal.humanReviewRequired).toBe(true);
+    expect(proposal.humanApprovalRefs).toEqual([]);
 
     const validateResponses = await runSidecarWith(e, [
       {
@@ -351,6 +353,7 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
     const report = ValidationReportSchema.parse(callResult(validateResponses[0]!));
     expect(report.proposalId).toBe(proposal.id);
     expect(report.applyEligible).toBe(false);
+    expect(report.blockingReasons.join('\n')).toContain('Automatic proposals require human review');
     expect(e.evolution.listEvents()).toEqual(beforeEvents);
   });
 

@@ -85,6 +85,21 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function humanApprovalRef(id = 'approval-human-review-001') {
+  return {
+    id,
+    kind: 'human-approval',
+    uri: `agentdock://approvals/${id}`,
+  };
+}
+
+function approvedProposalFields(id?: string) {
+  return {
+    humanReviewRequired: true,
+    humanApprovalRefs: [humanApprovalRef(id)],
+  };
+}
+
 function readAssetEvents(root: string): AssetEvent[] {
   const dir = join(root, 'assets', 'events');
   if (!existsSync(dir)) return [];
@@ -371,6 +386,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       proposal: {
         status: string;
         targetKind: string;
+        humanReviewRequired: boolean;
+        humanApprovalRefs: Array<{ id: string; kind: string }>;
         sourceObservationRefs: Array<{ id: string; kind: string }>;
         changeSet: Array<{ targetRef: { id: string }; contentHash?: string }>;
       };
@@ -382,6 +399,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.assetEventCount).toBe(1);
     expect(payload.assetEventIds).toHaveLength(1);
     expect(payload.proposal.status).toBe('dry-run');
+    expect(payload.proposal.humanReviewRequired).toBe(true);
+    expect(payload.proposal.humanApprovalRefs).toEqual([]);
     expect(payload.proposal.sourceObservationRefs).toEqual([
       { id: observePayload.batchId, kind: 'observation-batch', uri: `haro-sidecar://observations/${encodeURIComponent(observePayload.batchId)}` },
     ]);
@@ -1270,6 +1289,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
           { id: 'rollback-not-eligible', kind: 'rollback-ref' },
         ],
       },
+      ...approvedProposalFields('approval-not-eligible'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };
@@ -1310,6 +1330,87 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.blockingReasons).toContain('Manual approval is required before apply.');
     expect(payload.blockingReasons).toContain('Validation report has applyEligible=false.');
     expect(payload.applicationRecordCount).toBe(0);
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('apply --proposal-id blocks automatic proposals until human approval is attached', async () => {
+    const root = newHome('agentdock-apply-human-review');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    const proposal = {
+      id: 'proposal_needs_human_review',
+      title: 'Automatic prompt change requires human review',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-human-review', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'prompt-human-review', kind: 'prompt' },
+          contentHash: 'sha256:human-review',
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: { requiredCommands: ['git diff --check'], manualChecks: [], regressionRisks: [] },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      humanReviewRequired: true,
+      humanApprovalRefs: [],
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_needs_human_review.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_human_review.json'), `${JSON.stringify({
+      id: 'validation_human_review',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      validationId: string;
+      gatePassed: boolean;
+      applied: boolean;
+      applicationRecordCount: number;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'blocked',
+      gateCode: 'HUMAN_REVIEW_REQUIRED',
+      validationId: 'validation_human_review',
+      gatePassed: false,
+      applied: false,
+      applicationRecordCount: 0,
+    });
+    expect(payload.blockingReasons.join('\n')).toContain('Startup policy requires a human approval ref');
+    expect(readSnapshotRecords(root)).toHaveLength(0);
+    expect(readRollbackRecords(root)).toHaveLength(0);
     expect(readApplicationRecords(root)).toHaveLength(0);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
@@ -1606,6 +1707,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         snapshotRequired: true,
         rollbackRefs: [],
       },
+      ...approvedProposalFields('approval-autosnapshot-l0'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };
@@ -1724,6 +1826,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         snapshotRequired: true,
         rollbackRefs: [],
       },
+      ...approvedProposalFields('approval-ready-l0'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };
@@ -1860,6 +1963,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         snapshotRequired: true,
         rollbackRefs: [],
       },
+      ...approvedProposalFields('approval-rollback-restore-l0'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };
@@ -1999,6 +2103,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         snapshotRequired: true,
         rollbackRefs: [],
       },
+      ...approvedProposalFields('approval-rollback-delete-l0'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };
@@ -2174,6 +2279,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         snapshotRequired: true,
         rollbackRefs: [],
       },
+      ...approvedProposalFields('approval-l1-runner-profile'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };
@@ -2311,6 +2417,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         snapshotRequired: true,
         rollbackRefs: [],
       },
+      ...approvedProposalFields('approval-missing-apply-content'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };
@@ -2397,6 +2504,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         snapshotRequired: true,
         rollbackRefs: [],
       },
+      ...approvedProposalFields('approval-symlink-apply-content'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };
@@ -2525,6 +2633,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
           { id: foreignRollback.id, kind: 'rollback-ref' },
         ],
       },
+      ...approvedProposalFields('approval-cross-refs'),
       createdAt: '2026-05-08T12:00:00.000Z',
       updatedAt: '2026-05-08T12:00:00.000Z',
     };

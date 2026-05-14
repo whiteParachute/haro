@@ -1096,6 +1096,14 @@ export function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyRes
       ], validation.id);
     }
 
+    if (missingHumanApproval(proposal)) {
+      return blockedApplyResult(proposal.id, 'HUMAN_REVIEW_REQUIRED', [
+        'Startup policy requires a human approval ref before any apply; attach approval evidence through the AgentDock approval channel.',
+        ...(validation.applyEligible ? [] : ['Validation report has applyEligible=false.']),
+        ...(validation.riskVerdict === 'blocked' ? ['Validation report has riskVerdict=blocked.'] : []),
+      ], validation.id);
+    }
+
     if (!validation.applyEligible || validation.riskVerdict === 'blocked') {
       return blockedApplyResult(proposal.id, 'APPLY_NOT_ELIGIBLE', [
         ...validation.blockingReasons,
@@ -3236,6 +3244,7 @@ function applicationRecordId(
   return `application_${sha256(JSON.stringify({
     proposalId: proposal.id,
     validationId: validation.id,
+    humanApprovalRefs: proposal.humanApprovalRefs,
     snapshotRef,
     rollbackRef,
     appliedContent: changes.map((change) => ({
@@ -3272,6 +3281,7 @@ function createAppliedApplicationRecord(
     evidenceRefs: [
       evolutionProposalRef(proposal),
       validationReportRef(validation),
+      ...proposal.humanApprovalRefs,
       snapshotRef,
       rollbackRef,
       ...appliedContentRefs,
@@ -3358,6 +3368,7 @@ function createPatchBranchPlanRecord(
     evidenceRefs: [
       evolutionProposalRef(proposal),
       validationReportRef(validation),
+      ...proposal.humanApprovalRefs,
       ...proposal.sourceObservationRefs,
       ...validation.evidenceRefs,
       ...changeRefs,
@@ -3574,6 +3585,7 @@ function createDryRunProposal(
         'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
       ],
       manualChecks: [
+        'Human review in AgentDock is required before this automatic proposal can be applied or converted into a real branch.',
         frontierSignals.length > 0
           ? 'Run AgentDock scheduled script task for `haro observe` followed by `haro propose --auto-dry-run --include-frontier --json` and verify no runtime code is modified.'
           : 'Run AgentDock scheduled script task for `haro observe` followed by `haro propose --auto-dry-run --json` and verify no runtime code is modified.',
@@ -3595,6 +3607,8 @@ function createDryRunProposal(
       snapshotRequired: false,
       rollbackRefs: sourceObservationRefs,
     },
+    humanReviewRequired: true,
+    humanApprovalRefs: [],
     createdAt: timestamp,
     updatedAt: timestamp,
   });
@@ -3624,6 +3638,8 @@ function createValidationReport(
     rollbackReady,
     blockingReasons,
     requiredTests: proposal.testPlan.requiredCommands,
+    humanReviewRequired: proposal.humanReviewRequired,
+    humanApprovalRefs: proposal.humanApprovalRefs,
   }));
   return ValidationReportSchema.parse({
     id: `validation_${fingerprint.slice(0, 24)}`,
@@ -3875,8 +3891,11 @@ function stringToRef(value: string, kind: string): Ref {
 
 function validationBlockingReasons(proposal: EvolutionProposal, rollbackReady: boolean): string[] {
   const reasons = [
-    'FEAT-045 scheduled validation is advisory; gated apply and explicit user approval are not implemented in this CLI slice.',
+    'FEAT-045 scheduled validation is advisory; gated apply still requires explicit AgentDock human approval evidence.',
   ];
+  if (missingHumanApproval(proposal)) {
+    reasons.push('Human review is required before this proposal can be applied or converted into a real branch.');
+  }
   if (!rollbackReady) {
     reasons.push('Rollback plan requires a snapshot or rollback refs before apply can be considered.');
   }
@@ -3887,6 +3906,10 @@ function validationBlockingReasons(proposal: EvolutionProposal, rollbackReady: b
     reasons.push('High-risk proposals require manual review before any apply gate can be considered.');
   }
   return reasons;
+}
+
+function missingHumanApproval(proposal: EvolutionProposal): boolean {
+  return proposal.humanApprovalRefs.length === 0;
 }
 
 function observationBatchRef(batch: ObservationBatch): Ref {

@@ -13,7 +13,7 @@ Haro 当前主线已切换为 **AgentDock self-evolution sidecar**。
 - AgentDock 不能 import Haro。
 - Haro 不能 import AgentDock 内部 `src/*` 模块。
 - Haro 接入 AgentDock 只走外部 MCP server 注册、AgentDock scheduler/script task、AgentDock skills/MCP 调用面。
-- 第一阶段只读 / dry-run；L0/L1 apply 必须有 proposal、validation、snapshot、rollback ref。
+- 第一阶段只读 / dry-run；启动阶段自动 proposal 默认需要人审，L0/L1 apply 必须有 proposal、validation、human approval、snapshot、rollback ref。
 - 外部前沿情报只能作为带来源 evidence 进入 proposal，不得绕过 validation / approval / rollback gate。
 
 当前 sidecar-era specs：
@@ -326,7 +326,7 @@ FEAT-018 只负责 **workflow 编排调试的只读可观测面**，避免把后
 
 1. **AgentDock kernel 优先**：Haro 不再自建 workbench/runtime，只作为 AgentDock sidecar 接入。
 2. **Contract 先行**：先落 `@haro/agentdock-contract`，再做 MCP / scheduled CLI / apply。
-3. **先只读后可写**：observe/propose/validate/query 先落地；L0/L1 apply 必须后置到 validation + snapshot + rollback gate。
+3. **先只读后可写**：observe/propose/validate/query 先落地；L0/L1 apply 必须后置到 validation + human approval + snapshot + rollback gate。
 4. **删除旧未来规划**：旧 Phase 2.0 / 2.5 spec 已删除，后续以 `specs/sidecar/` 为准。
 
 ### 规划 checklist（后端 FEAT 起草时自检）

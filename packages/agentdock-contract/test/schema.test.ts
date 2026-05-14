@@ -109,7 +109,11 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
   });
 
   it('accepts a valid dry-run proposal fixture', () => {
-    expect(EvolutionProposalSchema.parse(validProposal).id).toBe('proposal-001');
+    const proposal = EvolutionProposalSchema.parse(validProposal);
+
+    expect(proposal.id).toBe('proposal-001');
+    expect(proposal.humanReviewRequired).toBe(true);
+    expect(proposal.humanApprovalRefs).toEqual([]);
   });
 
   it('accepts a ready L0/L1 application gate record without applying content', () => {
