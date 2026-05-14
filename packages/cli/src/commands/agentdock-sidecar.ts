@@ -56,6 +56,7 @@ interface ObserveOptions extends OutputFlags {
 
 interface ProposeOptions extends OutputFlags {
   autoDryRun?: boolean;
+  includeFrontier?: boolean;
   limit?: string;
 }
 
@@ -87,11 +88,15 @@ interface ObserveResult {
 interface ProposeResult {
   command: 'propose';
   mode: 'dry-run';
+  includeFrontier: boolean;
   proposalCount: number;
   consumedObservationCount: number;
   pendingObservationCount: number;
+  includedFrontierSignalCount: number;
+  availableFrontierSignalCount: number;
   skippedCorruptObservationCount: number;
   skippedCorruptProposalCount: number;
+  skippedCorruptFrontierSignalCount: number;
   wroteProposal: boolean;
   proposal?: EvolutionProposal;
   proposalPath?: string;
@@ -300,6 +305,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
     .command('propose')
     .description('Generate dry-run evolution proposals from persisted AgentDock observations')
     .option('--auto-dry-run', 'generate a dry-run proposal from unconsumed observation batches')
+    .option('--include-frontier', 'include active frontier signals as proposal evidence')
     .option('--limit <n>', 'maximum unconsumed observation batches to include')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
@@ -311,11 +317,15 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
           renderJson({
             command: result.command,
             mode: result.mode,
+            includeFrontier: result.includeFrontier,
             proposalCount: result.proposalCount,
             consumedObservationCount: result.consumedObservationCount,
             pendingObservationCount: result.pendingObservationCount,
+            includedFrontierSignalCount: result.includedFrontierSignalCount,
+            availableFrontierSignalCount: result.availableFrontierSignalCount,
             skippedCorruptObservationCount: result.skippedCorruptObservationCount,
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
+            skippedCorruptFrontierSignalCount: result.skippedCorruptFrontierSignalCount,
             wroteProposal: result.wroteProposal,
             proposalId: result.proposal?.id,
             proposalPath: result.proposalPath,
@@ -329,6 +339,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `Proposal: ${result.proposal.id}`,
               `Mode: ${result.mode}`,
               `Source observations: ${result.consumedObservationCount}`,
+              `Frontier signals: ${result.includedFrontierSignalCount}`,
               `Pending observations after run: ${result.pendingObservationCount}`,
               `Wrote: ${result.proposalPath}`,
             ].join('\n') + '\n',
@@ -524,36 +535,50 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
   try {
     const consumedResult = readConsumedObservationBatchIds(app.paths.root);
     const pendingResult = readUnconsumedObservationBatches(app.paths.root, consumedResult.consumed);
+    const frontierResult = options.includeFrontier
+      ? readActiveFrontierSignals(app.paths.root)
+      : { signals: [] as FrontierSignal[], corruptCount: 0 };
     emitCorruptJsonWarnings(app, {
       corruptObservationCount: pendingResult.corruptCount,
       corruptProposalCount: consumedResult.corruptCount,
     });
+    if (options.includeFrontier) {
+      emitCorruptFrontierSignalWarnings(app, frontierResult.corruptCount);
+    }
     const pending = pendingResult.batches;
     const selected = typeof limit === 'number' ? pending.slice(0, limit) : pending;
     if (selected.length === 0) {
       return {
         command: 'propose',
         mode: 'dry-run',
+        includeFrontier: options.includeFrontier === true,
         proposalCount: 0,
         consumedObservationCount: 0,
         pendingObservationCount: 0,
+        includedFrontierSignalCount: 0,
+        availableFrontierSignalCount: frontierResult.signals.length,
         skippedCorruptObservationCount: pendingResult.corruptCount,
         skippedCorruptProposalCount: consumedResult.corruptCount,
+        skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
         wroteProposal: false,
       };
     }
 
-    const proposal = createDryRunProposal(selected, app.now);
+    const proposal = createDryRunProposal(selected, app.now, frontierResult.signals);
     const path = proposalFilePath(app.paths.root, proposal);
     writeJsonFile(path, proposal);
     return {
       command: 'propose',
       mode: 'dry-run',
+      includeFrontier: options.includeFrontier === true,
       proposalCount: 1,
       consumedObservationCount: selected.length,
       pendingObservationCount: pending.length - selected.length,
+      includedFrontierSignalCount: frontierResult.signals.length,
+      availableFrontierSignalCount: frontierResult.signals.length,
       skippedCorruptObservationCount: pendingResult.corruptCount,
       skippedCorruptProposalCount: consumedResult.corruptCount,
+      skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
       wroteProposal: true,
       proposal,
       proposalPath: path,
@@ -1455,6 +1480,28 @@ function readFrontierSignalStats(root: string): {
   return { count, corruptCount, activeCount, rejectedCount, supersededCount };
 }
 
+function readActiveFrontierSignals(root: string): { signals: FrontierSignal[]; corruptCount: number } {
+  const dir = frontierSignalsDir(root);
+  if (!existsSync(dir)) return { signals: [], corruptCount: 0 };
+  const signals: FrontierSignal[] = [];
+  const seenSourceKeys = new Set<string>();
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const signal = FrontierSignalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (signal.status !== 'active') continue;
+      const key = frontierSignalSourceKey(signal);
+      if (seenSourceKeys.has(key)) continue;
+      seenSourceKeys.add(key);
+      signals.push(signal);
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { signals, corruptCount };
+}
+
 function emitCorruptJsonWarnings(
   app: AppContext,
   counts: { corruptObservationCount: number; corruptProposalCount: number },
@@ -1498,20 +1545,26 @@ function emitCorruptFrontierSignalWarnings(app: AppContext, corruptSignalCount: 
 function createDryRunProposal(
   batches: readonly ObservationBatch[],
   now: () => Date,
+  frontierSignals: readonly FrontierSignal[] = [],
 ): EvolutionProposal {
-  const sourceObservationRefs = batches.map(observationBatchRef);
+  const sourceObservationRefs = [
+    ...batches.map(observationBatchRef),
+    ...frontierSignals.map(frontierSignalRef),
+  ];
   const summary = summarizeObservationBatches(batches);
+  const frontierSummary = summarizeFrontierSignals(frontierSignals);
   const fingerprint = sha256(JSON.stringify({
     refs: sourceObservationRefs.map((ref) => ref.id).sort(),
     summary,
+    frontierSummary,
   }));
   const proposalId = `proposal_${fingerprint.slice(0, 24)}`;
   const contentRef = `haro-sidecar://proposals/${proposalId}/dry-run`;
-  const contentHash = sha256(JSON.stringify({ sourceObservationRefs, summary, contentRef }));
+  const contentHash = sha256(JSON.stringify({ sourceObservationRefs, summary, frontierSummary, contentRef }));
   const timestamp = now().toISOString();
   return EvolutionProposalSchema.parse({
     id: proposalId,
-    title: `Dry-run AgentDock sidecar proposal from ${batches.length} observation batch${batches.length === 1 ? '' : 'es'}`,
+    title: dryRunProposalTitle(batches.length, frontierSignals.length),
     status: 'dry-run',
     level: summary.runnerErrors > 0 ? 'L1' : 'L0',
     targetKind: summary.scheduledTaskErrors > 0 ? 'schedule-config' : summary.runnerErrors > 0 ? 'runner-profile' : 'mcp-tool-config',
@@ -1523,7 +1576,7 @@ function createDryRunProposal(
         targetRef: proposalTargetRef(summary),
         contentRef,
         contentHash,
-        summary: proposalSummary(summary),
+        summary: proposalSummary(summary, frontierSummary),
       },
     ],
     testPlan: {
@@ -1532,11 +1585,19 @@ function createDryRunProposal(
         'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
       ],
       manualChecks: [
-        'Run AgentDock scheduled script task for `haro observe` followed by `haro propose --auto-dry-run --json` and verify no runtime code is modified.',
+        frontierSignals.length > 0
+          ? 'Run AgentDock scheduled script task for `haro observe` followed by `haro propose --auto-dry-run --include-frontier --json` and verify no runtime code is modified.'
+          : 'Run AgentDock scheduled script task for `haro observe` followed by `haro propose --auto-dry-run --json` and verify no runtime code is modified.',
+        ...(frontierSignals.length > 0
+          ? ['Review cited frontier-signal source refs before trusting external evidence.']
+          : []),
       ],
       regressionRisks: [
         'Observation schema drift can make persisted batches unreadable until doctor/status surfaces the corrupt file.',
         'AgentDock scheduler task overlap can create duplicate proposals if the proposal lock is bypassed.',
+        ...(frontierSignals.length > 0
+          ? ['External frontier signals can become stale or be superseded; rejected/superseded signals must not remain active evidence.']
+          : []),
       ],
     },
     rollbackPlan: {
@@ -1612,6 +1673,14 @@ function observationBatchRef(batch: ObservationBatch): Ref {
   };
 }
 
+function frontierSignalRef(signal: FrontierSignal): Ref {
+  return {
+    id: signal.id,
+    kind: 'frontier-signal',
+    uri: `haro-sidecar://frontier-signals/${encodeURIComponent(signal.id)}`,
+  };
+}
+
 function summarizeObservationBatches(batches: readonly ObservationBatch[]) {
   return {
     batches: batches.length,
@@ -1627,6 +1696,28 @@ function summarizeObservationBatches(batches: readonly ObservationBatch[]) {
     runnerErrors: batches.reduce((sum, batch) => sum + batch.runnerErrors.length, 0),
     usageRecords: batches.reduce((sum, batch) => sum + batch.usageRecords.length, 0),
   };
+}
+
+function summarizeFrontierSignals(signals: readonly FrontierSignal[]) {
+  const domains = Array.from(new Set(signals.flatMap((signal) => signal.targetDomains))).sort();
+  const sourceTypes = Array.from(new Set(signals.map((signal) => signal.sourceType))).sort();
+  return {
+    frontierSignals: signals.length,
+    sourceTypes,
+    targetDomains: domains,
+    highConfidence: signals.filter((signal) => signal.confidence === 'high').length,
+    mediumConfidence: signals.filter((signal) => signal.confidence === 'medium').length,
+    lowConfidence: signals.filter((signal) => signal.confidence === 'low').length,
+  };
+}
+
+function dryRunProposalTitle(observationBatchCount: number, frontierSignalCount: number): string {
+  const observationPart = `${observationBatchCount} observation batch${observationBatchCount === 1 ? '' : 'es'}`;
+  if (frontierSignalCount === 0) {
+    return `Dry-run AgentDock sidecar proposal from ${observationPart}`;
+  }
+  const frontierPart = `${frontierSignalCount} frontier signal${frontierSignalCount === 1 ? '' : 's'}`;
+  return `Dry-run AgentDock sidecar proposal from ${observationPart} and ${frontierPart}`;
 }
 
 function proposalTargetRef(summary: ReturnType<typeof summarizeObservationBatches>): Ref {
@@ -1651,11 +1742,17 @@ function proposalTargetRef(summary: ReturnType<typeof summarizeObservationBatche
   };
 }
 
-function proposalSummary(summary: ReturnType<typeof summarizeObservationBatches>): string {
+function proposalSummary(
+  summary: ReturnType<typeof summarizeObservationBatches>,
+  frontierSummary?: ReturnType<typeof summarizeFrontierSignals>,
+): string {
   return [
     'Review persisted AgentDock sidecar observations and prepare a dry-run self-optimization proposal.',
     `Batches=${summary.batches}, sessions=${summary.sessions}, turns=${summary.turns}, toolCalls=${summary.toolCalls}, scheduledTaskRuns=${summary.scheduledTaskRuns}, scheduledTaskErrors=${summary.scheduledTaskErrors}, runnerErrors=${summary.runnerErrors}, usageRecords=${summary.usageRecords}.`,
-  ].join(' ');
+    frontierSummary && frontierSummary.frontierSignals > 0
+      ? `FrontierSignals=${frontierSummary.frontierSignals}, sourceTypes=${frontierSummary.sourceTypes.join('|') || '(none)'}, targetDomains=${frontierSummary.targetDomains.join('|') || '(none)'}.`
+      : '',
+  ].filter(Boolean).join(' ');
 }
 
 function frontierSignalSourceKey(signal: FrontierSignal): string {

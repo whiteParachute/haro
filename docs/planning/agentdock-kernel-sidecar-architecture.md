@@ -114,7 +114,8 @@ AgentDock 现有 scheduler 可以触发 agent task，也可以执行 script task
 
 ```bash
 haro observe --agentdock-url http://127.0.0.1:3000 --since last
-haro propose --auto-dry-run
+haro intake frontier --source-config ~/.haro/frontier-sources.json --since last
+haro propose --auto-dry-run --include-frontier
 haro validate --pending
 ```
 
@@ -191,7 +192,8 @@ Haro 需要支持无交互后台命令：
 ```bash
 haro connect agent-dock --base-url http://127.0.0.1:3000
 haro observe --since last
-haro propose --auto-dry-run
+haro intake frontier --source-config ~/.haro/frontier-sources.json --since last
+haro propose --auto-dry-run --include-frontier
 haro validate --pending
 haro status
 haro doctor
@@ -356,19 +358,20 @@ User approves proposal
 
 - `haro connect agent-dock` 已实现：保存 AgentDock HTTP connection。
 - `haro observe --since last` 已实现：复用 HTTP observation source，写入 `~/.haro/evolution/observations/` 并更新 base64url-encoded connection cursor；去重与锁均按 connection 隔离。
-- `haro propose --auto-dry-run` 已实现：读取未消费 observation batches，写入 `~/.haro/evolution/proposals/` dry-run proposal；source refs 作为 consumption marker，重复运行幂等；`--limit` 限制单次 proposal 打包的 observation batch 数，损坏 observation/proposal 会在 JSON 结果和 stderr warning 中显式暴露。
+- `haro propose --auto-dry-run --include-frontier` 已实现：读取未消费 observation batches，按需引用 active frontier signals，写入 `~/.haro/evolution/proposals/` dry-run proposal；observation source refs 作为 consumption marker，重复运行幂等；`--limit` 限制单次 proposal 打包的 observation batch 数，损坏 observation/proposal/frontier-signal 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro validate --pending` 已实现：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/` advisory validation report；已有 validation report 作为 consumption marker，重复运行幂等；`--limit` 限制单次处理的 pending proposal 数，损坏 proposal/validation 会在 JSON 结果和 stderr warning 中显式暴露。
 - `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
-- Phase D 核心闭环完成；下一步进入 Phase E（frontier signal intake + sidecar asset registry）或补更细的 doctor 自动修复。
+- Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；下一步进入 sidecar asset registry adapter 或补更细的 doctor 自动修复。
 - 通过 AgentDock script scheduled task 周期触发。
 
 ### Phase 4: Frontier Intelligence Intake
 
 - `FrontierSignal` schema 已定义在 `@haro/agentdock-contract`，覆盖 source type、source ref、summary、claims、target domains、confidence、status。
 - `haro intake frontier --source-config <file> --since last --json` 第一段已实现：读取 curated `FrontierSignal[]` / `{ signals: [...] }` source config，按 sourceRef 去重，写入 `~/.haro/evolution/frontier-signals/`，并维护 frontier cursor。
+- `haro propose --auto-dry-run --include-frontier` 已实现：proposal 仍以未消费 observation batch 为触发源，同时把 active frontier signals 追加为 `frontier-signal` evidence refs；`rejected` / `superseded` signals 不会被引用。
 - `haro status` / `haro doctor --component sidecar` 已纳入 frontier signal 计数和 corrupt file 检查。
-- 下一步：让 `haro propose --auto-dry-run --include-frontier` 同时引用内部 observation refs 与 active frontier signal refs。
+- 下一步：进入 sidecar asset registry adapter，把 prompt/skill/profile/tool config/frontier-source-ref 变更登记为可追溯资产事件。
 
 ### Phase 5: Asset Registry Adapter
 

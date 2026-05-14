@@ -52,7 +52,7 @@ Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。Agen
 AgentDock script task 示例：
 
 ```bash
-haro observe --since last && haro propose --auto-dry-run && haro validate --pending
+haro observe --since last && haro propose --auto-dry-run --include-frontier && haro validate --pending
 ```
 
 数据流：
@@ -124,3 +124,4 @@ cursor 存储建议：
 - 2026-05-12: Codex — 实现 `haro validate --pending` 第一段：读取未验证 pending proposals，写入 `~/.haro/evolution/validations/<validation-id>.json` advisory validation report；通过 existing validation reports 记录已验证 proposal，重复执行幂等；新增 validate lock，损坏 proposal/validation 通过 result 计数与 stderr warning 显式暴露，确定性 validation 文件损坏时自动覆盖修复，仍不创建 `$HARO_HOME/memory`。
 - 2026-05-12: Codex — 实现 `haro status` sidecar 段：复用现有 top-level status，新增 connection/cursor/observation/proposal/validation 计数、pending/validated proposal 计数与 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - 2026-05-12: Codex — 实现 `haro doctor --component sidecar`：复用现有 top-level doctor，新增 sidecar stage，检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts 与 memory 边界；默认 `haro doctor` 包含 sidecar stage，`doctor --fix` 不创建历史 Haro memory 目录。
+- 2026-05-13: Codex — 扩展 `haro propose --auto-dry-run --include-frontier`：在未消费 observation batch 触发 proposal 时引用 active frontier signal evidence refs，并显式暴露损坏 frontier signal 计数；仍只生成 dry-run proposal，不 apply、不写 memory。

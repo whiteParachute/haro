@@ -396,6 +396,132 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.skippedCorruptObservationCount).toBe(1);
   });
 
+  it('propose --auto-dry-run --include-frontier cites active frontier signals only', async () => {
+    const root = newHome('agentdock-propose-frontier');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+    const observePayload = (JSON.parse(observeOut.read()) as { data: { batchId: string } }).data;
+
+    const frontierDir = join(root, 'evolution', 'frontier-signals');
+    mkdirSync(frontierDir, { recursive: true });
+    writeFileSync(join(frontierDir, 'active.json'), `${JSON.stringify(frontierSignal(), null, 2)}\n`);
+    writeFileSync(join(frontierDir, 'rejected.json'), `${JSON.stringify(frontierSignal('frontier-signal-rejected', {
+      sourceRef: { id: 'rejected-source', kind: 'blog-post', uri: 'https://example.com/rejected' },
+      sourceType: 'blog-post',
+      status: 'rejected',
+    }), null, 2)}\n`);
+    writeFileSync(join(frontierDir, 'superseded.json'), `${JSON.stringify(frontierSignal('frontier-signal-superseded', {
+      sourceRef: { id: 'superseded-source', kind: 'paper', uri: 'https://example.com/superseded' },
+      sourceType: 'paper',
+      status: 'superseded',
+    }), null, 2)}\n`);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--include-frontier',
+      '--json',
+    ]));
+
+    expect(propose.exitCode).toBe(0);
+    expect(proposeErr.read()).toBe('');
+    const payload = (JSON.parse(proposeOut.read()) as { data: {
+      includeFrontier: boolean;
+      proposalCount: number;
+      consumedObservationCount: number;
+      includedFrontierSignalCount: number;
+      availableFrontierSignalCount: number;
+      skippedCorruptFrontierSignalCount: number;
+      proposal: {
+        title: string;
+        sourceObservationRefs: Array<{ id: string; kind: string; uri?: string }>;
+        changeSet: Array<{ summary: string }>;
+        testPlan: { manualChecks: string[]; regressionRisks: string[] };
+      };
+    } }).data;
+    expect(payload.includeFrontier).toBe(true);
+    expect(payload.proposalCount).toBe(1);
+    expect(payload.consumedObservationCount).toBe(1);
+    expect(payload.includedFrontierSignalCount).toBe(1);
+    expect(payload.availableFrontierSignalCount).toBe(1);
+    expect(payload.skippedCorruptFrontierSignalCount).toBe(0);
+    expect(payload.proposal.title).toContain('1 frontier signal');
+    expect(payload.proposal.sourceObservationRefs).toContainEqual({
+      id: observePayload.batchId,
+      kind: 'observation-batch',
+      uri: `haro-sidecar://observations/${encodeURIComponent(observePayload.batchId)}`,
+    });
+    expect(payload.proposal.sourceObservationRefs).toContainEqual({
+      id: 'frontier-signal-001',
+      kind: 'frontier-signal',
+      uri: 'haro-sidecar://frontier-signals/frontier-signal-001',
+    });
+    expect(payload.proposal.sourceObservationRefs.some((ref) => ref.id === 'frontier-signal-rejected')).toBe(false);
+    expect(payload.proposal.sourceObservationRefs.some((ref) => ref.id === 'frontier-signal-superseded')).toBe(false);
+    expect(payload.proposal.changeSet[0]?.summary).toContain('FrontierSignals=1');
+    expect(payload.proposal.testPlan.manualChecks).toContain('Review cited frontier-signal source refs before trusting external evidence.');
+    expect(payload.proposal.testPlan.regressionRisks.join('\n')).toContain('External frontier signals can become stale');
+    expect(observeErr.read()).toBe('');
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('propose --auto-dry-run --include-frontier reports corrupt frontier signals', async () => {
+    const root = newHome('agentdock-propose-frontier-corrupt');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const frontierDir = join(root, 'evolution', 'frontier-signals');
+    mkdirSync(frontierDir, { recursive: true });
+    writeFileSync(join(frontierDir, 'broken.json'), '{ broken json');
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--include-frontier',
+      '--json',
+    ]));
+
+    expect(propose.exitCode).toBe(0);
+    expect(proposeErr.read()).toContain('skipped 1 corrupt frontier signal');
+    const payload = (JSON.parse(proposeOut.read()) as { data: {
+      proposalCount: number;
+      includedFrontierSignalCount: number;
+      skippedCorruptFrontierSignalCount: number;
+    } }).data;
+    expect(payload.proposalCount).toBe(1);
+    expect(payload.includedFrontierSignalCount).toBe(0);
+    expect(payload.skippedCorruptFrontierSignalCount).toBe(1);
+    expect(observeErr.read()).toBe('');
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
   it('validate --pending writes validation reports for pending proposals and is idempotent', async () => {
     const root = newHome('agentdock-validate');
     const observeOut = captureStream();

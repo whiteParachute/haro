@@ -12,7 +12,7 @@
 | Phase B: Contract Skeleton | 已实现 skeleton | 建立 Haro 与 AgentDock 的稳定 contract | `@haro/agentdock-contract`、schema、fake source、contract tests | 无 |
 | Phase C: Read-only MCP Sidecar | 已实现，live smoke 已通过 | 让 AgentDock agent 可以显式调用 Haro 观察与提案 | `haro mcp`、`haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`；sidecar 启动不创建 Haro-owned memory 目录 | Haro 自有日志/资产目录 |
 | Phase D: Scheduled Sidecar | 核心闭环已落地 | 通过 AgentDock 定时任务后台驱动 observe/propose/validate/status/doctor | `haro connect agent-dock`、`haro observe --since last`、`haro propose --auto-dry-run`、`haro validate --pending`、`haro status`、`haro doctor --component sidecar` | Haro 自有目录，不写 memory |
-| Phase E: Signal Intake + Asset Registry | 进行中，frontier intake 第一段已落地 | 把外部前沿情报与 skills/prompts/profiles/rules/tool config 纳入进化证据和资产事件 | `FrontierSignal` schema、`haro intake frontier --source-config`、frontier-signals sidecar 数据目录；manifest/hash/rollback metadata 待实现；memory 仅保存 AgentDock refs | Haro 自有目录，不写 memory |
+| Phase E: Signal Intake + Asset Registry | 进行中，frontier evidence 主链路已落地 | 把外部前沿情报与 skills/prompts/profiles/rules/tool config 纳入进化证据和资产事件 | `FrontierSignal` schema、`haro intake frontier --source-config`、`haro propose --auto-dry-run --include-frontier`、frontier-signals sidecar 数据目录；manifest/hash/rollback metadata 待实现；memory 仅保存 AgentDock refs | Haro 自有目录，不写 memory |
 | Phase F: Gated Apply L0/L1 | 待启动 | 在 validation gate 后执行低风险变更 | `haro_apply`、snapshot、rollback、application event | 受控写入 |
 | Phase G: Patch Branch L2/L3 | 规划中 | 对 Haro 代码或 AgentDock contract 生成 patch branch 与验证报告 | proposal、patch branch、test report、rollback plan | 不直接 apply |
 
@@ -111,7 +111,8 @@ Haro 后续价值不在重新实现 AgentDock 已经具备的 runtime/workbench 
 haro connect agent-dock --base-url http://127.0.0.1:3000
 haro observe --since last
 # next
-haro propose --auto-dry-run
+haro intake frontier --source-config ~/.haro/frontier-sources.json --since last
+haro propose --auto-dry-run --include-frontier
 haro validate --pending
 haro status
 haro doctor
@@ -148,7 +149,7 @@ AgentDock scheduler
 
 每条 signal 必须包含 source ref、发布时间或版本、抓取时间、摘要、置信度和目标域；只能作为 proposal evidence，不能直接触发 apply。
 
-当前第一段已实现 `FrontierSignal` contract schema 与 `haro intake frontier --source-config <file> --since last --json`，source config 由人工或 AgentDock skill 先整理为 `FrontierSignal[]` / `{ signals: [...] }`，Haro 只负责 schema 校验、sourceRef 去重、cursor 和落盘。
+当前已实现 `FrontierSignal` contract schema、`haro intake frontier --source-config <file> --since last --json` 与 `haro propose --auto-dry-run --include-frontier`。source config 由人工或 AgentDock skill 先整理为 `FrontierSignal[]` / `{ signals: [...] }`，Haro 负责 schema 校验、sourceRef 去重、cursor、落盘，并在生成 dry-run proposal 时引用 active frontier evidence。
 
 **资产范围**：
 

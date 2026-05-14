@@ -112,6 +112,8 @@ AgentDock scheduler
 
 `haro intake frontier --source-config <file> --since last --json` 会校验 `FrontierSignal` schema，按 `sourceType + sourceRef` 去重，写入 `~/.haro/evolution/frontier-signals/`，并维护 `frontier-intake` cursor。损坏的既有 signal JSON 会在 stderr warning 和 JSON 输出中显式暴露。
 
+`haro propose --auto-dry-run --include-frontier` 会在有未消费内部 observation batch 时，把 active frontier signals 追加为 proposal evidence refs（`kind=frontier-signal`）。`rejected` / `superseded` signals 不会被引用；frontier evidence 只影响 dry-run proposal 的证据与摘要，不会触发 application event。
+
 ## 6. Acceptance Criteria / 验收标准
 
 - AC1: 给定一个 public source fixture，当执行 `haro intake frontier --json` 时，应写入 schema-valid `FrontierSignal`。（对应 R1/R2/R4）
@@ -138,5 +140,6 @@ AgentDock scheduler
 
 ## 9. Changelog / 变更记录
 
-- 2026-05-13: Haro — 第一段实现：`FrontierSignal` contract schema、curated source-config intake、dedupe/cursor、status/doctor frontier signal 计数；尚未实现 `propose --include-frontier`。
+- 2026-05-13: Haro — 接入 `haro propose --auto-dry-run --include-frontier`，proposal 能同时引用 `observation-batch` 与 active `frontier-signal` evidence refs，并显式报告损坏 frontier signal 计数；仍不 apply、不写 memory。
+- 2026-05-13: Haro — 第一段实现：`FrontierSignal` contract schema、curated source-config intake、dedupe/cursor、status/doctor frontier signal 计数。
 - 2026-05-09: Haro — 初稿，补齐外部前沿情报 intake 在 sidecar 闭环中的位置。
