@@ -234,6 +234,90 @@ describe('web dashboard local auth [FEAT-028]', () => {
     expect(ownerPromote.status).toBe(200);
   });
 
+  it('prevents admin from resetting owner password while owner reset remains allowed', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    const root = mkdtempSync(join(tmpdir(), 'haro-web-owner-password-reset-'));
+    tempRoots.push(root);
+    const app = createWebApp({ logger: createMockLogger(), runtime: { root } });
+
+    const ownerBootstrap = await (await app.request('/api/v1/auth/bootstrap', jsonRequest({
+      username: 'owner',
+      password: 'owner-password',
+    }))).json() as SessionEnvelope;
+    const ownerToken = ownerBootstrap.data.session.token;
+    const ownerId = ownerBootstrap.data.user.id;
+
+    await app.request('/api/v1/users', jsonRequest({
+      username: 'admin',
+      password: 'admin-password',
+      role: 'admin',
+    }, ownerToken));
+    const adminLogin = await (await app.request('/api/v1/auth/login', jsonRequest({
+      username: 'admin',
+      password: 'admin-password',
+    }))).json() as SessionEnvelope;
+    const adminToken = adminLogin.data.session.token;
+
+    const adminResetOwner = await app.request(`/api/v1/users/${ownerId}/password`, jsonRequest({
+      password: 'admin-took-over',
+    }, adminToken));
+    expect(adminResetOwner.status).toBe(403);
+    expect((await adminResetOwner.json() as { code: string }).code).toBe('owner_transfer_required');
+
+    const ownerResetSelf = await app.request(`/api/v1/users/${ownerId}/password`, jsonRequest({
+      password: 'owner-password-new',
+    }, ownerToken));
+    expect(ownerResetSelf.status).toBe(200);
+
+    const relogin = await app.request('/api/v1/auth/login', jsonRequest({
+      username: 'owner',
+      password: 'owner-password-new',
+    }));
+    expect(relogin.status).toBe(200);
+  });
+
+  it('persists denied login audit events outside the failed login transaction', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    const root = mkdtempSync(join(tmpdir(), 'haro-web-login-denied-audit-'));
+    tempRoots.push(root);
+    const app = createWebApp({ logger: createMockLogger(), runtime: { root } });
+
+    const ownerBootstrap = await (await app.request('/api/v1/auth/bootstrap', jsonRequest({
+      username: 'owner',
+      password: 'owner-password',
+    }))).json() as SessionEnvelope;
+    const ownerToken = ownerBootstrap.data.session.token;
+
+    const deniedLogin = await app.request('/api/v1/auth/login', jsonRequest({
+      username: 'owner',
+      password: 'wrong-password',
+    }));
+    expect(deniedLogin.status).toBe(401);
+
+    const auditResponse = await app.request('/api/v1/users/audit-events', {
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(auditResponse.status).toBe(200);
+    const auditBody = await auditResponse.json() as {
+      data: {
+        items: Array<{
+          operation: string;
+          result: string;
+          targetId: string | null;
+        }>;
+      };
+    };
+    expect(auditBody.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'auth.login',
+          result: 'denied',
+          targetId: ownerBootstrap.data.user.id,
+        }),
+      ]),
+    );
+  });
+
   it('HIGH-3: viewer is rejected on guarded write surfaces (config PUT, agent CRUD, channel mutations)', async () => {
     delete process.env.HARO_WEB_API_KEY;
     const root = mkdtempSync(join(tmpdir(), 'haro-web-feat028-rbac-matrix-'));

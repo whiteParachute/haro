@@ -1,19 +1,22 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
+import { WEB_CHANNEL_ID, WebChannel } from '@haro/channel-web';
 import type { AgentEvent, RunAgentResult } from '@haro/core';
 import { authenticateWebSession, readAuthStatus } from '../auth-store.js';
-import { WEB_SESSION_COOKIE_NAME } from '../auth.js';
+import { canPerform, WEB_SESSION_COOKIE_NAME } from '../auth.js';
 import { getRunner, type WebRuntime } from '../runtime.js';
-import type { WebLogger } from '../types.js';
+import type { WebAuthContext, WebLogger, WebOperationClass } from '../types.js';
 import { streamAgentRun } from './streamer.js';
 import type { ClientMessage, ServerMessage, SystemMetrics, WebSocketLike } from './types.js';
 
 interface ClientState extends WebSocketLike {
   id: string;
   authenticated: boolean;
+  auth?: WebAuthContext;
   channels: Set<string>;
   sessionIds: Set<string>;
+  ownedSessionIds: Set<string>;
   cancelledSessionIds: Set<string>;
   pending: Buffer;
   fragmentOpcode: number | null;
@@ -28,6 +31,7 @@ const MAX_PENDING_BYTES = 16 * 1024 * 1024;
 
 interface PendingChatSession {
   agentId: string;
+  ownerClientId: string;
   provider?: string;
   model?: string;
 }
@@ -131,6 +135,7 @@ export class WebSocketManager {
       authenticated: false,
       channels: new Set(),
       sessionIds: new Set(),
+      ownedSessionIds: new Set(),
       cancelledSessionIds: new Set(),
       pending: Buffer.alloc(0),
       fragmentOpcode: null,
@@ -244,7 +249,9 @@ export class WebSocketManager {
     }
 
     if (message.value.type === 'authenticate') {
-      client.authenticated = this.authenticateClient(message.value.token ?? client.cookieSessionToken);
+      const auth = this.authenticateClient(message.value.token ?? client.cookieSessionToken);
+      client.auth = auth ?? undefined;
+      client.authenticated = Boolean(auth);
       client.sendMessage({ type: 'authenticated', ok: client.authenticated });
       if (client.authenticated) client.sendMessage({ type: 'system.status', metrics: this.systemMetrics() });
       return;
@@ -257,19 +264,34 @@ export class WebSocketManager {
 
     switch (message.value.type) {
       case 'subscribe':
-        client.channels.add(message.value.channel);
-        if (message.value.sessionId) this.subscribeSession(client, message.value.sessionId);
+        if (!this.authorizeSubscription(client, message.value)) return;
+        if (message.value.sessionId) {
+          this.subscribeSession(client, message.value.sessionId);
+        } else {
+          client.channels.add(message.value.channel);
+        }
         if (message.value.channel === 'system') {
           client.sendMessage({ type: 'system.status', metrics: this.systemMetrics() });
         }
         return;
       case 'chat.start':
+        if (!this.requirePermission(client, 'local-write', 'protocol')) return;
         await this.handleChatStart(client, message.value);
         return;
       case 'chat.message':
+        if (!this.requirePermission(client, 'local-write', message.value.sessionId)) return;
+        if (!this.canControlSession(client, message.value.sessionId)) {
+          this.sendForbidden(client, message.value.sessionId, 'local-write');
+          return;
+        }
         await this.handleChatMessage(client, message.value.sessionId, message.value.content);
         return;
       case 'chat.cancel':
+        if (!this.requirePermission(client, 'local-write', message.value.sessionId)) return;
+        if (!this.canControlSession(client, message.value.sessionId)) {
+          this.sendForbidden(client, message.value.sessionId, 'local-write');
+          return;
+        }
         this.handleChatCancel(client, message.value.sessionId);
         return;
     }
@@ -286,9 +308,11 @@ export class WebSocketManager {
     const sessionId = randomUUID();
     this.pendingChatSessions.set(sessionId, {
       agentId: message.agentId,
+      ownerClientId: client.id,
       ...(message.provider ? { provider: message.provider } : {}),
       ...(message.model ? { model: message.model } : {}),
     });
+    client.ownedSessionIds.add(sessionId);
     this.subscribeSession(client, sessionId);
     this.publishSessionUpdate(sessionId, 'pending');
     if (message.content) {
@@ -300,6 +324,10 @@ export class WebSocketManager {
     const pending = this.pendingChatSessions.get(sessionId);
     if (!pending) {
       client.sendMessage({ type: 'event.error', sessionId, error: 'Unknown or already completed chat session' });
+      return;
+    }
+    if (pending.ownerClientId !== client.id && !this.hasPermission(client, 'config-write')) {
+      this.sendForbidden(client, sessionId, 'local-write');
       return;
     }
     this.pendingChatSessions.delete(sessionId);
@@ -367,18 +395,88 @@ export class WebSocketManager {
     }
   }
 
-  private authenticateClient(token?: string): boolean {
+  private authenticateClient(token?: string): WebAuthContext | null {
     const expected = process.env.HARO_WEB_API_KEY;
-    if (token && expected && token === expected) return true;
-    if (token && authenticateWebSession(this.runtime, token)) return true;
+    if (token && expected && token === expected) {
+      return { kind: 'legacy-api-key', authenticated: true, role: 'owner' };
+    }
+    if (token) {
+      const auth = authenticateWebSession(this.runtime, token);
+      if (auth) return auth;
+    }
     if (!expected) {
       try {
-        return readAuthStatus(this.runtime).userCount === 0;
+        return readAuthStatus(this.runtime).userCount === 0
+          ? { kind: 'anonymous-legacy', authenticated: false, role: 'owner' }
+          : null;
       } catch {
-        return false;
+        return null;
       }
     }
+    return null;
+  }
+
+  private hasPermission(client: ClientState, operationClass: WebOperationClass): boolean {
+    return Boolean(client.auth && canPerform(client.auth.role, operationClass));
+  }
+
+  private requirePermission(
+    client: ClientState,
+    operationClass: WebOperationClass,
+    sessionId: string,
+  ): boolean {
+    if (this.hasPermission(client, operationClass)) return true;
+    this.sendForbidden(client, sessionId, operationClass);
     return false;
+  }
+
+  private sendForbidden(
+    client: ClientState,
+    sessionId: string,
+    operationClass: WebOperationClass,
+  ): void {
+    client.sendMessage({
+      type: 'event.error',
+      sessionId,
+      error: `Forbidden: requires ${operationClass}`,
+    });
+  }
+
+  private authorizeSubscription(
+    client: ClientState,
+    message: Extract<ClientMessage, { type: 'subscribe' }>,
+  ): boolean {
+    if (message.channel === 'channels:web' && !message.sessionId) {
+      return this.requirePermission(client, 'config-write', 'channels:web');
+    }
+    if (!message.sessionId) return true;
+    if (message.channel !== 'sessions') {
+      return this.requirePermission(client, 'config-write', message.sessionId);
+    }
+    if (this.canControlSession(client, message.sessionId)) return true;
+    this.sendForbidden(client, message.sessionId, 'read-only');
+    return false;
+  }
+
+  private canControlSession(client: ClientState, sessionId: string): boolean {
+    if (this.hasPermission(client, 'config-write')) return true;
+    if (client.ownedSessionIds.has(sessionId)) return true;
+    return this.canAccessWebChannelSession(client, sessionId);
+  }
+
+  private canAccessWebChannelSession(client: ClientState, sessionId: string): boolean {
+    const session = this.readWebChannelSession(sessionId);
+    if (!session) return false;
+    if (this.hasPermission(client, 'config-write')) return true;
+    if (!session.ownerUserId) return false;
+    return client.auth?.kind === 'session' && client.auth.user.username === session.ownerUserId;
+  }
+
+  private readWebChannelSession(sessionId: string): { ownerUserId: string | null } | null {
+    const entry = this.runtime.channelRegistry?.getEntry(WEB_CHANNEL_ID);
+    if (!entry || !(entry.channel instanceof WebChannel)) return null;
+    const session = entry.channel.getSession(sessionId);
+    return session ? { ownerUserId: session.ownerUserId } : null;
   }
 }
 

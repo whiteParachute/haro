@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { buildHaroPaths, db as haroDb, config as haroConfig } from '@haro/core';
 import { ProviderRegistry } from '@haro/core';
 import { ChannelRegistry, type ChannelRegistryEntry } from '@haro/channel';
+import { redactConfigSecrets } from '../lib/config-redaction.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
@@ -159,7 +160,7 @@ export async function readChannelSummaries(runtime: WebRuntime): Promise<Channel
     source: 'config',
     health: config.enabled === false ? 'disabled' : 'unknown',
     lastCheckedAt: checkedAt,
-    config,
+    config: redactConfigSecrets(config, `channels.${id}`),
   }) satisfies ChannelHealthSummary);
 
   return [...registered, ...synthetic].sort((left, right) => left.id.localeCompare(right.id));
@@ -170,7 +171,10 @@ async function summarizeRegisteredChannel(
   config: haroConfig.HaroConfig,
   checkedAt: string,
 ): Promise<ChannelHealthSummary> {
-  const channelConfig = readChannelConfig(config, entry.id);
+  const channelConfig = redactConfigSecrets(
+    readChannelConfig(config, entry.id),
+    `channels.${entry.id}`,
+  );
   if (!entry.enabled) {
     return {
       id: entry.id,

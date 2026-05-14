@@ -325,43 +325,46 @@ export function loginWithPassword(
   const username = validateUsername(input.username);
   const password = typeof input.password === 'string' ? input.password : '';
   const db = openDb(ctx);
+  let txOpen = false;
   try {
     db.exec('BEGIN');
-    try {
-      const row = db.prepare(`SELECT * FROM web_users WHERE username = ?`).get(username) as WebUserRow | undefined;
-      if (!row || row.status !== 'active' || !verifyPassword(password, row.password_hash)) {
-        recordAudit(db, {
-          actorKind: 'anonymous',
-          targetType: 'web_user',
-          targetId: row?.id ?? username,
-          operation: 'auth.login',
-          operationClass: 'read-only',
-          result: 'denied',
-          metadata: { username },
-        });
-        throw new WebAuthError(401, 'invalid_credentials', 'Invalid username or password');
-      }
-      const now = timestamp();
-      db.prepare(`UPDATE web_users SET last_login_at = ?, updated_at = ? WHERE id = ?`).run(now, now, row.id);
-      const refreshed = { ...row, last_login_at: now, updated_at: now } satisfies WebUserRow;
-      const session = insertSession(db, row.id, now);
+    txOpen = true;
+    const row = db.prepare(`SELECT * FROM web_users WHERE username = ?`).get(username) as WebUserRow | undefined;
+    if (!row || row.status !== 'active' || !verifyPassword(password, row.password_hash)) {
+      db.exec('ROLLBACK');
+      txOpen = false;
       recordAudit(db, {
-        actorUserId: row.id,
-        actorKind: 'web-user',
-        actorRole: row.role,
+        actorKind: 'anonymous',
         targetType: 'web_user',
-        targetId: row.id,
+        targetId: row?.id ?? username,
         operation: 'auth.login',
         operationClass: 'read-only',
-        result: 'allowed',
-        createdAt: now,
+        result: 'denied',
+        metadata: { username },
       });
-      db.exec('COMMIT');
-      return { user: toPublicUser(refreshed), session };
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
+      throw new WebAuthError(401, 'invalid_credentials', 'Invalid username or password');
     }
+    const now = timestamp();
+    db.prepare(`UPDATE web_users SET last_login_at = ?, updated_at = ? WHERE id = ?`).run(now, now, row.id);
+    const refreshed = { ...row, last_login_at: now, updated_at: now } satisfies WebUserRow;
+    const session = insertSession(db, row.id, now);
+    recordAudit(db, {
+      actorUserId: row.id,
+      actorKind: 'web-user',
+      actorRole: row.role,
+      targetType: 'web_user',
+      targetId: row.id,
+      operation: 'auth.login',
+      operationClass: 'read-only',
+      result: 'allowed',
+      createdAt: now,
+    });
+    db.exec('COMMIT');
+    txOpen = false;
+    return { user: toPublicUser(refreshed), session };
+  } catch (error) {
+    if (txOpen) db.exec('ROLLBACK');
+    throw error;
   } finally {
     db.close();
   }
@@ -376,7 +379,6 @@ export function revokeSession(
   try {
     db.exec('BEGIN');
     try {
-      db.prepare(`UPDATE web_sessions SET revoked_at = ? WHERE id = ?`).run(now, args.sessionId);
       recordAudit(db, {
         actorUserId: args.actorUserId,
         actorKind: 'web-user',
@@ -388,6 +390,7 @@ export function revokeSession(
         result: 'allowed',
         createdAt: now,
       });
+      db.prepare(`UPDATE web_sessions SET revoked_at = ? WHERE id = ?`).run(now, args.sessionId);
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
@@ -566,6 +569,9 @@ export function resetUserPassword(
     db.exec('BEGIN');
     try {
       const current = readUserById(db, id);
+      if (current.role === 'owner' && actor.kind !== 'system' && actor.kind !== 'cli' && actor.role !== 'owner') {
+        throw new WebAuthError(403, 'owner_transfer_required', 'Only an owner may reset an owner password');
+      }
       const now = timestamp();
       db
         .prepare(`UPDATE web_users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE id = ?`)

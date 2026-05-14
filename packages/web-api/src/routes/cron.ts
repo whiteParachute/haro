@@ -10,6 +10,7 @@ import { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { HaroError, services } from '@haro/core';
 import type { CronJobMode, CronJobStatus, RetryBackoff, RetryPolicy } from '@haro/core/cron';
+import { requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 
@@ -123,7 +124,7 @@ export function createCronRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     }
   });
 
-  route.post('/jobs', async (c) => {
+  route.post('/jobs', requireWebPermission('local-write'), async (c) => {
     let body: CreateCronJobBody;
     try {
       body = (await c.req.json()) as CreateCronJobBody;
@@ -167,7 +168,7 @@ export function createCronRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     }
   });
 
-  route.delete('/jobs/:id', async (c) => {
+  route.delete('/jobs/:id', requireWebPermission('local-write'), async (c) => {
     try {
       const job = await services.cron.cancelJob(ctx(), c.req.param('id'));
       return c.json({ success: true, data: job });
@@ -188,7 +189,7 @@ export function createCronRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
     }
   });
 
-  route.post('/jobs/:id/trigger', (c) => {
+  route.post('/jobs/:id/trigger', requireWebPermission('local-write'), (c) => {
     try {
       const job = services.cron.triggerJob(ctx(), c.req.param('id'));
       return c.json({ success: true, data: job });

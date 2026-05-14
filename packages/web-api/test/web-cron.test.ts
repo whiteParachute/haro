@@ -128,4 +128,81 @@ describe('web-api /api/v1/cron [FEAT-033]', () => {
     const res = await app.request('/api/v1/cron/jobs?status=bogus');
     expect(res.status).toBe(400);
   });
+
+  it('rejects viewer cron create, cancel, and trigger mutations', async () => {
+    const { app } = makeApp();
+    const ownerBootstrap = await (await app.request('/api/v1/auth/bootstrap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'owner', password: 'owner-password' }),
+    })).json() as { data: { session: { token: string } } };
+    const ownerToken = ownerBootstrap.data.session.token;
+
+    await app.request('/api/v1/users', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${ownerToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'viewer',
+        password: 'viewer-password',
+        role: 'viewer',
+      }),
+    });
+    const viewerLogin = await (await app.request('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'viewer', password: 'viewer-password' }),
+    })).json() as { data: { session: { token: string } } };
+    const viewerToken = viewerLogin.data.session.token;
+
+    const create = await app.request('/api/v1/cron/jobs', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${ownerToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: 's-owner',
+        mode: 'cron',
+        when: '*/5 * * * *',
+        taskInput: 'owner task',
+      }),
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { data: { id: string } };
+
+    const viewerCreate = await app.request('/api/v1/cron/jobs', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${viewerToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: 's-viewer',
+        mode: 'cron',
+        when: '*/5 * * * *',
+        taskInput: 'viewer task',
+      }),
+    });
+    expect(viewerCreate.status).toBe(403);
+
+    const viewerTrigger = await app.request(`/api/v1/cron/jobs/${created.data.id}/trigger`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${viewerToken}` },
+    });
+    expect(viewerTrigger.status).toBe(403);
+
+    const viewerDelete = await app.request(`/api/v1/cron/jobs/${created.data.id}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${viewerToken}` },
+    });
+    expect(viewerDelete.status).toBe(403);
+
+    const viewerList = await app.request('/api/v1/cron/jobs', {
+      headers: { authorization: `Bearer ${viewerToken}` },
+    });
+    expect(viewerList.status).toBe(200);
+  });
 });

@@ -5,6 +5,10 @@ import { Hono } from 'hono';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { buildHaroPaths, config as haroConfig } from '@haro/core';
 import { requireWebPermission } from '../auth.js';
+import {
+  findSecretConfigPaths,
+  redactConfigSecrets,
+} from '../lib/config-redaction.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
 import { readChannelSummaries } from './status.js';
@@ -31,11 +35,12 @@ export function createConfigRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   route.get('/', async (c) => {
     const loaded = loadConfig(runtime);
     const sources = readSourceDetails(runtime, loaded.sources);
+    const config = redactConfigSecrets(loaded.config);
     return c.json({
       success: true,
       data: {
-        config: loaded.config,
-        rawYaml: stringifyYaml(loaded.config),
+        config,
+        rawYaml: stringifyYaml(config),
         sources,
         fieldSources: readFieldSources(runtime, sources),
         channels: await readChannelSummaries(runtime),
@@ -58,6 +63,21 @@ export function createConfigRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
   route.put('/', requireWebPermission('config-write'), async (c) => {
     const parsed = await parseConfigPayload(c.req.json.bind(c.req));
     if (!parsed.ok) return c.json({ error: parsed.error, issues: parsed.issues }, 400);
+    const secretPaths = findSecretConfigPaths(parsed.config);
+    if (secretPaths.length > 0) {
+      return c.json(
+        {
+          error: 'Secret-bearing config fields cannot be written via Web config',
+          code: 'CONFIG_SECRET_REJECTED',
+          issues: secretPaths.map((path) => ({
+            path,
+            message:
+              'Secret values must come from environment variables or secretRef-style indirection.',
+          })),
+        },
+        400,
+      );
+    }
 
     const validation = validateWithLoader(runtime, parsed.config);
     if (!validation.ok) return c.json({ error: validation.error, issues: validation.issues }, 400);
@@ -68,12 +88,13 @@ export function createConfigRoute(runtime: WebRuntime): Hono<ApiKeyAuthEnv> {
 
     const loaded = loadConfig(runtime);
     const sources = readSourceDetails(runtime, loaded.sources);
+    const config = redactConfigSecrets(loaded.config);
     return c.json({
       success: true,
       data: {
         saved: true,
         path: projectConfigPath,
-        config: loaded.config,
+        config,
         sources,
         fieldSources: readFieldSources(runtime, sources),
       },
@@ -184,11 +205,22 @@ function readFieldSources(runtime: WebRuntime, sources: SourceDetails): Record<s
 
   for (const field of fields) {
     if (hasPath(projectConfig, field)) {
-      result[field] = { source: 'project', path: projectSource?.path ?? undefined, value: getPath(projectConfig, field) };
+      result[field] = {
+        source: 'project',
+        path: projectSource?.path ?? undefined,
+        value: redactConfigSecrets(getPath(projectConfig, field), field),
+      };
     } else if (hasPath(globalConfig, field)) {
-      result[field] = { source: 'global', path: globalSource?.path ?? undefined, value: getPath(globalConfig, field) };
+      result[field] = {
+        source: 'global',
+        path: globalSource?.path ?? undefined,
+        value: redactConfigSecrets(getPath(globalConfig, field), field),
+      };
     } else {
-      result[field] = { source: 'defaults', value: getPath(loaded, field) };
+      result[field] = {
+        source: 'defaults',
+        value: redactConfigSecrets(getPath(loaded, field), field),
+      };
     }
   }
   return result;

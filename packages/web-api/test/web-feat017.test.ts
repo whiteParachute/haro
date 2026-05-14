@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -108,6 +115,60 @@ describe('web dashboard system management REST [FEAT-017]', () => {
     expect(invalidResponse.status).toBe(400);
     expect(invalid.issues).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'logging.level' }), expect.objectContaining({ path: 'runtime.taskTimeoutMs' })]));
     expect(readFileSync(projectConfig, 'utf8')).toBe(before);
+  });
+
+  it('rejects Web config secret writes and redacts existing secret-shaped fields on read', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    const root = tempRoot('haro-feat017-secret-home-');
+    const projectRoot = tempRoot('haro-feat017-secret-project-');
+    const projectConfig = join(projectRoot, '.haro', 'config.yaml');
+    mkdirSync(join(projectRoot, '.haro'), { recursive: true });
+    writeFileSync(
+      projectConfig,
+      [
+        'channels:',
+        '  feishu:',
+        '    enabled: true',
+        '    appId: cli_xxx',
+        '    appSecret: super-secret-value',
+        '  telegram:',
+        '    enabled: true',
+        '    botToken: 123:telegram-secret',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const app = createWebApp({ logger: createMockLogger(), runtime: { root, projectRoot } });
+
+    const getResponse = await app.request('/api/v1/config');
+    const getBody = await getResponse.json();
+    expect(getResponse.status).toBe(200);
+    expect(getBody.data.config.channels.feishu.appSecret).toBe('[redacted]');
+    expect(getBody.data.config.channels.telegram.botToken).toBe('[redacted]');
+    expect(getBody.data.fieldSources['channels.feishu'].value.appSecret).toBe('[redacted]');
+    expect(getBody.data.channels.find((channel: { id: string }) => channel.id === 'feishu').config.appSecret).toBe('[redacted]');
+    expect(JSON.stringify(getBody)).not.toContain('super-secret-value');
+    expect(JSON.stringify(getBody)).not.toContain('123:telegram-secret');
+
+    const rejected = await app.request('/api/v1/config', jsonRequest({
+      rawYaml: [
+        'channels:',
+        '  feishu:',
+        '    enabled: true',
+        '    appSecret: injected-secret',
+        '',
+      ].join('\n'),
+    }));
+    const rejectedBody = await rejected.json();
+    expect(rejected.status).toBe(400);
+    expect(rejectedBody.code).toBe('CONFIG_SECRET_REJECTED');
+    expect(rejectedBody.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'channels.feishu.appSecret' }),
+      ]),
+    );
+    expect(readFileSync(projectConfig, 'utf8')).toContain('super-secret-value');
+    expect(readFileSync(projectConfig, 'utf8')).not.toContain('injected-secret');
   });
 
   it('keeps Status/Settings read-only while FEAT-019 owns independent /api/v1/channels routes', async () => {

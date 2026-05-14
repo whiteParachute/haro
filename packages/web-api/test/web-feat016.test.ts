@@ -300,6 +300,83 @@ describe('web dashboard WebSocket protocol [FEAT-016]', () => {
     observer.close();
     await handle.stop();
   });
+
+  it('rejects viewer WebSocket chat execution and channel-wide Web Chat subscription', async () => {
+    delete process.env.HARO_WEB_API_KEY;
+    const root = mkdtempSync(join(tmpdir(), 'haro-websocket-rbac-'));
+    let runCount = 0;
+    const app = createWebApp({
+      logger: createMockLogger(),
+      runtime: {
+        agentRegistry: createRegistry(),
+        runner: {
+          run: async (input: RunAgentInput): Promise<RunAgentResult> => {
+            runCount += 1;
+            return createRunner('blocked-viewer-session').run(input);
+          },
+        } as never,
+        root,
+      },
+    });
+
+    const bootstrap = await (await app.request('/api/v1/auth/bootstrap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'owner', password: 'owner-password' }),
+    })).json() as { data: { session: { token: string } } };
+    await app.request('/api/v1/users', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${bootstrap.data.session.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'viewer',
+        password: 'viewer-password',
+        role: 'viewer',
+      }),
+    });
+    const viewerLogin = await (await app.request('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'viewer', password: 'viewer-password' }),
+    })).json() as { data: { session: { token: string } } };
+
+    const handle = startWebServer(app, { port: 0, host: '127.0.0.1' });
+    await handle.ready;
+    const address = handle.server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const messages: unknown[] = [];
+    ws.addEventListener('message', (event) => messages.push(JSON.parse(String(event.data))));
+    await once(ws, 'open');
+
+    ws.send(JSON.stringify({ type: 'authenticate', token: viewerLogin.data.session.token }));
+    await waitFor(messages, (item) => item.type === 'authenticated' && item.ok === true);
+
+    ws.send(JSON.stringify({ type: 'subscribe', channel: 'channels:web' }));
+    await waitFor(
+      messages,
+      (item) =>
+        item.type === 'event.error' &&
+        item.sessionId === 'channels:web' &&
+        /Forbidden/.test(item.error),
+    );
+
+    ws.send(JSON.stringify({ type: 'chat.start', agentId: 'assistant', content: 'viewer should not run' }));
+    await waitFor(
+      messages,
+      (item) =>
+        item.type === 'event.error' &&
+        item.sessionId === 'protocol' &&
+        /local-write/.test(item.error),
+    );
+    expect(runCount).toBe(0);
+
+    ws.close();
+    await handle.stop();
+    rmSync(root, { recursive: true, force: true });
+  });
 });
 
 function once(target: WebSocket, event: 'open'): Promise<void> {
