@@ -14,7 +14,7 @@
 | Phase D: Scheduled Sidecar | 核心闭环已落地 | 通过 AgentDock 定时任务后台驱动 observe/propose/validate/status/doctor | `haro connect agent-dock`、`haro observe --since last`、`haro propose --auto-dry-run`、`haro validate --pending`、`haro status`、`haro doctor --component sidecar` | Haro 自有目录，不写 memory |
 | Phase E: Signal Intake + Asset Registry | 进行中，frontier evidence + registry adapter 已接入 propose/validate | 把外部前沿情报与 skills/prompts/profiles/rules/tool config 纳入进化证据和资产事件 | `FrontierSignal` schema、`haro intake frontier --source-config`、`haro propose --auto-dry-run --include-frontier`、frontier-signals sidecar 数据目录；`~/.haro/assets/manifests` + `events` file-backed registry；proposed/validated asset event 写入；memory 仅保存 AgentDock refs | Haro 自有目录，不写 memory |
 | Phase F: Gated Apply L0/L1 | sidecar-local apply/rollback + opt-in MCP bridge 已落地 | 在 validation gate 后执行低风险变更 | `ApplicationRecord` / `AssetSnapshotRecord` / `RollbackRecord` contract、`haro snapshot --proposal-id`、sidecar-local `snapshot-content`、`haro apply --proposal-id` / `haro rollback --application-id`、`haro mcp --enable-gated-write` 的 `haro_apply` / `haro_rollback` | 只改 Haro sidecar-owned `assets/current`，不改 AgentDock 内部资产；默认 MCP 仍 read-only |
-| Phase G: Patch Branch L2/L3 | 规划中 | 对 Haro 代码或 AgentDock contract 生成 patch branch 与验证报告 | proposal、patch branch、test report、rollback plan | 不直接 apply |
+| Phase G: Patch Branch L2/L3 | plan artifact 第一段已落地 | 对 Haro 代码或 AgentDock contract 生成 patch branch 与验证报告 | `PatchBranchPlanRecord`、`haro patch-branch --proposal-id`、`~/.haro/evolution/patch-branches` plan artifacts；真实 branch executor 待实现 | 不直接 apply；不创建真实 branch；不写 memory |
 
 ## 关键判断
 
@@ -210,6 +210,9 @@ Asset registry 已改为 sidecar file-backed registry：manifest 写入 `~/.haro
 - Haro 不能直接修改 AgentDock kernel 主分支。
 - 跨项目 contract 变更必须人工决策。
 - 自动生成 patch 后必须附验证证据和回滚路径。
+- 第一段只生成 patch branch plan artifact，不 checkout、不创建真实 branch、不修改代码。
+
+当前已实现 `haro patch-branch --proposal-id <id>`：要求 L2/L3 proposal 已验证，生成 deterministic `PatchBranchPlanRecord`，写入 `~/.haro/evolution/patch-branches/`，包含推荐 branchName、requiredTests、manualChecks、regressionRisks、rollbackPlan 和 evidence refs；L0/L1 调用会返回 `PATCH_BRANCH_NOT_REQUIRED`。
 
 ## 历史资产处理
 

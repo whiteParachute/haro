@@ -110,3 +110,4 @@ Haro 生成的 proposal 必须明确目标域和风险级别：
 | Asset registry and rollback metadata | [FEAT-046](../../specs/sidecar/FEAT-046-sidecar-asset-registry-adapter.md) |
 | Gated apply L0/L1 | [FEAT-047](../../specs/sidecar/FEAT-047-gated-apply-l0-l1.md) |
 | External frontier intelligence intake | [FEAT-048](../../specs/sidecar/FEAT-048-frontier-intelligence-intake.md) |
+| Patch branch L2/L3 | [FEAT-049](../../specs/sidecar/FEAT-049-patch-branch-l2-l3.md) |

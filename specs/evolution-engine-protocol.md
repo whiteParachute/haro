@@ -2,7 +2,7 @@
 
 > **2026-05-08 状态：historical workbench protocol。**
 >
-> 本文描述旧 Haro workbench 路线下的 Evolution Engine / OODA 协议。旧 Phase 2.0 / 2.5 spec 文件已被 `specs/sidecar/FEAT-043` 到 `FEAT-047` 替代并删除；本文仅保留为概念参考。sidecar-era 实现以 AgentDock contract、read-only MCP、scheduled CLI、asset registry adapter 和 gated apply specs 为准。
+> 本文描述旧 Haro workbench 路线下的 Evolution Engine / OODA 协议。旧 Phase 2.0 / 2.5 spec 文件已被 `specs/sidecar/FEAT-043` 到 `FEAT-049` 替代并删除；本文仅保留为概念参考。sidecar-era 实现以 AgentDock contract、read-only MCP、scheduled CLI、asset registry adapter 和 gated apply specs 为准。
 
 
 **状态：历史参考。** 新 sidecar-era 实现以 `docs/architecture/sidecar-operating-model.md` 与 `specs/sidecar/` 为准；如本文与 sidecar specs 冲突，以 sidecar specs 为准。
@@ -40,6 +40,7 @@ sidecar-era 映射如下：
 | Phase D | Observe / Propose scheduled | [FEAT-045](./sidecar/FEAT-045-scheduled-sidecar-cli.md) | AgentDock script task 周期触发 | dry-run |
 | Phase E | Signal + asset registry | [FEAT-048](./sidecar/FEAT-048-frontier-intelligence-intake.md) / [FEAT-046](./sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | external frontier signals + sidecar asset registry；frontier intake + proposal evidence + file-backed asset query/proposed/validated events 已落地 | 写 Haro 自有目录，不写 memory |
 | Phase F | Act gated | [FEAT-047](./sidecar/FEAT-047-gated-apply-l0-l1.md) | L0/L1 proposal + validation + snapshot + rollback apply；sidecar-local snapshot/apply/rollback 与 opt-in MCP `haro_apply` / `haro_rollback` 已落地；AgentDock 原生写入口待补 | gated-write |
+| Phase G | Patch branch | [FEAT-049](./sidecar/FEAT-049-patch-branch-l2-l3.md) | L2/L3 proposal 转成 deterministic patch branch plan artifact；真实 branch executor 待补 | 不直接 apply |
 
 ## 一、OODA 契约
 

@@ -8,10 +8,12 @@ import {
   ApplicationRecordSchema,
   AssetSnapshotRecordSchema,
   AssetEventSchema,
+  PatchBranchPlanRecordSchema,
   RollbackRecordSchema,
   type ApplicationRecord,
   type AssetSnapshotRecord,
   type AssetEvent,
+  type PatchBranchPlanRecord,
   type RollbackRecord,
 } from '@haro/agentdock-contract';
 import { AgentRegistry, ProviderRegistry } from '@haro/core';
@@ -118,6 +120,15 @@ function readApplicationRecords(root: string): ApplicationRecord[] {
     .filter((name) => name.endsWith('.json'))
     .sort()
     .map((name) => ApplicationRecordSchema.parse(readJson(join(dir, name))));
+}
+
+function readPatchBranchPlanRecords(root: string): PatchBranchPlanRecord[] {
+  const dir = join(root, 'evolution', 'patch-branches');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .map((name) => PatchBranchPlanRecordSchema.parse(readJson(join(dir, name))));
 }
 
 function readSnapshotRecords(root: string): AssetSnapshotRecord[] {
@@ -1050,6 +1061,180 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.applicationRecordCount).toBe(0);
     expect(payload.blockingReasons.join('\n')).toContain('patch branch');
     expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('patch-branch --proposal-id writes a deterministic L2/L3 patch plan without applying content', async () => {
+    const root = newHome('agentdock-patch-branch-l2');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    const proposal = {
+      id: 'proposal_l2_patch_plan',
+      title: 'Code change that must use patch branch',
+      status: 'validated',
+      level: 'L2',
+      targetKind: 'haro-code',
+      riskLevel: 'medium',
+      sourceObservationRefs: [{ id: 'obs-l2-plan', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'packages/cli/src/index.ts', kind: 'haro-code' },
+          contentRef: 'haro-sidecar://proposals/proposal_l2_patch_plan/patch',
+          contentHash: 'sha256:l2-plan',
+          summary: 'Modify Haro code through a patch branch',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['pnpm lint', 'pnpm test'],
+        manualChecks: ['Review patch diff'],
+        regressionRisks: ['runtime regression'],
+      },
+      rollbackPlan: {
+        strategy: 'revert patch branch',
+        snapshotRequired: true,
+        rollbackRefs: [{ id: 'rollback-l2-plan', kind: 'rollback-ref' }],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_l2_patch_plan.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_l2_patch_plan.json'), `${JSON.stringify({
+      id: 'validation_l2_patch_plan',
+      proposalId: proposal.id,
+      riskVerdict: 'blocked',
+      requiredTests: ['pnpm lint', 'pnpm test', 'git diff --check'],
+      rollbackReady: true,
+      applyEligible: false,
+      blockingReasons: ['Direct apply is forbidden for L2/L3 proposals; generate a patch branch.'],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'patch-branch',
+      '--proposal-id',
+      proposal.id,
+      '--base-branch',
+      'main',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(result.action).toBe('patch-branch');
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      gatePassed: boolean;
+      planCount: number;
+      validationId: string;
+      branchName: string;
+      planPath: string;
+      plan: {
+        id: string;
+        level: string;
+        baseBranch: string;
+        branchName: string;
+        humanReviewRequired: boolean;
+        requiredTests: string[];
+        rollbackPlan: { strategy: string; snapshotRequired: boolean };
+        changeRefs: Array<{ kind: string }>;
+      };
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'planned',
+      gateCode: 'READY',
+      gatePassed: true,
+      planCount: 1,
+      validationId: 'validation_l2_patch_plan',
+      branchName: 'haro/evolution/proposal_l2_patch_plan',
+    });
+    expect(payload.plan).toMatchObject({
+      level: 'L2',
+      baseBranch: 'main',
+      branchName: payload.branchName,
+      humanReviewRequired: true,
+    });
+    expect(payload.plan.requiredTests).toEqual(['pnpm lint', 'pnpm test', 'git diff --check']);
+    expect(payload.plan.rollbackPlan).toMatchObject({
+      strategy: 'revert patch branch',
+      snapshotRequired: false,
+    });
+    expect(payload.plan.changeRefs).toEqual([expect.objectContaining({ kind: 'proposal-change' })]);
+    expect(existsSync(payload.planPath)).toBe(true);
+    expect(readPatchBranchPlanRecords(root)).toHaveLength(1);
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+
+    const repeatOut = captureStream();
+    const repeatErr = captureStream();
+    const repeat = await runCli(commonOpts(root, repeatOut, repeatErr, [
+      'patch-branch',
+      '--proposal-id',
+      proposal.id,
+      '--base-branch',
+      'main',
+      '--json',
+    ]));
+    expect(repeat.exitCode).toBe(0);
+    expect(repeatErr.read()).toBe('');
+    const repeatPayload = (JSON.parse(repeatOut.read()) as { data: { plan: { id: string } } }).data;
+    expect(repeatPayload.plan.id).toBe(payload.plan.id);
+    expect(readPatchBranchPlanRecords(root)).toHaveLength(1);
+  });
+
+  it('patch-branch --proposal-id blocks L0/L1 proposals without writing a patch plan', async () => {
+    const root = newHome('agentdock-patch-branch-l0');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    mkdirSync(proposalDir, { recursive: true });
+    writeFileSync(join(proposalDir, 'proposal_l0_patch_blocked.json'), `${JSON.stringify({
+      id: 'proposal_l0_patch_blocked',
+      title: 'Prompt change belongs to gated apply',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-l0-plan', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'prompt-default', kind: 'prompt' },
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: { requiredCommands: ['git diff --check'], manualChecks: [], regressionRisks: [] },
+      rollbackPlan: { strategy: 'restore prompt', snapshotRequired: true, rollbackRefs: [] },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'patch-branch',
+      '--proposal-id',
+      'proposal_l0_patch_blocked',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      planCount: number;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload.gateStatus).toBe('blocked');
+    expect(payload.gateCode).toBe('PATCH_BRANCH_NOT_REQUIRED');
+    expect(payload.planCount).toBe(0);
+    expect(payload.blockingReasons.join('\n')).toContain('L0/L1 apply');
+    expect(readPatchBranchPlanRecords(root)).toHaveLength(0);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
@@ -2536,6 +2721,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       snapshots: { count: number; corruptCount: number };
       rollbacks: { count: number; corruptCount: number };
       applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
+      patchBranches: { count: number; plannedCount: number; corruptCount: number };
       frontierSignals: {
         count: number;
         activeCount: number;
@@ -2559,6 +2745,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       rolledBackCount: 0,
       corruptCount: 0,
     });
+    expect(payload.patchBranches).toMatchObject({ count: 0, plannedCount: 0, corruptCount: 0 });
     expect(payload.frontierSignals).toMatchObject({
       count: 0,
       activeCount: 0,
@@ -2647,6 +2834,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       snapshots: { count: number; corruptCount: number };
       rollbacks: { count: number; corruptCount: number };
       applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
+      patchBranches: { count: number; plannedCount: number; corruptCount: number };
       frontierSignals: {
         count: number;
         activeCount: number;
@@ -2679,6 +2867,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       rolledBackCount: 0,
       corruptCount: 0,
     });
+    expect(payload.patchBranches).toMatchObject({ count: 0, plannedCount: 0, corruptCount: 0 });
     expect(payload.frontierSignals).toMatchObject({
       count: 1,
       activeCount: 1,

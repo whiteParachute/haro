@@ -186,6 +186,7 @@ export type RunCliAction =
   | 'snapshot'
   | 'apply'
   | 'rollback'
+  | 'patch-branch'
   | 'intake'
   | 'channel'
   | 'skills'
@@ -1650,6 +1651,7 @@ async function bootstrapApp(
     input.argv?.[0] === 'snapshot' ||
     input.argv?.[0] === 'apply' ||
     input.argv?.[0] === 'rollback' ||
+    input.argv?.[0] === 'patch-branch' ||
     input.argv?.[0] === 'intake' ||
     input.argv?.[0] === 'status' ||
     input.argv?.[0] === 'doctor';
@@ -2940,6 +2942,7 @@ async function createSidecarDoctorStage(
     { name: 'snapshots', path: sidecar.snapshots.path, required: false },
     { name: 'rollbacks', path: sidecar.rollbacks.path, required: false },
     { name: 'applications', path: sidecar.applications.path, required: false },
+    { name: 'patch-branches', path: sidecar.patchBranches.path, required: false },
     { name: 'frontier-signals', path: sidecar.frontierSignals.path, required: false },
   ].map((item) => ({
     ...item,
@@ -3001,6 +3004,7 @@ async function createSidecarDoctorStage(
     snapshots: sidecar.snapshots.corruptCount,
     rollbacks: sidecar.rollbacks.corruptCount,
     applications: sidecar.applications.corruptCount,
+    patchBranches: sidecar.patchBranches.corruptCount,
     frontierSignals: sidecar.frontierSignals.corruptCount,
   };
   const corruptTotal = Object.values(corruptCounts).reduce((sum, count) => sum + count, 0);
@@ -3153,7 +3157,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'snapshot' || first === 'apply' || first === 'rollback' || first === 'intake' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'snapshot' || first === 'apply' || first === 'rollback' || first === 'patch-branch' || first === 'intake' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

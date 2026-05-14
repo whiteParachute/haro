@@ -5,6 +5,7 @@ import {
   AssetEventSchema,
   EvolutionProposalSchema,
   FrontierSignalSchema,
+  PatchBranchPlanRecordSchema,
   RollbackRecordSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
@@ -250,6 +251,42 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
 
     expect(signal.sourceType).toBe('official-doc');
     expect(signal.targetDomains).toContain('mcp-tools');
+  });
+
+  it('accepts an L2/L3 patch branch plan and rejects L0/L1 plans', () => {
+    const plan = PatchBranchPlanRecordSchema.parse({
+      id: 'patch_branch_plan_001',
+      proposalId: 'proposal-l2',
+      validationId: 'validation-l2',
+      status: 'planned',
+      level: 'L2',
+      targetKind: 'haro-code',
+      sourceRef: { id: 'proposal-l2', kind: 'evolution-proposal' },
+      validationRef: { id: 'validation-l2', kind: 'validation-report' },
+      branchName: 'haro/evolution/proposal-l2',
+      changeRefs: [{ id: 'proposal-l2:change:0', kind: 'proposal-change' }],
+      requiredTests: ['pnpm test'],
+      manualChecks: ['Review patch diff'],
+      regressionRisks: ['runtime regression'],
+      rollbackPlan: {
+        strategy: 'revert patch branch',
+        snapshotRequired: false,
+        rollbackRefs: [],
+      },
+      humanReviewRequired: true,
+      evidenceRefs: [{ id: 'proposal-l2', kind: 'evolution-proposal' }],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(plan.level).toBe('L2');
+    const invalid = PatchBranchPlanRecordSchema.safeParse({
+      ...plan,
+      id: 'patch_branch_plan_l1',
+      level: 'L1',
+      targetKind: 'skill',
+    });
+    expect(invalid.success).toBe(false);
   });
 
   it('rejects frontier signals without sourceRef or summary', () => {

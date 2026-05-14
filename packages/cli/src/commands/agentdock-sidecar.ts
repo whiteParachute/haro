@@ -10,6 +10,7 @@ import {
   EvolutionProposalSchema,
   FrontierSignalSchema,
   ObservationBatchSchema,
+  PatchBranchPlanRecordSchema,
   RollbackRecordSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
@@ -23,6 +24,7 @@ import {
   type EvolutionProposal,
   type FrontierSignal,
   type ObservationBatch,
+  type PatchBranchPlanRecord,
   type Ref,
   type RollbackAction,
   type RollbackRecord,
@@ -90,6 +92,11 @@ interface ApplyOptions extends OutputFlags {
 
 interface RollbackOptions extends OutputFlags {
   applicationId: string;
+}
+
+interface PatchBranchOptions extends OutputFlags {
+  proposalId: string;
+  baseBranch?: string;
 }
 
 interface IntakeFrontierOptions extends OutputFlags {
@@ -298,6 +305,26 @@ interface RollbackResult {
   applicationRecordPath?: string;
 }
 
+type PatchBranchGateCode =
+  | 'READY'
+  | 'PROPOSAL_NOT_FOUND'
+  | 'VALIDATION_REQUIRED'
+  | 'PATCH_BRANCH_NOT_REQUIRED';
+
+interface PatchBranchResult {
+  command: 'patch-branch';
+  proposalId: string;
+  gateStatus: 'planned' | 'blocked';
+  gateCode: PatchBranchGateCode;
+  gatePassed: boolean;
+  planCount: number;
+  blockingReasons: string[];
+  validationId?: string;
+  branchName?: string;
+  planPath?: string;
+  plan?: PatchBranchPlanRecord;
+}
+
 interface IntakeFrontierResult {
   command: 'intake frontier';
   sourceConfigPath: string;
@@ -371,6 +398,12 @@ interface SidecarStatusResult {
     readyCount: number;
     appliedCount: number;
     rolledBackCount: number;
+  };
+  patchBranches: {
+    path: string;
+    count: number;
+    corruptCount: number;
+    plannedCount: number;
   };
   frontierSignals: {
     path: string;
@@ -704,6 +737,41 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               ].join('\n') + '\n'
             : [
                 `Rollback gate blocked: ${result.applicationId}`,
+                `Code: ${result.gateCode}`,
+                ...result.blockingReasons.map((reason) => `- ${reason}`),
+              ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+  program
+    .command('patch-branch')
+    .description('Plan an L2/L3 patch branch instead of applying code-level changes directly')
+    .requiredOption('--proposal-id <id>', 'validated L2/L3 proposal id to plan')
+    .option('--base-branch <name>', 'optional base branch label for the generated plan')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: PatchBranchOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = patchBranchAgentDock(app, options);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(
+          result.gatePassed
+            ? [
+                `Patch branch plan: ${result.branchName}`,
+                `Proposal: ${result.proposalId}`,
+                `Wrote: ${result.planPath}`,
+              ].join('\n') + '\n'
+            : [
+                `Patch branch gate blocked: ${result.proposalId}`,
                 `Code: ${result.gateCode}`,
                 ...result.blockingReasons.map((reason) => `- ${reason}`),
               ].join('\n') + '\n',
@@ -1270,6 +1338,56 @@ export function rollbackAgentDock(app: AppContext, options: RollbackOptions): Ro
   }
 }
 
+function patchBranchAgentDock(app: AppContext, options: PatchBranchOptions): PatchBranchResult {
+  const proposalId = options.proposalId.trim();
+  if (!proposalId) {
+    throw new CommanderExit(2, '`haro patch-branch --proposal-id` requires a non-empty proposal id.');
+  }
+  const baseBranch = options.baseBranch?.trim() || undefined;
+
+  const lockDir = acquirePatchBranchLock(app.paths.root);
+  try {
+    const proposal = readProposalById(app.paths.root, proposalId);
+    if (!proposal) {
+      return blockedPatchBranchResult(proposalId, 'PROPOSAL_NOT_FOUND', [
+        `No proposal artifact found for ${proposalId} under evolution/proposals.`,
+      ]);
+    }
+
+    if (proposal.level !== 'L2' && proposal.level !== 'L3') {
+      return blockedPatchBranchResult(proposal.id, 'PATCH_BRANCH_NOT_REQUIRED', [
+        `Proposal level ${proposal.level} is eligible for gated L0/L1 apply, not Phase G patch branch planning.`,
+      ]);
+    }
+
+    const validation = readLatestValidationForProposal(app.paths.root, proposal.id);
+    if (!validation) {
+      return blockedPatchBranchResult(proposal.id, 'VALIDATION_REQUIRED', [
+        `No validation report found for proposal ${proposal.id}; run \`haro validate --pending\` before planning a patch branch.`,
+      ]);
+    }
+
+    const plan = createPatchBranchPlanRecord(app, proposal, validation, baseBranch);
+    const planPath = patchBranchPlanFilePath(app.paths.root, plan);
+    writeJsonFile(planPath, plan);
+    return {
+      command: 'patch-branch',
+      proposalId: proposal.id,
+      gateStatus: 'planned',
+      gateCode: 'READY',
+      gatePassed: true,
+      planCount: 1,
+      blockingReasons: [],
+      validationId: validation.id,
+      branchName: plan.branchName,
+      planPath,
+      plan,
+    };
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
 function intakeFrontierSignals(app: AppContext, options: IntakeFrontierOptions): IntakeFrontierResult {
   const limit = normalizeOptionalPositiveInt(options.limit, '--limit');
   const sourceConfigPath = resolve(options.sourceConfig);
@@ -1361,6 +1479,7 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
   const applicationStats = readApplicationStats(app.paths.root);
   const snapshotStats = readSnapshotStats(app.paths.root);
   const rollbackStats = readRollbackStats(app.paths.root);
+  const patchBranchStats = readPatchBranchPlanStats(app.paths.root);
   return {
     command: 'status',
     root: app.paths.root,
@@ -1401,6 +1520,12 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
       readyCount: applicationStats.readyCount,
       appliedCount: applicationStats.appliedCount,
       rolledBackCount: applicationStats.rolledBackCount,
+    },
+    patchBranches: {
+      path: patchBranchesDir(app.paths.root),
+      count: patchBranchStats.count,
+      corruptCount: patchBranchStats.corruptCount,
+      plannedCount: patchBranchStats.plannedCount,
     },
     frontierSignals: {
       path: frontierSignalsDir(app.paths.root),
@@ -1658,6 +1783,10 @@ function applicationFilePath(root: string, record: ApplicationRecord): string {
   return join(applicationsDir(root), `${safePathSegment(record.id)}.json`);
 }
 
+function patchBranchPlanFilePath(root: string, record: PatchBranchPlanRecord): string {
+  return join(patchBranchesDir(root), `${safePathSegment(record.id)}.json`);
+}
+
 function snapshotFilePath(root: string, record: AssetSnapshotRecord): string {
   return join(snapshotsDir(root), `${safePathSegment(record.id)}.json`);
 }
@@ -1696,6 +1825,10 @@ function validationsDir(root: string): string {
 
 function applicationsDir(root: string): string {
   return join(root, 'evolution', 'applications');
+}
+
+function patchBranchesDir(root: string): string {
+  return join(root, 'evolution', 'patch-branches');
 }
 
 function snapshotsDir(root: string): string {
@@ -1810,6 +1943,25 @@ function acquireApplyLock(root: string): string {
       throw new CommanderExit(
         1,
         'Another haro apply/rollback process is already running.',
+      );
+    }
+    throw error;
+  }
+  return dir;
+}
+
+function acquirePatchBranchLock(root: string): string {
+  const parent = join(root, 'evolution', 'locks');
+  mkdirSync(parent, { recursive: true });
+  const dir = join(parent, 'patch-branch.lock');
+  try {
+    mkdirSync(dir);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === 'EEXIST') {
+      throw new CommanderExit(
+        1,
+        'Another haro patch-branch process is already running.',
       );
     }
     throw error;
@@ -2226,6 +2378,29 @@ function readApplicationStats(root: string): {
   return { count, corruptCount, readyCount, appliedCount, rolledBackCount };
 }
 
+function readPatchBranchPlanStats(root: string): {
+  count: number;
+  corruptCount: number;
+  plannedCount: number;
+} {
+  const dir = patchBranchesDir(root);
+  if (!existsSync(dir)) return { count: 0, corruptCount: 0, plannedCount: 0 };
+  let count = 0;
+  let corruptCount = 0;
+  let plannedCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = PatchBranchPlanRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+      if (record.status === 'planned') plannedCount += 1;
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount, plannedCount };
+}
+
 function readSnapshotStats(root: string): { count: number; corruptCount: number } {
   const dir = snapshotsDir(root);
   if (!existsSync(dir)) return { count: 0, corruptCount: 0 };
@@ -2448,6 +2623,24 @@ function blockedRollbackResult(
     assetEventCount: 0,
     assetEventIds: [],
     blockingReasons,
+  };
+}
+
+function blockedPatchBranchResult(
+  proposalId: string,
+  gateCode: Exclude<PatchBranchGateCode, 'READY'>,
+  blockingReasons: string[],
+  validationId?: string,
+): PatchBranchResult {
+  return {
+    command: 'patch-branch',
+    proposalId,
+    gateStatus: 'blocked',
+    gateCode,
+    gatePassed: false,
+    planCount: 0,
+    blockingReasons,
+    ...(validationId ? { validationId } : {}),
   };
 }
 
@@ -3117,6 +3310,63 @@ function createRolledBackApplicationRecord(
   });
 }
 
+function createPatchBranchPlanRecord(
+  app: AppContext,
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+  baseBranch?: string,
+): PatchBranchPlanRecord {
+  const changeRefs = proposal.changeSet.map((_change, index) => proposalChangeRef(proposal, index));
+  const branchName = `haro/evolution/${safePathSegment(proposal.id)}`;
+  const timestamp = app.now().toISOString();
+  const planId = `patch_branch_plan_${sha256(JSON.stringify({
+    proposalId: proposal.id,
+    validationId: validation.id,
+    baseBranch,
+    changeSet: proposal.changeSet.map((change, index) => ({
+      index,
+      op: change.op,
+      targetRef: change.targetRef,
+      contentHash: change.contentHash,
+    })),
+  })).slice(0, 24)}`;
+  return PatchBranchPlanRecordSchema.parse({
+    id: planId,
+    proposalId: proposal.id,
+    validationId: validation.id,
+    status: 'planned',
+    level: proposal.level,
+    targetKind: proposal.targetKind,
+    sourceRef: evolutionProposalRef(proposal),
+    validationRef: validationReportRef(validation),
+    branchName,
+    ...(baseBranch ? { baseBranch } : {}),
+    changeRefs,
+    requiredTests: validation.requiredTests.length > 0
+      ? validation.requiredTests
+      : proposal.testPlan.requiredCommands,
+    manualChecks: [
+      ...proposal.testPlan.manualChecks,
+      'Human review is required before merging an L2/L3 patch branch.',
+    ],
+    regressionRisks: proposal.testPlan.regressionRisks,
+    rollbackPlan: {
+      ...proposal.rollbackPlan,
+      snapshotRequired: false,
+    },
+    humanReviewRequired: true,
+    evidenceRefs: [
+      evolutionProposalRef(proposal),
+      validationReportRef(validation),
+      ...proposal.sourceObservationRefs,
+      ...validation.evidenceRefs,
+      ...changeRefs,
+    ],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
 function createSnapshotArtifacts(
   app: AppContext,
   proposal: EvolutionProposal,
@@ -3604,6 +3854,14 @@ function validationReportRef(report: ValidationReport): Ref {
     id: report.id,
     kind: 'validation-report',
     uri: `haro-sidecar://validations/${encodeURIComponent(report.id)}`,
+  };
+}
+
+function proposalChangeRef(proposal: EvolutionProposal, index: number): Ref {
+  return {
+    id: `${proposal.id}:change:${index}`,
+    kind: 'proposal-change',
+    uri: `haro-sidecar://proposals/${encodeURIComponent(proposal.id)}/changes/${index}`,
   };
 }
 

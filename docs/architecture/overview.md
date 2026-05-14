@@ -145,10 +145,11 @@ Haro 不直接发 IM，不直接接管 AgentDock channel。用户可见输出仍
 | AgentDock Contract | connection / observation / proposal / validation / asset event schema | repo code                                         |
 | Observation Source | 读取 AgentDock API、event export、日志或文件约定                      | read-only                                         |
 | Haro MCP Server    | 暴露 observe/propose/validate/query tools                             | Haro 自有日志                                     |
-| Scheduled CLI      | 支持 connect/observe/propose/validate/status/doctor                   | `~/.haro/evolution/*`                             |
-| Evolution Store    | 保存 observations/proposals/validations/applications                  | `~/.haro/evolution/*`                             |
+| Scheduled CLI      | 支持 connect/observe/propose/validate/snapshot/apply/rollback/patch-branch/status/doctor | `~/.haro/evolution/*`                             |
+| Evolution Store    | 保存 observations/proposals/validations/snapshots/rollbacks/applications/patch-branches | `~/.haro/evolution/*`                             |
 | Asset Registry     | 管理 prompt/skill/profile/rule/tool config 资产                       | `~/.haro/assets/*`；memory 不作为 Haro asset kind |
-| Gated Apply        | 应用 L0/L1 低风险变更                                                 | 受控目标 + snapshot                               |
+| Gated Apply        | 应用 L0/L1 低风险变更                                                 | sidecar-owned current content + snapshot          |
+| Patch Branch Plan   | 为 L2/L3 生成 patch branch plan、测试和 rollback 证据                 | `~/.haro/evolution/patch-branches`                |
 
 ## 数据目录
 
@@ -159,9 +160,14 @@ Haro 自己维护独立数据目录，不写 AgentDock DB：
   agentdock-connections.json
   evolution/
     observations/
+    frontier-signals/
     proposals/
     validations/
+    snapshots/
+    snapshot-content/
+    rollbacks/
     applications/
+    patch-branches/
   assets/
     registry.sqlite
     manifests/
@@ -190,7 +196,7 @@ Haro 同时观察三类信号：
 
 - MCP server tool latency / error code / schema mismatch
 - Scheduled CLI exit code / cursor / lock / duplicate suppression
-- Evolution Store observation/proposal/validation/application 状态
+- Evolution Store observation/proposal/validation/application/patch-branch 状态
 - Asset Registry event lifecycle / rollback metadata
 - Gated apply / rollback 成功率和阻断原因
 
@@ -251,6 +257,7 @@ Haro apply 阶段只允许写入低风险对象：
 
 ## 架构变更记录
 
+- **2026-05-14**：Phase G patch branch plan 第一段落地：新增 `PatchBranchPlanRecord` 与 `haro patch-branch --proposal-id`，只为 validated L2/L3 proposal 写 `~/.haro/evolution/patch-branches/` plan artifact；不创建真实 branch、不改代码、不写 memory。
 - **2026-05-14**：Phase F gated-write MCP bridge 落地：`haro mcp` 默认仍只列出 4 个 read-only tools；只有显式 `--enable-gated-write` 时才注册 `haro_apply` / `haro_rollback`，并复用 CLI proposal/application id gate，不接受自由文本 patch，也不读写 memory。
 - **2026-05-14**：Phase E asset registry adapter 落地并接入 scheduled loop：新增 `~/.haro/assets/manifests` + `~/.haro/assets/events` file-backed sidecar registry，`haro_asset_query` 改为读取 sidecar registry，`haro propose` / `haro validate` 分别写 `proposed` / `validated` events；仍不读写 Haro-owned memory 或 `aria-memory-vault`。
 - **2026-05-14**：Phase F gated apply 前置骨架落地：新增 `ApplicationRecord` contract 与 `haro apply --proposal-id` gate preflight，只有 L0/L1 validated + applyEligible + snapshot/rollback refs 齐全时才进入 apply 流程；第一段只写 ready record，不写 memory。

@@ -88,6 +88,15 @@ export type {
 } from './application.js';
 
 export {
+  PatchBranchPlanRecordSchema,
+  PatchBranchPlanStatusSchema,
+} from './patch-branch.js';
+export type {
+  PatchBranchPlanRecord,
+  PatchBranchPlanStatus,
+} from './patch-branch.js';
+
+export {
   FrontierConfidenceSchema,
   FrontierSignalSchema,
   FrontierSignalStatusSchema,

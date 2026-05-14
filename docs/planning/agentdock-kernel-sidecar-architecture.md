@@ -210,9 +210,14 @@ Haro 自己维护独立数据目录，不写入 AgentDock DB：
   agentdock-connections.json
   evolution/
     observations/
+    frontier-signals/
     proposals/
     validations/
+    snapshots/
+    snapshot-content/
+    rollbacks/
     applications/
+    patch-branches/
   assets/
     registry.sqlite
     manifests/
@@ -389,6 +394,14 @@ User approves proposal
 - 已实现 sidecar-local L0/L1 rollback executor：`haro rollback --application-id <id>` 只对 `ApplicationRecord(status=applied)` 生效，基于 application 绑定的 snapshot/rollback artifact 恢复 `snapshot-content` 或删除 apply 创建的 current content，并写 `ApplicationRecord(status=rolled-back, applied=false)` 与 `rolled-back` asset event。
 - `haro mcp --enable-gated-write` 已可显式暴露 `haro_apply({ proposalId })` 与 `haro_rollback({ applicationId })`，二者复用 CLI gate；默认 `haro mcp` 仍 read-only。
 - 当前仍不修改 AgentDock 内部资产、不读取或写入 memory；后续补 AgentDock 原生 skill/profile/schedule/routing config 的稳定写入口。
+
+### Phase 7: Patch Branch L2/L3
+
+- `PatchBranchPlanRecord` 已加入 `@haro/agentdock-contract`，只允许 L2/L3 proposal。
+- `haro patch-branch --proposal-id <id> --json` 已实现：要求 proposal 存在、level=L2/L3 且已有 validation report，写入 `~/.haro/evolution/patch-branches/<plan-id>.json`。
+- `--base-branch <name>` 只作为 plan label 写入，不 checkout、不创建真实 git branch。
+- `haro status` / `haro doctor --component sidecar` 已纳入 patch-branches 计数和 corrupt artifact 检查。
+- 当前仍不修改 Haro / AgentDock 代码、不创建真实 branch、不读取或写入 memory；下一步才考虑真实 worktree/branch executor 或 AgentDock approval UX。
 
 ## Acceptance Criteria
 

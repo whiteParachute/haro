@@ -26,6 +26,7 @@ Haro 当前主线已切换为 **AgentDock self-evolution sidecar**。
 | [FEAT-046](sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | Sidecar asset registry adapter | Phase E | draft |
 | [FEAT-047](sidecar/FEAT-047-gated-apply-l0-l1.md) | Gated apply L0/L1 | Phase F | implemented |
 | [FEAT-048](sidecar/FEAT-048-frontier-intelligence-intake.md) | Frontier intelligence intake | Phase E | draft |
+| [FEAT-049](sidecar/FEAT-049-patch-branch-l2-l3.md) | Patch branch L2/L3 | Phase G | implemented |
 
 ## 目录结构
 
@@ -47,7 +48,8 @@ specs/
 │   ├── FEAT-045-scheduled-sidecar-cli.md
 │   ├── FEAT-046-sidecar-asset-registry-adapter.md
 │   ├── FEAT-047-gated-apply-l0-l1.md
-│   └── FEAT-048-frontier-intelligence-intake.md
+│   ├── FEAT-048-frontier-intelligence-intake.md
+│   └── FEAT-049-patch-branch-l2-l3.md
 ├── phase-1.5/                      # 历史 workbench parity 资产（2026-05-01 路线）
 │
 ├── multi-agent-design-constraints.md   # 强制规范（跨 phase）
@@ -312,7 +314,7 @@ FEAT-018 只负责 **workflow 编排调试的只读可观测面**，避免把后
 | FEAT-038 | Web API 解耦 | 新建 `packages/web-api`，从 CLI 剥离；hermes-web-ui 风格前后端解耦 |
 | FEAT-039 | CLI 等价补完 | chat / session / agent / logs / workflow / budget / user / skill / config 命令族；memory CLI 为历史兼容 |
 
-**历史 Phase 2.0 / Phase 2.5 规划**：已由 `specs/sidecar/FEAT-043` 到 `FEAT-047` 替代并删除，避免继续误导到 Haro 自建 workbench 路线。
+**历史 Phase 2.0 / Phase 2.5 规划**：已由 `specs/sidecar/FEAT-043` 到 `FEAT-049` 替代并删除，避免继续误导到 Haro 自建 workbench 路线。
 
 2026-04-25 后续路线重排原则：
 
