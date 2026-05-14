@@ -974,6 +974,15 @@ function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
         `Rollback artifact ${rollbackRef.id} was not found under evolution/rollbacks.`,
       ], validation.id);
     }
+    const evidenceRefProblem = validateApplyEvidenceRefs(proposal, validation, snapshot, rollback);
+    if (evidenceRefProblem) {
+      return blockedApplyResult(
+        proposal.id,
+        evidenceRefProblem.gateCode,
+        [evidenceRefProblem.reason],
+        validation.id,
+      );
+    }
 
     const preparedApply = prepareSidecarLocalApply(app.paths.root, proposal);
     if (!preparedApply.ok) {
@@ -2243,6 +2252,80 @@ function readCurrentAssetContent(
       contentHash: sha256(content),
       extension,
     };
+  }
+  return undefined;
+}
+
+function validateApplyEvidenceRefs(
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+  snapshot: AssetSnapshotRecord,
+  rollback: RollbackRecord,
+): { gateCode: Exclude<ApplyGateCode, 'READY'>; reason: string } | undefined {
+  if (snapshot.proposalId !== proposal.id) {
+    return {
+      gateCode: 'SNAPSHOT_FAILED',
+      reason: `Snapshot ${snapshot.id} belongs to proposal ${snapshot.proposalId}, not ${proposal.id}.`,
+    };
+  }
+  if (snapshot.validationId && snapshot.validationId !== validation.id) {
+    return {
+      gateCode: 'SNAPSHOT_FAILED',
+      reason: `Snapshot ${snapshot.id} belongs to validation ${snapshot.validationId}, not ${validation.id}.`,
+    };
+  }
+  if (snapshot.level !== proposal.level || snapshot.targetKind !== proposal.targetKind) {
+    return {
+      gateCode: 'SNAPSHOT_FAILED',
+      reason: `Snapshot ${snapshot.id} target ${snapshot.level}/${snapshot.targetKind} does not match proposal ${proposal.level}/${proposal.targetKind}.`,
+    };
+  }
+  if (snapshot.entries.length !== proposal.changeSet.length) {
+    return {
+      gateCode: 'SNAPSHOT_FAILED',
+      reason: `Snapshot ${snapshot.id} entry count ${snapshot.entries.length} does not match proposal change count ${proposal.changeSet.length}.`,
+    };
+  }
+  for (const change of proposal.changeSet) {
+    if (!snapshot.entries.some((entry) => entry.assetId === change.targetRef.id && entry.targetRef.kind === change.targetRef.kind)) {
+      return {
+        gateCode: 'SNAPSHOT_FAILED',
+        reason: `Snapshot ${snapshot.id} does not contain target ${change.targetRef.kind}:${change.targetRef.id}.`,
+      };
+    }
+  }
+
+  if (rollback.proposalId !== proposal.id) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Rollback ${rollback.id} belongs to proposal ${rollback.proposalId}, not ${proposal.id}.`,
+    };
+  }
+  if (rollback.validationId && rollback.validationId !== validation.id) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Rollback ${rollback.id} belongs to validation ${rollback.validationId}, not ${validation.id}.`,
+    };
+  }
+  if (rollback.snapshotRef.id !== snapshot.id) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Rollback ${rollback.id} points to snapshot ${rollback.snapshotRef.id}, not ${snapshot.id}.`,
+    };
+  }
+  if (rollback.entries.length !== snapshot.entries.length) {
+    return {
+      gateCode: 'ROLLBACK_REF_REQUIRED',
+      reason: `Rollback ${rollback.id} entry count ${rollback.entries.length} does not match snapshot entry count ${snapshot.entries.length}.`,
+    };
+  }
+  for (const entry of snapshot.entries) {
+    if (!rollback.entries.some((rollbackEntry) => rollbackEntry.assetId === entry.assetId && rollbackEntry.targetRef.kind === entry.targetRef.kind)) {
+      return {
+        gateCode: 'ROLLBACK_REF_REQUIRED',
+        reason: `Rollback ${rollback.id} does not contain target ${entry.targetRef.kind}:${entry.assetId}.`,
+      };
+    }
   }
   return undefined;
 }

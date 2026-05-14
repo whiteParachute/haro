@@ -1793,6 +1793,134 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
+  it('apply --proposal-id rejects snapshot and rollback refs from another proposal', async () => {
+    const root = newHome('agentdock-apply-cross-proposal-refs');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    const snapshotDir = join(root, 'evolution', 'snapshots');
+    const rollbackDir = join(root, 'evolution', 'rollbacks');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', 'proposal_cross_refs');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    mkdirSync(snapshotDir, { recursive: true });
+    mkdirSync(rollbackDir, { recursive: true });
+    mkdirSync(proposalContentDir, { recursive: true });
+    const assetId = 'prompt-cross-refs';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    const nextContent = 'new prompt\n';
+    writeFileSync(join(proposalContentDir, `0000-${encodedAssetId}.md`), nextContent);
+    const foreignSnapshot = AssetSnapshotRecordSchema.parse({
+      id: 'snapshot_foreign',
+      proposalId: 'proposal_foreign',
+      validationId: 'validation_foreign',
+      level: 'L0',
+      targetKind: 'prompt',
+      sourceRef: { id: 'proposal_foreign', kind: 'evolution-proposal' },
+      entries: [
+        {
+          changeIndex: 0,
+          targetRef: { id: assetId, kind: 'prompt' },
+          assetId,
+          existed: false,
+          snapshotSource: 'absent',
+        },
+      ],
+      createdAt: '2026-05-08T12:00:00.000Z',
+    });
+    const foreignRollback = RollbackRecordSchema.parse({
+      id: 'rollback_foreign',
+      proposalId: 'proposal_foreign',
+      validationId: 'validation_foreign',
+      snapshotRef: { id: foreignSnapshot.id, kind: 'asset-snapshot' },
+      sourceRef: { id: foreignSnapshot.id, kind: 'asset-snapshot' },
+      reversible: true,
+      entries: [
+        {
+          changeIndex: 0,
+          targetRef: { id: assetId, kind: 'prompt' },
+          assetId,
+          action: 'delete-created-asset',
+          existedBefore: false,
+        },
+      ],
+      createdAt: '2026-05-08T12:00:00.000Z',
+    });
+    writeFileSync(join(snapshotDir, 'snapshot_foreign.json'), `${JSON.stringify(foreignSnapshot, null, 2)}\n`);
+    writeFileSync(join(rollbackDir, 'rollback_foreign.json'), `${JSON.stringify(foreignRollback, null, 2)}\n`);
+    const proposal = {
+      id: 'proposal_cross_refs',
+      title: 'Reject foreign snapshot refs',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-cross-refs', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: assetId, kind: 'prompt' },
+          contentHash: sha256(nextContent),
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: [],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [
+          { id: foreignSnapshot.id, kind: 'asset-snapshot' },
+          { id: foreignRollback.id, kind: 'rollback-ref' },
+        ],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_cross_refs.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_cross_refs.json'), `${JSON.stringify({
+      id: 'validation_cross_refs',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      blockingReasons: string[];
+      applicationRecordCount: number;
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'blocked',
+      gateCode: 'SNAPSHOT_FAILED',
+      applicationRecordCount: 0,
+    });
+    expect(payload.blockingReasons.join('\n')).toContain('belongs to proposal proposal_foreign');
+    expect(existsSync(join(root, 'assets', 'current', 'prompt', `${encodedAssetId}.md`))).toBe(false);
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(readAssetEvents(root).filter((event) => event.status === 'applied')).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
   it('intake frontier writes schema-valid signals and is idempotent by source ref', async () => {
     const root = newHome('frontier-intake');
     const sourceConfigPath = join(root, 'frontier-sources.json');
