@@ -6,12 +6,14 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApplicationRecordSchema,
+  ApprovalDecisionRecordSchema,
   ApprovalRequestRecordSchema,
   AssetSnapshotRecordSchema,
   AssetEventSchema,
   PatchBranchPlanRecordSchema,
   RollbackRecordSchema,
   type ApplicationRecord,
+  type ApprovalDecisionRecord,
   type ApprovalRequestRecord,
   type AssetSnapshotRecord,
   type AssetEvent,
@@ -146,6 +148,65 @@ function readApprovalRequestRecords(root: string): ApprovalRequestRecord[] {
     .filter((name) => name.endsWith('.json'))
     .sort()
     .map((name) => ApprovalRequestRecordSchema.parse(readJson(join(dir, name))));
+}
+
+function writeApprovalDecisionRecord(root: string, record: ApprovalDecisionRecord): void {
+  const dir = join(root, 'evolution', 'approval-decisions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${record.id}.json`),
+    `${JSON.stringify(ApprovalDecisionRecordSchema.parse(record), null, 2)}\n`,
+  );
+}
+
+function writeValidatedMcpToolConfigProposal(root: string, proposalId: string, validationId: string): void {
+  const proposalDir = join(root, 'evolution', 'proposals');
+  const validationDir = join(root, 'evolution', 'validations');
+  mkdirSync(proposalDir, { recursive: true });
+  mkdirSync(validationDir, { recursive: true });
+  writeFileSync(join(proposalDir, `${proposalId}.json`), `${JSON.stringify({
+    id: proposalId,
+    title: `Review ${proposalId}`,
+    status: 'validated',
+    level: 'L0',
+    targetKind: 'mcp-tool-config',
+    riskLevel: 'low',
+    sourceObservationRefs: [{ id: `obs_${proposalId}`, kind: 'observation-batch' }],
+    changeSet: [
+      {
+        op: 'update',
+        targetRef: { id: 'tools/review.json', kind: 'mcp-tool-config' },
+        contentRef: `haro-sidecar://proposals/${proposalId}/content/tools-review.json`,
+        contentHash: sha256(`${proposalId}:content`),
+        summary: 'Update sidecar MCP tool review config.',
+      },
+    ],
+    testPlan: {
+      requiredCommands: ['git diff --check'],
+      manualChecks: ['Human reviewer confirms approval decision.'],
+      regressionRisks: ['Decision artifacts may be ignored by apply gate.'],
+    },
+    rollbackPlan: {
+      strategy: 'Restore previous tool config content.',
+      snapshotRequired: false,
+      rollbackRefs: [],
+    },
+    humanReviewRequired: true,
+    humanApprovalRefs: [],
+    createdAt: '2026-05-08T12:00:00.000Z',
+    updatedAt: '2026-05-08T12:00:00.000Z',
+  }, null, 2)}\n`);
+  writeFileSync(join(validationDir, `${validationId}.json`), `${JSON.stringify({
+    id: validationId,
+    proposalId,
+    riskVerdict: 'low',
+    requiredTests: ['git diff --check'],
+    rollbackReady: true,
+    applyEligible: true,
+    blockingReasons: [],
+    evidenceRefs: [{ id: proposalId, kind: 'evolution-proposal' }],
+    createdAt: '2026-05-08T12:01:00.000Z',
+  }, null, 2)}\n`);
 }
 
 function readPatchBranchPlanRecords(root: string): PatchBranchPlanRecord[] {
@@ -892,6 +953,52 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(validateErr.read()).toBe('');
   });
 
+  it('approval-request --pending skips proposals that already have a decision artifact', async () => {
+    const root = newHome('agentdock-approval-request-decided');
+    writeValidatedMcpToolConfigProposal(root, 'proposal_already_decided', 'validation_already_decided');
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_existing',
+      approvalRequestId: 'approval_request_existing',
+      proposalId: 'proposal_already_decided',
+      validationId: 'validation_already_decided',
+      decision: 'request-changes',
+      direction: 'Rework this into a narrower proposal first.',
+      reviewer: {
+        source: 'agentdock',
+        username: 'reviewer',
+        role: 'owner',
+      },
+      sourceRef: {
+        id: 'approval_request_existing',
+        kind: 'approval-request',
+      },
+      createdAt: '2026-05-08T12:02:00.000Z',
+      updatedAt: '2026-05-08T12:02:00.000Z',
+    });
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      approvalRequestCount: number;
+      requestedProposalCount: number;
+      skippedCorruptApprovalDecisionCount: number;
+      wroteApprovalRequests: boolean;
+    } }).data;
+    expect(payload.approvalRequestCount).toBe(0);
+    expect(payload.requestedProposalCount).toBe(0);
+    expect(payload.skippedCorruptApprovalDecisionCount).toBe(0);
+    expect(payload.wroteApprovalRequests).toBe(false);
+    expect(readApprovalRequestRecords(root)).toHaveLength(0);
+  });
+
   it('validate --pending --limit only validates the selected pending proposal count', async () => {
     const root = newHome('agentdock-validate-limit');
     const observeOut = captureStream();
@@ -1529,6 +1636,152 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(readRollbackRecords(root)).toHaveLength(0);
     expect(readApplicationRecords(root)).toHaveLength(0);
     expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('apply --proposal-id consumes approve decision artifacts as human approval evidence', async () => {
+    const root = newHome('agentdock-apply-approval-decision');
+    writeValidatedMcpToolConfigProposal(root, 'proposal_decision_approved', 'validation_decision_approved');
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_approved',
+      approvalRequestId: 'approval_request_decision_approved',
+      proposalId: 'proposal_decision_approved',
+      validationId: 'validation_decision_approved',
+      decision: 'approve',
+      reviewer: {
+        source: 'haro-web',
+        username: 'reviewer',
+        role: 'owner',
+      },
+      sourceRef: {
+        id: 'approval_request_decision_approved',
+        kind: 'approval-request',
+        uri: 'haro-sidecar://approval-requests/approval_request_decision_approved',
+      },
+      createdAt: '2026-05-08T12:02:00.000Z',
+      updatedAt: '2026-05-08T12:02:00.000Z',
+    });
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      'proposal_decision_approved',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateCode: string;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload.gateCode).toBe('APPLY_CONTENT_REQUIRED');
+    expect(payload.blockingReasons.join('\n')).not.toContain('human approval ref');
+    const proposal = readJson<{
+      humanApprovalRefs: Array<{ id: string; kind: string; uri?: string }>;
+    }>(join(root, 'evolution', 'proposals', 'proposal_decision_approved.json'));
+    expect(proposal.humanApprovalRefs).toEqual([
+      {
+        id: 'approval_decision_approved',
+        kind: 'human-approval',
+        uri: 'haro-sidecar://approval-decisions/approval_decision_approved',
+      },
+    ]);
+    expect(readApplicationRecords(root)).toHaveLength(0);
+  });
+
+  it('apply --proposal-id blocks rejected decision artifacts and syncs proposal status', async () => {
+    const root = newHome('agentdock-apply-rejected-decision');
+    writeValidatedMcpToolConfigProposal(root, 'proposal_decision_rejected', 'validation_decision_rejected');
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_rejected',
+      approvalRequestId: 'approval_request_decision_rejected',
+      proposalId: 'proposal_decision_rejected',
+      validationId: 'validation_decision_rejected',
+      decision: 'reject',
+      reviewer: {
+        source: 'agentdock',
+        username: 'reviewer',
+        role: 'owner',
+      },
+      sourceRef: {
+        id: 'approval_request_decision_rejected',
+        kind: 'approval-request',
+      },
+      createdAt: '2026-05-08T12:02:00.000Z',
+      updatedAt: '2026-05-08T12:02:00.000Z',
+    });
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      'proposal_decision_rejected',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateCode: string;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload.gateCode).toBe('APPROVAL_REJECTED');
+    expect(payload.blockingReasons.join('\n')).toContain('rejected by human review');
+    const proposal = readJson<{ status: string }>(
+      join(root, 'evolution', 'proposals', 'proposal_decision_rejected.json'),
+    );
+    expect(proposal.status).toBe('rejected');
+    expect(readApplicationRecords(root)).toHaveLength(0);
+  });
+
+  it('apply --proposal-id blocks request-changes decisions with reviewer direction', async () => {
+    const root = newHome('agentdock-apply-request-changes-decision');
+    writeValidatedMcpToolConfigProposal(root, 'proposal_decision_changes', 'validation_decision_changes');
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_changes',
+      approvalRequestId: 'approval_request_decision_changes',
+      proposalId: 'proposal_decision_changes',
+      validationId: 'validation_decision_changes',
+      decision: 'request-changes',
+      direction: 'Narrow the change to a read-only AgentDock MCP registration plan first.',
+      reviewer: {
+        source: 'haro-web',
+        username: 'reviewer',
+        role: 'owner',
+      },
+      sourceRef: {
+        id: 'approval_request_decision_changes',
+        kind: 'approval-request',
+      },
+      createdAt: '2026-05-08T12:02:00.000Z',
+      updatedAt: '2026-05-08T12:02:00.000Z',
+    });
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      'proposal_decision_changes',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateCode: string;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload.gateCode).toBe('CHANGES_REQUESTED');
+    expect(payload.blockingReasons.join('\n')).toContain('Narrow the change');
+    const proposal = readJson<{ status: string }>(
+      join(root, 'evolution', 'proposals', 'proposal_decision_changes.json'),
+    );
+    expect(proposal.status).toBe('superseded');
+    expect(readApplicationRecords(root)).toHaveLength(0);
   });
 
   it('snapshot --proposal-id writes deterministic snapshot and rollback metadata without applying content', async () => {

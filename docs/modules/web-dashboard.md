@@ -23,7 +23,7 @@ Haro Web 只解决一个问题：当 Haro 自动生成需要人审的 `ApprovalR
 | --- | --- |
 | approve | 写入 `approval-decisions/*.json`，并向对应 proposal 追加 `human-approval` ref |
 | reject | 写入 decision，并把对应 proposal 标记为 `rejected` |
-| request-changes | 写入带 direction 的 decision，要求 Haro 后续按方向重做 proposal |
+| request-changes | 写入带 direction 的 decision，把当前 proposal 标记为 `superseded`，要求 Haro 后续按方向重做 proposal |
 
 ## 组成
 
@@ -70,6 +70,12 @@ Haro Web 只读写 Haro sidecar-owned evolution store：
 
 它不写 AgentDock DB、不写 AgentDock memory、不启动 Haro runner、不调度 cron、不接管任何 IM channel。
 
+`approval-decisions/*.json` 由共享 `ApprovalDecisionRecord` contract 校验。后续 `haro apply --proposal-id` 会消费这些 decision：
+
+- `approve`：补齐 proposal `humanApprovalRefs`，通过 human-review gate 后继续进入 snapshot/content/apply gate。
+- `reject`：把 proposal 标记为 `rejected`，apply 返回 `APPROVAL_REJECTED`。
+- `request-changes`：把 proposal 标记为 `superseded`，apply 返回 `CHANGES_REQUESTED` 并携带 reviewer direction。
+
 ## 已删除的历史 Dashboard 能力
 
 以下能力属于旧 Haro workbench 路线，已从当前代码面删除或下线：
@@ -96,7 +102,7 @@ Haro Web review 与 AgentDock/飞书中的审批呈现是并行入口：
 - Haro scheduled loop 负责生成 proposal / validation / approval request。
 - AgentDock 可以通过 MCP/skill/IM 把 approval request 发给用户审批。
 - Haro Web 可以直接查看同一批 approval request artifacts。
-- 所有 apply 仍必须经过 validation + human approval refs + snapshot/rollback gate。
+- 所有 apply 仍必须经过 validation + human approval refs + snapshot/rollback gate；reject/request-changes 会在进入后续 gate 前 fail closed。
 
 ## 启动
 

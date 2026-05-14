@@ -84,6 +84,29 @@ describe('approval request review API', () => {
     const body = await response.json();
     expect(body.error).toContain('requires direction');
   });
+
+  it('records request-changes decisions and supersedes the proposal', async () => {
+    const app = createWebApp({ logger, runtime: { root } });
+
+    const response = await app.request('/api/v1/approval-requests/approval_request_smoke/decision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        decision: 'request-changes',
+        direction: 'Keep this proposal scoped to the approval review page only.',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.decision.decision).toBe('request-changes');
+    expect(body.data.decision.direction).toContain('approval review page');
+    expect(body.data.proposalUpdated).toBe(true);
+
+    const proposal = JSON.parse(readFileSync(path.join(root, 'evolution/proposals/proposal_smoke.json'), 'utf8'));
+    expect(proposal.status).toBe('superseded');
+    expect(proposal.humanApprovalRefs).toHaveLength(0);
+  });
 });
 
 function writeFixture(haroHome: string): void {

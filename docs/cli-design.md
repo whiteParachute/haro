@@ -570,6 +570,6 @@ Haro Web 已收缩为 proposal review 工作台，只覆盖：
 | Web 页面 / 动作 | CLI / artifact 对应 | 状态 |
 | --- | --- | --- |
 | `/bootstrap` / `/login` | 本地 Web auth，仅保护 review decision | 已实现 |
-| `/` 提案列表与决策 | `haro approval-request --pending` 产出 `~/.haro/evolution/approval-requests/*.json`；Web 写 `approval-decisions/*.json` | 已实现 |
+| `/` 提案列表与决策 | `haro approval-request --pending` 产出 `~/.haro/evolution/approval-requests/*.json`；Web 写 `approval-decisions/*.json`；`haro apply` 消费 approve/reject/request-changes decision | 已实现 |
 
 不再存在 `/chat`、`/sessions`、`/agent`、`/skills`、`/knowledge`、`/logs`、`/cron`、`/config`、`/users` 等 Haro Web 页面。对应能力若仍需要，走 CLI/MCP/AgentDock。

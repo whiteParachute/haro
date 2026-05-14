@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ApplicationRecordSchema,
+  ApprovalDecisionRecordSchema,
   ApprovalRequestRecordSchema,
   AssetSnapshotRecordSchema,
   AssetEventSchema,
@@ -169,6 +170,35 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
 
     expect(record.humanReviewRequired).toBe(true);
     expect(record.decisionOptions).toContain('request-changes');
+  });
+
+  it('accepts approval decision records and requires direction for request-changes', () => {
+    const record = ApprovalDecisionRecordSchema.parse({
+      id: 'approval-decision-001',
+      approvalRequestId: 'approval-request-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      decision: 'approve',
+      reviewer: {
+        source: 'haro-web',
+        username: 'reviewer',
+        role: 'owner',
+      },
+      sourceRef: { id: 'approval-request-001', kind: 'approval-request' },
+      approvalRef: { id: 'approval-decision-001', kind: 'human-approval' },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(record.decision).toBe('approve');
+
+    const missingDirection = ApprovalDecisionRecordSchema.safeParse({
+      ...record,
+      id: 'approval-decision-002',
+      decision: 'request-changes',
+      approvalRef: undefined,
+    });
+    expect(missingDirection.success).toBe(false);
   });
 
   it('requires applied application records to set applied=true', () => {

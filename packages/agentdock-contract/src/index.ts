@@ -65,12 +65,16 @@ export { ValidationReportSchema } from './validation.js';
 export type { ValidationReport } from './validation.js';
 
 export {
+  ApprovalDecisionRecordSchema,
   ApprovalDecisionOptionSchema,
+  ApprovalDecisionReviewerSchema,
   ApprovalRequestRecordSchema,
   ApprovalRequestStatusSchema,
 } from './approval-request.js';
 export type {
+  ApprovalDecisionRecord,
   ApprovalDecisionOption,
+  ApprovalDecisionReviewer,
   ApprovalRequestRecord,
   ApprovalRequestStatus,
 } from './approval-request.js';

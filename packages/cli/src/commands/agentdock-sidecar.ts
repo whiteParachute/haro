@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import {
   ApplicationRecordSchema,
+  ApprovalDecisionRecordSchema,
   ApprovalRequestRecordSchema,
   AssetSnapshotRecordSchema,
   AssetKindSchema,
@@ -17,6 +18,7 @@ import {
   createFakeAgentDockSource,
   createHttpAgentDockSource,
   type ApplicationRecord,
+  type ApprovalDecisionRecord,
   type ApprovalRequestRecord,
   type ApplyGateCode,
   type AssetSnapshotRecord,
@@ -169,6 +171,7 @@ interface ApprovalRequestResult {
   skippedCorruptProposalCount: number;
   skippedCorruptValidationCount: number;
   skippedCorruptApprovalRequestCount: number;
+  skippedCorruptApprovalDecisionCount: number;
   wroteApprovalRequests: boolean;
   approvalRequests: ApprovalRequestRecord[];
   approvalRequestPaths: string[];
@@ -407,6 +410,14 @@ interface SidecarStatusResult {
     count: number;
     corruptCount: number;
     pendingCount: number;
+  };
+  approvalDecisions: {
+    path: string;
+    count: number;
+    corruptCount: number;
+    approveCount: number;
+    rejectCount: number;
+    requestChangesCount: number;
   };
   snapshots: {
     path: string;
@@ -728,6 +739,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
             skippedCorruptValidationCount: result.skippedCorruptValidationCount,
             skippedCorruptApprovalRequestCount: result.skippedCorruptApprovalRequestCount,
+            skippedCorruptApprovalDecisionCount: result.skippedCorruptApprovalDecisionCount,
             wroteApprovalRequests: result.wroteApprovalRequests,
             approvalRequestIds: result.approvalRequests.map((request) => request.id),
             approvalRequestPaths: result.approvalRequestPaths,
@@ -1124,11 +1136,13 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
   const lockDir = acquireApprovalRequestLock(app.paths.root);
   try {
     const requestedResult = readApprovalRequestedProposalIds(app.paths.root);
+    const decidedResult = readApprovalDecisionProposalIds(app.paths.root);
     const validationStats = readValidationStats(app.paths.root);
     const pendingResult = readValidatedProposalsNeedingApprovalRequest(
       app.paths.root,
       validationStats.validatedProposalIds,
       requestedResult.requested,
+      decidedResult.decided,
     );
     const pending = pendingResult.proposals;
     const selected = typeof limit === 'number' ? pending.slice(0, limit) : pending;
@@ -1142,6 +1156,7 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
         skippedCorruptProposalCount: pendingResult.corruptCount,
         skippedCorruptValidationCount: validationStats.corruptCount,
         skippedCorruptApprovalRequestCount: requestedResult.corruptCount,
+        skippedCorruptApprovalDecisionCount: decidedResult.corruptCount,
         wroteApprovalRequests: false,
         approvalRequests: [],
         approvalRequestPaths: [],
@@ -1162,6 +1177,7 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
       skippedCorruptProposalCount: pendingResult.corruptCount,
       skippedCorruptValidationCount: validationStats.corruptCount,
       skippedCorruptApprovalRequestCount: requestedResult.corruptCount,
+      skippedCorruptApprovalDecisionCount: decidedResult.corruptCount,
       wroteApprovalRequests: true,
       approvalRequests,
       approvalRequestPaths,
@@ -1203,12 +1219,14 @@ export function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyRes
 
   const lockDir = acquireApplyLock(app.paths.root);
   try {
-    const proposal = readProposalById(app.paths.root, proposalId);
+    let proposal = readProposalById(app.paths.root, proposalId);
     if (!proposal) {
       return blockedApplyResult(proposalId, 'PROPOSAL_NOT_FOUND', [
         `No proposal artifact found for ${proposalId} under evolution/proposals.`,
       ]);
     }
+    const decisionSync = syncProposalWithLatestApprovalDecision(app.paths.root, proposal);
+    proposal = decisionSync.proposal;
 
     if (proposal.level === 'L2' || proposal.level === 'L3') {
       return blockedApplyResult(proposal.id, 'DIRECT_APPLY_FORBIDDEN', [
@@ -1226,6 +1244,19 @@ export function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyRes
       return blockedApplyResult(proposal.id, 'VALIDATION_REQUIRED', [
         `No validation report found for proposal ${proposal.id}.`,
       ]);
+    }
+
+    if (decisionSync.decision?.decision === 'reject' || proposal.status === 'rejected') {
+      return blockedApplyResult(proposal.id, 'APPROVAL_REJECTED', [
+        `Proposal ${proposal.id} was rejected by human review and cannot be applied.`,
+      ], validation.id);
+    }
+
+    if (decisionSync.decision?.decision === 'request-changes') {
+      return blockedApplyResult(proposal.id, 'CHANGES_REQUESTED', [
+        `Human review requested changes for proposal ${proposal.id}; create a revised proposal before applying.`,
+        ...(decisionSync.decision.direction ? [`Requested direction: ${decisionSync.decision.direction}`] : []),
+      ], validation.id);
     }
 
     if (proposal.status !== 'validated') {
@@ -1624,6 +1655,7 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
   const frontierSignalStats = readFrontierSignalStats(app.paths.root);
   const applicationStats = readApplicationStats(app.paths.root);
   const approvalRequestStats = readApprovalRequestStats(app.paths.root);
+  const approvalDecisionStats = readApprovalDecisionStats(app.paths.root);
   const snapshotStats = readSnapshotStats(app.paths.root);
   const rollbackStats = readRollbackStats(app.paths.root);
   const patchBranchStats = readPatchBranchPlanStats(app.paths.root);
@@ -1655,6 +1687,14 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
       count: approvalRequestStats.count,
       corruptCount: approvalRequestStats.corruptCount,
       pendingCount: approvalRequestStats.pendingCount,
+    },
+    approvalDecisions: {
+      path: approvalDecisionsDir(app.paths.root),
+      count: approvalDecisionStats.count,
+      corruptCount: approvalDecisionStats.corruptCount,
+      approveCount: approvalDecisionStats.approveCount,
+      rejectCount: approvalDecisionStats.rejectCount,
+      requestChangesCount: approvalDecisionStats.requestChangesCount,
     },
     snapshots: {
       path: snapshotsDir(app.paths.root),
@@ -1982,6 +2022,10 @@ function validationsDir(root: string): string {
 
 function approvalRequestsDir(root: string): string {
   return join(root, 'evolution', 'approval-requests');
+}
+
+function approvalDecisionsDir(root: string): string {
+  return join(root, 'evolution', 'approval-decisions');
 }
 
 function applicationsDir(root: string): string {
@@ -2338,10 +2382,51 @@ function readApprovalRequestedProposalIds(root: string): { requested: Set<string
   return { requested, corruptCount };
 }
 
+function readApprovalDecisionProposalIds(root: string): { decided: Set<string>; corruptCount: number } {
+  const dir = approvalDecisionsDir(root);
+  const decided = new Set<string>();
+  if (!existsSync(dir)) return { decided, corruptCount: 0 };
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = ApprovalDecisionRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      decided.add(record.proposalId);
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { decided, corruptCount };
+}
+
+function readLatestApprovalDecisionForProposal(
+  root: string,
+  proposalId: string,
+): { decision?: ApprovalDecisionRecord; corruptCount: number } {
+  const dir = approvalDecisionsDir(root);
+  if (!existsSync(dir)) return { corruptCount: 0 };
+  let decision: ApprovalDecisionRecord | undefined;
+  let corruptCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = ApprovalDecisionRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (record.proposalId !== proposalId) continue;
+      if (!decision || record.createdAt > decision.createdAt || (record.createdAt === decision.createdAt && record.id > decision.id)) {
+        decision = record;
+      }
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { ...(decision ? { decision } : {}), corruptCount };
+}
+
 function readValidatedProposalsNeedingApprovalRequest(
   root: string,
   validatedProposalIds: ReadonlySet<string>,
   requestedProposalIds: ReadonlySet<string>,
+  decidedProposalIds: ReadonlySet<string>,
 ): { proposals: Array<{ proposal: EvolutionProposal; validation: ValidationReport }>; corruptCount: number } {
   const dir = proposalsDir(root);
   if (!existsSync(dir)) return { proposals: [], corruptCount: 0 };
@@ -2353,6 +2438,7 @@ function readValidatedProposalsNeedingApprovalRequest(
       const proposal = EvolutionProposalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
       if (!validatedProposalIds.has(proposal.id)) continue;
       if (requestedProposalIds.has(proposal.id)) continue;
+      if (decidedProposalIds.has(proposal.id)) continue;
       if (proposal.humanApprovalRefs.length > 0) continue;
       if (proposal.status === 'rejected' || proposal.status === 'superseded' || proposal.status === 'applied') continue;
       const validation = readLatestValidationForProposal(root, proposal.id);
@@ -2622,6 +2708,37 @@ function readApprovalRequestStats(root: string): {
     }
   }
   return { count, corruptCount, pendingCount };
+}
+
+function readApprovalDecisionStats(root: string): {
+  count: number;
+  corruptCount: number;
+  approveCount: number;
+  rejectCount: number;
+  requestChangesCount: number;
+} {
+  const dir = approvalDecisionsDir(root);
+  if (!existsSync(dir)) {
+    return { count: 0, corruptCount: 0, approveCount: 0, rejectCount: 0, requestChangesCount: 0 };
+  }
+  let count = 0;
+  let corruptCount = 0;
+  let approveCount = 0;
+  let rejectCount = 0;
+  let requestChangesCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = ApprovalDecisionRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+      if (record.decision === 'approve') approveCount += 1;
+      if (record.decision === 'reject') rejectCount += 1;
+      if (record.decision === 'request-changes') requestChangesCount += 1;
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount, approveCount, rejectCount, requestChangesCount };
 }
 
 function readPatchBranchPlanStats(root: string): {
@@ -4201,6 +4318,51 @@ function proposalChangeRef(proposal: EvolutionProposal, index: number): Ref {
     kind: 'proposal-change',
     uri: `haro-sidecar://proposals/${encodeURIComponent(proposal.id)}/changes/${index}`,
   };
+}
+
+function approvalDecisionApprovalRef(decision: ApprovalDecisionRecord): Ref {
+  return {
+    id: decision.id,
+    kind: 'human-approval',
+    uri: `haro-sidecar://approval-decisions/${encodeURIComponent(decision.id)}`,
+  };
+}
+
+function syncProposalWithLatestApprovalDecision(
+  root: string,
+  proposal: EvolutionProposal,
+): { proposal: EvolutionProposal; decision?: ApprovalDecisionRecord } {
+  const { decision } = readLatestApprovalDecisionForProposal(root, proposal.id);
+  if (!decision) return { proposal };
+
+  let next = proposal;
+  let changed = false;
+  if (decision.decision === 'approve') {
+    const approvalRef = decision.approvalRef ?? approvalDecisionApprovalRef(decision);
+    if (!next.humanApprovalRefs.some((ref) => ref.id === approvalRef.id && ref.kind === approvalRef.kind)) {
+      next = {
+        ...next,
+        humanApprovalRefs: [...next.humanApprovalRefs, approvalRef],
+        updatedAt: decision.createdAt,
+      };
+      changed = true;
+    }
+  } else if (decision.decision === 'reject') {
+    if (next.status !== 'rejected') {
+      next = { ...next, status: 'rejected', updatedAt: decision.createdAt };
+      changed = true;
+    }
+  } else if (decision.decision === 'request-changes') {
+    if (next.status !== 'superseded') {
+      next = { ...next, status: 'superseded', updatedAt: decision.createdAt };
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    writeJsonFile(proposalFilePath(root, next), next);
+  }
+  return { proposal: next, decision };
 }
 
 function stringToRef(value: string, kind: string): Ref {

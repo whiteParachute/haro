@@ -13,42 +13,17 @@ import path from 'node:path';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import {
+  ApprovalDecisionRecordSchema,
   ApprovalDecisionOptionSchema,
   ApprovalRequestRecordSchema,
   EvolutionProposalSchema,
+  type ApprovalDecisionRecord,
   type ApprovalDecisionOption,
   type ApprovalRequestRecord,
 } from '@haro/agentdock-contract';
 import { readWebAuth, requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
 import type { WebRuntime } from '../runtime.js';
-
-const RefSchema = z.object({
-  id: z.string().min(1),
-  kind: z.string().min(1),
-  uri: z.string().optional(),
-});
-
-const ApprovalDecisionRecordSchema = z.object({
-  id: z.string().min(1),
-  approvalRequestId: z.string().min(1),
-  proposalId: z.string().min(1),
-  validationId: z.string().min(1),
-  decision: ApprovalDecisionOptionSchema,
-  direction: z.string().optional(),
-  reviewer: z.object({
-    source: z.literal('haro-web'),
-    userId: z.string().optional(),
-    username: z.string().optional(),
-    role: z.string().optional(),
-  }),
-  sourceRef: RefSchema,
-  approvalRef: RefSchema.optional(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-
-type ApprovalDecisionRecord = z.infer<typeof ApprovalDecisionRecordSchema>;
 
 interface ApprovalRequestView {
   request: ApprovalRequestRecord;
@@ -334,6 +309,8 @@ function updateProposal(
     }
   } else if (decision.decision === 'reject') {
     proposal.status = 'rejected';
+  } else if (decision.decision === 'request-changes') {
+    proposal.status = 'superseded';
   }
   proposal.updatedAt = decision.createdAt;
   writeJsonAtomic(filePath, proposal);
