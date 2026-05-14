@@ -20,12 +20,20 @@ export const ApplicationStatusSchema = z.enum([
   'rolled-back',
 ]);
 
+export const SnapshotSourceSchema = z.enum([
+  'target-content',
+  'sidecar-ledger',
+  'absent',
+]);
+
 export const SnapshotEntrySchema = z.object({
   changeIndex: z.number().int().nonnegative(),
   targetRef: RefSchema,
   assetId: NonEmptyStringSchema,
   existed: z.boolean(),
+  snapshotSource: SnapshotSourceSchema.optional(),
   latestEventRef: RefSchema.optional(),
+  sourceContentRef: RefSchema.optional(),
   contentRef: RefSchema.optional(),
   contentHash: NonEmptyStringSchema.optional(),
   version: NonEmptyStringSchema.optional(),
@@ -123,6 +131,7 @@ export const ApplicationRecordSchema = z.object({
 
 export type ApplyGateCode = z.infer<typeof ApplyGateCodeSchema>;
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
+export type SnapshotSource = z.infer<typeof SnapshotSourceSchema>;
 export type SnapshotEntry = z.infer<typeof SnapshotEntrySchema>;
 export type AssetSnapshotRecord = z.infer<typeof AssetSnapshotRecordSchema>;
 export type RollbackAction = z.infer<typeof RollbackActionSchema>;

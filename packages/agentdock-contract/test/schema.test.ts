@@ -148,6 +148,7 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
           targetRef: { id: 'prompt-default', kind: 'prompt' },
           assetId: 'prompt-default',
           existed: false,
+          snapshotSource: 'absent',
         },
       ],
       createdAt: now,

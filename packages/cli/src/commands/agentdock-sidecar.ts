@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import {
@@ -25,6 +25,7 @@ import {
   type ObservationBatch,
   type Ref,
   type RollbackRecord,
+  type SnapshotSource,
   type ValidationReport,
 } from '@haro/agentdock-contract';
 import { createSidecarAssetRegistry } from '@haro/mcp-tools';
@@ -151,6 +152,40 @@ interface SnapshotResult {
   rollbackRef: Ref;
   snapshot: AssetSnapshotRecord;
   rollback: RollbackRecord;
+}
+
+interface SnapshotContentFile {
+  path: string;
+  content: Buffer;
+}
+
+interface SnapshotArtifacts {
+  snapshot: AssetSnapshotRecord;
+  rollback: RollbackRecord;
+  contentFiles: SnapshotContentFile[];
+}
+
+interface CurrentAssetContent {
+  sourceContentRef: Ref;
+  content: Buffer;
+  contentHash: string;
+  extension: string;
+}
+
+interface SnapshotEntryDraft {
+  changeIndex: number;
+  targetRef: Ref;
+  assetId: string;
+  existed: boolean;
+  snapshotSource: SnapshotSource;
+  latestEventRef?: Ref;
+  sourceContentRef?: Ref;
+  contentRef?: Ref;
+  contentHash?: string;
+  version?: string;
+  status?: string;
+  content?: Buffer;
+  contentExtension?: string;
 }
 
 interface ApplyResult {
@@ -1363,6 +1398,14 @@ function rollbacksDir(root: string): string {
   return join(root, 'evolution', 'rollbacks');
 }
 
+function snapshotContentDir(root: string, snapshotId: string): string {
+  return join(root, 'evolution', 'snapshot-content', safePathSegment(snapshotId));
+}
+
+function currentAssetContentDir(root: string, kind: string): string {
+  return join(root, 'assets', 'current', kind);
+}
+
 function frontierSignalsDir(root: string): string {
   return join(root, 'evolution', 'frontier-signals');
 }
@@ -1494,6 +1537,18 @@ function writeJsonFile(path: string, value: unknown): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   try {
     writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`);
+    renameSync(tmpPath, path);
+  } catch (error) {
+    rmSync(tmpPath, { force: true });
+    throw error;
+  }
+}
+
+function writeContentFile(path: string, content: Buffer): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tmpPath, content);
     renameSync(tmpPath, path);
   } catch (error) {
     rmSync(tmpPath, { force: true });
@@ -2052,6 +2107,72 @@ function findRollbackRef(proposal: EvolutionProposal): Ref | undefined {
   return proposal.rollbackPlan.rollbackRefs.find((ref) => /rollback/i.test(ref.kind));
 }
 
+function readCurrentAssetContent(
+  root: string,
+  proposal: EvolutionProposal,
+  change: ChangeOperation,
+): CurrentAssetContent | undefined {
+  const extensions = currentAssetContentExtensions(proposal.targetKind);
+  if (extensions.length === 0) return undefined;
+
+  for (const extension of extensions) {
+    const fileName = `${encodedAssetPathSegment(change.targetRef.id)}${extension}`;
+    const path = join(currentAssetContentDir(root, proposal.targetKind), fileName);
+    if (!existsSync(path) || !lstatSync(path).isFile()) continue;
+    const content = readFileSync(path);
+    return {
+      sourceContentRef: currentAssetContentRef(proposal.targetKind, fileName, change.targetRef.id),
+      content,
+      contentHash: sha256(content),
+      extension,
+    };
+  }
+  return undefined;
+}
+
+function currentAssetContentExtensions(kind: string): readonly string[] {
+  if (kind === 'prompt') return ['.md', '.txt', '.json'];
+  if (kind === 'mcp-tool-config') return ['.json', '.md', '.txt'];
+  return [];
+}
+
+function snapshotEntryFingerprint(entry: SnapshotEntryDraft): Record<string, unknown> {
+  return {
+    changeIndex: entry.changeIndex,
+    targetRef: entry.targetRef,
+    assetId: entry.assetId,
+    existed: entry.existed,
+    snapshotSource: entry.snapshotSource,
+    ...(entry.latestEventRef ? { latestEventRef: entry.latestEventRef } : {}),
+    ...(entry.sourceContentRef ? { sourceContentRef: entry.sourceContentRef } : {}),
+    ...(entry.contentRef ? { contentRef: entry.contentRef } : {}),
+    ...(entry.contentHash ? { contentHash: entry.contentHash } : {}),
+    ...(entry.version ? { version: entry.version } : {}),
+    ...(entry.status ? { status: entry.status } : {}),
+    ...(entry.contentExtension ? { contentExtension: entry.contentExtension } : {}),
+  };
+}
+
+function snapshotContentFileName(changeIndex: number, assetId: string, extension: string): string {
+  return `${String(changeIndex).padStart(4, '0')}-${encodedAssetPathSegment(assetId)}${extension}`;
+}
+
+function currentAssetContentRef(kind: string, fileName: string, assetId: string): Ref {
+  return {
+    id: `${kind}:${assetId}:${fileName}`,
+    kind: 'sidecar-current-content',
+    uri: `haro-sidecar://assets/current/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}`,
+  };
+}
+
+function snapshotContentRef(snapshotId: string, fileName: string, assetId: string): Ref {
+  return {
+    id: `${snapshotId}:${assetId}:${fileName}`,
+    kind: 'snapshot-content',
+    uri: `haro-sidecar://snapshot-content/${encodeURIComponent(snapshotId)}/${encodeURIComponent(fileName)}`,
+  };
+}
+
 function createReadyApplicationRecord(
   app: AppContext,
   proposal: EvolutionProposal,
@@ -2094,17 +2215,33 @@ function createSnapshotArtifacts(
   app: AppContext,
   proposal: EvolutionProposal,
   validation?: ValidationReport,
-): { snapshot: AssetSnapshotRecord; rollback: RollbackRecord } {
+): SnapshotArtifacts {
   assertSnapshotAllowedProposal(proposal);
   const registry = createSidecarAssetRegistry(app.paths.root);
   const baselineEvents = registry.listEvents();
-  const entries = proposal.changeSet.map((change, index) => {
+  const entryDrafts = proposal.changeSet.map((change, index): SnapshotEntryDraft => {
+    const currentContent = readCurrentAssetContent(app.paths.root, proposal, change);
+    if (currentContent) {
+      return {
+        changeIndex: index,
+        targetRef: change.targetRef,
+        assetId: change.targetRef.id,
+        existed: true,
+        snapshotSource: 'target-content',
+        sourceContentRef: currentContent.sourceContentRef,
+        contentHash: currentContent.contentHash,
+        content: currentContent.content,
+        contentExtension: currentContent.extension,
+      };
+    }
+
     const baseline = latestRollbackBaselineEvent(baselineEvents, proposal, change);
     return {
       changeIndex: index,
       targetRef: change.targetRef,
       assetId: change.targetRef.id,
       existed: Boolean(baseline),
+      snapshotSource: baseline ? 'sidecar-ledger' : 'absent',
       ...(baseline ? {
         latestEventRef: assetEventRef(baseline),
         contentRef: baseline.contentRef,
@@ -2117,10 +2254,25 @@ function createSnapshotArtifacts(
   const snapshotId = `snapshot_${sha256(JSON.stringify({
     proposalId: proposal.id,
     validationId: validation?.id,
-    entries,
+    entries: entryDrafts.map(snapshotEntryFingerprint),
   })).slice(0, 24)}`;
   const snapshotRef = assetSnapshotRef(snapshotId);
   const timestamp = app.now().toISOString();
+  const contentFiles: SnapshotContentFile[] = [];
+  const entries = entryDrafts.map((draft) => {
+    const { content, contentExtension, ...entry } = draft;
+    if (content && contentExtension) {
+      const fileName = snapshotContentFileName(entry.changeIndex, entry.assetId, contentExtension);
+      const path = join(snapshotContentDir(app.paths.root, snapshotId), fileName);
+      const contentRef = snapshotContentRef(snapshotId, fileName, entry.assetId);
+      contentFiles.push({ path, content });
+      return {
+        ...entry,
+        contentRef,
+      };
+    }
+    return entry;
+  });
   const snapshot = AssetSnapshotRecordSchema.parse({
     id: snapshotId,
     proposalId: proposal.id,
@@ -2158,15 +2310,18 @@ function createSnapshotArtifacts(
     entries: rollbackEntries,
     createdAt: timestamp,
   });
-  return { snapshot, rollback };
+  return { snapshot, rollback, contentFiles };
 }
 
 function writeSnapshotArtifacts(
   root: string,
-  artifacts: { snapshot: AssetSnapshotRecord; rollback: RollbackRecord },
+  artifacts: SnapshotArtifacts,
 ): SnapshotResult {
   const snapshotPath = snapshotFilePath(root, artifacts.snapshot);
   const rollbackPath = rollbackFilePath(root, artifacts.rollback);
+  for (const contentFile of artifacts.contentFiles) {
+    writeContentFile(contentFile.path, contentFile.content);
+  }
   writeJsonFile(snapshotPath, artifacts.snapshot);
   writeJsonFile(rollbackPath, artifacts.rollback);
   return {
@@ -2587,6 +2742,10 @@ function encodedConnectionId(connectionId: string): string {
   return Buffer.from(connectionId, 'utf8').toString('base64url');
 }
 
+function encodedAssetPathSegment(value: string): string {
+  return Buffer.from(value, 'utf8').toString('base64url');
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -2601,6 +2760,6 @@ function countSemanticObservations(batch: ObservationBatch): number {
     batch.usageRecords.length;
 }
 
-function sha256(input: string): string {
+function sha256(input: string | Buffer): string {
   return createHash('sha256').update(input).digest('hex');
 }

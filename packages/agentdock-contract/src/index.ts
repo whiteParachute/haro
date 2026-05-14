@@ -72,6 +72,7 @@ export {
   RollbackActionSchema,
   RollbackEntrySchema,
   RollbackRecordSchema,
+  SnapshotSourceSchema,
   SnapshotEntrySchema,
 } from './application.js';
 export type {
@@ -82,6 +83,7 @@ export type {
   RollbackAction,
   RollbackEntry,
   RollbackRecord,
+  SnapshotSource,
   SnapshotEntry,
 } from './application.js';
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -1166,7 +1166,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       rollbackId: string;
       snapshotPath: string;
       rollbackPath: string;
-      snapshot: { entries: Array<{ existed: boolean; assetId: string }> };
+      snapshot: { entries: Array<{ existed: boolean; assetId: string; snapshotSource?: string }> };
       rollback: { entries: Array<{ action: string; existedBefore: boolean }> };
     } }).data;
     expect(payload.proposalId).toBe(proposalPayload.proposalId);
@@ -1174,7 +1174,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.rollbackId).toMatch(/^rollback_/);
     expect(existsSync(payload.snapshotPath)).toBe(true);
     expect(existsSync(payload.rollbackPath)).toBe(true);
-    expect(payload.snapshot.entries[0]).toMatchObject({ existed: false });
+    expect(payload.snapshot.entries[0]).toMatchObject({ existed: false, snapshotSource: 'absent' });
     expect(payload.rollback.entries[0]).toMatchObject({
       action: 'delete-created-asset',
       existedBefore: false,
@@ -1202,6 +1202,177 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(readRollbackRecords(root)).toHaveLength(1);
     expect(observeErr.read()).toBe('');
     expect(proposeErr.read()).toBe('');
+  });
+
+  it('snapshot --proposal-id copies sidecar-local prompt content into snapshot-content', async () => {
+    const root = newHome('agentdock-snapshot-content');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const currentPromptDir = join(root, 'assets', 'current', 'prompt');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(currentPromptDir, { recursive: true });
+    const assetId = 'prompt-default';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    writeFileSync(join(currentPromptDir, `${encodedAssetId}.md`), 'old prompt\n');
+    const proposal = {
+      id: 'proposal_prompt_content_snapshot',
+      title: 'Tune prompt wording with content snapshot',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-prompt-content', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: assetId, kind: 'prompt' },
+          contentRef: 'haro-sidecar://proposals/proposal_prompt_content_snapshot/content',
+          contentHash: 'sha256:new-prompt',
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: ['Review prompt wording'],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_prompt_content_snapshot.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'snapshot',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      snapshotId: string;
+      snapshotPath: string;
+      rollbackPath: string;
+      snapshot: {
+        entries: Array<{
+          existed: boolean;
+          snapshotSource?: string;
+          sourceContentRef?: { uri: string };
+          contentRef?: { uri: string };
+          contentHash?: string;
+        }>;
+      };
+      rollback: {
+        entries: Array<{
+          action: string;
+          existedBefore: boolean;
+          restoreContentRef?: { uri: string };
+          restoreContentHash?: string;
+        }>;
+      };
+    } }).data;
+    const entry = payload.snapshot.entries[0]!;
+    expect(entry).toMatchObject({
+      existed: true,
+      snapshotSource: 'target-content',
+    });
+    expect(entry.sourceContentRef?.uri).toBe(`haro-sidecar://assets/current/prompt/${encodedAssetId}.md`);
+    expect(entry.contentRef?.uri).toContain(`haro-sidecar://snapshot-content/${payload.snapshotId}/`);
+    expect(entry.contentHash).toBeDefined();
+    const contentDir = join(root, 'evolution', 'snapshot-content', payload.snapshotId);
+    const contentFiles = readdirSync(contentDir);
+    expect(contentFiles).toEqual([`0000-${encodedAssetId}.md`]);
+    expect(readFileSync(join(contentDir, contentFiles[0]!), 'utf8')).toBe('old prompt\n');
+    expect(payload.rollback.entries[0]).toMatchObject({
+      action: 'restore-latest-event',
+      existedBefore: true,
+      restoreContentHash: entry.contentHash,
+    });
+    expect(payload.rollback.entries[0]?.restoreContentRef?.uri).toBe(entry.contentRef?.uri);
+    expect(existsSync(payload.snapshotPath)).toBe(true);
+    expect(existsSync(payload.rollbackPath)).toBe(true);
+    expect(readSnapshotRecords(root)).toHaveLength(1);
+    expect(readRollbackRecords(root)).toHaveLength(1);
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('snapshot --proposal-id does not follow sidecar current content symlinks', async () => {
+    const root = newHome('agentdock-snapshot-symlink');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const currentPromptDir = join(root, 'assets', 'current', 'prompt');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(currentPromptDir, { recursive: true });
+    const assetId = 'prompt-symlink';
+    const encodedAssetId = Buffer.from(assetId, 'utf8').toString('base64url');
+    const outsidePath = join(root, 'outside-secret.md');
+    writeFileSync(outsidePath, 'must not be snapshotted\n');
+    symlinkSync(outsidePath, join(currentPromptDir, `${encodedAssetId}.md`));
+    const proposal = {
+      id: 'proposal_prompt_symlink_snapshot',
+      title: 'Reject symlinked prompt snapshot source',
+      status: 'dry-run',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-prompt-symlink', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: assetId, kind: 'prompt' },
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: [],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_prompt_symlink_snapshot.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'snapshot',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      snapshotId: string;
+      snapshot: { entries: Array<{ existed: boolean; snapshotSource?: string; contentRef?: { uri: string } }> };
+      rollback: { entries: Array<{ action: string; existedBefore: boolean; restoreContentRef?: { uri: string } }> };
+    } }).data;
+    expect(payload.snapshot.entries[0]).toMatchObject({
+      existed: false,
+      snapshotSource: 'absent',
+    });
+    expect(payload.snapshot.entries[0]?.contentRef).toBeUndefined();
+    expect(payload.rollback.entries[0]).toMatchObject({
+      action: 'delete-created-asset',
+      existedBefore: false,
+    });
+    expect(payload.rollback.entries[0]?.restoreContentRef).toBeUndefined();
+    expect(existsSync(join(root, 'evolution', 'snapshot-content', payload.snapshotId))).toBe(false);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
   it('apply --proposal-id auto-generates snapshot and rollback metadata before writing a ready record', async () => {
