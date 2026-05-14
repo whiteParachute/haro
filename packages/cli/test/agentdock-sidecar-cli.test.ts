@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AssetEventSchema, type AssetEvent } from '@haro/agentdock-contract';
+import {
+  ApplicationRecordSchema,
+  AssetEventSchema,
+  type ApplicationRecord,
+  type AssetEvent,
+} from '@haro/agentdock-contract';
 import { AgentRegistry, ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
@@ -93,6 +98,15 @@ function readAssetManifests(root: string): Array<{
       status: string;
       latestEventRef: { id: string };
     }>(join(dir, name)));
+}
+
+function readApplicationRecords(root: string): ApplicationRecord[] {
+  const dir = join(root, 'evolution', 'applications');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .map((name) => ApplicationRecordSchema.parse(readJson(join(dir, name))));
 }
 
 describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
@@ -887,6 +901,309 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.skippedCorruptProposalCount).toBe(1);
   });
 
+  it('apply --proposal-id blocks unvalidated proposals without writing application records', async () => {
+    const root = newHome('agentdock-apply-unvalidated');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(propose.exitCode).toBe(0);
+    const proposalPayload = (JSON.parse(proposeOut.read()) as { data: { proposalId: string } }).data;
+
+    const applyOut = captureStream();
+    const applyErr = captureStream();
+    const apply = await runCli(commonOpts(root, applyOut, applyErr, [
+      'apply',
+      '--proposal-id',
+      proposalPayload.proposalId,
+      '--json',
+    ]));
+
+    expect(apply.exitCode).toBe(0);
+    expect(apply.action).toBe('apply');
+    expect(applyErr.read()).toBe('');
+    const payload = (JSON.parse(applyOut.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      gatePassed: boolean;
+      applied: boolean;
+      applicationRecordCount: number;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'blocked',
+      gateCode: 'VALIDATION_REQUIRED',
+      gatePassed: false,
+      applied: false,
+      applicationRecordCount: 0,
+    });
+    expect(payload.blockingReasons.join('\n')).toContain('No validation report');
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+    expect(observeErr.read()).toBe('');
+    expect(proposeErr.read()).toBe('');
+  });
+
+  it('apply --proposal-id refuses L2/L3 proposals before validation lookup', async () => {
+    const root = newHome('agentdock-apply-l2');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    mkdirSync(proposalDir, { recursive: true });
+    writeFileSync(join(proposalDir, 'proposal_l2_fixture.json'), `${JSON.stringify({
+      id: 'proposal_l2_fixture',
+      title: 'Code change that must use patch branch',
+      status: 'validated',
+      level: 'L2',
+      targetKind: 'haro-code',
+      riskLevel: 'medium',
+      sourceObservationRefs: [{ id: 'obs-001', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'packages/cli/src/index.ts', kind: 'haro-code' },
+          contentRef: 'haro-sidecar://proposals/proposal_l2_fixture/patch',
+          contentHash: 'sha256:l2',
+          summary: 'Modify Haro code directly',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['pnpm test'],
+        manualChecks: [],
+        regressionRisks: ['runtime regression'],
+      },
+      rollbackPlan: {
+        strategy: 'revert patch branch',
+        snapshotRequired: true,
+        rollbackRefs: [
+          { id: 'snapshot-l2', kind: 'asset-snapshot' },
+          { id: 'rollback-l2', kind: 'rollback-ref' },
+        ],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      'proposal_l2_fixture',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      applicationRecordCount: number;
+      blockingReasons: string[];
+    } }).data;
+    expect(payload.gateStatus).toBe('blocked');
+    expect(payload.gateCode).toBe('DIRECT_APPLY_FORBIDDEN');
+    expect(payload.applicationRecordCount).toBe(0);
+    expect(payload.blockingReasons.join('\n')).toContain('patch branch');
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('apply --proposal-id blocks validated proposals when validation is not apply eligible', async () => {
+    const root = newHome('agentdock-apply-not-eligible');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    const proposal = {
+      id: 'proposal_not_eligible',
+      title: 'Prompt change missing approval',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-not-eligible', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'prompt-default', kind: 'prompt' },
+          contentRef: 'haro-sidecar://proposals/proposal_not_eligible/content',
+          contentHash: 'sha256:not-eligible',
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: { requiredCommands: ['git diff --check'], manualChecks: [], regressionRisks: [] },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [
+          { id: 'snapshot-not-eligible', kind: 'asset-snapshot' },
+          { id: 'rollback-not-eligible', kind: 'rollback-ref' },
+        ],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_not_eligible.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_not_eligible.json'), `${JSON.stringify({
+      id: 'validation_not_eligible',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: false,
+      blockingReasons: ['Manual approval is required before apply.'],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      validationId: string;
+      blockingReasons: string[];
+      applicationRecordCount: number;
+    } }).data;
+    expect(payload.gateStatus).toBe('blocked');
+    expect(payload.gateCode).toBe('APPLY_NOT_ELIGIBLE');
+    expect(payload.validationId).toBe('validation_not_eligible');
+    expect(payload.blockingReasons).toContain('Manual approval is required before apply.');
+    expect(payload.blockingReasons).toContain('Validation report has applyEligible=false.');
+    expect(payload.applicationRecordCount).toBe(0);
+    expect(readApplicationRecords(root)).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('apply --proposal-id writes a ready gate record for eligible L0 proposals without mutating assets', async () => {
+    const root = newHome('agentdock-apply-ready-l0');
+    const proposalDir = join(root, 'evolution', 'proposals');
+    const validationDir = join(root, 'evolution', 'validations');
+    mkdirSync(proposalDir, { recursive: true });
+    mkdirSync(validationDir, { recursive: true });
+    const proposal = {
+      id: 'proposal_ready_l0',
+      title: 'Tune prompt wording',
+      status: 'validated',
+      level: 'L0',
+      targetKind: 'prompt',
+      riskLevel: 'low',
+      sourceObservationRefs: [{ id: 'obs-ready-l0', kind: 'observation-batch' }],
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'prompt-default', kind: 'prompt' },
+          contentRef: 'haro-sidecar://proposals/proposal_ready_l0/content',
+          contentHash: 'sha256:prompt-ready',
+          summary: 'Clarify prompt wording',
+        },
+      ],
+      testPlan: {
+        requiredCommands: ['git diff --check'],
+        manualChecks: ['Review prompt wording'],
+        regressionRisks: ['prompt drift'],
+      },
+      rollbackPlan: {
+        strategy: 'restore previous prompt content',
+        snapshotRequired: true,
+        rollbackRefs: [
+          { id: 'snapshot-ready-l0', kind: 'asset-snapshot', uri: 'haro-sidecar://snapshots/snapshot-ready-l0' },
+          { id: 'rollback-ready-l0', kind: 'rollback-ref', uri: 'haro-sidecar://rollbacks/rollback-ready-l0' },
+        ],
+      },
+      createdAt: '2026-05-08T12:00:00.000Z',
+      updatedAt: '2026-05-08T12:00:00.000Z',
+    };
+    writeFileSync(join(proposalDir, 'proposal_ready_l0.json'), `${JSON.stringify(proposal, null, 2)}\n`);
+    writeFileSync(join(validationDir, 'validation_ready_l0.json'), `${JSON.stringify({
+      id: 'validation_ready_l0',
+      proposalId: proposal.id,
+      riskVerdict: 'low',
+      requiredTests: ['git diff --check'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposal.id, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'apply',
+      '--proposal-id',
+      proposal.id,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      gatePassed: boolean;
+      applied: boolean;
+      applicationRecordCount: number;
+      validationId: string;
+      applicationRecordPath: string;
+      applicationRecord: {
+        proposalId: string;
+        validationId: string;
+        status: string;
+        gateCode: string;
+        applied: boolean;
+        snapshotRef: { id: string };
+        rollbackRef: { id: string };
+      };
+    } }).data;
+    expect(payload).toMatchObject({
+      gateStatus: 'ready',
+      gateCode: 'READY',
+      gatePassed: true,
+      applied: false,
+      applicationRecordCount: 1,
+      validationId: 'validation_ready_l0',
+    });
+    expect(payload.applicationRecord).toMatchObject({
+      proposalId: proposal.id,
+      validationId: 'validation_ready_l0',
+      status: 'ready',
+      gateCode: 'READY',
+      applied: false,
+      snapshotRef: { id: 'snapshot-ready-l0' },
+      rollbackRef: { id: 'rollback-ready-l0' },
+    });
+    expect(existsSync(payload.applicationRecordPath)).toBe(true);
+    expect(readApplicationRecords(root)).toHaveLength(1);
+    expect(readAssetEvents(root).filter((event) => event.status === 'applied')).toHaveLength(0);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
   it('intake frontier writes schema-valid signals and is idempotent by source ref', async () => {
     const root = newHome('frontier-intake');
     const sourceConfigPath = join(root, 'frontier-sources.json');
@@ -1035,6 +1352,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
       proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
       validations: { count: number; corruptCount: number };
+      applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
       frontierSignals: {
         count: number;
         activeCount: number;
@@ -1049,6 +1367,13 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.observations).toMatchObject({ batchCount: 0, corruptCount: 0, semanticObservationCount: 0 });
     expect(payload.proposals).toMatchObject({ count: 0, pendingCount: 0, validatedCount: 0, corruptCount: 0 });
     expect(payload.validations).toMatchObject({ count: 0, corruptCount: 0 });
+    expect(payload.applications).toMatchObject({
+      count: 0,
+      readyCount: 0,
+      appliedCount: 0,
+      rolledBackCount: 0,
+      corruptCount: 0,
+    });
     expect(payload.frontierSignals).toMatchObject({
       count: 0,
       activeCount: 0,
@@ -1134,6 +1459,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       observations: { batchCount: number; corruptCount: number; semanticObservationCount: number };
       proposals: { count: number; pendingCount: number; validatedCount: number; corruptCount: number };
       validations: { count: number; corruptCount: number };
+      applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
       frontierSignals: {
         count: number;
         activeCount: number;
@@ -1157,6 +1483,13 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.observations.corruptCount).toBe(1);
     expect(payload.proposals).toMatchObject({ count: 1, pendingCount: 0, validatedCount: 1, corruptCount: 1 });
     expect(payload.validations).toMatchObject({ count: 1, corruptCount: 1 });
+    expect(payload.applications).toMatchObject({
+      count: 0,
+      readyCount: 0,
+      appliedCount: 0,
+      rolledBackCount: 0,
+      corruptCount: 0,
+    });
     expect(payload.frontierSignals).toMatchObject({
       count: 1,
       activeCount: 1,

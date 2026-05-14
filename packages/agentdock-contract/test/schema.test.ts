@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ApplicationRecordSchema,
   AssetEventSchema,
   EvolutionProposalSchema,
   FrontierSignalSchema,
@@ -106,6 +107,52 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
 
   it('accepts a valid dry-run proposal fixture', () => {
     expect(EvolutionProposalSchema.parse(validProposal).id).toBe('proposal-001');
+  });
+
+  it('accepts a ready L0/L1 application gate record without applying content', () => {
+    const record = ApplicationRecordSchema.parse({
+      id: 'application-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      status: 'ready',
+      gateCode: 'READY',
+      level: 'L0',
+      targetKind: 'prompt',
+      applied: false,
+      snapshotRef: { id: 'snapshot-001', kind: 'asset-snapshot' },
+      rollbackRef: { id: 'rollback-001', kind: 'rollback-ref' },
+      assetEventRefs: [],
+      evidenceRefs: [{ id: 'proposal-001', kind: 'evolution-proposal' }],
+      blockingReasons: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(record.applied).toBe(false);
+    expect(record.gateCode).toBe('READY');
+  });
+
+  it('rejects ready application records with blocking reasons', () => {
+    const result = ApplicationRecordSchema.safeParse({
+      id: 'application-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      status: 'ready',
+      gateCode: 'READY',
+      level: 'L0',
+      targetKind: 'prompt',
+      applied: false,
+      snapshotRef: { id: 'snapshot-001', kind: 'asset-snapshot' },
+      rollbackRef: { id: 'rollback-001', kind: 'rollback-ref' },
+      blockingReasons: ['not ready'],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === 'blockingReasons')).toBe(true);
+    }
   });
 
   it('accepts a valid frontier signal fixture', () => {

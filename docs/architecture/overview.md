@@ -238,11 +238,12 @@ Haro apply 阶段只允许写入低风险对象：
 | Phase C | Read-only MCP sidecar  | `haro mcp` 暴露 read-only tools                  |
 | Phase D | Scheduled sidecar      | `connect agent-dock` + `observe --since last` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `status` + `doctor --component sidecar` 已落地；propose/validate 已显式报告损坏 JSON 并原子写 artifact；status/doctor 只读汇总和检查 sidecar store |
 | Phase E | Signal intake + asset registry | `FrontierSignal` schema + `haro intake frontier --source-config` + `propose --include-frontier` 已落地，active frontier signals 会作为 dry-run proposal evidence；file-backed asset registry 已接入 query 与 scheduled propose/validate，能写 `proposed` / `validated` events |
-| Phase F | Gated apply L0/L1      | proposal + validation + snapshot + rollback gate |
+| Phase F | Gated apply L0/L1      | 第一段 gate preflight 已落地：`haro apply --proposal-id` 校验 proposal/validation/L0-L1/snapshot/rollback refs，ready 时写 application record；暂不修改资产内容 |
 
 ## 架构变更记录
 
 - **2026-05-14**：Phase E asset registry adapter 落地并接入 scheduled loop：新增 `~/.haro/assets/manifests` + `~/.haro/assets/events` file-backed sidecar registry，`haro_asset_query` 改为读取 sidecar registry，`haro propose` / `haro validate` 分别写 `proposed` / `validated` events；仍不读写 Haro-owned memory 或 `aria-memory-vault`。
+- **2026-05-14**：Phase F gated apply 前置骨架落地：新增 `ApplicationRecord` contract 与 `haro apply --proposal-id` gate preflight，只有 L0/L1 validated + applyEligible + snapshot/rollback refs 齐全时写 `~/.haro/evolution/applications/*` ready record；当前不执行内容 apply、不写 memory。
 - **2026-05-13**：Phase E frontier 主链路落地：`FrontierSignal` contract schema、curated source-config intake、frontier signal status/doctor 计数，以及 `propose --include-frontier` 引用 active frontier evidence；仍不读写 Haro-owned memory 或 `aria-memory-vault`。
 - **2026-05-09**：补充 sidecar operating model：Haro 同时观察 AgentDock 使用、Haro 自身组件和外部前沿情报；所有建议在审批后才进入 gated apply 或 patch branch。
 - **2026-05-08**：架构基线切换为 AgentDock Kernel + Haro Sidecar。Haro 不再继续自建完整 workbench/runtime；通过 AgentDock 外部 MCP server 注册、定时任务和 skills/MCP 调用面接入。

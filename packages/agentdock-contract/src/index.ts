@@ -65,6 +65,17 @@ export { ValidationReportSchema } from './validation.js';
 export type { ValidationReport } from './validation.js';
 
 export {
+  ApplicationRecordSchema,
+  ApplicationStatusSchema,
+  ApplyGateCodeSchema,
+} from './application.js';
+export type {
+  ApplicationRecord,
+  ApplicationStatus,
+  ApplyGateCode,
+} from './application.js';
+
+export {
   FrontierConfidenceSchema,
   FrontierSignalSchema,
   FrontierSignalStatusSchema,

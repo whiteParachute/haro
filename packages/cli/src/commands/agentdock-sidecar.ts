@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import {
+  ApplicationRecordSchema,
   AssetKindSchema,
   AssetEventSchema,
   EvolutionProposalSchema,
@@ -11,6 +12,8 @@ import {
   ValidationReportSchema,
   createFakeAgentDockSource,
   createHttpAgentDockSource,
+  type ApplicationRecord,
+  type ApplyGateCode,
   type AssetEvent,
   type AssetKind,
   type ChangeOperation,
@@ -71,6 +74,10 @@ interface ValidateOptions extends OutputFlags {
   limit?: string;
 }
 
+interface ApplyOptions extends OutputFlags {
+  proposalId: string;
+}
+
 interface IntakeFrontierOptions extends OutputFlags {
   sourceConfig: string;
   since?: string;
@@ -123,6 +130,20 @@ interface ValidateResult {
   assetEventIds: string[];
   validations: ValidationReport[];
   validationPaths: string[];
+}
+
+interface ApplyResult {
+  command: 'apply';
+  proposalId: string;
+  gateStatus: 'ready' | 'blocked';
+  gateCode: ApplyGateCode;
+  gatePassed: boolean;
+  applied: false;
+  applicationRecordCount: number;
+  blockingReasons: string[];
+  validationId?: string;
+  applicationRecord?: ApplicationRecord;
+  applicationRecordPath?: string;
 }
 
 interface IntakeFrontierResult {
@@ -180,6 +201,14 @@ interface SidecarStatusResult {
     path: string;
     count: number;
     corruptCount: number;
+  };
+  applications: {
+    path: string;
+    count: number;
+    corruptCount: number;
+    readyCount: number;
+    appliedCount: number;
+    rolledBackCount: number;
   };
   frontierSignals: {
     path: string;
@@ -418,6 +447,40 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             'No pending AgentDock sidecar proposals found.',
             `Pending proposals after run: ${result.pendingProposalCount}`,
           ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+  program
+    .command('apply')
+    .description('Run the L0/L1 gated apply preflight for a validated sidecar proposal')
+    .requiredOption('--proposal-id <id>', 'validated proposal id to gate')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: ApplyOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = applyAgentDock(app, options);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(
+          result.gatePassed
+            ? [
+                `Apply gate ready: ${result.proposalId}`,
+                'Applied: false (gate-only preflight; content mutation is not implemented in this slice)',
+                `Application record: ${result.applicationRecordPath}`,
+              ].join('\n') + '\n'
+            : [
+                `Apply gate blocked: ${result.proposalId}`,
+                `Code: ${result.gateCode}`,
+                ...result.blockingReasons.map((reason) => `- ${reason}`),
+              ].join('\n') + '\n',
         );
       } catch (error) {
         renderError(error, { stderr: app.stderr }, { mode });
@@ -676,6 +739,87 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
   }
 }
 
+function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {
+  const proposalId = options.proposalId.trim();
+  if (!proposalId) {
+    throw new CommanderExit(2, '`haro apply --proposal-id` requires a non-empty proposal id.');
+  }
+
+  const lockDir = acquireApplyLock(app.paths.root);
+  try {
+    const proposal = readProposalById(app.paths.root, proposalId);
+    if (!proposal) {
+      return blockedApplyResult(proposalId, 'PROPOSAL_NOT_FOUND', [
+        `No proposal artifact found for ${proposalId} under evolution/proposals.`,
+      ]);
+    }
+
+    if (proposal.level === 'L2' || proposal.level === 'L3') {
+      return blockedApplyResult(proposal.id, 'DIRECT_APPLY_FORBIDDEN', [
+        'Direct apply is forbidden for L2/L3 proposals; generate a patch branch and require human review.',
+      ]);
+    }
+
+    const unsupportedTargetReason = unsupportedL0L1TargetReason(proposal);
+    if (unsupportedTargetReason) {
+      return blockedApplyResult(proposal.id, 'UNSUPPORTED_TARGET_KIND', [unsupportedTargetReason]);
+    }
+
+    const validation = readLatestValidationForProposal(app.paths.root, proposal.id);
+    if (!validation) {
+      return blockedApplyResult(proposal.id, 'VALIDATION_REQUIRED', [
+        `No validation report found for proposal ${proposal.id}.`,
+      ]);
+    }
+
+    if (proposal.status !== 'validated') {
+      return blockedApplyResult(proposal.id, 'VALIDATION_REQUIRED', [
+        `Proposal status is ${proposal.status}; gated apply requires proposal.status=validated.`,
+      ], validation.id);
+    }
+
+    if (!validation.applyEligible || validation.riskVerdict === 'blocked') {
+      return blockedApplyResult(proposal.id, 'APPLY_NOT_ELIGIBLE', [
+        ...validation.blockingReasons,
+        ...(validation.applyEligible ? [] : ['Validation report has applyEligible=false.']),
+      ], validation.id);
+    }
+
+    if (!validation.rollbackReady) {
+      return blockedApplyResult(proposal.id, 'ROLLBACK_REF_REQUIRED', [
+        'Validation report has rollbackReady=false.',
+      ], validation.id);
+    }
+
+    const snapshotRef = findSnapshotRef(proposal);
+    const rollbackRef = findRollbackRef(proposal);
+    if (!snapshotRef || !rollbackRef) {
+      return blockedApplyResult(proposal.id, 'ROLLBACK_REF_REQUIRED', [
+        'Gated apply requires both snapshot and rollback refs before content mutation can be enabled.',
+      ], validation.id);
+    }
+
+    const applicationRecord = createReadyApplicationRecord(app, proposal, validation, snapshotRef, rollbackRef);
+    const applicationRecordPath = applicationFilePath(app.paths.root, applicationRecord);
+    writeJsonFile(applicationRecordPath, applicationRecord);
+    return {
+      command: 'apply',
+      proposalId: proposal.id,
+      gateStatus: 'ready',
+      gateCode: 'READY',
+      gatePassed: true,
+      applied: false,
+      applicationRecordCount: 1,
+      blockingReasons: [],
+      validationId: validation.id,
+      applicationRecord,
+      applicationRecordPath,
+    };
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
 function intakeFrontierSignals(app: AppContext, options: IntakeFrontierOptions): IntakeFrontierResult {
   const limit = normalizeOptionalPositiveInt(options.limit, '--limit');
   const sourceConfigPath = resolve(options.sourceConfig);
@@ -764,6 +908,7 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
   const proposalStats = readProposalStats(app.paths.root, validationStats.validatedProposalIds);
   const observationStats = readObservationStats(app.paths.root);
   const frontierSignalStats = readFrontierSignalStats(app.paths.root);
+  const applicationStats = readApplicationStats(app.paths.root);
   return {
     command: 'status',
     root: app.paths.root,
@@ -786,6 +931,14 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
       path: validationsDir(app.paths.root),
       count: validationStats.count,
       corruptCount: validationStats.corruptCount,
+    },
+    applications: {
+      path: applicationsDir(app.paths.root),
+      count: applicationStats.count,
+      corruptCount: applicationStats.corruptCount,
+      readyCount: applicationStats.readyCount,
+      appliedCount: applicationStats.appliedCount,
+      rolledBackCount: applicationStats.rolledBackCount,
     },
     frontierSignals: {
       path: frontierSignalsDir(app.paths.root),
@@ -1039,6 +1192,10 @@ function validationFilePath(root: string, report: ValidationReport): string {
   return join(validationsDir(root), `${safePathSegment(report.id)}.json`);
 }
 
+function applicationFilePath(root: string, record: ApplicationRecord): string {
+  return join(applicationsDir(root), `${safePathSegment(record.id)}.json`);
+}
+
 function frontierSignalFilePath(root: string, signal: FrontierSignal): string {
   const fingerprint = sha256(frontierSignalSourceKey(signal)).slice(0, 12);
   return join(
@@ -1065,6 +1222,10 @@ function proposalsDir(root: string): string {
 
 function validationsDir(root: string): string {
   return join(root, 'evolution', 'validations');
+}
+
+function applicationsDir(root: string): string {
+  return join(root, 'evolution', 'applications');
 }
 
 function frontierSignalsDir(root: string): string {
@@ -1121,6 +1282,25 @@ function acquireValidateLock(root: string): string {
       throw new CommanderExit(
         1,
         'Another haro validate process is already running.',
+      );
+    }
+    throw error;
+  }
+  return dir;
+}
+
+function acquireApplyLock(root: string): string {
+  const parent = join(root, 'evolution', 'locks');
+  mkdirSync(parent, { recursive: true });
+  const dir = join(parent, 'apply.lock');
+  try {
+    mkdirSync(dir);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === 'EEXIST') {
+      throw new CommanderExit(
+        1,
+        'Another haro apply process is already running.',
       );
     }
     throw error;
@@ -1288,6 +1468,39 @@ function readValidatedProposalIds(root: string): { validated: Set<string>; corru
   return { validated, corruptCount };
 }
 
+function readProposalById(root: string, proposalId: string): EvolutionProposal | undefined {
+  const dir = proposalsDir(root);
+  if (!existsSync(dir)) return undefined;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const proposal = EvolutionProposalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (proposal.id === proposalId) return proposal;
+    } catch {
+      // Corrupt proposal artifacts are surfaced by status/doctor; apply gates
+      // fail closed by treating the target proposal as unavailable.
+    }
+  }
+  return undefined;
+}
+
+function readLatestValidationForProposal(root: string, proposalId: string): ValidationReport | undefined {
+  const dir = validationsDir(root);
+  if (!existsSync(dir)) return undefined;
+  const reports: ValidationReport[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const report = ValidationReportSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (report.proposalId === proposalId) reports.push(report);
+    } catch {
+      // Corrupt validation artifacts are surfaced by status/doctor; apply gates
+      // fail closed when no valid validation report remains.
+    }
+  }
+  return reports.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id))[0];
+}
+
 function readConnectionStatus(root: string): SidecarStatusResult['connection'] {
   const path = connectionsPath(root);
   if (!existsSync(path)) {
@@ -1426,6 +1639,37 @@ function readValidationStats(root: string): {
     }
   }
   return { count, corruptCount, validatedProposalIds };
+}
+
+function readApplicationStats(root: string): {
+  count: number;
+  corruptCount: number;
+  readyCount: number;
+  appliedCount: number;
+  rolledBackCount: number;
+} {
+  const dir = applicationsDir(root);
+  if (!existsSync(dir)) {
+    return { count: 0, corruptCount: 0, readyCount: 0, appliedCount: 0, rolledBackCount: 0 };
+  }
+  let count = 0;
+  let corruptCount = 0;
+  let readyCount = 0;
+  let appliedCount = 0;
+  let rolledBackCount = 0;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = ApplicationRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      count += 1;
+      if (record.status === 'ready') readyCount += 1;
+      if (record.status === 'applied') appliedCount += 1;
+      if (record.status === 'rolled-back') rolledBackCount += 1;
+    } catch {
+      corruptCount += 1;
+    }
+  }
+  return { count, corruptCount, readyCount, appliedCount, rolledBackCount };
 }
 
 function readFrontierSourceConfig(path: string): FrontierSignal[] {
@@ -1570,6 +1814,79 @@ function emitCorruptFrontierSignalWarnings(app: AppContext, corruptSignalCount: 
       `Warning: skipped ${corruptSignalCount} corrupt frontier signal file(s) under evolution/frontier-signals.\n`,
     );
   }
+}
+
+function blockedApplyResult(
+  proposalId: string,
+  gateCode: Exclude<ApplyGateCode, 'READY'>,
+  blockingReasons: string[],
+  validationId?: string,
+): ApplyResult {
+  return {
+    command: 'apply',
+    proposalId,
+    gateStatus: 'blocked',
+    gateCode,
+    gatePassed: false,
+    applied: false,
+    applicationRecordCount: 0,
+    blockingReasons,
+    ...(validationId ? { validationId } : {}),
+  };
+}
+
+function unsupportedL0L1TargetReason(proposal: EvolutionProposal): string | undefined {
+  const allowedL0 = new Set(['prompt', 'mcp-tool-config']);
+  const allowedL1 = new Set(['skill', 'runner-profile', 'schedule-config', 'routing-rule']);
+  const allowed = proposal.level === 'L0' ? allowedL0 : allowedL1;
+  if (allowed.has(proposal.targetKind)) return undefined;
+  return `Target kind ${proposal.targetKind} is not in the ${proposal.level} direct-apply allowlist.`;
+}
+
+function findSnapshotRef(proposal: EvolutionProposal): Ref | undefined {
+  return proposal.rollbackPlan.rollbackRefs.find((ref) => /snapshot/i.test(ref.kind));
+}
+
+function findRollbackRef(proposal: EvolutionProposal): Ref | undefined {
+  return proposal.rollbackPlan.rollbackRefs.find((ref) => /rollback/i.test(ref.kind));
+}
+
+function createReadyApplicationRecord(
+  app: AppContext,
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+  snapshotRef: Ref,
+  rollbackRef: Ref,
+): ApplicationRecord {
+  const timestamp = app.now().toISOString();
+  const id = `application_${sha256(JSON.stringify({
+    proposalId: proposal.id,
+    validationId: validation.id,
+    snapshotRef,
+    rollbackRef,
+  })).slice(0, 24)}`;
+  return ApplicationRecordSchema.parse({
+    id,
+    proposalId: proposal.id,
+    validationId: validation.id,
+    status: 'ready',
+    gateCode: 'READY',
+    level: proposal.level,
+    targetKind: proposal.targetKind,
+    applied: false,
+    snapshotRef,
+    rollbackRef,
+    assetEventRefs: [],
+    evidenceRefs: [
+      evolutionProposalRef(proposal),
+      validationReportRef(validation),
+      snapshotRef,
+      rollbackRef,
+    ],
+    blockingReasons: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
 }
 
 function createDryRunProposal(
