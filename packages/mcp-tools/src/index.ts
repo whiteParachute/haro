@@ -51,9 +51,11 @@ export {
   createSidecarRegistry,
   createHaroApplyTool,
   createHaroRollbackTool,
+  createHaroRunDailyWorkflowTool,
   haroAssetQueryTool,
   haroObserveTool,
   haroProposeTool,
+  HaroRunDailyWorkflowInputSchema,
   haroValidateTool,
   HaroApplyInputSchema,
   HaroAssetQueryInputSchema,
@@ -67,9 +69,11 @@ export {
   type HaroAssetQueryOutput,
   type HaroObserveInput,
   type HaroProposeInput,
+  type HaroRunDailyWorkflowInput,
   type HaroRollbackInput,
   type HaroValidateInput,
   type SidecarGatedWriteHandlers,
+  type SidecarWorkflowHandlers,
   type SidecarRegistryOptions,
 } from './sidecar-tools.js';
 

@@ -38,13 +38,11 @@ const SIDECAR_TOOL_NAMES = [
   'haro_propose',
   'haro_validate',
   'haro_asset_query',
+  'haro_run_daily_workflow',
 ] as const;
 
 const SIDECAR_TOOL_NAME_SET = new Set<string>(SIDECAR_TOOL_NAMES);
-const SIDECAR_GATED_WRITE_TOOL_NAMES = [
-  'haro_apply',
-  'haro_rollback',
-] as const;
+const SIDECAR_GATED_WRITE_TOOL_NAMES = ['haro_apply', 'haro_rollback'] as const;
 const SIDECAR_GATED_WRITE_TOOL_NAME_SET = new Set<string>(SIDECAR_GATED_WRITE_TOOL_NAMES);
 
 export interface SidecarGatedWriteHandlers {
@@ -52,7 +50,12 @@ export interface SidecarGatedWriteHandlers {
   rollback(input: HaroRollbackInput): Promise<unknown> | unknown;
 }
 
+export interface SidecarWorkflowHandlers {
+  runDaily(input: HaroRunDailyWorkflowInput): Promise<unknown> | unknown;
+}
+
 export interface SidecarRegistryOptions extends RegistryOptions {
+  workflow?: SidecarWorkflowHandlers;
   gatedWrite?: SidecarGatedWriteHandlers;
 }
 
@@ -211,7 +214,7 @@ export const haroProposeTool: ToolDefinition<typeof HaroProposeInputSchema, Evol
         requiredCommands: ['pnpm -F @haro/agentdock-contract test', 'pnpm -F @haro/mcp-tools test'],
         manualChecks: [
           'Human review in AgentDock is required before this automatic proposal can be applied.',
-          'Register `haro mcp` as an external AgentDock MCP server and verify tools/list shows read-only tools only.',
+          'Register `haro mcp` as an external AgentDock MCP server and verify tools/list does not expose gated-write tools by default.',
         ],
         regressionRisks: [
           'AgentDock MCP registration shape may differ from local fake-source assumptions.',
@@ -331,6 +334,38 @@ export const haroAssetQueryTool: ToolDefinition<
   },
 };
 
+export const HaroRunDailyWorkflowInputSchema = z.object({
+  connectionId: z.string().min(1).optional(),
+  source: z.enum(['http', 'fake']).optional(),
+  since: z
+    .union([z.literal('last'), z.literal('none'), z.string().datetime({ offset: true })])
+    .optional(),
+  includeFrontier: z.boolean().optional(),
+  frontierSourceConfigPath: z.string().min(1).optional(),
+  observeLimit: z.number().int().positive().max(500).optional(),
+  frontierLimit: z.number().int().positive().max(500).optional(),
+  proposalLimit: z.number().int().positive().max(100).optional(),
+  validationLimit: z.number().int().positive().max(100).optional(),
+  approvalRequestLimit: z.number().int().positive().max(100).optional(),
+});
+
+export type HaroRunDailyWorkflowInput = z.infer<typeof HaroRunDailyWorkflowInputSchema>;
+
+export function createHaroRunDailyWorkflowTool(
+  handler: SidecarWorkflowHandlers['runDaily'],
+): ToolDefinition<typeof HaroRunDailyWorkflowInputSchema, unknown> {
+  return {
+    name: 'haro_run_daily_workflow',
+    description:
+      'Run the AgentDock workspace/agent daily sidecar workflow: observe, optionally intake frontier evidence, propose, validate, and render approval requests. Writes Haro sidecar artifacts only; it does not apply changes.',
+    inputSchema: HaroRunDailyWorkflowInputSchema,
+    timeoutMs: 30_000,
+    async execute(params): Promise<unknown> {
+      return handler(params);
+    },
+  };
+}
+
 export const HaroApplyInputSchema = z.object({
   proposalId: z.string().trim().min(1),
 });
@@ -382,8 +417,13 @@ export const allowSidecarReadOnlyTools: PermissionEvaluator = (input): Permissio
   };
 };
 
-export const allowSidecarGatedWriteTools: PermissionEvaluator = (input): PermissionDecisionOutput => {
-  if (SIDECAR_TOOL_NAME_SET.has(input.toolName) || SIDECAR_GATED_WRITE_TOOL_NAME_SET.has(input.toolName)) {
+export const allowSidecarGatedWriteTools: PermissionEvaluator = (
+  input,
+): PermissionDecisionOutput => {
+  if (
+    SIDECAR_TOOL_NAME_SET.has(input.toolName) ||
+    SIDECAR_GATED_WRITE_TOOL_NAME_SET.has(input.toolName)
+  ) {
     return { decision: 'allowed' };
   }
   return {
@@ -395,14 +435,17 @@ export const allowSidecarGatedWriteTools: PermissionEvaluator = (input): Permiss
 export function createSidecarRegistry(options: SidecarRegistryOptions): ToolRegistry {
   const registry = new ToolRegistry({
     ...options,
-    permissionEvaluator: options.permissionEvaluator ?? (
-      options.gatedWrite ? allowSidecarGatedWriteTools : allowSidecarReadOnlyTools
-    ),
+    permissionEvaluator:
+      options.permissionEvaluator ??
+      (options.gatedWrite ? allowSidecarGatedWriteTools : allowSidecarReadOnlyTools),
   });
   registry.register(haroObserveTool);
   registry.register(haroProposeTool);
   registry.register(haroValidateTool);
   registry.register(haroAssetQueryTool);
+  if (options.workflow) {
+    registry.register(createHaroRunDailyWorkflowTool(options.workflow.runDaily));
+  }
   if (options.gatedWrite) {
     registry.register(createHaroApplyTool(options.gatedWrite.apply));
     registry.register(createHaroRollbackTool(options.gatedWrite.rollback));

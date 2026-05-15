@@ -101,6 +101,7 @@ Haro 不要求 AgentDock 内嵌 Haro，只要求 AgentDock 保持已有能力稳
 | `haro_propose`     | 基于观察结果生成 evolution proposal    | read-only |
 | `haro_validate`    | 验证 proposal 风险、测试计划、回滚路径 | read-only |
 | `haro_asset_query` | 查询资产、事件、版本和效果             | read-only |
+| `haro_run_daily_workflow` | AgentDock workspace/agent daily loop：observe → optional frontier intake → propose → validate → approval-request | sidecar-owned artifacts only；不 apply |
 
 显式以 `haro mcp --enable-gated-write` 启动时，额外注册 gated-write tools：
 
@@ -250,7 +251,7 @@ Haro apply 阶段只允许写入低风险对象：
 | ------- | ---------------------- | ------------------------------------------------ |
 | Phase A | 文档基线重置           | README / roadmap / overview / planning 一致      |
 | Phase B | Contract skeleton      | schema + fake source + contract tests            |
-| Phase C | Read-only MCP sidecar  | `haro mcp` 默认暴露 4 个 read-only tools；gated-write tools 必须显式开启 |
+| Phase C | Read-only MCP sidecar  | `haro mcp` 默认暴露 observe/propose/validate/query tools；gated-write tools 必须显式开启 |
 | Phase D | Scheduled sidecar      | `connect agent-dock` + `observe --since last` + `propose --auto-dry-run --include-frontier` + `validate --pending` + `approval-request --pending` + `status` + `doctor --component sidecar` 已落地；propose/validate/approval-request 已显式报告损坏 JSON 并原子写 artifact；status/doctor 只读汇总和检查 sidecar store |
 | Phase E | Signal intake + asset registry | `FrontierSignal` schema + `haro intake frontier --source-config` + `propose --include-frontier` 已落地，active frontier signals 会作为 dry-run proposal evidence；file-backed asset registry 已接入 query 与 workflow-driven propose/validate，能写 `proposed` / `validated` events |
 | Phase F | Gated apply L0/L1      | gate preflight + snapshot + local apply/rollback 已落地：`haro snapshot --proposal-id` 写 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0/L1 内容生成 `snapshot-content`；`haro apply --proposal-id` 校验 proposal/validation/L0-L1/human-review/snapshot/rollback refs，缺少 `humanApprovalRefs` 时返回 `HUMAN_REVIEW_REQUIRED`，否则从 sidecar-owned `proposal-content` 应用 L0 `prompt` / `mcp-tool-config` 与 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 到 `assets/current`，并写 `applied` application/asset event；`haro rollback --application-id` 可恢复 snapshot-content 或删除 apply 创建的 current content，并写 `rolled-back` event；`haro mcp --enable-gated-write` 可显式暴露同一套 `haro_apply` / `haro_rollback`；暂不修改 AgentDock 内部资产 |
@@ -260,7 +261,7 @@ Haro apply 阶段只允许写入低风险对象：
 - **2026-05-14**：Phase G patch branch plan 第一段落地：新增 `PatchBranchPlanRecord` 与 `haro patch-branch --proposal-id`，只为 validated L2/L3 proposal 写 `~/.haro/evolution/patch-branches/` plan artifact；不创建真实 branch、不改代码、不写 memory。
 - **2026-05-14**：Phase H approval request 第一段落地：新增 `ApprovalRequestRecord` 与 `haro approval-request --pending`，把 proposal + validation 转成 why/how/benefit 审批 artifact，供 AgentDock 飞书/Web 渲染；不签发 approval、不写 memory。
 - **2026-05-14**：启动阶段 human review gate 落地：`EvolutionProposal` 默认 `humanReviewRequired=true`，自动 proposal 显式空 `humanApprovalRefs`；`haro apply` / `haro_apply` 对缺少 approval ref 的 proposal 返回 `HUMAN_REVIEW_REQUIRED`，不会生成 snapshot/application。
-- **2026-05-14**：Phase F gated-write MCP bridge 落地：`haro mcp` 默认仍只列出 4 个 read-only tools；只有显式 `--enable-gated-write` 时才注册 `haro_apply` / `haro_rollback`，并复用 CLI proposal/application id gate，不接受自由文本 patch，也不读写 memory。
+- **2026-05-14**：Phase F gated-write MCP bridge 落地：`haro mcp --enable-gated-write` 才注册 `haro_apply` / `haro_rollback`，并复用 CLI proposal/application id gate，不接受自由文本 patch，也不读写 memory。
 - **2026-05-14**：Phase E asset registry adapter 落地并接入 workspace/agent-driven loop：新增 `~/.haro/assets/manifests` + `~/.haro/assets/events` file-backed sidecar registry，`haro_asset_query` 改为读取 sidecar registry，`haro propose` / `haro validate` 分别写 `proposed` / `validated` events；仍不读写 Haro-owned memory 或 `aria-memory-vault`。
 - **2026-05-14**：Phase F gated apply 前置骨架落地：新增 `ApplicationRecord` contract 与 `haro apply --proposal-id` gate preflight，只有 L0/L1 validated + human approval + applyEligible + snapshot/rollback refs 齐全时才进入 apply 流程；第一段只写 ready record，不写 memory。
 - **2026-05-14**：Phase F snapshot/rollback metadata 落地：新增 `AssetSnapshotRecord` / `RollbackRecord` contract 与 `haro snapshot --proposal-id`，`haro apply --proposal-id` 可在缺 refs 时生成 metadata-only snapshot/rollback artifacts；status/doctor 纳入 snapshots/rollbacks/applications 计数；该阶段尚未执行内容 apply。
@@ -273,5 +274,6 @@ Haro apply 阶段只允许写入低风险对象：
 - **2026-05-08**：架构基线切换为 AgentDock Kernel + Haro Sidecar。Haro 不再继续自建完整 workbench/runtime；通过 AgentDock 外部 MCP server 注册、workspace/agent 编排和 skills/MCP 调用面接入。
 - **2026-05-07**：FEAT-034 流式 UX 升级 done。该能力作为历史 workbench 资产保留，不再决定后续主路径。
 - **2026-05-06**：FEAT-032 MCP 工具层实现交付。permission / timeout / audit 经验保留，tool 语义后续迁移到 Haro sidecar。
+- **2026-05-15**：Phase I AgentDock workspace daily workflow 落地：`haro mcp` 增加 `haro_run_daily_workflow`，由 AgentDock workspace/agent 调用并只写 sidecar artifacts；Haro Web 不承载调度。
 - **2026-05-14**：Haro Web 收缩为 proposal review 工作台；旧 Web Channel / Dashboard Chat 代码删除。
 - **2026-05-01**：双层架构（workbench + 进化）+ 三层解耦重写。该路线已归档，见 `docs/planning/archive/redesign-2026-05-01.md`。

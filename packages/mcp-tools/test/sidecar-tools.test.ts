@@ -13,6 +13,7 @@ import {
   createSidecarAssetRegistry,
   createSidecarRegistry,
   type SidecarGatedWriteHandlers,
+  type SidecarWorkflowHandlers,
 } from '../src/index.js';
 import { McpServer } from '../src/server.js';
 import { InMemoryTransport, type JsonRpcMessage } from '../src/transport.js';
@@ -51,7 +52,7 @@ afterEach(() => {
 async function runSidecarWith(
   e: TestEnv,
   requests: JsonRpcMessage[],
-  options: { gatedWrite?: SidecarGatedWriteHandlers } = {},
+  options: { gatedWrite?: SidecarGatedWriteHandlers; workflow?: SidecarWorkflowHandlers } = {},
 ): Promise<JsonRpcMessage[]> {
   const transport = new InMemoryTransport();
   for (const req of requests) transport.push(req);
@@ -63,6 +64,7 @@ async function runSidecarWith(
   const registry = createSidecarRegistry({
     audit,
     now: () => new Date('2026-05-08T06:00:00.000Z'),
+    ...(options.workflow ? { workflow: options.workflow } : {}),
     ...(options.gatedWrite ? { gatedWrite: options.gatedWrite } : {}),
   });
   const server = new McpServer({
@@ -170,6 +172,72 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
     expect(callResult<{ applicationId: string; gateStatus: string }>(responses[2]!)).toMatchObject({
       applicationId: 'application-applied',
       gateStatus: 'rolled-back',
+    });
+  });
+
+  it('lists and invokes the daily workflow tool only when a workflow handler is provided', async () => {
+    const e = (env = setupEnv());
+    const responses = await runSidecarWith(
+      e,
+      [
+        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: {
+            name: 'haro_run_daily_workflow',
+            arguments: {
+              source: 'fake',
+              since: 'last',
+              includeFrontier: true,
+              observeLimit: 5,
+              proposalLimit: 1,
+              validationLimit: 1,
+              approvalRequestLimit: 1,
+            },
+          },
+        },
+      ],
+      {
+        workflow: {
+          runDaily: (input) => ({
+            command: 'agentdock-daily-workflow',
+            sidecarOnly: true,
+            input,
+            summary: {
+              approvalRequestCount: 1,
+              approvalRequestIds: ['approval-request-001'],
+            },
+          }),
+        },
+      },
+    );
+
+    const listed = responses[0]! as { result: { tools: Array<{ name: string }> } };
+    expect(listed.result.tools.map((tool) => tool.name).sort()).toEqual([
+      'haro_asset_query',
+      'haro_observe',
+      'haro_propose',
+      'haro_run_daily_workflow',
+      'haro_validate',
+    ]);
+    expect(callResult<{
+      command: string;
+      sidecarOnly: boolean;
+      input: { source: string; includeFrontier: boolean; observeLimit: number };
+      summary: { approvalRequestIds: string[] };
+    }>(responses[1]!)).toMatchObject({
+      command: 'agentdock-daily-workflow',
+      sidecarOnly: true,
+      input: {
+        source: 'fake',
+        includeFrontier: true,
+        observeLimit: 5,
+      },
+      summary: {
+        approvalRequestIds: ['approval-request-001'],
+      },
     });
   });
 

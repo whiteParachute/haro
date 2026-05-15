@@ -28,6 +28,7 @@ Haro 当前主线已切换为 **AgentDock self-evolution sidecar**。
 | [FEAT-048](sidecar/FEAT-048-frontier-intelligence-intake.md) | Frontier intelligence intake | Phase E | draft |
 | [FEAT-049](sidecar/FEAT-049-patch-branch-l2-l3.md) | Patch branch L2/L3 | Phase G | implemented |
 | [FEAT-050](sidecar/FEAT-050-approval-request-workflow.md) | Approval request workflow | Phase H | implemented |
+| [FEAT-051](sidecar/FEAT-051-agentdock-workspace-daily-workflow.md) | AgentDock workspace daily workflow | Phase I | implemented |
 
 ## 目录结构
 
@@ -51,7 +52,8 @@ specs/
 │   ├── FEAT-047-gated-apply-l0-l1.md
 │   ├── FEAT-048-frontier-intelligence-intake.md
 │   ├── FEAT-049-patch-branch-l2-l3.md
-│   └── FEAT-050-approval-request-workflow.md
+│   ├── FEAT-050-approval-request-workflow.md
+│   └── FEAT-051-agentdock-workspace-daily-workflow.md
 ├── phase-1.5/                      # 历史 workbench parity 资产（2026-05-01 路线）
 │
 ├── multi-agent-design-constraints.md   # 强制规范（跨 phase）

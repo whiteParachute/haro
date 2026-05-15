@@ -35,7 +35,7 @@ import {
   type SnapshotSource,
   type ValidationReport,
 } from '@haro/agentdock-contract';
-import { createSidecarAssetRegistry } from '@haro/mcp-tools';
+import { createSidecarAssetRegistry, type HaroRunDailyWorkflowInput } from '@haro/mcp-tools';
 import { CommanderExit, type AppContext } from '../index.js';
 import { renderError, renderJson, resolveOutputMode } from '../output/index.js';
 
@@ -362,6 +362,32 @@ interface IntakeFrontierResult {
   skippedCorruptSignalCount: number;
   signalIds: string[];
   signalPaths: string[];
+}
+
+export interface AgentDockDailyWorkflowResult {
+  command: 'agentdock-daily-workflow';
+  mode: 'agentdock-workspace-agent';
+  generatedAt: string;
+  sidecarOnly: true;
+  steps: {
+    observe: Omit<ObserveResult, 'batch'> & { batchId: string };
+    frontierIntake?: IntakeFrontierResult;
+    propose: Omit<ProposeResult, 'proposal'> & { proposalId?: string };
+    validate: Omit<ValidateResult, 'validations'> & { validationIds: string[] };
+    approvalRequest: Omit<ApprovalRequestResult, 'approvalRequests'> & {
+      approvalRequestIds: string[];
+      approvalRequests: ApprovalRequestRecord[];
+    };
+  };
+  summary: {
+    observationCount: number;
+    proposalCount: number;
+    validationCount: number;
+    approvalRequestCount: number;
+    approvalRequestIds: string[];
+    wroteSidecarArtifacts: boolean;
+  };
+  nextActions: string[];
 }
 
 interface SidecarStatusResult {
@@ -1187,6 +1213,71 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
   }
 }
 
+export async function runAgentDockDailyWorkflow(
+  app: AppContext,
+  options: HaroRunDailyWorkflowInput,
+): Promise<AgentDockDailyWorkflowResult> {
+  const observe = await observeAgentDock(app, {
+    ...(options.connectionId ? { connection: options.connectionId } : {}),
+    ...(options.source ? { source: options.source } : {}),
+    since: options.since ?? 'last',
+    ...(options.observeLimit ? { limit: String(options.observeLimit) } : {}),
+  });
+  const frontierIntake = options.frontierSourceConfigPath
+    ? intakeFrontierSignals(app, {
+        sourceConfig: options.frontierSourceConfigPath,
+        since: 'last',
+        ...(options.frontierLimit ? { limit: String(options.frontierLimit) } : {}),
+      })
+    : undefined;
+  const propose = proposeAgentDock(app, {
+    autoDryRun: true,
+    includeFrontier: options.includeFrontier ?? Boolean(options.frontierSourceConfigPath),
+    ...(options.proposalLimit ? { limit: String(options.proposalLimit) } : {}),
+  });
+  const validate = validateAgentDock(app, {
+    pending: true,
+    ...(options.validationLimit ? { limit: String(options.validationLimit) } : {}),
+  });
+  const approvalRequest = approvalRequestAgentDock(app, {
+    pending: true,
+    ...(options.approvalRequestLimit ? { limit: String(options.approvalRequestLimit) } : {}),
+  });
+  const approvalRequestIds = approvalRequest.approvalRequests.map((request) => request.id);
+  const wroteSidecarArtifacts =
+    observe.wroteObservation ||
+    Boolean(frontierIntake && frontierIntake.wroteSignalCount > 0) ||
+    propose.wroteProposal ||
+    validate.wroteValidations ||
+    approvalRequest.wroteApprovalRequests;
+
+  return {
+    command: 'agentdock-daily-workflow',
+    mode: 'agentdock-workspace-agent',
+    generatedAt: app.now().toISOString(),
+    sidecarOnly: true,
+    steps: {
+      observe: summarizeObserveStep(observe),
+      ...(frontierIntake ? { frontierIntake } : {}),
+      propose: summarizeProposeStep(propose),
+      validate: summarizeValidateStep(validate),
+      approvalRequest: {
+        ...approvalRequest,
+        approvalRequestIds,
+      },
+    },
+    summary: {
+      observationCount: observe.observationCount,
+      proposalCount: propose.proposalCount,
+      validationCount: validate.validationCount,
+      approvalRequestCount: approvalRequest.approvalRequestCount,
+      approvalRequestIds,
+      wroteSidecarArtifacts,
+    },
+    nextActions: dailyWorkflowNextActions(approvalRequestIds, wroteSidecarArtifacts),
+  };
+}
+
 function snapshotAgentDock(app: AppContext, options: SnapshotOptions): SnapshotResult {
   const proposalId = options.proposalId.trim();
   if (!proposalId) {
@@ -1209,6 +1300,52 @@ function snapshotAgentDock(app: AppContext, options: SnapshotOptions): SnapshotR
   } finally {
     releaseConnectionLock(lockDir);
   }
+}
+
+function summarizeObserveStep(result: ObserveResult): Omit<ObserveResult, 'batch'> & { batchId: string } {
+  const { batch, ...rest } = result;
+  return {
+    ...rest,
+    batchId: batch.id,
+  };
+}
+
+function summarizeProposeStep(result: ProposeResult): Omit<ProposeResult, 'proposal'> & { proposalId?: string } {
+  const { proposal, ...rest } = result;
+  return {
+    ...rest,
+    ...(proposal ? { proposalId: proposal.id } : {}),
+  };
+}
+
+function summarizeValidateStep(result: ValidateResult): Omit<ValidateResult, 'validations'> & { validationIds: string[] } {
+  const { validations, ...rest } = result;
+  return {
+    ...rest,
+    validationIds: validations.map((report) => report.id),
+  };
+}
+
+function dailyWorkflowNextActions(
+  approvalRequestIds: readonly string[],
+  wroteSidecarArtifacts: boolean,
+): string[] {
+  if (approvalRequestIds.length > 0) {
+    return [
+      'Present the approval request summaries to the user through AgentDock IM/workspace.',
+      'Wait for approve, reject, or request-changes before any apply or patch-branch action.',
+      'Haro Web may show the same approval request artifacts as a review board, but it is not the workflow runner.',
+    ];
+  }
+  if (wroteSidecarArtifacts) {
+    return [
+      'No new approval request was created in this run; inspect the step counters before retrying.',
+      'Do not apply changes unless a validated proposal has explicit human approval evidence.',
+    ];
+  }
+  return [
+    'No new sidecar artifacts were produced; the AgentDock workspace can report that there is nothing pending for review.',
+  ];
 }
 
 export function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyResult {

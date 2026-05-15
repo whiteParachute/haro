@@ -89,6 +89,7 @@ import {
   readAgentDockSidecarStatus,
   registerAgentDockSidecarCommands,
   rollbackAgentDock,
+  runAgentDockDailyWorkflow,
 } from './commands/agentdock-sidecar.js';
 import { buildServiceContext } from './commands/service-context.js';
 import { renderJson, renderJsonDiagnostic, renderListJson, resolveOutputMode } from './output/index.js';
@@ -1410,6 +1411,9 @@ function registerMcpCommand(program: Command, app: AppContext): void {
           const registry = createSidecarRegistry({
             audit,
             now: app.now,
+            workflow: {
+              runDaily: (input) => runAgentDockDailyWorkflow(app, input),
+            },
             ...(options.enableGatedWrite ? {
               gatedWrite: {
                 apply: (input) => applyAgentDock(app, { proposalId: input.proposalId }),

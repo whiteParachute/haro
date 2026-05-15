@@ -91,7 +91,7 @@ AgentDock agent
 
 ## 6. Acceptance Criteria / 验收标准
 
-- AC1: 给定 AgentDock MCP server 配置，当运行 `haro mcp` 时，AgentDock 能列出 4 个 read-only tools。（对应 R1/R2/R7）
+- AC1: 给定 AgentDock MCP server 配置，当运行 `haro mcp` 的 FEAT-044 基础 registry 时，AgentDock 能列出 observe/propose/validate/query read-only tools；FEAT-051 会在 CLI 启动面额外注入 daily workflow tool。（对应 R1/R2/R7）
 - AC2: 给定 fake observation source，当调用 `haro_observe` 时，返回结果通过 FEAT-043 schema。（对应 R3）
 - AC2.1: 给定 `HARO_AGENTDOCK_BASE_URL` 指向可访问 AgentDock API，当调用 `haro_observe` 时，应返回 `source=agentdock-http` 的 schema-valid `ObservationBatch`，且不 import AgentDock 内部模块。（对应 R3/R10）
 - AC3: 给定 observation refs，当调用 `haro_propose` 时，只生成 dry-run proposal，不产生 application event。（对应 R4/R7）
@@ -104,7 +104,7 @@ AgentDock agent
 
 - 单元测试：tool schema 与 error mapping。
 - 集成测试：stdio MCP `tools/list` / `tools/call`。
-- CLI 入口测试：`bin/haro.js mcp` 在干净 `HARO_HOME` 只列出 4 个 sidecar tools，且不创建 `memory/`。
+- CLI 入口测试：`bin/haro.js mcp` 在干净 `HARO_HOME` 列出 sidecar default tools，且不创建 `memory/`；`haro_apply` / `haro_rollback` 只在显式 gated-write 时出现。
 - 集成测试：fake source observe → propose → validate。
 - 单元测试：HTTP AgentDock source 使用 fake fetch 覆盖 sessions/messages/turns/tasks 映射、500 字符 excerpt 截断、since 过滤和 schema 校验。
 - 手动验证：在 AgentDock 外部 MCP server 配置中注册 `haro mcp`，配置 `HARO_AGENTDOCK_BASE_URL` 后调用 `haro_observe`，确认返回真实 AgentDock sessions/messages 而不是 fake fixture。
@@ -115,13 +115,13 @@ AgentDock agent
 - D2: MCP audit JSONL 只记录参数 hash，避免 AgentDock session / user payload 泄露到 Haro 日志。
 - D3: `haro_asset_query` 第一版读取现有 Evolution Asset Registry 并输出 FEAT-043 `AssetEvent` summary；2026-05-14 起由 FEAT-046 接管，读取 `~/.haro/assets` sidecar registry manifests/events。
 - D4: AgentDock 真实 observation source 只走 AgentDock HTTP API 契约，不读取、不 import AgentDock repo 内部源码；如果 API 不可达，应按 401/403、404、网络/5xx/JSON 失败分类返回结构化错误，而不是静默写入 Haro memory 或切换到 AgentDock 内部文件。
-- D5: FEAT-047 允许 `haro mcp --enable-gated-write` 额外注册 `haro_apply` / `haro_rollback`，但默认 `haro mcp` 仍必须满足本 spec 的 read-only tools/list。
+- D5: FEAT-047 允许 `haro mcp --enable-gated-write` 额外注册 `haro_apply` / `haro_rollback`，但默认 `haro mcp` 仍不得暴露 gated-write apply/rollback。
 
 ## 9. Changelog / 变更记录
 
-- 2026-05-14: Haro — FEAT-047 增加 opt-in gated-write MCP bridge；默认 `haro mcp` tools/list 仍只有 4 个 read-only tools，`haro_apply` / `haro_rollback` 必须通过 `--enable-gated-write` 显式开启。
+- 2026-05-14: Haro — FEAT-047 增加 opt-in gated-write MCP bridge；`haro_apply` / `haro_rollback` 必须通过 `--enable-gated-write` 显式开启。
 - 2026-05-14: Haro — `haro_asset_query` 迁移到 FEAT-046 sidecar asset registry adapter，读取 `~/.haro/assets` manifests/events，不再查询旧 core EvolutionAssetRegistry。
-- 2026-05-08: Codex — 完成 `haro mcp` 只读 sidecar 首版：新增 4 个 read-only tools、JSONL audit、fake-source observe/propose/validate/asset query 测试；sidecar registry 不暴露历史 memory/send_message tools，启动路径不创建 Haro-owned MemoryFabric 或 `$HARO_HOME/memory`。
+- 2026-05-08: Codex — 完成 `haro mcp` 只读 sidecar 首版：新增 observe/propose/validate/asset query tools、JSONL audit、fake-source observe/propose/validate/asset query 测试；sidecar registry 不暴露历史 memory/send_message tools，启动路径不创建 Haro-owned MemoryFabric 或 `$HARO_HOME/memory`。
 - 2026-05-08: Codex — 修复 `tools/call` wire result：`content` 改为 MCP 标准 content block 数组，结构化 payload 进入 `structuredContent`，避免 AgentDock/Codex MCP client 报 `Unexpected response type`。
 - 2026-05-08: Codex — `haro_observe` 接入真实 AgentDock HTTP observation source：配置 `HARO_AGENTDOCK_BASE_URL` 时采集 health/status/sessions/messages/turns/tasks 并返回 `source=agentdock-http`；未配置或 `HARO_AGENTDOCK_SOURCE=fake` 时保留 fake fixture fallback；错误码、limit、cursor、baseUrl 凭据边界已补回归。
 - 2026-05-08: Haro — 初稿。

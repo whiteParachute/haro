@@ -34,10 +34,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
     const home = mkdtempSync(join(tmpdir(), 'haro-bin-bad-'));
     try {
       mkdirSync(home, { recursive: true });
-      writeFileSync(
-        join(home, 'config.yaml'),
-        'providers:\n  codex:\n    defaultModel: 123\n',
-      );
+      writeFileSync(join(home, 'config.yaml'), 'providers:\n  codex:\n    defaultModel: 123\n');
       const res = spawnSync(process.execPath, [bin, 'run', 'hello'], {
         env: { ...process.env, HARO_HOME: home },
         encoding: 'utf8',
@@ -97,7 +94,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
     }
   });
 
-  it('shipped binary mcp lists only AgentDock sidecar read-only tools', () => {
+  it('shipped binary mcp lists AgentDock sidecar default tools without gated write', () => {
     const home = mkdtempSync(join(tmpdir(), 'haro-bin-mcp-'));
     try {
       const res = spawnSync(process.execPath, [bin, 'mcp'], {
@@ -113,6 +110,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
         'haro_asset_query',
         'haro_observe',
         'haro_propose',
+        'haro_run_daily_workflow',
         'haro_validate',
       ]);
       expect(names).not.toContain('haro_apply');
@@ -154,9 +152,75 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       };
       expect(payload.result.isError).toBe(false);
       expect(payload.result.content[0]).toMatchObject({ type: 'text' });
-      expect(payload.result.content[0]!.text).toBe(JSON.stringify(payload.result.structuredContent, null, 2));
+      expect(payload.result.content[0]!.text).toBe(
+        JSON.stringify(payload.result.structuredContent, null, 2),
+      );
       expect(payload.result.structuredContent.connectionId).toBe('fake-agentdock-test');
       expect(payload.result.structuredContent.sessions).toHaveLength(1);
+      expect(existsSync(join(home, 'memory'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('shipped binary mcp can run the AgentDock daily workflow without creating memory', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-mcp-daily-workflow-'));
+    try {
+      const res = spawnSync(process.execPath, [bin, 'mcp'], {
+        env: { ...process.env, HARO_HOME: home },
+        input: [
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: {
+              name: 'haro_run_daily_workflow',
+              arguments: {
+                source: 'fake',
+                since: 'none',
+                proposalLimit: 1,
+                validationLimit: 1,
+                approvalRequestLimit: 1,
+              },
+            },
+          }),
+          '',
+        ].join('\n'),
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      expect(res.stderr).toBe('');
+      const payload = JSON.parse(res.stdout) as {
+        result: {
+          isError: boolean;
+          structuredContent: {
+            command: string;
+            sidecarOnly: boolean;
+            summary: {
+              observationCount: number;
+              proposalCount: number;
+              validationCount: number;
+              approvalRequestCount: number;
+              approvalRequestIds: string[];
+            };
+            nextActions: string[];
+          };
+        };
+      };
+      expect(payload.result.isError).toBe(false);
+      expect(payload.result.structuredContent).toMatchObject({
+        command: 'agentdock-daily-workflow',
+        sidecarOnly: true,
+      });
+      expect(payload.result.structuredContent.summary.observationCount).toBeGreaterThan(0);
+      expect(payload.result.structuredContent.summary.proposalCount).toBe(1);
+      expect(payload.result.structuredContent.summary.validationCount).toBe(1);
+      expect(payload.result.structuredContent.summary.approvalRequestCount).toBe(1);
+      expect(payload.result.structuredContent.summary.approvalRequestIds).toHaveLength(1);
+      expect(payload.result.structuredContent.nextActions.join('\n')).toContain(
+        'Present the approval request',
+      );
+      expect(existsSync(join(home, 'evolution', 'approval-requests'))).toBe(true);
       expect(existsSync(join(home, 'memory'))).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -189,13 +253,16 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
         .trim()
         .split('\n')
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as {
-          result: {
-            tools?: Array<{ name: string }>;
-            isError?: boolean;
-            structuredContent?: { command: string; gateStatus: string; gateCode: string };
-          };
-        });
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              result: {
+                tools?: Array<{ name: string }>;
+                isError?: boolean;
+                structuredContent?: { command: string; gateStatus: string; gateCode: string };
+              };
+            },
+        );
       const names = responses[0]!.result.tools!.map((tool) => tool.name).sort();
       expect(names).toEqual([
         'haro_apply',
@@ -203,6 +270,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
         'haro_observe',
         'haro_propose',
         'haro_rollback',
+        'haro_run_daily_workflow',
         'haro_validate',
       ]);
       expect(responses[1]!.result.isError).toBe(false);

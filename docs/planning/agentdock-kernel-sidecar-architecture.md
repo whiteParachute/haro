@@ -180,11 +180,12 @@ Haro 对 AgentDock 暴露一组 MCP tools：
 | `haro_propose` | 基于观察结果生成 evolution proposal | read-only |
 | `haro_validate` | 验证 proposal 风险、测试计划、回滚路径 | read-only |
 | `haro_asset_query` | 查询资产、事件、版本和效果 | read-only |
+| `haro_run_daily_workflow` | AgentDock workspace/agent daily loop，生成待审 artifacts | sidecar-owned writes only；不 apply |
 | `haro_asset_register` | 登记 prompt/skill/rule/tool config 为资产 | write-haro，Phase 4 后开放；memory 不登记为 Haro asset |
 | `haro_apply` | 应用 L0/L1 变更 | gated-write；仅 `haro mcp --enable-gated-write` 注册 |
 | `haro_rollback` | 回滚已应用的 L0/L1 变更 | gated-write；仅 `haro mcp --enable-gated-write` 注册 |
 
-默认 MCP tools 只开放 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。`haro_apply` 只接受 proposal id，`haro_rollback` 只接受 application id；二者复用 CLI gate，不接受自由文本改动。
+默认 MCP tools 开放 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query` 和 `haro_run_daily_workflow`；daily workflow 只写 Haro sidecar artifacts 并生成待审请求。`haro_apply` 只接受 proposal id，`haro_rollback` 只接受 application id；二者复用 CLI gate，不接受自由文本改动。
 
 ### 2. Haro Daemon / Scheduled CLI
 
@@ -359,7 +360,7 @@ User approves proposal
 
 - 实现 `haro mcp` stdio server。（已完成首版）
 - 暴露 `haro_observe`、`haro_propose`、`haro_validate`、`haro_asset_query`。（已完成首版）
-- 默认 tools 全部 read-only，且 sidecar 启动不创建 Haro-owned MemoryFabric / `$HARO_HOME/memory`。显式 `--enable-gated-write` 时才额外注册 `haro_apply` / `haro_rollback`，并复用 CLI gated apply/rollback。
+- 默认 observe/propose/validate/query tools 不写 AgentDock；`haro_run_daily_workflow` 只写 Haro sidecar artifacts 并生成 approval request。sidecar 启动不创建 Haro-owned MemoryFabric / `$HARO_HOME/memory`。显式 `--enable-gated-write` 时才额外注册 `haro_apply` / `haro_rollback`，并复用 CLI gated apply/rollback。
 
 ### Phase 3: Scheduled Sidecar
 
@@ -379,7 +380,7 @@ User approves proposal
 - `haro intake frontier --source-config <file> --since last --json` 第一段已实现：读取 curated `FrontierSignal[]` / `{ signals: [...] }` source config，按 sourceRef 去重，写入 `~/.haro/evolution/frontier-signals/`，并维护 frontier cursor。
 - `haro propose --auto-dry-run --include-frontier` 已实现：proposal 仍以未消费 observation batch 为触发源，同时把 active frontier signals 追加为 `frontier-signal` evidence refs；`rejected` / `superseded` signals 不会被引用。
 - `haro status` / `haro doctor --component sidecar` 已纳入 frontier signal 计数和 corrupt file 检查。
-- CLI apply/rollback 已接到 opt-in gated-write MCP 编排面；下一步是补 AgentDock 原生 skill/profile/task config 的稳定写入口，或做 AgentDock live approval UX smoke。
+- CLI apply/rollback 已接到 opt-in gated-write MCP 编排面；`haro_run_daily_workflow` 已把每日 observe/propose/validate/approval-request 接到 AgentDock workspace/agent 可调用的 MCP 面。下一步是做 AgentDock live approval UX smoke 或补原生 skill/profile/task config 的稳定写入口。
 
 ### Phase 5: Asset Registry Adapter
 

@@ -111,7 +111,7 @@ haro_apply({ proposalId })
 - 对 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule`，apply/rollback 使用相同的 sidecar-local proposal-content、snapshot-content 与 assets/current 布局；首段只建立 Haro 侧稳定写入口，不直接写 AgentDock 原生目录。
 - Apply 成功后写 `~/.haro/evolution/applications/<application-id>.json` applied record，`applied=true`，并写 `applied` asset event，event 带 snapshot/rollback metadata。
 - `haro rollback --application-id <id> --json` 已实现 sidecar-local L0/L1 rollback executor：`restore-latest-event` 只恢复 sidecar-owned `snapshot-content`，`delete-created-asset` 删除 apply 创建的 current content；成功后把 application record 更新为 `rolled-back/applied=false`，并写 `rolled-back` asset event。
-- `haro mcp --enable-gated-write` 已显式注册 `haro_apply({ proposalId })` 与 `haro_rollback({ applicationId })`，并分别委托 `haro apply --proposal-id` / `haro rollback --application-id` 的同一套 gate；默认 `haro mcp` 仍只列出 4 个 read-only tools。
+- `haro mcp --enable-gated-write` 已显式注册 `haro_apply({ proposalId })` 与 `haro_rollback({ applicationId })`，并分别委托 `haro apply --proposal-id` / `haro rollback --application-id` 的同一套 gate；默认 `haro mcp` 仍不列出 gated-write tools。
 - 当前不支持 apply delete/archive op、不读写 memory。
 
 ## 6. Acceptance Criteria / 验收标准
@@ -141,7 +141,7 @@ haro_apply({ proposalId })
 - 单元测试：错误码和 remediation。
 - 集成测试：L0 apply + rollback。
 - 集成测试：L1 skill/profile fixture apply + rollback。
-- MCP 集成测试：默认 `haro mcp` 只列出 4 个 read-only tools；`haro mcp --enable-gated-write` 额外列出并可调用 `haro_apply` / `haro_rollback`。
+- MCP 集成测试：默认 `haro mcp` 不列出 `haro_apply` / `haro_rollback`；`haro mcp --enable-gated-write` 额外列出并可调用二者。
 - 手动验证：通过 AgentDock MCP 调用 `haro_apply({ proposalId })`。
 
 第一段已覆盖的自动测试：
@@ -161,7 +161,7 @@ haro_apply({ proposalId })
 - CLI rollback：apply 创建的新 L0 prompt 可被 `delete-created-asset` rollback 删除 current content，写 `rolled-back` asset event。
 - CLI rollback：非 `status=applied` application 返回 blocking gate code，不写 asset event，不创建 memory。
 - CLI apply/rollback：L1 `runner-profile` sidecar-local content 可执行 snapshot -> apply -> rollback，写 applied / rolled-back asset events，不创建 memory。
-- MCP registry：默认 sidecar registry 只列出 4 个 read-only tools；显式提供 gated-write handlers 后才列出并调用 `haro_apply` / `haro_rollback`。
+- MCP registry：默认 sidecar registry 不列出 gated-write tools；显式提供 gated-write handlers 后才列出并调用 `haro_apply` / `haro_rollback`。
 - CLI binary：`bin/haro.js mcp --enable-gated-write` 可列出 `haro_apply` / `haro_rollback`，缺失 proposal 返回 `PROPOSAL_NOT_FOUND` blocking result，且不创建 `$HARO_HOME/memory`。
 
 ## 8. Open Questions / 待定问题

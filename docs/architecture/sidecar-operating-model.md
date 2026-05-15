@@ -4,7 +4,7 @@
 
 Haro 是 AgentDock 的 self-evolution sidecar，不是第二套 workbench。它通过 AgentDock 已有能力运行：
 
-1. **外部 MCP server 注册**：AgentDock 把 `haro mcp` 注册为普通 MCP server。默认只暴露 `haro_observe` / `haro_propose` / `haro_validate` / `haro_asset_query`；显式 `haro mcp --enable-gated-write` 时才额外暴露 `haro_apply` / `haro_rollback`，且仍复用 proposal / validation / snapshot / rollback gate。
+1. **外部 MCP server 注册**：AgentDock 把 `haro mcp` 注册为普通 MCP server。默认暴露 `haro_observe` / `haro_propose` / `haro_validate` / `haro_asset_query` / `haro_run_daily_workflow`；其中 daily workflow 只写 Haro sidecar artifacts，不 apply；显式 `haro mcp --enable-gated-write` 时才额外暴露 `haro_apply` / `haro_rollback`，且仍复用 proposal / validation / snapshot / rollback gate。
 2. **AgentDock workspace / agent 编排**：真正的消息流、外部信息整理和 workspace 复用/新建发生在 AgentDock 侧；AgentDock agent 在合适工作区通过 `haro mcp` 调用 Haro sidecar tools。
 3. **Haro Web review 看板**：`haro web` 只展示 Haro artifacts 和审批入口，不承载聊天、调度或运行时。
 
@@ -112,3 +112,4 @@ Haro 生成的 proposal 必须明确目标域和风险级别：
 | External frontier intelligence intake | [FEAT-048](../../specs/sidecar/FEAT-048-frontier-intelligence-intake.md) |
 | Patch branch L2/L3 | [FEAT-049](../../specs/sidecar/FEAT-049-patch-branch-l2-l3.md) |
 | Approval request workflow | [FEAT-050](../../specs/sidecar/FEAT-050-approval-request-workflow.md) |
+| AgentDock workspace daily workflow | [FEAT-051](../../specs/sidecar/FEAT-051-agentdock-workspace-daily-workflow.md) |
