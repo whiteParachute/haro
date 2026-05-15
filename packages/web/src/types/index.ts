@@ -93,3 +93,38 @@ export interface ApprovalRequestView {
   request: ApprovalRequestRecord;
   latestDecision?: ApprovalDecisionRecord;
 }
+
+export interface DailyFrontierRunStep {
+  name: string;
+  command: string;
+  startedAt: string;
+  completedAt: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  skipped?: boolean;
+}
+
+export interface DailyFrontierRunRecord {
+  id: string;
+  status: 'success' | 'error';
+  startedAt: string;
+  completedAt: string;
+  cron: string;
+  sourceConfigPath?: string;
+  generatedSourceConfigPath?: string;
+  collectCommandConfigured: boolean;
+  steps: DailyFrontierRunStep[];
+  error?: string;
+}
+
+export interface DailyFrontierStatus {
+  enabled: boolean;
+  cron: string;
+  nextRunAt: string | null;
+  running: boolean;
+  sourceConfigPath: string;
+  collectCommandConfigured: boolean;
+  runDirectory: string;
+  lastRun?: DailyFrontierRunRecord;
+}

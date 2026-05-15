@@ -12,7 +12,7 @@ Haro 当前主线已切换为 **AgentDock self-evolution sidecar**。
 
 - AgentDock 不能 import Haro。
 - Haro 不能 import AgentDock 内部 `src/*` 模块。
-- Haro 接入 AgentDock 只走外部 MCP server 注册、AgentDock scheduler/script task、AgentDock skills/MCP 调用面。
+- Haro 接入 AgentDock 只走外部 MCP server 注册、Haro Web 托管服务每日调度、AgentDock skills/MCP 调用面；AgentDock scheduler/script task 只是可选部署方式，不要求 AgentDock 代码改动。
 - 第一阶段只读 / dry-run；启动阶段自动 proposal 默认需要人审，L0/L1 apply 必须有 proposal、validation、human approval、snapshot、rollback ref。
 - 外部前沿情报只能作为带来源 evidence 进入 proposal，不得绕过 validation / approval / rollback gate。
 

@@ -1,7 +1,8 @@
 /**
  * Standalone launcher for the Haro proposal review Web API. The Web surface is
  * intentionally narrow: it serves auth plus approval-request review endpoints;
- * AgentDock remains the execution and scheduling host for the sidecar loop.
+ * the hosted Haro Web service owns the daily frontier intake loop without
+ * requiring AgentDock code changes.
  */
 
 import { createWebApp } from './index.js';

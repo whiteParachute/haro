@@ -69,8 +69,8 @@ Haro 不要求 AgentDock 内嵌 Haro，只要求 AgentDock 保持已有能力稳
 | --------------------- | --------------------------------- | -------------------------------------------------------------- |
 | 外部 MCP server 注册  | 注册 `haro mcp`                   | AgentDock 已有 `src/routes/mcp-servers.ts`                     |
 | Runner 合入 MCP 配置  | 让 session 可见 Haro tools        | AgentDock 已有 `src/runtime-runner.ts`                         |
-| 定时任务              | 周期性触发 Haro CLI               | AgentDock 已有 `src/routes/tasks.ts` / `src/task-scheduler.ts` |
-| Script task           | 后台执行 observe/propose/validate | AgentDock scheduler 已支持 script execution                    |
+| Haro Web hosted scheduler | 周期性触发 Haro CLI               | `haro web` 内置 daily frontier scheduler，不要求 AgentDock 改动 |
+| AgentDock scheduler/script task | 可选部署方式                     | 可复用 AgentDock 现有 task 能力，但不是主路径                  |
 | Skills / agent 调用面 | 在普通 session 中主动调用 Haro    | 复用 AgentDock 现有 skills/MCP 能力                            |
 
 这些是 contract 的来源，不是源码依赖许可。Haro 实现中不得 import 上述 AgentDock 内部文件。
@@ -113,15 +113,15 @@ Haro 不要求 AgentDock 内嵌 Haro，只要求 AgentDock 保持已有能力稳
 
 `haro_observe` 的读取源由环境变量决定：配置 `HARO_AGENTDOCK_BASE_URL` 时读取 AgentDock HTTP API 并返回 `source=agentdock-http`；需要鉴权时用 `HARO_AGENTDOCK_AUTH_HEADER`，baseUrl 必须是 http(s) URL，且不要把凭据放进 baseUrl；未配置或显式 `HARO_AGENTDOCK_SOURCE=fake` 时只使用离线 fake fixture。Haro 不读取 AgentDock repo 内部文件，也不维护独立 memory authority。
 
-### 路径 B：AgentDock 定时任务
+### 路径 B：Haro Web 托管服务每日任务
 
 ```text
-AgentDock scheduler
-  -> script task
-  -> haro observe --since last
+Haro Web hosted daily frontier scheduler
   -> haro intake frontier --source-config ~/.haro/frontier-sources.json --since last
+  -> haro observe --since last
   -> haro propose --auto-dry-run --include-frontier
   -> haro validate --pending
+  -> haro approval-request --pending
   -> Haro writes ~/.haro/evolution/*
 ```
 

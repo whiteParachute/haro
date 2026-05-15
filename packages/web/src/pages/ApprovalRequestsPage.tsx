@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { decideApprovalRequest, listApprovalRequests } from '@/api/client';
+import { decideApprovalRequest, getDailyFrontierStatus, listApprovalRequests } from '@/api/client';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
-import type { ApprovalDecisionOption, ApprovalRequestView } from '@/types';
+import type { ApprovalDecisionOption, ApprovalRequestView, DailyFrontierStatus } from '@/types';
 
 type StatusFilter = 'pending' | 'decided' | 'all';
 
@@ -25,6 +25,7 @@ export function ApprovalRequestsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [dailyFrontier, setDailyFrontier] = useState<DailyFrontierStatus | null>(null);
 
   async function refresh(nextStatus = status) {
     setLoading(true);
@@ -44,6 +45,12 @@ export function ApprovalRequestsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
+  useEffect(() => {
+    void getDailyFrontierStatus()
+      .then((response) => setDailyFrontier(response.data))
+      .catch(() => setDailyFrontier(null));
+  }, []);
+
   const counts = useMemo(() => {
     const decided = items.filter((item) => item.latestDecision).length;
     return { total: items.length, decided, pending: items.length - decided };
@@ -62,7 +69,10 @@ export function ApprovalRequestsPage() {
     setError(null);
     setNotice(null);
     try {
-      await decideApprovalRequest(view.request.id, { decision, ...(direction ? { direction } : {}) });
+      await decideApprovalRequest(view.request.id, {
+        decision,
+        ...(direction ? { direction } : {}),
+      });
       setNotice(`已${verb}：${view.request.title}`);
       await refresh(status);
     } catch (submitError) {
@@ -76,9 +86,15 @@ export function ApprovalRequestsPage() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <section className="grid gap-4 md:grid-cols-3">
         <MetricCard label="当前列表" value={counts.total} description="按筛选条件展示的提案数" />
-        <MetricCard label="待人工审阅" value={counts.pending} description="没有 Web decision record 的提案" />
+        <MetricCard
+          label="待人工审阅"
+          value={counts.pending}
+          description="没有 Web decision record 的提案"
+        />
         <MetricCard label="已决策" value={counts.decided} description="已通过、驳回或要求修改" />
       </section>
+
+      <DailyFrontierCard status={dailyFrontier} />
 
       <Card>
         <CardHeader className="gap-4 md:flex-row md:items-center md:justify-between md:space-y-0">
@@ -99,18 +115,35 @@ export function ApprovalRequestsPage() {
                 {option === 'pending' ? '待审' : option === 'decided' ? '已决策' : '全部'}
               </Button>
             ))}
-            <Button size="sm" variant="secondary" onClick={() => void refresh(status)} disabled={loading}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void refresh(status)}
+              disabled={loading}
+            >
               刷新
             </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p> : null}
-          {notice ? <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">{notice}</p> : null}
+          {error ? (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+            >
+              {error}
+            </p>
+          ) : null}
+          {notice ? (
+            <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              {notice}
+            </p>
+          ) : null}
           {loading ? <p className="text-sm text-muted-foreground">加载中…</p> : null}
           {!loading && items.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              当前没有符合筛选条件的 approval request。Haro scheduled loop 生成 validated proposal 后会自动落到这里。
+              当前没有符合筛选条件的 approval request。Haro scheduled loop 生成 validated proposal
+              后会自动落到这里。
             </div>
           ) : null}
           {items.map((view) => (
@@ -127,7 +160,61 @@ export function ApprovalRequestsPage() {
   );
 }
 
-function MetricCard({ label, value, description }: { label: string; value: number; description: string }) {
+function DailyFrontierCard({ status }: { status: DailyFrontierStatus | null }) {
+  const lastRun = status?.lastRun;
+  return (
+    <Card>
+      <CardHeader className="gap-2">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle>每日外部情报收集</CardTitle>
+            <CardDescription>
+              Haro Web 托管服务每天自动执行 frontier intake → observe → propose → validate →
+              approval request。
+            </CardDescription>
+          </div>
+          <span
+            className={`rounded-full px-3 py-1 text-sm ${status?.enabled ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}
+          >
+            {status?.enabled ? (status.running ? '运行中' : '已启用') : '未启用'}
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3 text-sm text-muted-foreground md:grid-cols-3">
+        <p>
+          <span className="font-medium text-foreground">Cron：</span>
+          {status?.cron ?? '—'}
+        </p>
+        <p>
+          <span className="font-medium text-foreground">下次运行：</span>
+          {status?.nextRunAt ? formatDate(status.nextRunAt) : '—'}
+        </p>
+        <p>
+          <span className="font-medium text-foreground">最近运行：</span>
+          {lastRun
+            ? `${lastRun.status === 'success' ? '成功' : '失败'} · ${formatDate(lastRun.completedAt)}`
+            : '—'}
+        </p>
+        {lastRun?.error ? (
+          <p className="md:col-span-3 text-destructive">
+            <span className="font-medium">最近错误：</span>
+            {lastRun.error}
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: number;
+  description: string;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -156,12 +243,19 @@ function ApprovalRequestCard({
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-lg font-semibold">{request.title}</h3>
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{request.level}</span>
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{request.targetKind}</span>
-            <span className={`rounded-full px-2 py-0.5 text-xs ${riskTone[request.riskLevel]}`}>{request.riskLevel}</span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              {request.level}
+            </span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              {request.targetKind}
+            </span>
+            <span className={`rounded-full px-2 py-0.5 text-xs ${riskTone[request.riskLevel]}`}>
+              {request.riskLevel}
+            </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Proposal: {request.proposalId} · Validation: {request.validationId} · Updated: {formatDate(request.updatedAt)}
+            Proposal: {request.proposalId} · Validation: {request.validationId} · Updated:{' '}
+            {formatDate(request.updatedAt)}
           </p>
         </div>
         {view.latestDecision ? (
@@ -169,7 +263,9 @@ function ApprovalRequestCard({
             已{decisionLabel[view.latestDecision.decision]}
           </span>
         ) : (
-          <span className="rounded-full bg-amber-500/10 px-3 py-1 text-sm text-amber-700 dark:text-amber-300">待审</span>
+          <span className="rounded-full bg-amber-500/10 px-3 py-1 text-sm text-amber-700 dark:text-amber-300">
+            待审
+          </span>
         )}
       </div>
 
@@ -190,7 +286,8 @@ function ApprovalRequestCard({
         <p className="mt-1 text-muted-foreground">{request.reviewerInstruction}</p>
         <p className="mt-3 font-medium">Rollback</p>
         <p className="mt-1 text-muted-foreground">
-          {request.rollbackPlan.strategy} · snapshotRequired={String(request.rollbackPlan.snapshotRequired)}
+          {request.rollbackPlan.strategy} · snapshotRequired=
+          {String(request.rollbackPlan.snapshotRequired)}
         </p>
         {view.latestDecision?.direction ? (
           <>
@@ -201,21 +298,47 @@ function ApprovalRequestCard({
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => onDecision('approve')} disabled={disabled}>通过</Button>
-        <Button size="sm" variant="outline" onClick={() => onDecision('request-changes')} disabled={disabled}>要求修改</Button>
-        <Button size="sm" variant="secondary" onClick={() => onDecision('reject')} disabled={disabled}>驳回</Button>
+        <Button size="sm" onClick={() => onDecision('approve')} disabled={disabled}>
+          通过
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => onDecision('request-changes')}
+          disabled={disabled}
+        >
+          要求修改
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => onDecision('reject')}
+          disabled={disabled}
+        >
+          驳回
+        </Button>
       </div>
     </article>
   );
 }
 
-function SectionList({ title, items, empty = '无' }: { title: string; items: string[]; empty?: string }) {
+function SectionList({
+  title,
+  items,
+  empty = '无',
+}: {
+  title: string;
+  items: string[];
+  empty?: string;
+}) {
   return (
     <section>
       <p className="text-sm font-medium">{title}</p>
       {items.length > 0 ? (
         <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-          {items.map((item) => <li key={item}>{item}</li>)}
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
         </ul>
       ) : (
         <p className="mt-2 text-sm text-muted-foreground">{empty}</p>

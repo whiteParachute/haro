@@ -353,7 +353,9 @@ haro web                              # 默认 127.0.0.1:3456
 haro web --port 3000 --host 0.0.0.0
 ```
 
-> 当前实现：`haro web` 仅支持 `--port` / `--host`；API key 通过 `HARO_WEB_API_KEY` 环境变量注入。`haro web` 是 `@haro/web-api` 的薄启动器，只注入 `HARO_HOME`/DB 上下文并挂载 `/api/v1/approval-requests`。
+> 当前实现：`haro web` 仅支持 `--port` / `--host`；API key 通过 `HARO_WEB_API_KEY` 环境变量注入。`haro web` 是 `@haro/web-api` 的薄启动器，只注入 `HARO_HOME`/DB 上下文，挂载 `/api/v1/approval-requests` 和 `/api/v1/daily-frontier/status`。
+>
+> 若设置 `HARO_DAILY_FRONTIER_ENABLED=1`，同一个 Haro Web 托管服务会按 `HARO_DAILY_FRONTIER_CRON`（默认 `0 2 * * *`）自动执行每日 frontier loop：可选 `HARO_DAILY_FRONTIER_COLLECT_COMMAND` 先生成 `FrontierSignal` source-config，然后串联 `haro intake frontier --since last`、`haro observe --since last`、`haro propose --auto-dry-run --include-frontier`、`haro validate --pending`、`haro approval-request --pending`。这条链路不需要 AgentDock 代码改动，也不提供通用 cron 管理面。
 
 ### `haro eat` / `haro shit`
 
@@ -517,7 +519,7 @@ haro config unset providers.codex.defaultModel --scope project
 
 ### `haro cron`（FEAT-033，2026-05-06 done）
 
-调度 cron 表达式或一次性 ISO 时间触发的任务，复用现有 session 上下文。sidecar 新基线下，后台 observe/propose/validate 优先由 AgentDock scheduler 触发 Haro CLI；Haro Web 不再提供 cron HTTP 管理面。
+调度 cron 表达式或一次性 ISO 时间触发的任务，复用现有 session 上下文。sidecar 新基线下，后台 frontier intake / observe / propose / validate / approval-request 优先由 Haro Web 托管服务内置 daily frontier scheduler 触发；`haro cron` 保留为通用历史能力，Haro Web 不再提供 cron HTTP 管理面。
 
 ```bash
 haro cron list [--session <id>] [--status pending|running|done|failed|cancelled]

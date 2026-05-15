@@ -199,7 +199,7 @@ haro status
 haro doctor
 ```
 
-这些命令可以被 AgentDock script task 定期调用，也可以由用户手动运行。
+这些命令由 Haro Web 托管服务定期调用，也可以由用户手动运行；AgentDock script task 仅作为可选部署方式。
 
 ### 3. Evolution Store
 
@@ -256,8 +256,8 @@ AgentDock 数据是被观察对象，不是 Haro 的内部状态。
 ### 流程 A：后台观察
 
 ```text
-AgentDock scheduler
-  -> script task: haro observe --since last
+Haro Web hosted daily frontier scheduler
+  -> haro observe --since last
   -> Haro reads AgentDock observation source
   -> Haro writes ~/.haro/evolution/observations/*
   -> Haro updates cursor
@@ -266,8 +266,8 @@ AgentDock scheduler
 ### 流程 B：外部情报 intake
 
 ```text
-AgentDock scheduler
-  -> script task: haro intake frontier --since last
+Haro Web hosted daily frontier scheduler
+  -> haro intake frontier --since last
   -> Haro reads configured public/approved sources
   -> Haro writes frontier signal records with source refs
   -> Haro does not apply changes
@@ -276,8 +276,8 @@ AgentDock scheduler
 ### 流程 C：自动提案 dry-run
 
 ```text
-AgentDock scheduler
-  -> script task: haro propose --auto-dry-run --include-frontier
+Haro Web hosted daily frontier scheduler
+  -> haro propose --auto-dry-run --include-frontier
   -> Haro consumes AgentDock observations + Haro self signals + frontier signals + asset history
   -> Haro writes proposal
   -> Haro does not apply changes
@@ -370,7 +370,7 @@ User approves proposal
 - `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation、approval request、snapshot、rollback、application gate record 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
 - Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 已接入 propose/validate；Phase F gated apply 已落地 sidecar-local L0/L1 snapshot/apply/rollback：`haro snapshot --proposal-id` 生成 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0/L1 内容生成 `snapshot-content`；`haro apply --proposal-id` 已可把 sidecar-local proposal content 应用到 L0 `prompt` / `mcp-tool-config` 和 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 的 `assets/current`；`haro rollback --application-id` 已可恢复 snapshot-content 或删除 apply 创建的 sidecar-local current content；`haro mcp --enable-gated-write` 可把同一套能力暴露给 AgentDock MCP 编排面。
-- 通过 AgentDock script scheduled task 周期触发。
+- 通过 Haro Web 托管服务 daily frontier scheduler 周期触发；AgentDock script task 仅作为可选部署方式。
 
 ### Phase 4: Frontier Intelligence Intake
 
@@ -416,7 +416,7 @@ User approves proposal
 
 - AgentDock 不 import Haro，Haro 不 import AgentDock 内部源码。
 - Haro 可以作为外部 MCP server 注册到 AgentDock。
-- Haro 可以通过 AgentDock 定时任务周期执行 observe/propose/validate。
+- Haro 可以通过自己的 Web 托管服务每日周期执行 intake/observe/propose/validate/approval-request。
 - Haro 可以被 AgentDock 现有 skills / agent 编排面调用，并通过 AgentDock 原 channel 汇报。
 - Haro 能基于真实 AgentDock 状态、Haro 自身信号和外部 frontier signals 生成 dry-run proposal。
 - Haro 的所有资产变更写入独立 Evolution Asset Registry。

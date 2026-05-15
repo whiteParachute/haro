@@ -5,7 +5,7 @@
 Haro 是 AgentDock 的 self-evolution sidecar，不是第二套 workbench。它通过 AgentDock 已有能力运行：
 
 1. **外部 MCP server 注册**：AgentDock 把 `haro mcp` 注册为普通 MCP server。默认只暴露 `haro_observe` / `haro_propose` / `haro_validate` / `haro_asset_query`；显式 `haro mcp --enable-gated-write` 时才额外暴露 `haro_apply` / `haro_rollback`，且仍复用 proposal / validation / snapshot / rollback gate。
-2. **AgentDock 定时任务**：AgentDock scheduler/script task 周期执行 Haro CLI，完成后台 observe / propose / validate / intake。
+2. **Haro 托管服务定时任务**：`haro web` 内置轻量 daily frontier scheduler，周期执行 Haro CLI，完成后台 intake / observe / propose / validate / approval-request；不需要修改 AgentDock 代码。AgentDock scheduler/script task 只作为可选部署方式，不是主路径。
 3. **AgentDock skills / workflow 编排**：已有 skills 负责任务入口、用户汇报和审批，不新增 Haro 专用 AgentDock 内部插件链路。
 
 Haro 的核心职责是把内部使用信号、Haro 自身运行信号和外部前沿情报统一为可审计 observation，再生成可验证、可回滚的自优化建议；所有改动必须在审批和 validation gate 之后执行。

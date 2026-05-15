@@ -1,4 +1,5 @@
 import type { WebLogger } from './types.js';
+import type { DailyFrontierScheduler } from './daily-frontier.js';
 
 export interface WebRuntime {
   /** HARO_HOME root that contains evolution/approval-requests and auth DB. */
@@ -9,4 +10,6 @@ export interface WebRuntime {
   dbFile?: string;
   logger: WebLogger;
   startedAt: number;
+  /** Optional hosted-service scheduler for daily frontier intake + proposal generation. */
+  dailyFrontier?: DailyFrontierScheduler;
 }

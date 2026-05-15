@@ -6,9 +6,11 @@ import { compress } from 'hono/compress';
 import { cors } from 'hono/cors';
 import type { MiddlewareHandler } from 'hono';
 import { createWebAuth, warnIfApiKeyAuthDisabled } from './auth.js';
+import { createDailyFrontierScheduler } from './daily-frontier.js';
 import { createWebLogger } from './logger.js';
 import { createApprovalRequestsRoute } from './routes/approval-requests.js';
 import { createAuthRoute } from './routes/auth.js';
+import { createDailyFrontierRoute } from './routes/daily-frontier.js';
 import type { WebRuntime } from './runtime.js';
 import type { ApiKeyAuthEnv, WebApp, WebLogger } from './types.js';
 
@@ -22,7 +24,8 @@ const ALLOWED_CORS_HEADERS = ['content-type', 'authorization', 'x-api-key', 'x-h
 export interface CreateWebAppOptions {
   logger?: WebLogger;
   staticRoot?: string;
-  runtime?: Omit<WebRuntime, 'logger' | 'startedAt'> & Partial<Pick<WebRuntime, 'logger' | 'startedAt'>>;
+  runtime?: Omit<WebRuntime, 'logger' | 'startedAt'> &
+    Partial<Pick<WebRuntime, 'logger' | 'startedAt'>>;
 }
 
 export function resolveWebDistRoot(cwd = process.cwd()): string {
@@ -63,6 +66,14 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
     logger,
     startedAt: options.runtime?.startedAt ?? Date.now(),
   };
+  runtime.dailyFrontier =
+    options.runtime?.dailyFrontier ??
+    createDailyFrontierScheduler({
+      root: runtime.root,
+      projectRoot: runtime.projectRoot,
+      logger,
+    });
+  runtime.dailyFrontier.start();
 
   warnIfApiKeyAuthDisabled(logger);
   app.use('*', createRequestLogger(logger));
@@ -88,6 +99,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
   );
   app.route('/api/v1/auth', createAuthRoute(runtime));
   app.route('/api/v1/approval-requests', createApprovalRequestsRoute(runtime));
+  app.route('/api/v1/daily-frontier', createDailyFrontierRoute(runtime));
 
   app.use('/*', serveStatic({ root: staticRoot }));
   app.get('*', async (c, next) => {

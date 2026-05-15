@@ -37,7 +37,7 @@ sidecar-era 映射如下：
 |---|---|---|---|---|
 | Phase B | Observe contract | [FEAT-043](./sidecar/FEAT-043-agentdock-contract-skeleton.md) | observation / proposal / validation / asset event schema | 无写入 |
 | Phase C | Observe / Orient / Validate read-only | [FEAT-044](./sidecar/FEAT-044-read-only-mcp-sidecar.md) | Haro MCP read-only tools | dry-run |
-| Phase D | Observe / Propose scheduled | [FEAT-045](./sidecar/FEAT-045-scheduled-sidecar-cli.md) | AgentDock script task 周期触发；自动 proposal 默认 `humanReviewRequired=true` | dry-run + human-review |
+| Phase D | Observe / Propose scheduled | [FEAT-045](./sidecar/FEAT-045-scheduled-sidecar-cli.md) | Haro Web 托管服务周期触发；自动 proposal 默认 `humanReviewRequired=true` | dry-run + human-review |
 | Phase E | Signal + asset registry | [FEAT-048](./sidecar/FEAT-048-frontier-intelligence-intake.md) / [FEAT-046](./sidecar/FEAT-046-sidecar-asset-registry-adapter.md) | external frontier signals + sidecar asset registry；frontier intake + proposal evidence + file-backed asset query/proposed/validated events 已落地 | 写 Haro 自有目录，不写 memory |
 | Phase F | Act gated | [FEAT-047](./sidecar/FEAT-047-gated-apply-l0-l1.md) | L0/L1 proposal + validation + human approval + snapshot + rollback apply；sidecar-local snapshot/apply/rollback 与 opt-in MCP `haro_apply` / `haro_rollback` 已落地；AgentDock 原生写入口待补 | human-gated write |
 | Phase G | Patch branch | [FEAT-049](./sidecar/FEAT-049-patch-branch-l2-l3.md) | L2/L3 proposal 转成 deterministic patch branch plan artifact；真实 branch executor 待补 | 不直接 apply |

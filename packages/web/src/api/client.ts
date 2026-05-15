@@ -1,9 +1,10 @@
-import {
-  AUTH_API_KEY_STORAGE_KEY,
-  readPersistedApiKey,
-  useAuthStore,
-} from '@/stores/auth';
-import type { ApiResponse, ApprovalDecisionOption, ApprovalRequestView } from '@/types';
+import { AUTH_API_KEY_STORAGE_KEY, readPersistedApiKey, useAuthStore } from '@/stores/auth';
+import type {
+  ApiResponse,
+  ApprovalDecisionOption,
+  ApprovalRequestView,
+  DailyFrontierStatus,
+} from '@/types';
 
 interface ErrorPayload {
   error?: string;
@@ -46,12 +47,13 @@ function createRequestError(
   payload: ApiResponse<unknown> | ErrorPayload,
 ): Error {
   const message = payload.message ?? ('error' in payload ? payload.error : undefined);
-  const error = response.status === 401
-    ? new Error(
-      `${message ?? 'Unauthorized'}: Haro Web API key is missing or invalid. ` +
-        `Set localStorage key "${AUTH_API_KEY_STORAGE_KEY}" to match HARO_WEB_API_KEY, or log in with a Web user.`,
-    )
-    : new Error(message ?? `Request failed with status ${response.status}`);
+  const error =
+    response.status === 401
+      ? new Error(
+          `${message ?? 'Unauthorized'}: Haro Web API key is missing or invalid. ` +
+            `Set localStorage key "${AUTH_API_KEY_STORAGE_KEY}" to match HARO_WEB_API_KEY, or log in with a Web user.`,
+        )
+      : new Error(message ?? `Request failed with status ${response.status}`);
   if ('issues' in payload && Array.isArray(payload.issues)) {
     Object.assign(error, { issues: payload.issues });
   }
@@ -102,9 +104,19 @@ export function post<T>(path: string, body?: unknown, init?: RequestInit) {
   });
 }
 
-export function listApprovalRequests(status: 'pending' | 'decided' | 'all' = 'pending', init?: RequestInit) {
+export function listApprovalRequests(
+  status: 'pending' | 'decided' | 'all' = 'pending',
+  init?: RequestInit,
+) {
   const query = new URLSearchParams({ status }).toString();
-  return get<{ items: ApprovalRequestView[]; total: number }>(`/v1/approval-requests?${query}`, init);
+  return get<{ items: ApprovalRequestView[]; total: number }>(
+    `/v1/approval-requests?${query}`,
+    init,
+  );
+}
+
+export function getDailyFrontierStatus(init?: RequestInit) {
+  return get<DailyFrontierStatus>('/v1/daily-frontier/status', init);
 }
 
 export function getApprovalRequest(id: string, init?: RequestInit) {

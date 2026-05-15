@@ -17,7 +17,7 @@ related:
 
 ## 1. Context / 背景
 
-Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。AgentDock 已支持 scheduler 和 script task，因此 Haro 应提供无交互 CLI，让 AgentDock 定时任务周期触发。
+Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。因此 Haro 应提供无交互 CLI，让 Haro Web 托管服务的每日调度周期触发；AgentDock scheduler/script task 只作为可选部署方式。
 
 该能力是 Haro sidecar 的后台驱动面。FEAT-045 的第一步先把 FEAT-044 `haro_observe` 从纯 fake fixture 升级为可读真实 AgentDock HTTP API 的 observation source；后续 CLI 的 `haro observe --since last` 复用同一 source，而不是读取 AgentDock 内部源码或维护第二套 memory。
 
@@ -27,7 +27,7 @@ Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。Agen
 - G2: 提供 `haro observe --since last` 增量采集 AgentDock 状态。
 - G3: 提供 `haro propose --auto-dry-run` 从 observations 生成 proposal。
 - G4: 提供 `haro validate --pending` 批量验证 pending proposals。
-- G5: 所有后台命令可被 AgentDock script task 安全执行。
+- G5: 所有后台命令可被 Haro Web 托管服务或可选 AgentDock script task 安全执行。
 
 ## 3. Non-Goals / 不做的事
 
@@ -51,7 +51,7 @@ Haro 的后台 observe/propose/validate 不应依赖普通聊天上下文。Agen
 
 ## 5. Design / 设计要点
 
-AgentDock script task 示例：
+Haro hosted daily task 示例：
 
 ```bash
 haro observe --since last && haro propose --auto-dry-run --include-frontier && haro validate --pending && haro approval-request --pending
@@ -60,8 +60,7 @@ haro observe --since last && haro propose --auto-dry-run --include-frontier && h
 数据流：
 
 ```text
-AgentDock scheduler
-  -> script task
+Haro Web hosted daily frontier scheduler
   -> Haro CLI
   -> AgentDock HTTP observation source read-only
   -> ~/.haro/evolution/*
