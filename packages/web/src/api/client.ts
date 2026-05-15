@@ -1,10 +1,5 @@
 import { AUTH_API_KEY_STORAGE_KEY, readPersistedApiKey, useAuthStore } from '@/stores/auth';
-import type {
-  ApiResponse,
-  ApprovalDecisionOption,
-  ApprovalRequestView,
-  DailyFrontierStatus,
-} from '@/types';
+import type { ApiResponse, ApprovalDecisionOption, ApprovalRequestView } from '@/types';
 
 interface ErrorPayload {
   error?: string;
@@ -113,10 +108,6 @@ export function listApprovalRequests(
     `/v1/approval-requests?${query}`,
     init,
   );
-}
-
-export function getDailyFrontierStatus(init?: RequestInit) {
-  return get<DailyFrontierStatus>('/v1/daily-frontier/status', init);
 }
 
 export function getApprovalRequest(id: string, init?: RequestInit) {

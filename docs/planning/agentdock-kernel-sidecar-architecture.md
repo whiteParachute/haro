@@ -10,11 +10,11 @@ Haro 不再继续自建完整 workbench/runtime。新的项目定位是：
 ```text
 agent-dock
   独立运行的 agent runtime / workbench
-  负责 Session、Runner、Memory Agent、MCP、IM、Scheduler、Web/PWA 体验
+  负责 Session、Runner、Memory Agent、MCP、IM、Workspace、Web/PWA 体验
 
 haro
   可插拔的 self-evolution sidecar
-  通过 MCP server、定时任务、skills 编排、只读观测和少量可写配置入口接入 AgentDock
+  通过 MCP server、workspace/agent 编排、skills 编排、只读观测和少量可写配置入口接入 AgentDock
 ```
 
 依赖方向只能是：
@@ -55,8 +55,8 @@ Haro 的差异化应该集中在：
 3. **MCP 是主动交互面**
    AgentDock 通过已有外部 MCP server 注册能力加载 `haro mcp`。Agent 可以显式调用 Haro 暴露的 MCP tools 来观察、提案、验证、登记资产或执行受控变更。
 
-4. **定时任务是后台驱动面**
-   周期性 observe/propose/maintain 通过 AgentDock 已有 scheduler / script task 触发，不依赖普通聊天上下文，不要求 agent 每次记得调用 Haro。
+4. **AgentDock workspace/agent 是后台驱动面**
+   周期性 observe/propose/maintain 由 AgentDock 工作区/agent 唤起，并通过 `haro mcp` 或 CLI helper 调用 Haro；不依赖普通聊天上下文，也不把 Haro Web 变成调度器。
 
 5. **skills 是编排辅助面**
    AgentDock 已有 skills / workflow 能力可以编排 Haro MCP tools 或 Haro CLI。Haro 不因此成为 AgentDock 内部插件，也不接管 AgentDock session。
@@ -77,7 +77,7 @@ Haro 接入 AgentDock 只走三条现有能力，不新增第四条主链路：
 | 接入面 | AgentDock 已有能力 | Haro 使用方式 | 禁止事项 |
 | --- | --- | --- | --- |
 | MCP server 注册 | 外部 MCP server 管理 | 注册 `haro mcp`，默认暴露 observe/propose/validate/query tools；需要写入时显式启用 gated apply/rollback | 不在 AgentDock 内部 import Haro |
-| 定时任务 | scheduler + script task | 周期执行 `haro observe/propose/validate` | 不把后台维护塞进普通聊天上下文 |
+| Workspace / agent 编排 | AgentDock workspace + MCP 调用面 | 复用或新建工作区后调用 Haro MCP/CLI helper | 不把后台维护塞进 Haro Web 或普通聊天上下文 |
 | skills / agent 编排 | AgentDock skills + MCP 调用面 | 在 session 中显式调用 Haro tools 并通过原 channel 汇报 | Haro 不直接接管 IM/Web/Runner/Memory 主链路 |
 
 这三条接入面都属于 AgentDock 已有能力。Haro 的实现目标是适配这些能力，而不是要求 AgentDock 为 Haro 引入深度插件系统。
@@ -108,9 +108,9 @@ AgentDock 当前已有外部 MCP server 管理入口，支持 stdio / http / sse
 - `src/routes/mcp-servers.ts` 支持新增、启用、禁用外部 MCP server。
 - `src/runtime-runner.ts` 会把用户配置的 MCP servers 合入 runner settings/env。
 
-### 2. 定时任务
+### 2. AgentDock workspace / agent 编排
 
-AgentDock 现有 scheduler 可以触发 agent task，也可以执行 script task。Haro 的后台维护应优先用 script task：
+Haro 的后台维护应优先由 AgentDock 在合适 workspace 中唤起 agent，由该 agent 通过已注册的 `haro mcp` 或 CLI helper 调用 Haro：
 
 ```bash
 haro observe --agentdock-url http://127.0.0.1:3000 --since last
@@ -121,9 +121,10 @@ haro validate --pending
 
 原因：
 
-- 后台维护不依赖聊天上下文。
-- 失败可以写结构化日志并重试。
-- 不会把自进化流程混进普通 session。
+- 后台维护不依赖普通聊天上下文。
+- AgentDock 可以根据使用情况复用已有工作区，或新建/选择合适工作区。
+- Haro Web 只展示 artifacts 和审批 decision，不承担调度或执行。
+- 若部署环境需要，AgentDock script task 仍可作为可选兜底，但不是主路径。
 
 ### 3. AgentDock skills / agent 编排
 
@@ -199,7 +200,7 @@ haro status
 haro doctor
 ```
 
-这些命令由 Haro Web 托管服务定期调用，也可以由用户手动运行；AgentDock script task 仅作为可选部署方式。
+这些命令优先由 AgentDock workspace/agent 通过 `haro mcp` 编排触发；必要时可由可选 script task 或用户手动运行。
 
 ### 3. Evolution Store
 
@@ -256,8 +257,8 @@ AgentDock 数据是被观察对象，不是 Haro 的内部状态。
 ### 流程 A：后台观察
 
 ```text
-Haro Web hosted daily frontier scheduler
-  -> haro observe --since last
+AgentDock workspace / agent
+  -> calls haro_observe or Haro CLI helper
   -> Haro reads AgentDock observation source
   -> Haro writes ~/.haro/evolution/observations/*
   -> Haro updates cursor
@@ -266,8 +267,8 @@ Haro Web hosted daily frontier scheduler
 ### 流程 B：外部情报 intake
 
 ```text
-Haro Web hosted daily frontier scheduler
-  -> haro intake frontier --since last
+AgentDock workspace / agent
+  -> calls Haro MCP/CLI helper for frontier intake
   -> Haro reads configured public/approved sources
   -> Haro writes frontier signal records with source refs
   -> Haro does not apply changes
@@ -276,8 +277,8 @@ Haro Web hosted daily frontier scheduler
 ### 流程 C：自动提案 dry-run
 
 ```text
-Haro Web hosted daily frontier scheduler
-  -> haro propose --auto-dry-run --include-frontier
+AgentDock workspace / agent
+  -> calls haro_propose / Haro CLI helper with frontier evidence
   -> Haro consumes AgentDock observations + Haro self signals + frontier signals + asset history
   -> Haro writes proposal
   -> Haro does not apply changes
@@ -370,7 +371,7 @@ User approves proposal
 - `haro status` 已实现：在现有 top-level status 中增加 sidecar 段，汇总 connection、cursor、observation、frontier signal、proposal、validation、approval request、snapshot、rollback、application gate record 计数和 corrupt 文件计数；只读 sidecar evolution store，不读取或写入 memory。
 - `haro doctor --component sidecar` 已实现：检查 HARO_HOME/sidecar store 写权限、connection 配置、AgentDock `/api/health` reachability、schema/corrupt artifacts（含 frontier signals），并输出修复建议；默认 `haro doctor` 也包含 sidecar stage；不读取或写入 memory。
 - Phase D 核心闭环完成；Phase E frontier evidence 主链路已接入 proposal；sidecar asset registry adapter 已接入 propose/validate；Phase F gated apply 已落地 sidecar-local L0/L1 snapshot/apply/rollback：`haro snapshot --proposal-id` 生成 snapshot/rollback artifacts，并为 allowlisted sidecar-local L0/L1 内容生成 `snapshot-content`；`haro apply --proposal-id` 已可把 sidecar-local proposal content 应用到 L0 `prompt` / `mcp-tool-config` 和 L1 `skill` / `runner-profile` / `schedule-config` / `routing-rule` 的 `assets/current`；`haro rollback --application-id` 已可恢复 snapshot-content 或删除 apply 创建的 sidecar-local current content；`haro mcp --enable-gated-write` 可把同一套能力暴露给 AgentDock MCP 编排面。
-- 通过 Haro Web 托管服务 daily frontier scheduler 周期触发；AgentDock script task 仅作为可选部署方式。
+- 通过 AgentDock workspace/agent 按日或按需触发；script task 仅作为部署兜底。
 
 ### Phase 4: Frontier Intelligence Intake
 
@@ -416,7 +417,7 @@ User approves proposal
 
 - AgentDock 不 import Haro，Haro 不 import AgentDock 内部源码。
 - Haro 可以作为外部 MCP server 注册到 AgentDock。
-- Haro 可以通过自己的 Web 托管服务每日周期执行 intake/observe/propose/validate/approval-request。
+- Haro 可以被 AgentDock workspace/agent 编排面周期或按需执行 observe/propose/validate。
 - Haro 可以被 AgentDock 现有 skills / agent 编排面调用，并通过 AgentDock 原 channel 汇报。
 - Haro 能基于真实 AgentDock 状态、Haro 自身信号和外部 frontier signals 生成 dry-run proposal。
 - Haro 的所有资产变更写入独立 Evolution Asset Registry。

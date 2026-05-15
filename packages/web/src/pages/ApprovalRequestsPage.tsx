@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { decideApprovalRequest, getDailyFrontierStatus, listApprovalRequests } from '@/api/client';
+import { decideApprovalRequest, listApprovalRequests } from '@/api/client';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
-import type { ApprovalDecisionOption, ApprovalRequestView, DailyFrontierStatus } from '@/types';
+import type { ApprovalDecisionOption, ApprovalRequestView } from '@/types';
 
 type StatusFilter = 'pending' | 'decided' | 'all';
 
@@ -25,7 +25,6 @@ export function ApprovalRequestsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [dailyFrontier, setDailyFrontier] = useState<DailyFrontierStatus | null>(null);
 
   async function refresh(nextStatus = status) {
     setLoading(true);
@@ -44,12 +43,6 @@ export function ApprovalRequestsPage() {
     void refresh(status);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
-
-  useEffect(() => {
-    void getDailyFrontierStatus()
-      .then((response) => setDailyFrontier(response.data))
-      .catch(() => setDailyFrontier(null));
-  }, []);
 
   const counts = useMemo(() => {
     const decided = items.filter((item) => item.latestDecision).length;
@@ -93,8 +86,6 @@ export function ApprovalRequestsPage() {
         />
         <MetricCard label="已决策" value={counts.decided} description="已通过、驳回或要求修改" />
       </section>
-
-      <DailyFrontierCard status={dailyFrontier} />
 
       <Card>
         <CardHeader className="gap-4 md:flex-row md:items-center md:justify-between md:space-y-0">
@@ -142,8 +133,8 @@ export function ApprovalRequestsPage() {
           {loading ? <p className="text-sm text-muted-foreground">加载中…</p> : null}
           {!loading && items.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              当前没有符合筛选条件的 approval request。Haro scheduled loop 生成 validated proposal
-              后会自动落到这里。
+              当前没有符合筛选条件的 approval request。AgentDock workspace/agent 调用 Haro 后生成的
+              validated proposal 会自动落到这里。
             </div>
           ) : null}
           {items.map((view) => (
@@ -157,52 +148,6 @@ export function ApprovalRequestsPage() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function DailyFrontierCard({ status }: { status: DailyFrontierStatus | null }) {
-  const lastRun = status?.lastRun;
-  return (
-    <Card>
-      <CardHeader className="gap-2">
-        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-          <div>
-            <CardTitle>每日外部情报收集</CardTitle>
-            <CardDescription>
-              Haro Web 托管服务每天自动执行 frontier intake → observe → propose → validate →
-              approval request。
-            </CardDescription>
-          </div>
-          <span
-            className={`rounded-full px-3 py-1 text-sm ${status?.enabled ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}
-          >
-            {status?.enabled ? (status.running ? '运行中' : '已启用') : '未启用'}
-          </span>
-        </div>
-      </CardHeader>
-      <CardContent className="grid gap-3 text-sm text-muted-foreground md:grid-cols-3">
-        <p>
-          <span className="font-medium text-foreground">Cron：</span>
-          {status?.cron ?? '—'}
-        </p>
-        <p>
-          <span className="font-medium text-foreground">下次运行：</span>
-          {status?.nextRunAt ? formatDate(status.nextRunAt) : '—'}
-        </p>
-        <p>
-          <span className="font-medium text-foreground">最近运行：</span>
-          {lastRun
-            ? `${lastRun.status === 'success' ? '成功' : '失败'} · ${formatDate(lastRun.completedAt)}`
-            : '—'}
-        </p>
-        {lastRun?.error ? (
-          <p className="md:col-span-3 text-destructive">
-            <span className="font-medium">最近错误：</span>
-            {lastRun.error}
-          </p>
-        ) : null}
-      </CardContent>
-    </Card>
   );
 }
 

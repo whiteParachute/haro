@@ -1,6 +1,6 @@
 # Channel Layer（historical compatibility）
 
-> **2026-05-15 状态**：Haro 不再以自建 Channel Layer 作为主路径。AgentDock 负责日用 IM / workbench；Haro sidecar 通过 MCP、Haro Web 托管服务的每日 frontier scheduler 和 AgentDock skills/agent 编排接入。
+> **2026-05-15 状态**：Haro 不再以自建 Channel Layer 作为主路径。AgentDock 负责日用 IM / workspace / workbench；Haro sidecar 通过已注册的 `haro mcp` 和 AgentDock skills/agent 编排接入。
 
 ## 当前保留范围
 
@@ -15,7 +15,7 @@
 
 - Haro 不新增自有 IM channel 作为主产品面。
 - Haro 不再把浏览器作为 chat channel。
-- Haro Web 只做 proposal review 与每日 frontier scheduler 状态展示，不做消息收发、session history、文件上传或 streaming。
+- Haro Web 只做 proposal review 看板，不做消息收发、调度、session history、文件上传或 streaming。
 - sidecar 输出应通过 AgentDock 已有 channel 或 Haro Web approval request review 呈现。
 
 ## Agent 主动出站（历史兼容）

@@ -14,7 +14,7 @@ haro -> AgentDock public API / MCP / event export / filesystem contract
 
 - AgentDock 不能 import Haro。
 - Haro 不能 import AgentDock 内部 `src/*` 模块。
-- Haro 接入 AgentDock 只走现有能力：外部 MCP server 注册、AgentDock scheduler/script task、AgentDock skills/MCP 调用面。
+- Haro 接入 AgentDock 只走现有能力：外部 MCP server 注册、AgentDock workspace/agent 编排、AgentDock skills/MCP 调用面；script task 仅可作部署兜底。
 - Haro 不接管 AgentDock 的 Session、Runner、Memory Agent、IM、Web/PWA 或 Scheduler 主链路。
 - Memory 由 AgentDock/aria-memory-vault 负责。Haro 不创建或维护自有 memory store，不改变 `aria-memory-vault` 结构；如需读写记忆，必须通过 AgentDock 暴露的 memory API/MCP/能力完成，Haro 侧最多保存 memory source ref / observation ref。
 - 第一阶段只做 read-only / dry-run；L0/L1 apply 必须有 proposal、validation、snapshot、rollback ref。

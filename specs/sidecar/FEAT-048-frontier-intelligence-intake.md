@@ -19,12 +19,12 @@ related:
 
 Haro 的 self-evolution 不只来自 AgentDock 内部运行数据。用户要求 Haro 作为 AgentDock sidecar，持续从 X、YouTube、论文、开源仓库、官方文档、benchmark 等前沿信息源获取 agent 演进方向，并结合 AgentDock / Haro 自身组件使用情况，对 runner、web 端、消息端、记忆、自身功能等目标域提出自优化建议。
 
-该能力必须仍然遵守 sidecar 边界：Haro 通过 Haro Web 托管服务每日自动触发 intake，必要时复用 AgentDock MCP/skills 编排呈现结果；外部信息只能作为带来源的 evidence；任何改动必须先生成 proposal、通过 validation、获得审批，再进入 gated apply 或 patch branch。
+该能力必须仍然遵守 sidecar 边界：Haro 通过 AgentDock workspace/agent 调用 `haro mcp` 或 Haro CLI helper 触发 intake；外部信息只能作为带来源的 evidence；任何改动必须先生成 proposal、通过 validation、获得审批，再进入 gated apply 或 patch branch。
 
 ## 2. Goals / 目标
 
 - G1: 定义外部前沿情报的 source 类型、归一化 schema 和存储位置。
-- G2: 提供可被 Haro Web 托管服务每日调度调用的无交互 intake 命令。
+- G2: 提供可被 AgentDock workspace/agent 通过 Haro MCP/CLI helper 调用的无交互 intake 命令。
 - G3: 将外部情报与 AgentDock/Haro 内部 observations 关联，用于 proposal 生成。
 - G4: 为每条外部情报保留 source ref、发布时间/版本、抓取时间、摘要、置信度和适用目标域。
 - G5: 确保外部情报不会绕过 validation / approval / rollback gate 直接触发 apply。
@@ -43,7 +43,7 @@ Haro 的 self-evolution 不只来自 AgentDock 内部运行数据。用户要求
 - R2: 每条 `FrontierSignal` 必须包含 `id`、`sourceType`、`sourceRef`、`title`、`publishedAt?`、`collectedAt`、`summary`、`claims[]`、`targetDomains[]`、`confidence`、`rawRef?`、`status`。
 - R3: `targetDomains` 至少支持：`runner`、`web`、`message-channel`、`memory`、`mcp-tools`、`scheduler`、`skills`、`haro-sidecar`、`agentdock-kernel`。
 - R4: intake 输出写入 `~/.haro/evolution/frontier-signals/` 或作为 `ObservationBatch` 的外部 signal refs；不得写 AgentDock DB。
-- R5: 支持由 Haro Web 托管服务每日自动执行，例如 `haro intake frontier --source-config <file> --since last --json`；AgentDock scheduler/script task 只能作为可选部署方式，不要求 AgentDock 代码改动。
+- R5: 支持由 AgentDock workspace/agent 编排周期执行，例如 `haro intake frontier --source-config <file> --since last --json`；AgentDock task/script 只能作为可选部署兜底。
 - R6: 支持 dedupe、cursor 和 TTL：重复来源不重复写入，过期/被证伪的 signal 可标记 `superseded` / `rejected`。
 - R7: proposal 生成必须能同时引用内部 observation refs 与 frontier signal refs。
 - R8: 外部情报驱动的 proposal 默认不得高于 `dry-run`；进入 apply 仍需 validation、snapshot/rollback 和用户审批。
@@ -60,15 +60,14 @@ haro propose --auto-dry-run --include-frontier
 建议数据流：
 
 ```text
-Haro Web hosted daily frontier scheduler
-  -> optional collector command writes FrontierSignal source-config
+AgentDock workspace / agent
+  -> Haro MCP / CLI helper
   -> haro intake frontier --since last
   -> Haro reads configured public sources / approved APIs
   -> Haro writes FrontierSignal records
   -> haro propose --auto-dry-run consumes internal observations + frontier signals
   -> haro validate --pending
-  -> haro approval-request --pending
-  -> Haro Web / AgentDock channel presents proposal for approval
+  -> AgentDock channel or Haro Web review board presents proposal for approval
 ```
 
 建议 source config：
@@ -130,7 +129,7 @@ Haro Web hosted daily frontier scheduler
 - 单元测试：source ref dedupe、cursor 和 TTL。
 - 集成测试：fixture source → frontier signal → proposal evidence refs。
 - CLI 测试：`--json` 输出、错误码、stderr。
-- 手动验证：由 Haro Web 托管服务周期执行 intake，不影响普通 AgentDock session。
+- 手动验证：由 AgentDock workspace/agent 周期执行 intake，不影响普通 AgentDock session；script task 仅作为部署兜底。
 
 ## 8. Open Questions / 待定问题
 

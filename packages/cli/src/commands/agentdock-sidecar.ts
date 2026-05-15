@@ -462,7 +462,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
 
   connect
     .command('agent-dock')
-    .description('Save an AgentDock HTTP connection for scheduled sidecar CLI commands')
+    .description('Save an AgentDock HTTP connection for sidecar workflow commands')
     .requiredOption('--base-url <url>', 'AgentDock web/API base URL')
     .option('--id <id>', 'connection id', DEFAULT_CONNECTION_ID)
     .option('--auth-ref <ref>', 'secret reference, currently env:VARNAME')
@@ -522,7 +522,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
 
   program
     .command('observe')
-    .description('Collect AgentDock observations and persist them for scheduled sidecar workflows')
+    .description('Collect AgentDock observations and persist them for sidecar workflows')
     .option('--connection <id>', 'connection id from agentdock-connections.json')
     .option('--agentdock-url <url>', 'one-shot AgentDock web/API base URL override')
     .option('--base-url <url>', 'alias for --agentdock-url')
@@ -4026,15 +4026,15 @@ function createDryRunProposal(
       manualChecks: [
         'Human review in AgentDock is required before this automatic proposal can be applied or converted into a real branch.',
         frontierSignals.length > 0
-          ? 'Run AgentDock scheduled script task for `haro observe` followed by `haro propose --auto-dry-run --include-frontier --json` and verify no runtime code is modified.'
-          : 'Run AgentDock scheduled script task for `haro observe` followed by `haro propose --auto-dry-run --json` and verify no runtime code is modified.',
+          ? 'Run an AgentDock workspace/agent Haro MCP workflow for `haro observe` followed by `haro propose --auto-dry-run --include-frontier --json` and verify no runtime code is modified.'
+          : 'Run an AgentDock workspace/agent Haro MCP workflow for `haro observe` followed by `haro propose --auto-dry-run --json` and verify no runtime code is modified.',
         ...(frontierSignals.length > 0
           ? ['Review cited frontier-signal source refs before trusting external evidence.']
           : []),
       ],
       regressionRisks: [
         'Observation schema drift can make persisted batches unreadable until doctor/status surfaces the corrupt file.',
-        'AgentDock scheduler task overlap can create duplicate proposals if the proposal lock is bypassed.',
+        'Overlapping AgentDock workspace/agent Haro workflows can create duplicate proposals if the proposal lock is bypassed.',
         ...(frontierSignals.length > 0
           ? ['External frontier signals can become stale or be superseded; rejected/superseded signals must not remain active evidence.']
           : []),

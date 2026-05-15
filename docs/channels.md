@@ -1,6 +1,6 @@
 # Channel 指南（sidecar-era）
 
-> **2026-05-15 状态**：Haro 不再继续扩展自建 channel/workbench 主链路。AgentDock 负责日用 IM / runtime；Haro 作为 sidecar 通过 AgentDock MCP、Haro Web 托管服务每日调度和 AgentDock skills/agent 编排交互。
+> **2026-05-15 状态**：Haro 不再继续扩展自建 channel/workbench 主链路。AgentDock 负责日用 IM / workspace / runtime；Haro 作为 sidecar 通过已注册的 `haro mcp` 与 AgentDock workspace/agent 编排交互。
 
 ## 当前边界
 
@@ -18,7 +18,7 @@
 新的 Haro sidecar 不应让用户直接进入 Haro channel，而是：
 
 1. 在 AgentDock 注册 `haro mcp`。
-2. 用 Haro Web 托管服务每日自动触发 `haro intake frontier/observe/propose/validate/approval-request`。
+2. 由 AgentDock agent 根据使用情况复用已有工作区，或新建/选择合适工作区后调用 Haro MCP tools。
 3. 由 AgentDock agent/skills/IM 把 approval request 汇报给用户。
 4. 用户可在 AgentDock/飞书中审批，也可打开 Haro Web proposal review 工作台审批同一批 artifacts。
 

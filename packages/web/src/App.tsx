@@ -18,8 +18,8 @@ function NotFoundPage() {
           <CardDescription>Haro Web 只保留提案 Review 工作台。</CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          旧 Dashboard / chat / config 页面已下线；Haro Web
-          负责每日情报收集状态与提案人审，AgentDock 仅作为 sidecar 交互底座。
+          旧 Dashboard / chat / cron / config 页面已下线；Haro Web 只是提案 Review
+          看板，实际消息流和工作区执行在 AgentDock 侧完成。
         </CardContent>
       </Card>
     </div>

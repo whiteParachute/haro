@@ -2,7 +2,7 @@
 
 > **2026-05-14 状态：Haro Web 已从历史 Dashboard 收缩为提案 Review 工作台。**
 >
-> Haro 的主定位是 AgentDock self-evolution sidecar。AgentDock 负责 runtime / workbench / IM / memory；Haro Web 不再提供 chat、agent run、config、memory、skill、logs、provider、session 等通用控制面，但承载 Haro 自己的每日 frontier intake 调度和 proposal review。
+> Haro 的主定位是 AgentDock self-evolution sidecar。AgentDock 负责 runtime / workspace / IM / memory；Haro Web 只是部署在环境里的 proposal review 看板，不承载消息流、调度流或工作区执行。
 
 ## 目标
 
@@ -30,8 +30,8 @@ Haro Web 只解决一个问题：当 Haro 自动生成需要人审的 `ApprovalR
 | 层 | 路径 | 职责 |
 | --- | --- | --- |
 | 前端 | `packages/web/` | React + Vite + Tailwind。只保留 login/bootstrap、layout、theme toggle、proposal review list/cards。 |
-| 后端 | `packages/web-api/` | Hono app。只挂载 `/api/health`、`/api/v1/auth`、`/api/v1/approval-requests`、`/api/v1/daily-frontier/status`。 |
-| CLI | `packages/cli/src/index.ts` | `haro web --port <n> --host <addr>` 薄启动器，只启动 review Web 与 Haro-owned daily frontier scheduler，不启动 channels/runtime。 |
+| 后端 | `packages/web-api/` | Hono app。只挂载 `/api/health`、`/api/v1/auth`、`/api/v1/approval-requests`。 |
+| CLI | `packages/cli/src/index.ts` | `haro web --port <n> --host <addr>` 薄启动器，只启动 review 看板，不启动 channels/runtime/scheduler。 |
 
 ## API surface
 
@@ -46,7 +46,6 @@ POST /api/v1/auth/logout
 GET  /api/v1/approval-requests?status=pending|decided|all
 GET  /api/v1/approval-requests/:id
 POST /api/v1/approval-requests/:id/decision
-GET  /api/v1/daily-frontier/status
 ```
 
 `POST /decision` body:
@@ -69,25 +68,9 @@ Haro Web 只读写 Haro sidecar-owned evolution store：
 └── proposals/
 ```
 
-它不写 AgentDock DB、不写 AgentDock memory、不启动 Haro runner、不接管任何 IM channel。每日外部情报收集由 Haro Web 托管服务内的轻量 scheduler 触发，不需要修改 AgentDock 代码。
+它不写 AgentDock DB、不写 AgentDock memory、不启动 Haro runner、不调度 cron、不接管任何 IM channel。
 
-每日 frontier scheduler 的环境变量：
-
-```bash
-HARO_DAILY_FRONTIER_ENABLED=1
-HARO_DAILY_FRONTIER_CRON="0 2 * * *"                    # 默认每天 02:00
-HARO_DAILY_FRONTIER_SOURCE_CONFIG="$HARO_HOME/frontier-sources.json"
-HARO_DAILY_FRONTIER_COLLECT_COMMAND="<optional command>" # 可选：输出 FrontierSignal JSON 到 stdout
-HARO_DAILY_FRONTIER_HARO_CMD="haro"                      # 可选：覆盖 haro CLI 命令
-```
-
-每次运行会顺序执行：
-
-```text
-optional collect command -> haro intake frontier -> haro observe -> haro propose --include-frontier -> haro validate -> haro approval-request
-```
-
-运行记录写入 `~/.haro/evolution/daily-frontier-runs/*.json`；前端只展示启用状态、下次运行时间和最近运行结果，不提供通用 cron 管理。
+所有真正的消息、外部信息整理、workspace 复用/新建，都应发生在 AgentDock 侧：AgentDock agent/workspace 通过已注册的 `haro mcp` 调用 Haro sidecar tools，Haro 只产出可审计 artifacts，Web 只展示这些 artifacts 并写审批 decision。
 
 `approval-decisions/*.json` 由共享 `ApprovalDecisionRecord` contract 校验。后续 `haro apply --proposal-id` 会消费这些 decision：
 
@@ -102,7 +85,7 @@ optional collect command -> haro intake frontier -> haro observe -> haro propose
 - Web Chat / Web Channel / WebSocket streaming
 - Agent CRUD / run
 - Sessions UI/API
-- 通用 Cron HTTP management
+- Cron HTTP management
 - Channel / Gateway management
 - Provider / monitor / invocation stats
 - Logs / Knowledge / Memory pages
@@ -118,7 +101,7 @@ optional collect command -> haro intake frontier -> haro observe -> haro propose
 
 Haro Web review 与 AgentDock/飞书中的审批呈现是并行入口：
 
-- Haro Web hosted daily frontier loop 负责周期生成 frontier signal / proposal / validation / approval request。
+- AgentDock workspace/agent 驱动的 Haro loop 负责生成 proposal / validation / approval request。
 - AgentDock 可以通过 MCP/skill/IM 把 approval request 发给用户审批。
 - Haro Web 可以直接查看同一批 approval request artifacts。
 - 所有 apply 仍必须经过 validation + human approval refs + snapshot/rollback gate；reject/request-changes 会在进入后续 gate 前 fail closed。

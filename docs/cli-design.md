@@ -2,12 +2,12 @@
 
 ## 概述
 
-Haro CLI 是 Haro sidecar 的**第一类本地入口**。2026-05-14 起，Haro Web 只保留 proposal review 工作台；通用使用、配置、查询、诊断和 scheduled sidecar 操作仍以 CLI/MCP/AgentDock 调度为主。
+Haro CLI 是 Haro sidecar 的**第一类本地入口**。2026-05-14 起，Haro Web 只保留 proposal review 工作台；通用使用、配置、查询、诊断和 sidecar workflow 操作仍以 CLI/MCP/AgentDock workspace/agent 编排为主。
 
 **为什么 CLI-first**（参见 [架构总览 § 三层解耦](architecture/overview.md#三层解耦cli--web-api--web-前端)）：
 - 单人自用、远程 SSH / devbox / headless 场景下 CLI 是最稳定的运维入口
 - AgentDock 负责日用 Web/IM/workbench；Haro CLI 负责 sidecar observe/propose/validate/apply/rollback 等维护动作
-- CLI 输出是 scheduled task、MCP tool 和审计验证最稳定的机器可读信号源
+- CLI 输出是 MCP tool、AgentDock workspace/agent workflow 和审计验证最稳定的机器可读信号源
 
 技术栈：
 
@@ -353,9 +353,7 @@ haro web                              # 默认 127.0.0.1:3456
 haro web --port 3000 --host 0.0.0.0
 ```
 
-> 当前实现：`haro web` 仅支持 `--port` / `--host`；API key 通过 `HARO_WEB_API_KEY` 环境变量注入。`haro web` 是 `@haro/web-api` 的薄启动器，只注入 `HARO_HOME`/DB 上下文，挂载 `/api/v1/approval-requests` 和 `/api/v1/daily-frontier/status`。
->
-> 若设置 `HARO_DAILY_FRONTIER_ENABLED=1`，同一个 Haro Web 托管服务会按 `HARO_DAILY_FRONTIER_CRON`（默认 `0 2 * * *`）自动执行每日 frontier loop：可选 `HARO_DAILY_FRONTIER_COLLECT_COMMAND` 先生成 `FrontierSignal` source-config，然后串联 `haro intake frontier --since last`、`haro observe --since last`、`haro propose --auto-dry-run --include-frontier`、`haro validate --pending`、`haro approval-request --pending`。这条链路不需要 AgentDock 代码改动，也不提供通用 cron 管理面。
+> 当前实现：`haro web` 仅支持 `--port` / `--host`；API key 通过 `HARO_WEB_API_KEY` 环境变量注入。`haro web` 是 `@haro/web-api` 的薄启动器，只注入 `HARO_HOME`/DB 上下文并挂载 `/api/v1/approval-requests`；它只是 review 看板，不承载消息流、调度流或 workspace runtime。
 
 ### `haro eat` / `haro shit`
 
@@ -519,7 +517,7 @@ haro config unset providers.codex.defaultModel --scope project
 
 ### `haro cron`（FEAT-033，2026-05-06 done）
 
-调度 cron 表达式或一次性 ISO 时间触发的任务，复用现有 session 上下文。sidecar 新基线下，后台 frontier intake / observe / propose / validate / approval-request 优先由 Haro Web 托管服务内置 daily frontier scheduler 触发；`haro cron` 保留为通用历史能力，Haro Web 不再提供 cron HTTP 管理面。
+调度 cron 表达式或一次性 ISO 时间触发的任务，复用现有 session 上下文。sidecar 新基线下，后台 observe/propose/validate 优先由 AgentDock workspace/agent 通过 `haro mcp` 编排；`haro cron` / script task 只作为可选部署兜底。Haro Web 不提供 cron HTTP 管理面。
 
 ```bash
 haro cron list [--session <id>] [--status pending|running|done|failed|cancelled]
