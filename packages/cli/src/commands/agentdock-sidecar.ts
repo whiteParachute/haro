@@ -169,6 +169,7 @@ interface ApprovalRequestResult {
   requestedProposalCount: number;
   pendingProposalCount: number;
   skippedDuplicatePendingApprovalRequestCount: number;
+  skippedNotActionableApprovalRequestCount: number;
   skippedCorruptProposalCount: number;
   skippedCorruptValidationCount: number;
   skippedCorruptApprovalRequestCount: number;
@@ -764,6 +765,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             requestedProposalCount: result.requestedProposalCount,
             pendingProposalCount: result.pendingProposalCount,
             skippedDuplicatePendingApprovalRequestCount: result.skippedDuplicatePendingApprovalRequestCount,
+            skippedNotActionableApprovalRequestCount: result.skippedNotActionableApprovalRequestCount,
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
             skippedCorruptValidationCount: result.skippedCorruptValidationCount,
             skippedCorruptApprovalRequestCount: result.skippedCorruptApprovalRequestCount,
@@ -782,6 +784,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `Requested proposals: ${result.requestedProposalCount}`,
               `Pending proposals after run: ${result.pendingProposalCount}`,
               `Skipped duplicate pending approval requests: ${result.skippedDuplicatePendingApprovalRequestCount}`,
+              `Skipped non-actionable approval requests: ${result.skippedNotActionableApprovalRequestCount}`,
               `Wrote: ${result.approvalRequestPaths.join(', ')}`,
             ].join('\n') + '\n',
           );
@@ -792,6 +795,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             'No validated proposals need approval requests.',
             `Pending proposals after run: ${result.pendingProposalCount}`,
             `Skipped duplicate pending approval requests: ${result.skippedDuplicatePendingApprovalRequestCount}`,
+            `Skipped non-actionable approval requests: ${result.skippedNotActionableApprovalRequestCount}`,
           ].join('\n') + '\n',
         );
       } catch (error) {
@@ -1123,7 +1127,7 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
       };
     }
 
-    const validations = selected.map((proposal) => createValidationReport(proposal, app.now));
+    const validations = selected.map((proposal) => createValidationReport(app.paths.root, proposal, app.now));
     const validationPaths = validations.map((report) => validationFilePath(app.paths.root, report));
     const assetEventIds: string[] = [];
     for (let i = 0; i < validations.length; i += 1) {
@@ -1131,8 +1135,11 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
       const path = validationPaths[i]!;
       writeJsonFile(path, report);
       const proposal = selected[i]!;
+      const persistedProposal = report.applyEligible
+        ? markProposalValidated(app.paths.root, proposal, report.createdAt)
+        : proposal;
       assetEventIds.push(
-        ...recordValidationAssetEvents(app.paths.root, proposal, report).map((event) => event.id),
+        ...recordValidationAssetEvents(app.paths.root, persistedProposal, report).map((event) => event.id),
       );
     }
     return {
@@ -1175,14 +1182,16 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
       requestedResult.requested,
       decidedResult.decided,
     );
+    const actionableResult = filterActionableApprovalRequestProposals(app.paths.root, pendingResult.proposals);
     const pending: Array<{ proposal: EvolutionProposal; validation: ValidationReport }> = [];
-    for (const candidate of pendingResult.proposals) {
+    for (const candidate of actionableResult.proposals) {
       const dedupeKey = proposalApprovalRequestDedupeKey(candidate.proposal);
       if (pendingDedupeKeys.has(dedupeKey)) continue;
       pendingDedupeKeys.add(dedupeKey);
       pending.push(candidate);
     }
-    const skippedDuplicatePendingApprovalRequestCount = pendingResult.proposals.length - pending.length;
+    const skippedDuplicatePendingApprovalRequestCount = actionableResult.proposals.length - pending.length;
+    const skippedNotActionableApprovalRequestCount = actionableResult.skippedCount;
     const selected = typeof limit === 'number' ? pending.slice(0, limit) : pending;
     if (selected.length === 0) {
       return {
@@ -1192,6 +1201,7 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
         requestedProposalCount: 0,
         pendingProposalCount: 0,
         skippedDuplicatePendingApprovalRequestCount,
+        skippedNotActionableApprovalRequestCount,
         skippedCorruptProposalCount: pendingResult.corruptCount,
         skippedCorruptValidationCount: validationStats.corruptCount,
         skippedCorruptApprovalRequestCount: requestedResult.corruptCount,
@@ -1214,6 +1224,7 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
       requestedProposalCount: selected.length,
       pendingProposalCount: pending.length - selected.length,
       skippedDuplicatePendingApprovalRequestCount,
+      skippedNotActionableApprovalRequestCount,
       skippedCorruptProposalCount: pendingResult.corruptCount,
       skippedCorruptValidationCount: validationStats.corruptCount,
       skippedCorruptApprovalRequestCount: requestedResult.corruptCount,
@@ -2643,6 +2654,23 @@ function readValidatedProposalsNeedingApprovalRequest(
     }
   }
   return { proposals, corruptCount };
+}
+
+function filterActionableApprovalRequestProposals(
+  root: string,
+  proposals: Array<{ proposal: EvolutionProposal; validation: ValidationReport }>,
+): { proposals: Array<{ proposal: EvolutionProposal; validation: ValidationReport }>; skippedCount: number } {
+  const actionable: Array<{ proposal: EvolutionProposal; validation: ValidationReport }> = [];
+  let skippedCount = 0;
+  for (const item of proposals) {
+    const blockingReasons = approvalRequestReadinessBlockingReasons(root, item.proposal, item.validation);
+    if (blockingReasons.length > 0) {
+      skippedCount += 1;
+      continue;
+    }
+    actionable.push(item);
+  }
+  return { proposals: actionable, skippedCount };
 }
 
 function readProposalById(root: string, proposalId: string): EvolutionProposal | undefined {
@@ -4284,14 +4312,20 @@ function createDryRunProposal(
 }
 
 function createValidationReport(
+  root: string,
   proposal: EvolutionProposal,
   now: () => Date,
 ): ValidationReport {
   const rollbackReady = !proposal.rollbackPlan.snapshotRequired || proposal.rollbackPlan.rollbackRefs.length > 0;
-  const blockingReasons = validationBlockingReasons(proposal, rollbackReady);
-  const riskVerdict = proposal.level === 'L2' || proposal.level === 'L3'
+  const blockingReasons = validationBlockingReasons(root, proposal, rollbackReady);
+  const riskVerdict = blockingReasons.length > 0
     ? 'blocked'
     : proposal.riskLevel;
+  const applyEligible = proposal.level !== 'L2' &&
+    proposal.level !== 'L3' &&
+    rollbackReady &&
+    blockingReasons.length === 0 &&
+    riskVerdict !== 'blocked';
   const evidenceRefs: Ref[] = [
     {
       id: proposal.id,
@@ -4316,11 +4350,22 @@ function createValidationReport(
     riskVerdict,
     requiredTests: proposal.testPlan.requiredCommands,
     rollbackReady,
-    applyEligible: false,
+    applyEligible,
     blockingReasons,
     evidenceRefs,
     createdAt: now().toISOString(),
   });
+}
+
+function markProposalValidated(root: string, proposal: EvolutionProposal, updatedAt: string): EvolutionProposal {
+  if (proposal.status === 'validated') return proposal;
+  const next = EvolutionProposalSchema.parse({
+    ...proposal,
+    status: 'validated',
+    updatedAt,
+  });
+  writeJsonFile(proposalFilePath(root, next), next);
+  return next;
 }
 
 function recordProposalAssetEvents(root: string, proposal: EvolutionProposal): AssetEvent[] {
@@ -4603,23 +4648,57 @@ function stringToRef(value: string, kind: string): Ref {
   return ref;
 }
 
-function validationBlockingReasons(proposal: EvolutionProposal, rollbackReady: boolean): string[] {
-  const reasons = [
-        'FEAT-045 定时验证当前只提供建议性结论；受控应用（gated apply）仍必须有明确的 AgentDock 人审证据。',
-  ];
-  if (missingHumanApproval(proposal)) {
-    reasons.push('应用或转换真实分支前必须完成人审。');
-  }
+function validationBlockingReasons(root: string, proposal: EvolutionProposal, rollbackReady: boolean): string[] {
+  const reasons = proposalExecutionReadinessBlockingReasons(root, proposal);
   if (!rollbackReady) {
     reasons.push('回滚方案需要快照（snapshot）或回滚引用（rollback refs）后，才允许进入应用判断。');
-  }
-  if (proposal.level === 'L2' || proposal.level === 'L3') {
-    reasons.push('L2/L3 提案禁止直接应用（apply）；必须生成补丁分支（patch branch）并经过人审。');
   }
   if (proposal.riskLevel === 'high') {
     reasons.push('高风险提案进入任何应用门禁（apply gate）前都必须人工复核。');
   }
   return reasons;
+}
+
+function proposalExecutionReadinessBlockingReasons(root: string, proposal: EvolutionProposal): string[] {
+  const reasons: string[] = [];
+  if (isGenericDryRunProposal(proposal)) {
+    reasons.push('提案仍是泛化 dry-run 演练：缺少具体 proposed content / patch，不能进入审批。');
+  }
+  if (proposal.level === 'L0' || proposal.level === 'L1') {
+    const prepared = prepareSidecarLocalApply(root, proposal);
+    if (!prepared.ok) reasons.push(...prepared.blockingReasons);
+  }
+  return Array.from(new Set(reasons));
+}
+
+function isGenericDryRunProposal(proposal: EvolutionProposal): boolean {
+  if (proposal.status === 'dry-run') return true;
+  return proposal.changeSet.some((change) => (
+    change.contentRef?.includes('/dry-run') ||
+    /仅演练|复核已持久化的 AgentDock sidecar 观察数据/.test(change.summary)
+  ));
+}
+
+function approvalRequestReadinessBlockingReasons(
+  root: string,
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+): string[] {
+  const reasons: string[] = [];
+  if (proposal.status !== 'validated') {
+    reasons.push(`提案状态为 ${proposal.status}；只有已验证（validated）的具体提案才能进入审批。`);
+  }
+  if (validation.riskVerdict === 'blocked') {
+    reasons.push('验证结论为 blocked，不能进入审批。');
+  }
+  if (!validation.rollbackReady) {
+    reasons.push('验证报告 rollbackReady=false，不能进入审批。');
+  }
+  if ((proposal.level === 'L0' || proposal.level === 'L1') && !validation.applyEligible) {
+    reasons.push('L0/L1 提案缺少可执行内容或未通过应用前质量门槛，不能进入审批。');
+  }
+  reasons.push(...proposalExecutionReadinessBlockingReasons(root, proposal));
+  return Array.from(new Set(reasons));
 }
 
 function missingHumanApproval(proposal: EvolutionProposal): boolean {

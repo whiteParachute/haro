@@ -89,6 +89,10 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function encodedAssetPathSegment(value: string): string {
+  return Buffer.from(value, 'utf8').toString('base64url');
+}
+
 function humanApprovalRef(id = 'approval-human-review-001') {
   return {
     id,
@@ -206,6 +210,57 @@ function writeValidatedMcpToolConfigProposal(root: string, proposalId: string, v
     blockingReasons: [],
     evidenceRefs: [{ id: proposalId, kind: 'evolution-proposal' }],
     createdAt: '2026-05-08T12:01:00.000Z',
+  }, null, 2)}\n`);
+}
+
+function writeExecutableMcpToolConfigProposal(root: string, proposalId: string, assetId = 'agentdock:haro-proposal-quality-gate'): void {
+  const proposalDir = join(root, 'evolution', 'proposals');
+  const contentDir = join(root, 'evolution', 'proposal-content', proposalId);
+  mkdirSync(proposalDir, { recursive: true });
+  mkdirSync(contentDir, { recursive: true });
+  const content = `${JSON.stringify({
+    id: assetId,
+    purpose: '确保 Haro 只有在存在具体 proposed content 时才生成审批提案。',
+    approvalPolicy: {
+      requireHumanReview: true,
+      requireConcreteProposedContent: true,
+      rejectGenericDryRunApprovalRequests: true,
+    },
+  }, null, 2)}\n`;
+  const contentHash = sha256(content);
+  const fileName = `0000-${encodedAssetPathSegment(assetId)}.json`;
+  writeFileSync(join(contentDir, fileName), content);
+  writeFileSync(join(proposalDir, `${proposalId}.json`), `${JSON.stringify({
+    id: proposalId,
+    title: '收紧 Haro 审批提案质量门槛',
+    status: 'proposed',
+    level: 'L0',
+    targetKind: 'mcp-tool-config',
+    riskLevel: 'low',
+    sourceObservationRefs: [{ id: `obs_${proposalId}`, kind: 'observation-batch' }],
+    changeSet: [
+      {
+        op: 'update',
+        targetRef: { id: assetId, kind: 'mcp-tool-config' },
+        contentRef: `haro-sidecar://proposal-content/${proposalId}/${fileName}`,
+        contentHash,
+        summary: '写入具体的 Haro 审批提案质量门槛配置，避免泛化 dry-run 进入人审。',
+      },
+    ],
+    testPlan: {
+      requiredCommands: ['pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts'],
+      manualChecks: ['审批页应只展示有具体 proposed content 的提案。'],
+      regressionRisks: ['过严的质量门槛可能导致低价值但有用的 insight 不进入审批。'],
+    },
+    rollbackPlan: {
+      strategy: '通过 Haro rollback 恢复该 mcp-tool-config 的旧版本或删除新建配置。',
+      snapshotRequired: false,
+      rollbackRefs: [],
+    },
+    humanReviewRequired: true,
+    humanApprovalRefs: [],
+    createdAt: '2026-05-08T12:00:00.000Z',
+    updatedAt: '2026-05-08T12:00:00.000Z',
   }, null, 2)}\n`);
 }
 
@@ -794,11 +849,11 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.assetEventIds).toHaveLength(1);
     expect(payload.validations[0]).toMatchObject({
       proposalId: proposalPayload.proposalId,
-      riskVerdict: 'medium',
+      riskVerdict: 'blocked',
       rollbackReady: true,
       applyEligible: false,
     });
-    expect(payload.validations[0]?.blockingReasons[0]).toContain('FEAT-045');
+    expect(payload.validations[0]?.blockingReasons.join('\n')).toContain('泛化 dry-run');
     expect(payload.validations[0]?.evidenceRefs[0]).toMatchObject({
       id: proposalPayload.proposalId,
       kind: 'evolution-proposal',
@@ -848,7 +903,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(proposeErr.read()).toBe('');
   });
 
-  it('approval-request --pending writes human-review artifacts with why how and benefits', async () => {
+  it('approval-request --pending does not render generic dry-run proposals for human review', async () => {
     const root = newHome('agentdock-approval-request');
     const observeOut = captureStream();
     const observeErr = captureStream();
@@ -883,6 +938,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     ]));
     expect(validate.exitCode).toBe(0);
     const validationPayload = (JSON.parse(validateOut.read()) as { data: { validationIds: string[] } }).data;
+    expect(validationPayload.validationIds).toHaveLength(1);
 
     const approvalOut = captureStream();
     const approvalErr = captureStream();
@@ -899,35 +955,19 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       approvalRequestCount: number;
       requestedProposalCount: number;
       pendingProposalCount: number;
+      skippedNotActionableApprovalRequestCount: number;
       wroteApprovalRequests: boolean;
       approvalRequestIds: string[];
       approvalRequestPaths: string[];
-      approvalRequests: Array<{
-        proposalId: string;
-        validationId: string;
-        whyChange: string[];
-        howChange: string[];
-        expectedBenefits: string[];
-        decisionOptions: string[];
-        humanReviewRequired: boolean;
-      }>;
     } }).data;
-    expect(payload.approvalRequestCount).toBe(1);
-    expect(payload.requestedProposalCount).toBe(1);
+    expect(payload.approvalRequestCount).toBe(0);
+    expect(payload.requestedProposalCount).toBe(0);
     expect(payload.pendingProposalCount).toBe(0);
-    expect(payload.wroteApprovalRequests).toBe(true);
-    expect(payload.approvalRequestIds).toHaveLength(1);
-    expect(existsSync(payload.approvalRequestPaths[0]!)).toBe(true);
-    expect(payload.approvalRequests[0]).toMatchObject({
-      proposalId: proposalPayload.proposalId,
-      validationId: validationPayload.validationIds[0],
-      humanReviewRequired: true,
-      decisionOptions: ['approve', 'reject', 'request-changes'],
-    });
-    expect(payload.approvalRequests[0]?.whyChange.join('\n')).toContain('提案基于');
-    expect(payload.approvalRequests[0]?.howChange[0]).toContain('更新');
-    expect(payload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('可审查');
-    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+    expect(payload.skippedNotActionableApprovalRequestCount).toBe(1);
+    expect(payload.wroteApprovalRequests).toBe(false);
+    expect(payload.approvalRequestIds).toHaveLength(0);
+    expect(payload.approvalRequestPaths).toHaveLength(0);
+    expect(readApprovalRequestRecords(root)).toHaveLength(0);
     expect(existsSync(join(root, 'memory'))).toBe(false);
 
     const repeatOut = captureStream();
@@ -947,10 +987,110 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(repeatPayload.approvalRequestCount).toBe(0);
     expect(repeatPayload.requestedProposalCount).toBe(0);
     expect(repeatPayload.wroteApprovalRequests).toBe(false);
-    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+    expect(readApprovalRequestRecords(root)).toHaveLength(0);
     expect(observeErr.read()).toBe('');
     expect(proposeErr.read()).toBe('');
     expect(validateErr.read()).toBe('');
+  });
+
+  it('executable proposals validate, reach human review, and can be applied after approval', async () => {
+    const root = newHome('agentdock-executable-approval-flow');
+    const proposalId = 'proposal_executable_quality_gate';
+    const assetId = 'agentdock:haro-proposal-quality-gate';
+    writeExecutableMcpToolConfigProposal(root, proposalId, assetId);
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const validationPayload = (JSON.parse(validateOut.read()) as { data: {
+      validationIds: string[];
+      validations: Array<{
+        riskVerdict: string;
+        rollbackReady: boolean;
+        applyEligible: boolean;
+        blockingReasons: string[];
+      }>;
+    } }).data;
+    expect(validationPayload.validations[0]).toMatchObject({
+      riskVerdict: 'low',
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+    });
+    expect(readJson<{ status: string }>(join(root, 'evolution', 'proposals', `${proposalId}.json`)).status).toBe('validated');
+
+    const approvalOut = captureStream();
+    const approvalErr = captureStream();
+    const approval = await runCli(commonOpts(root, approvalOut, approvalErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(approval.exitCode).toBe(0);
+    expect(approvalErr.read()).toBe('');
+    const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
+      approvalRequestCount: number;
+      approvalRequests: ApprovalRequestRecord[];
+    } }).data;
+    expect(approvalPayload.approvalRequestCount).toBe(1);
+    expect(approvalPayload.approvalRequests[0]).toMatchObject({
+      proposalId,
+      validationId: validationPayload.validationIds[0],
+      humanReviewRequired: true,
+    });
+
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_executable_quality_gate',
+      approvalRequestId: approvalPayload.approvalRequests[0]!.id,
+      proposalId,
+      validationId: validationPayload.validationIds[0]!,
+      decision: 'approve',
+      reviewer: {
+        source: 'agentdock',
+        username: 'reviewer',
+        role: 'owner',
+      },
+      sourceRef: {
+        id: approvalPayload.approvalRequests[0]!.id,
+        kind: 'approval-request',
+      },
+      createdAt: '2026-05-08T12:02:00.000Z',
+      updatedAt: '2026-05-08T12:02:00.000Z',
+    });
+
+    const applyOut = captureStream();
+    const applyErr = captureStream();
+    const apply = await runCli(commonOpts(root, applyOut, applyErr, [
+      'apply',
+      '--proposal-id',
+      proposalId,
+      '--json',
+    ]));
+
+    expect(apply.exitCode).toBe(0);
+    expect(applyErr.read()).toBe('');
+    const applyPayload = (JSON.parse(applyOut.read()) as { data: {
+      gateStatus: string;
+      gateCode: string;
+      applied: boolean;
+      applicationRecordCount: number;
+    } }).data;
+    expect(applyPayload).toMatchObject({
+      gateStatus: 'applied',
+      gateCode: 'READY',
+      applied: true,
+      applicationRecordCount: 1,
+    });
+    expect(existsSync(join(root, 'assets', 'current', 'mcp-tool-config', `${encodedAssetPathSegment(assetId)}.json`))).toBe(true);
+    expect(readApplicationRecords(root)).toHaveLength(1);
   });
 
   it('approval-request --pending skips proposals that already have a decision artifact', async () => {
@@ -1001,7 +1141,16 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
 
   it('approval-request --pending skips new proposals that duplicate an undecided approval request', async () => {
     const root = newHome('agentdock-approval-request-duplicate-pending');
-    writeValidatedMcpToolConfigProposal(root, 'proposal_duplicate_old', 'validation_duplicate_old');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_old');
+    const firstValidateOut = captureStream();
+    const firstValidateErr = captureStream();
+    const firstValidate = await runCli(commonOpts(root, firstValidateOut, firstValidateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(firstValidate.exitCode).toBe(0);
+    expect(firstValidateErr.read()).toBe('');
 
     const firstOut = captureStream();
     const firstErr = captureStream();
@@ -1015,7 +1164,17 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(firstErr.read()).toBe('');
     expect(readApprovalRequestRecords(root)).toHaveLength(1);
 
-    writeValidatedMcpToolConfigProposal(root, 'proposal_duplicate_new', 'validation_duplicate_new');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_new');
+    const secondValidateOut = captureStream();
+    const secondValidateErr = captureStream();
+    const secondValidate = await runCli(commonOpts(root, secondValidateOut, secondValidateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(secondValidate.exitCode).toBe(0);
+    expect(secondValidateErr.read()).toBe('');
+
     const secondOut = captureStream();
     const secondErr = captureStream();
     const second = await runCli(commonOpts(root, secondOut, secondErr, [

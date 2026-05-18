@@ -215,12 +215,12 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       expect(payload.result.structuredContent.summary.observationCount).toBeGreaterThan(0);
       expect(payload.result.structuredContent.summary.proposalCount).toBe(1);
       expect(payload.result.structuredContent.summary.validationCount).toBe(1);
-      expect(payload.result.structuredContent.summary.approvalRequestCount).toBe(1);
-      expect(payload.result.structuredContent.summary.approvalRequestIds).toHaveLength(1);
+      expect(payload.result.structuredContent.summary.approvalRequestCount).toBe(0);
+      expect(payload.result.structuredContent.summary.approvalRequestIds).toHaveLength(0);
       expect(payload.result.structuredContent.nextActions.join('\n')).toContain(
-        '展示审批请求摘要',
+        '没有新增审批请求',
       );
-      expect(existsSync(join(home, 'evolution', 'approval-requests'))).toBe(true);
+      expect(existsSync(join(home, 'evolution', 'approval-requests'))).toBe(false);
       expect(existsSync(join(home, 'memory'))).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
