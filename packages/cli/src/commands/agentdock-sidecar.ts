@@ -1332,19 +1332,19 @@ function dailyWorkflowNextActions(
 ): string[] {
   if (approvalRequestIds.length > 0) {
     return [
-      'Present the approval request summaries to the user through AgentDock IM/workspace.',
-      'Wait for approve, reject, or request-changes before any apply or patch-branch action.',
-      'Haro Web may show the same approval request artifacts as a review board, but it is not the workflow runner.',
+      '通过 AgentDock IM/workspace 向用户展示审批请求摘要。',
+      '在执行任何应用（apply）或补丁分支（patch branch）动作前，必须等待通过、驳回或要求修改的人审结论。',
+      'Haro Web 可以作为同一批审批请求的看板，但它不是 workflow runner。',
     ];
   }
   if (wroteSidecarArtifacts) {
     return [
-      'No new approval request was created in this run; inspect the step counters before retrying.',
-      'Do not apply changes unless a validated proposal has explicit human approval evidence.',
+      '本轮没有新增审批请求；重试前请先检查各步骤计数。',
+      '除非已验证提案具备明确的人审证据，否则不要应用变更。',
     ];
   }
   return [
-    'No new sidecar artifacts were produced; the AgentDock workspace can report that there is nothing pending for review.',
+    '本轮没有产生新的 sidecar artifact；AgentDock workspace 可以汇报当前没有待审内容。',
   ];
 }
 
@@ -1391,8 +1391,8 @@ export function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyRes
 
     if (decisionSync.decision?.decision === 'request-changes') {
       return blockedApplyResult(proposal.id, 'CHANGES_REQUESTED', [
-        `Human review requested changes for proposal ${proposal.id}; create a revised proposal before applying.`,
-        ...(decisionSync.decision.direction ? [`Requested direction: ${decisionSync.decision.direction}`] : []),
+        `人审要求修改提案 ${proposal.id}；应用前必须先创建修订后的提案。`,
+        ...(decisionSync.decision.direction ? [`要求修改方向：${decisionSync.decision.direction}`] : []),
       ], validation.id);
     }
 
@@ -3849,7 +3849,7 @@ function createPatchBranchPlanRecord(
       : proposal.testPlan.requiredCommands,
     manualChecks: [
       ...proposal.testPlan.manualChecks,
-      'Human review is required before merging an L2/L3 patch branch.',
+      '合并 L2/L3 补丁分支前必须完成人审。',
     ],
     regressionRisks: proposal.testPlan.regressionRisks,
     rollbackPlan: {
@@ -3909,13 +3909,13 @@ function createApprovalRequestRecord(
       : proposal.testPlan.requiredCommands,
     manualChecks: [
       ...proposal.testPlan.manualChecks,
-      'Reviewer must decide approve, reject, or request-changes in AgentDock before Haro can continue.',
+      '审批人必须在 AgentDock 中选择通过（approve）、驳回（reject）或要求修改（request-changes）后，Haro 才能继续。',
     ],
     regressionRisks: proposal.testPlan.regressionRisks,
     rollbackPlan: proposal.rollbackPlan,
     decisionOptions: ['approve', 'reject', 'request-changes'],
     reviewerInstruction:
-      'Review why/how/benefit, evidence, tests, risks, and rollback plan. Reply approve, reject, or request-changes with direction.',
+      '请审阅为什么改、怎么改、预期收益、证据、测试、风险和回滚方案，然后选择通过（approve）、驳回（reject）或要求修改（request-changes）；如果要求修改，请写明方向。',
     humanReviewRequired: true,
     evidenceRefs: [
       evolutionProposalRef(proposal),
@@ -3932,26 +3932,61 @@ function createApprovalRequestRecord(
 function approvalWhyChange(proposal: EvolutionProposal, validation: ValidationReport): string[] {
   const sourceKinds = new Set(proposal.sourceObservationRefs.map((ref) => ref.kind));
   return [
-    `Proposal is based on ${proposal.sourceObservationRefs.length} evidence ref(s): ${Array.from(sourceKinds).sort().join(', ')}.`,
-    `Validation verdict is ${validation.riskVerdict}; apply eligibility is ${validation.applyEligible ? 'eligible after approval' : 'not yet apply-eligible'}.`,
-    `Target is ${proposal.targetKind} at ${proposal.level} with ${proposal.riskLevel} proposal risk.`,
+    `提案基于 ${proposal.sourceObservationRefs.length} 条证据：${Array.from(sourceKinds).sort().map(localizeRefKind).join('、') || '无'}。`,
+    `验证风险结论为 ${localizeRiskVerdict(validation.riskVerdict)}；应用条件：${validation.applyEligible ? '人审通过后可进入受控应用（apply gate）' : '暂不满足受控应用（apply gate）'}。`,
+    `目标为 ${localizeRefKind(proposal.targetKind)}（${proposal.targetKind}），级别 ${proposal.level}，提案风险 ${localizeRiskVerdict(proposal.riskLevel)}。`,
   ];
 }
 
 function approvalHowChange(proposal: EvolutionProposal): string[] {
   return proposal.changeSet.map((change, index) => (
-    `${index + 1}. ${change.op} ${change.targetRef.kind}:${change.targetRef.id} — ${change.summary}`
+    `${index + 1}. ${localizeChangeOperation(change.op)} ${localizeRefKind(change.targetRef.kind)}:${change.targetRef.id} — ${change.summary}`
   ));
 }
 
 function approvalExpectedBenefits(proposal: EvolutionProposal): string[] {
   return [
-    `Keeps ${proposal.targetKind} evolution explicit and reviewable before execution.`,
-    'Preserves a structured test and rollback plan before any write path is allowed.',
+    `保持${localizeRefKind(proposal.targetKind)}的演进在执行前可审查、可追踪。`,
+    '在允许任何写入路径前，保留结构化测试计划和回滚方案。',
     proposal.level === 'L0' || proposal.level === 'L1'
-      ? 'Allows low-risk sidecar-owned changes to move through gated apply only after approval.'
-      : 'Keeps code-level changes on a patch branch path instead of direct apply.',
+      ? '低风险 sidecar 自有变更也必须人审通过后，才能进入受控应用（gated apply）。'
+      : '代码级变更必须走补丁分支（patch branch）和人审路径，不能直接应用（apply）。',
   ];
+}
+
+function localizeRefKind(kind: string): string {
+  const labels: Record<string, string> = {
+    'approval-request': '审批请求',
+    'evolution-proposal': '演进提案',
+    'frontier-signal': '前沿信号',
+    'mcp-tool-config': 'MCP 工具配置',
+    'observation-batch': '观察批次',
+    'proposal-change': '提案变更',
+    'runner-profile': 'Runner Profile',
+    'schedule-config': '调度配置',
+    'validation-report': '验证报告',
+  };
+  return labels[kind] ?? kind;
+}
+
+function localizeRiskVerdict(value: string): string {
+  const labels: Record<string, string> = {
+    low: '低风险',
+    medium: '中风险',
+    high: '高风险',
+    blocked: '已阻塞',
+  };
+  return labels[value] ?? value;
+}
+
+function localizeChangeOperation(op: string): string {
+  const labels: Record<string, string> = {
+    add: '新增',
+    archive: '归档',
+    delete: '删除',
+    update: '更新',
+  };
+  return labels[op] ?? op;
 }
 
 function createSnapshotArtifacts(
@@ -4161,25 +4196,25 @@ function createDryRunProposal(
         'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
       ],
       manualChecks: [
-        'Human review in AgentDock is required before this automatic proposal can be applied or converted into a real branch.',
+        'AgentDock 人审通过前，这个自动提案不能被应用，也不能转换为真实分支。',
         frontierSignals.length > 0
-          ? 'Run an AgentDock workspace/agent Haro MCP workflow for `haro observe` followed by `haro propose --auto-dry-run --include-frontier --json` and verify no runtime code is modified.'
-          : 'Run an AgentDock workspace/agent Haro MCP workflow for `haro observe` followed by `haro propose --auto-dry-run --json` and verify no runtime code is modified.',
+          ? '通过 AgentDock workspace/agent 调用 Haro MCP workflow：先 `haro observe`，再 `haro propose --auto-dry-run --include-frontier --json`，并确认不会修改 runtime 代码。'
+          : '通过 AgentDock workspace/agent 调用 Haro MCP workflow：先 `haro observe`，再 `haro propose --auto-dry-run --json`，并确认不会修改 runtime 代码。',
         ...(frontierSignals.length > 0
-          ? ['Review cited frontier-signal source refs before trusting external evidence.']
+          ? ['信任外部证据前，必须复核引用的 frontier-signal source refs。']
           : []),
       ],
       regressionRisks: [
-        'Observation schema drift can make persisted batches unreadable until doctor/status surfaces the corrupt file.',
-        'Overlapping AgentDock workspace/agent Haro workflows can create duplicate proposals if the proposal lock is bypassed.',
+        'Observation schema 变化可能导致已持久化 batch 无法读取，需要 doctor/status 明确暴露损坏文件。',
+        '如果 proposal lock 被绕过，并发 AgentDock workspace/agent Haro workflow 可能生成重复提案。',
         ...(frontierSignals.length > 0
-          ? ['External frontier signals can become stale or be superseded; rejected/superseded signals must not remain active evidence.']
+          ? ['外部 frontier signals 可能过期或被新信息替代；已驳回/已被替代的信号不能继续作为有效证据。']
           : []),
       ],
     },
     rollbackPlan: {
       strategy:
-        'Dry-run proposal generation only writes a proposal JSON artifact; delete the proposal file to roll back before validation or approval.',
+        'dry-run 提案生成只会写入 proposal JSON artifact；在验证或审批前删除对应 proposal 文件即可回滚。',
       snapshotRequired: false,
       rollbackRefs: sourceObservationRefs,
     },
@@ -4512,19 +4547,19 @@ function stringToRef(value: string, kind: string): Ref {
 
 function validationBlockingReasons(proposal: EvolutionProposal, rollbackReady: boolean): string[] {
   const reasons = [
-    'FEAT-045 scheduled validation is advisory; gated apply still requires explicit AgentDock human approval evidence.',
+        'FEAT-045 定时验证当前只提供建议性结论；受控应用（gated apply）仍必须有明确的 AgentDock 人审证据。',
   ];
   if (missingHumanApproval(proposal)) {
-    reasons.push('Human review is required before this proposal can be applied or converted into a real branch.');
+    reasons.push('应用或转换真实分支前必须完成人审。');
   }
   if (!rollbackReady) {
-    reasons.push('Rollback plan requires a snapshot or rollback refs before apply can be considered.');
+    reasons.push('回滚方案需要快照（snapshot）或回滚引用（rollback refs）后，才允许进入应用判断。');
   }
   if (proposal.level === 'L2' || proposal.level === 'L3') {
-    reasons.push('Direct apply is forbidden for L2/L3 proposals; generate a patch branch and require human review.');
+    reasons.push('L2/L3 提案禁止直接应用（apply）；必须生成补丁分支（patch branch）并经过人审。');
   }
   if (proposal.riskLevel === 'high') {
-    reasons.push('High-risk proposals require manual review before any apply gate can be considered.');
+    reasons.push('高风险提案进入任何应用门禁（apply gate）前都必须人工复核。');
   }
   return reasons;
 }
@@ -4580,12 +4615,10 @@ function summarizeFrontierSignals(signals: readonly FrontierSignal[]) {
 }
 
 function dryRunProposalTitle(observationBatchCount: number, frontierSignalCount: number): string {
-  const observationPart = `${observationBatchCount} observation batch${observationBatchCount === 1 ? '' : 'es'}`;
   if (frontierSignalCount === 0) {
-    return `Dry-run AgentDock sidecar proposal from ${observationPart}`;
+    return `基于 ${observationBatchCount} 个 AgentDock 观察批次的 Haro 自进化演练提案（dry-run）`;
   }
-  const frontierPart = `${frontierSignalCount} frontier signal${frontierSignalCount === 1 ? '' : 's'}`;
-  return `Dry-run AgentDock sidecar proposal from ${observationPart} and ${frontierPart}`;
+  return `基于 ${observationBatchCount} 个 AgentDock 观察批次和 ${frontierSignalCount} 条前沿信号的 Haro 自进化演练提案（dry-run）`;
 }
 
 function proposalTargetRef(summary: ReturnType<typeof summarizeObservationBatches>): Ref {
@@ -4615,10 +4648,10 @@ function proposalSummary(
   frontierSummary?: ReturnType<typeof summarizeFrontierSignals>,
 ): string {
   return [
-    'Review persisted AgentDock sidecar observations and prepare a dry-run self-optimization proposal.',
-    `Batches=${summary.batches}, sessions=${summary.sessions}, turns=${summary.turns}, toolCalls=${summary.toolCalls}, scheduledTaskRuns=${summary.scheduledTaskRuns}, scheduledTaskErrors=${summary.scheduledTaskErrors}, runnerErrors=${summary.runnerErrors}, usageRecords=${summary.usageRecords}.`,
+    '复核已持久化的 AgentDock sidecar 观察数据，并生成一个仅演练（dry-run）的自优化提案。',
+    `观察批次=${summary.batches}，会话=${summary.sessions}，轮次=${summary.turns}，工具调用=${summary.toolCalls}，定时任务运行=${summary.scheduledTaskRuns}，定时任务错误=${summary.scheduledTaskErrors}，runner 错误=${summary.runnerErrors}，用量记录=${summary.usageRecords}。`,
     frontierSummary && frontierSummary.frontierSignals > 0
-      ? `FrontierSignals=${frontierSummary.frontierSignals}, sourceTypes=${frontierSummary.sourceTypes.join('|') || '(none)'}, targetDomains=${frontierSummary.targetDomains.join('|') || '(none)'}.`
+      ? `前沿信号=${frontierSummary.frontierSignals}，来源类型=${frontierSummary.sourceTypes.join('|') || '无'}，目标域=${frontierSummary.targetDomains.join('|') || '无'}。`
       : '',
   ].filter(Boolean).join(' ');
 }

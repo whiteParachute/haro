@@ -666,7 +666,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.includedFrontierSignalCount).toBe(1);
     expect(payload.availableFrontierSignalCount).toBe(1);
     expect(payload.skippedCorruptFrontierSignalCount).toBe(0);
-    expect(payload.proposal.title).toContain('1 frontier signal');
+    expect(payload.proposal.title).toContain('1 条前沿信号');
     expect(payload.proposal.sourceObservationRefs).toContainEqual({
       id: observePayload.batchId,
       kind: 'observation-batch',
@@ -679,9 +679,9 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     });
     expect(payload.proposal.sourceObservationRefs.some((ref) => ref.id === 'frontier-signal-rejected')).toBe(false);
     expect(payload.proposal.sourceObservationRefs.some((ref) => ref.id === 'frontier-signal-superseded')).toBe(false);
-    expect(payload.proposal.changeSet[0]?.summary).toContain('FrontierSignals=1');
-    expect(payload.proposal.testPlan.manualChecks).toContain('Review cited frontier-signal source refs before trusting external evidence.');
-    expect(payload.proposal.testPlan.regressionRisks.join('\n')).toContain('External frontier signals can become stale');
+    expect(payload.proposal.changeSet[0]?.summary).toContain('前沿信号=1');
+    expect(payload.proposal.testPlan.manualChecks).toContain('信任外部证据前，必须复核引用的 frontier-signal source refs。');
+    expect(payload.proposal.testPlan.regressionRisks.join('\n')).toContain('外部 frontier signals 可能过期');
     expect(observeErr.read()).toBe('');
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
@@ -924,9 +924,9 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       humanReviewRequired: true,
       decisionOptions: ['approve', 'reject', 'request-changes'],
     });
-    expect(payload.approvalRequests[0]?.whyChange.join('\n')).toContain('Proposal is based on');
-    expect(payload.approvalRequests[0]?.howChange[0]).toContain('update');
-    expect(payload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('reviewable');
+    expect(payload.approvalRequests[0]?.whyChange.join('\n')).toContain('提案基于');
+    expect(payload.approvalRequests[0]?.howChange[0]).toContain('更新');
+    expect(payload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('可审查');
     expect(readApprovalRequestRecords(root)).toHaveLength(1);
     expect(existsSync(join(root, 'memory'))).toBe(false);
 

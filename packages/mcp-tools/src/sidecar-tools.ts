@@ -194,7 +194,7 @@ export const haroProposeTool: ToolDefinition<typeof HaroProposeInputSchema, Evol
     const contentHash = sha256(JSON.stringify({ sourceObservationRefs, contentRef }));
     return EvolutionProposalSchema.parse({
       id: proposalId,
-      title: 'Dry-run AgentDock sidecar improvement proposal',
+      title: 'Haro AgentDock sidecar 改进演练提案（dry-run）',
       status: 'dry-run',
       level: 'L0',
       targetKind: 'mcp-tool-config',
@@ -207,22 +207,22 @@ export const haroProposeTool: ToolDefinition<typeof HaroProposeInputSchema, Evol
           contentRef,
           contentHash,
           summary:
-            'Review AgentDock observation signals and prepare a dry-run MCP sidecar registration/config improvement proposal.',
+            '复核 AgentDock 观察信号，并生成一个仅演练（dry-run）的 MCP sidecar 注册/配置改进提案。',
         },
       ],
       testPlan: {
         requiredCommands: ['pnpm -F @haro/agentdock-contract test', 'pnpm -F @haro/mcp-tools test'],
         manualChecks: [
-          'Human review in AgentDock is required before this automatic proposal can be applied.',
-          'Register `haro mcp` as an external AgentDock MCP server and verify tools/list does not expose gated-write tools by default.',
+          'AgentDock 人审通过前，这个自动提案不能被应用。',
+          '将 `haro mcp` 注册为外部 AgentDock MCP server，并验证 tools/list 默认不会暴露 gated-write 工具。',
         ],
         regressionRisks: [
-          'AgentDock MCP registration shape may differ from local fake-source assumptions.',
+          'AgentDock MCP 注册结构可能和本地 fake-source 假设不一致。',
         ],
       },
       rollbackPlan: {
         strategy:
-          'No runtime write is performed by haro_propose; discard the dry-run proposal or remove the external MCP server registration if manually tested.',
+          '`haro_propose` 不执行 runtime 写入；如需回滚，丢弃 dry-run proposal，或在手动测试后移除外部 MCP server 注册。',
         snapshotRequired: false,
         rollbackRefs: [],
       },

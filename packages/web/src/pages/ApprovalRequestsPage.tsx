@@ -12,6 +12,21 @@ const decisionLabel: Record<ApprovalDecisionOption, string> = {
   'request-changes': '要求修改',
 };
 
+const targetKindLabel: Record<string, string> = {
+  'mcp-tool-config': 'MCP 工具配置',
+  'runner-profile': 'Runner Profile',
+  'schedule-config': '调度配置',
+  skill: 'Skill',
+  prompt: 'Prompt',
+  'routing-rule': '路由规则',
+};
+
+const riskLevelLabel: Record<string, string> = {
+  low: '低风险',
+  medium: '中风险',
+  high: '高风险',
+};
+
 const riskTone = {
   low: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
   medium: 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
@@ -82,7 +97,7 @@ export function ApprovalRequestsPage() {
         <MetricCard
           label="待人工审阅"
           value={counts.pending}
-          description="没有 Web decision record 的提案"
+          description="没有 Web 决策记录的提案"
         />
         <MetricCard label="已决策" value={counts.decided} description="已通过、驳回或要求修改" />
       </section>
@@ -133,8 +148,7 @@ export function ApprovalRequestsPage() {
           {loading ? <p className="text-sm text-muted-foreground">加载中…</p> : null}
           {!loading && items.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              当前没有符合筛选条件的 approval request。AgentDock workspace/agent 调用 Haro 后生成的
-              validated proposal 会自动落到这里。
+              当前没有符合筛选条件的审批请求。AgentDock workspace/agent 调用 Haro 后生成的已验证提案会自动展示在这里。
             </div>
           ) : null}
           {items.map((view) => (
@@ -192,14 +206,14 @@ function ApprovalRequestCard({
               {request.level}
             </span>
             <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              {request.targetKind}
+              {targetKindLabel[request.targetKind] ?? request.targetKind}
             </span>
             <span className={`rounded-full px-2 py-0.5 text-xs ${riskTone[request.riskLevel]}`}>
-              {request.riskLevel}
+              {riskLevelLabel[request.riskLevel] ?? request.riskLevel}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Proposal: {request.proposalId} · Validation: {request.validationId} · Updated:{' '}
+            提案：{request.proposalId} · 验证：{request.validationId} · 更新时间：
             {formatDate(request.updatedAt)}
           </p>
         </div>
@@ -227,12 +241,12 @@ function ApprovalRequestCard({
       </div>
 
       <div className="mt-5 rounded-lg bg-muted/50 p-4 text-sm">
-        <p className="font-medium">Reviewer instruction</p>
+        <p className="font-medium">审阅说明</p>
         <p className="mt-1 text-muted-foreground">{request.reviewerInstruction}</p>
-        <p className="mt-3 font-medium">Rollback</p>
+        <p className="mt-3 font-medium">回滚方案</p>
         <p className="mt-1 text-muted-foreground">
-          {request.rollbackPlan.strategy} · snapshotRequired=
-          {String(request.rollbackPlan.snapshotRequired)}
+          {request.rollbackPlan.strategy} · 是否需要快照：
+          {request.rollbackPlan.snapshotRequired ? '是' : '否'}
         </p>
         {view.latestDecision?.direction ? (
           <>
