@@ -168,6 +168,7 @@ interface ApprovalRequestResult {
   approvalRequestCount: number;
   requestedProposalCount: number;
   pendingProposalCount: number;
+  skippedDuplicatePendingApprovalRequestCount: number;
   skippedCorruptProposalCount: number;
   skippedCorruptValidationCount: number;
   skippedCorruptApprovalRequestCount: number;
@@ -762,6 +763,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             approvalRequestCount: result.approvalRequestCount,
             requestedProposalCount: result.requestedProposalCount,
             pendingProposalCount: result.pendingProposalCount,
+            skippedDuplicatePendingApprovalRequestCount: result.skippedDuplicatePendingApprovalRequestCount,
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
             skippedCorruptValidationCount: result.skippedCorruptValidationCount,
             skippedCorruptApprovalRequestCount: result.skippedCorruptApprovalRequestCount,
@@ -779,6 +781,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `Approval requests: ${result.approvalRequestCount}`,
               `Requested proposals: ${result.requestedProposalCount}`,
               `Pending proposals after run: ${result.pendingProposalCount}`,
+              `Skipped duplicate pending approval requests: ${result.skippedDuplicatePendingApprovalRequestCount}`,
               `Wrote: ${result.approvalRequestPaths.join(', ')}`,
             ].join('\n') + '\n',
           );
@@ -788,6 +791,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
           [
             'No validated proposals need approval requests.',
             `Pending proposals after run: ${result.pendingProposalCount}`,
+            `Skipped duplicate pending approval requests: ${result.skippedDuplicatePendingApprovalRequestCount}`,
           ].join('\n') + '\n',
         );
       } catch (error) {
@@ -1164,13 +1168,21 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
     const requestedResult = readApprovalRequestedProposalIds(app.paths.root);
     const decidedResult = readApprovalDecisionProposalIds(app.paths.root);
     const validationStats = readValidationStats(app.paths.root);
+    const pendingDedupeKeys = readPendingApprovalRequestProposalDedupeKeys(app.paths.root, decidedResult.decided);
     const pendingResult = readValidatedProposalsNeedingApprovalRequest(
       app.paths.root,
       validationStats.validatedProposalIds,
       requestedResult.requested,
       decidedResult.decided,
     );
-    const pending = pendingResult.proposals;
+    const pending: Array<{ proposal: EvolutionProposal; validation: ValidationReport }> = [];
+    for (const candidate of pendingResult.proposals) {
+      const dedupeKey = proposalApprovalRequestDedupeKey(candidate.proposal);
+      if (pendingDedupeKeys.has(dedupeKey)) continue;
+      pendingDedupeKeys.add(dedupeKey);
+      pending.push(candidate);
+    }
+    const skippedDuplicatePendingApprovalRequestCount = pendingResult.proposals.length - pending.length;
     const selected = typeof limit === 'number' ? pending.slice(0, limit) : pending;
     if (selected.length === 0) {
       return {
@@ -1179,6 +1191,7 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
         approvalRequestCount: 0,
         requestedProposalCount: 0,
         pendingProposalCount: 0,
+        skippedDuplicatePendingApprovalRequestCount,
         skippedCorruptProposalCount: pendingResult.corruptCount,
         skippedCorruptValidationCount: validationStats.corruptCount,
         skippedCorruptApprovalRequestCount: requestedResult.corruptCount,
@@ -1200,6 +1213,7 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
       approvalRequestCount: approvalRequests.length,
       requestedProposalCount: selected.length,
       pendingProposalCount: pending.length - selected.length,
+      skippedDuplicatePendingApprovalRequestCount,
       skippedCorruptProposalCount: pendingResult.corruptCount,
       skippedCorruptValidationCount: validationStats.corruptCount,
       skippedCorruptApprovalRequestCount: requestedResult.corruptCount,
@@ -2517,6 +2531,50 @@ function readApprovalRequestedProposalIds(root: string): { requested: Set<string
     }
   }
   return { requested, corruptCount };
+}
+
+function readPendingApprovalRequestProposalDedupeKeys(
+  root: string,
+  decidedProposalIds: ReadonlySet<string>,
+): Set<string> {
+  const dir = approvalRequestsDir(root);
+  const keys = new Set<string>();
+  if (!existsSync(dir)) return keys;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = ApprovalRequestRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (decidedProposalIds.has(record.proposalId)) continue;
+      const proposal = readProposalById(root, record.proposalId);
+      if (proposal) keys.add(proposalApprovalRequestDedupeKey(proposal));
+    } catch {
+      // Corrupt approval request artifacts are already counted by
+      // readApprovalRequestedProposalIds(); skip them here so a corrupt file
+      // cannot block new review material.
+    }
+  }
+  return keys;
+}
+
+function proposalApprovalRequestDedupeKey(proposal: EvolutionProposal): string {
+  return JSON.stringify({
+    level: proposal.level,
+    targetKind: proposal.targetKind,
+    riskLevel: proposal.riskLevel,
+    changeSet: proposal.changeSet
+      .map((change) => ({
+        op: change.op,
+        targetRef: {
+          id: change.targetRef.id,
+          kind: change.targetRef.kind,
+          uri: change.targetRef.uri ?? '',
+        },
+      }))
+      .sort((a, b) => (
+        `${a.op}:${a.targetRef.kind}:${a.targetRef.id}:${a.targetRef.uri}`
+          .localeCompare(`${b.op}:${b.targetRef.kind}:${b.targetRef.id}:${b.targetRef.uri}`)
+      )),
+  });
 }
 
 function readApprovalDecisionProposalIds(root: string): { decided: Set<string>; corruptCount: number } {

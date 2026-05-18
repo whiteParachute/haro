@@ -31,9 +31,12 @@ describe('approval request review API', () => {
     const list = await app.request('/api/v1/approval-requests');
     expect(list.status).toBe(200);
     const listBody = await list.json();
-    expect(listBody.data.total).toBe(1);
-    expect(listBody.data.items[0].request.id).toBe('approval_request_smoke');
-    expect(listBody.data.items[0].latestDecision).toBeUndefined();
+    expect(listBody.data.total).toBe(2);
+    expect(listBody.data.items.map((item: { request: { id: string } }) => item.request.id)).toEqual([
+      'approval_request_zzz_older',
+      'approval_request_smoke',
+    ]);
+    expect(listBody.data.items[1].latestDecision).toBeUndefined();
 
     const detail = await app.request('/api/v1/approval-requests/approval_request_smoke');
     expect(detail.status).toBe(200);
@@ -181,6 +184,40 @@ function writeFixture(haroHome: string): void {
       evidenceRefs: [],
       createdAt: now,
       updatedAt: now,
+    }, null, 2)}\n`,
+    'utf8',
+  );
+
+  writeFileSync(
+    path.join(requestDir, 'approval_request_zzz_older.json'),
+    `${JSON.stringify({
+      id: 'approval_request_zzz_older',
+      proposalId: 'proposal_older',
+      validationId: 'validation_older',
+      status: 'pending',
+      title: 'Older review proposal',
+      level: 'L0',
+      targetKind: 'mcp-tool-config',
+      riskLevel: 'low',
+      sourceRef: { id: 'proposal_older', kind: 'evolution-proposal' },
+      validationRef: { id: 'validation_older', kind: 'validation-report' },
+      whyChange: ['This older request should be reviewed first.'],
+      howChange: ['Keep the list ordered by creation time.'],
+      expectedBenefits: ['Humans can drain the oldest pending work first.'],
+      requiredTests: [],
+      manualChecks: [],
+      regressionRisks: [],
+      rollbackPlan: {
+        strategy: 'No artifact change in this fixture.',
+        snapshotRequired: false,
+        rollbackRefs: [],
+      },
+      decisionOptions: ['approve', 'reject', 'request-changes'],
+      reviewerInstruction: 'Review older requests first.',
+      humanReviewRequired: true,
+      evidenceRefs: [],
+      createdAt: '2026-05-13T00:00:00.000Z',
+      updatedAt: '2026-05-13T00:00:00.000Z',
     }, null, 2)}\n`,
     'utf8',
   );

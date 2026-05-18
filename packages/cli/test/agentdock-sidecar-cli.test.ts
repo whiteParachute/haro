@@ -999,6 +999,46 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(readApprovalRequestRecords(root)).toHaveLength(0);
   });
 
+  it('approval-request --pending skips new proposals that duplicate an undecided approval request', async () => {
+    const root = newHome('agentdock-approval-request-duplicate-pending');
+    writeValidatedMcpToolConfigProposal(root, 'proposal_duplicate_old', 'validation_duplicate_old');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+
+    writeValidatedMcpToolConfigProposal(root, 'proposal_duplicate_new', 'validation_duplicate_new');
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toBe('');
+    const payload = (JSON.parse(secondOut.read()) as { data: {
+      approvalRequestCount: number;
+      requestedProposalCount: number;
+      skippedDuplicatePendingApprovalRequestCount: number;
+      wroteApprovalRequests: boolean;
+    } }).data;
+    expect(payload.approvalRequestCount).toBe(0);
+    expect(payload.requestedProposalCount).toBe(0);
+    expect(payload.skippedDuplicatePendingApprovalRequestCount).toBe(1);
+    expect(payload.wroteApprovalRequests).toBe(false);
+    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+  });
+
   it('validate --pending --limit only validates the selected pending proposal count', async () => {
     const root = newHome('agentdock-validate-limit');
     const observeOut = captureStream();

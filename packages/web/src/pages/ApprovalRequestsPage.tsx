@@ -63,7 +63,7 @@ export function ApprovalRequestsPage() {
     setError(null);
     try {
       const response = await listApprovalRequests(nextStatus);
-      setItems(response.data.items);
+      setItems([...response.data.items].sort(compareApprovalRequestViews));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
@@ -244,7 +244,7 @@ function ApprovalRequestCard({
   const disabled = busy || Boolean(view.latestDecision);
   const tone = riskTone[request.riskLevel];
   return (
-    <article className={`group relative overflow-hidden rounded-[1.6rem] border border-slate-950/10 bg-white shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl dark:border-white/10 dark:bg-slate-950/88 ${tone.glow}`}>
+    <article className={`group relative min-w-0 overflow-hidden rounded-[1.6rem] border border-slate-950/10 bg-white shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl dark:border-white/10 dark:bg-slate-950/88 ${tone.glow}`}>
       <div className={`absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b ${tone.rail}`} />
       <div className="absolute right-0 top-0 h-36 w-36 rounded-full bg-cyan-300/10 blur-3xl transition group-hover:bg-cyan-300/18" />
       <div className="relative p-5 md:p-6">
@@ -271,10 +271,10 @@ function ApprovalRequestCard({
             </div>
 
             <div>
-              <h3 className="max-w-4xl text-2xl font-black leading-tight tracking-[-0.045em] text-slate-950 dark:text-white">
+              <h3 className="max-w-4xl break-words text-2xl font-black leading-tight tracking-[-0.045em] text-slate-950 [overflow-wrap:anywhere] dark:text-white">
                 {request.title}
               </h3>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <div className="mt-3 flex min-w-0 flex-wrap gap-2 text-xs text-muted-foreground">
                 <CodePill label="提案" value={request.proposalId} />
                 <CodePill label="验证" value={request.validationId} />
                 <CodePill label="更新时间" value={formatDate(request.updatedAt)} />
@@ -285,19 +285,19 @@ function ApprovalRequestCard({
           <DecisionPanel disabled={disabled} busy={busy} latestDecision={view.latestDecision?.decision} onDecision={onDecision} />
         </div>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-3">
+        <div className="mt-6 grid min-w-0 gap-4 lg:grid-cols-3">
           <SectionList variant="why" title="为什么改" items={request.whyChange} />
           <SectionList variant="how" title="怎么改" items={request.howChange} />
           <SectionList variant="gain" title="预期收益" items={request.expectedBenefits} />
         </div>
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-3">
           <SectionList variant="test" title="必须测试" items={request.requiredTests} empty="无自动测试要求" />
           <SectionList variant="check" title="人工检查" items={request.manualChecks} empty="无人工检查要求" />
           <SectionList variant="risk" title="回归风险" items={request.regressionRisks} empty="未声明额外风险" />
         </div>
 
-        <div className="mt-5 grid gap-4 rounded-[1.35rem] border border-slate-950/10 bg-slate-950/[0.025] p-4 text-sm dark:border-white/10 dark:bg-white/[0.035] lg:grid-cols-[1fr_1fr]">
+        <div className="mt-5 grid min-w-0 gap-4 rounded-[1.35rem] border border-slate-950/10 bg-slate-950/[0.025] p-4 text-sm dark:border-white/10 dark:bg-white/[0.035] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <InfoBlock label="审阅说明" text={request.reviewerInstruction} />
           <InfoBlock
             label="回滚方案"
@@ -326,7 +326,7 @@ function DecisionPanel({
   onDecision: (decision: ApprovalDecisionOption) => void;
 }) {
   return (
-    <aside className="rounded-[1.25rem] border border-slate-950/10 bg-slate-50/85 p-3 dark:border-white/10 dark:bg-white/[0.045]">
+    <aside className="min-w-0 rounded-[1.25rem] border border-slate-950/10 bg-slate-50/85 p-3 dark:border-white/10 dark:bg-white/[0.045]">
       <p className="px-2 pt-1 text-xs font-bold uppercase tracking-[0.24em] text-muted-foreground">Decision</p>
       <div className="mt-3 grid gap-2">
         <Button className="h-10 rounded-xl" onClick={() => onDecision('approve')} disabled={disabled}>
@@ -371,19 +371,19 @@ function SectionList({
     why: 'bg-amber-400',
   }[variant];
   return (
-    <section className="rounded-[1.25rem] border border-slate-950/10 bg-slate-50/76 p-4 dark:border-white/10 dark:bg-white/[0.035]">
+    <section className="min-w-0 rounded-[1.25rem] border border-slate-950/10 bg-slate-50/76 p-4 dark:border-white/10 dark:bg-white/[0.035]">
       <div className="flex items-center gap-2">
         <span className={`h-2.5 w-2.5 rounded-full ${marker} shadow-[0_0_20px_currentColor]`} />
         <p className="text-sm font-black tracking-[-0.02em]">{title}</p>
       </div>
       {items.length > 0 ? (
-        <ol className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
+        <ol className="mt-3 min-w-0 space-y-2 text-sm leading-6 text-muted-foreground">
           {items.map((item, itemIndex) => (
-            <li key={`${title}-${item}`} className="grid grid-cols-[1.6rem_1fr] gap-2">
+            <li key={`${title}-${item}`} className="grid min-w-0 grid-cols-[1.6rem_minmax(0,1fr)] gap-2">
               <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-white text-[11px] font-bold text-slate-700 shadow-sm dark:bg-slate-900 dark:text-slate-200">
                 {itemIndex + 1}
               </span>
-              <span>{item}</span>
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">{item}</span>
             </li>
           ))}
         </ol>
@@ -404,18 +404,18 @@ function Badge({ children }: { children: string }) {
 
 function CodePill({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-950/10 bg-slate-100/80 px-2.5 py-1 dark:border-white/10 dark:bg-white/8">
-      <span className="font-semibold text-foreground">{label}</span>
-      <span className="truncate font-mono">{value}</span>
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-slate-950/10 bg-slate-100/80 px-2.5 py-1 dark:border-white/10 dark:bg-white/8">
+      <span className="shrink-0 font-semibold text-foreground">{label}</span>
+      <span className="min-w-0 truncate font-mono">{value}</span>
     </span>
   );
 }
 
 function InfoBlock({ label, text }: { label: string; text: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <p className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">{label}</p>
-      <p className="mt-2 leading-6 text-muted-foreground">{text}</p>
+      <p className="mt-2 break-words leading-6 text-muted-foreground [overflow-wrap:anywhere]">{text}</p>
     </div>
   );
 }
@@ -443,4 +443,21 @@ function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function compareApprovalRequestViews(a: ApprovalRequestView, b: ApprovalRequestView): number {
+  const created = compareIsoDateTime(a.request.createdAt, b.request.createdAt);
+  if (created !== 0) return created;
+  const updated = compareIsoDateTime(a.request.updatedAt, b.request.updatedAt);
+  if (updated !== 0) return updated;
+  return a.request.id.localeCompare(b.request.id);
+}
+
+function compareIsoDateTime(a: string, b: string): number {
+  const left = Date.parse(a);
+  const right = Date.parse(b);
+  if (Number.isNaN(left) && Number.isNaN(right)) return a.localeCompare(b);
+  if (Number.isNaN(left)) return 1;
+  if (Number.isNaN(right)) return -1;
+  return left - right;
 }

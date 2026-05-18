@@ -160,7 +160,7 @@ function listApprovalRequests(
   const dir = approvalRequestsDir(root);
   if (!existsSync(dir)) return [];
   const decisions = latestDecisions(root);
-  return readdirSync(dir)
+  const views = readdirSync(dir)
     .filter((name) => name.endsWith('.json'))
     .sort()
     .flatMap((name) => {
@@ -172,6 +172,24 @@ function listApprovalRequests(
       if (status === 'decided' && !decided) return [];
       return [{ request, ...(latestDecision ? { latestDecision } : {}) }];
     });
+  return views.sort(compareApprovalRequestViews);
+}
+
+function compareApprovalRequestViews(a: ApprovalRequestView, b: ApprovalRequestView): number {
+  const created = compareIsoDateTime(a.request.createdAt, b.request.createdAt);
+  if (created !== 0) return created;
+  const updated = compareIsoDateTime(a.request.updatedAt, b.request.updatedAt);
+  if (updated !== 0) return updated;
+  return a.request.id.localeCompare(b.request.id);
+}
+
+function compareIsoDateTime(a: string, b: string): number {
+  const left = Date.parse(a);
+  const right = Date.parse(b);
+  if (Number.isNaN(left) && Number.isNaN(right)) return a.localeCompare(b);
+  if (Number.isNaN(left)) return 1;
+  if (Number.isNaN(right)) return -1;
+  return left - right;
 }
 
 function getApprovalRequest(root: string, id: string): ApprovalRequestView | null {

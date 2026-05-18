@@ -218,7 +218,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       expect(payload.result.structuredContent.summary.approvalRequestCount).toBe(1);
       expect(payload.result.structuredContent.summary.approvalRequestIds).toHaveLength(1);
       expect(payload.result.structuredContent.nextActions.join('\n')).toContain(
-        'Present the approval request',
+        '展示审批请求摘要',
       );
       expect(existsSync(join(home, 'evolution', 'approval-requests'))).toBe(true);
       expect(existsSync(join(home, 'memory'))).toBe(false);
