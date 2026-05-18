@@ -3,30 +3,30 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(0.985 0.002 247.839);
+  --background: oklch(0.976 0.01 238);
   --foreground: oklch(0.208 0.042 265.755);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.208 0.042 265.755);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.208 0.042 265.755);
-  --primary: oklch(0.546 0.072 257.417);
+  --primary: oklch(0.28 0.04 258);
   --primary-foreground: oklch(0.985 0.002 247.839);
-  --secondary: oklch(0.968 0.007 247.896);
+  --secondary: oklch(0.94 0.018 235);
   --secondary-foreground: oklch(0.278 0.033 256.848);
-  --muted: oklch(0.968 0.007 247.896);
+  --muted: oklch(0.94 0.018 235);
   --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
+  --accent: oklch(0.91 0.05 216);
   --accent-foreground: oklch(0.278 0.033 256.848);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0.002 247.839);
   --border: oklch(0.928 0.006 264.531);
   --input: oklch(0.928 0.006 264.531);
-  --ring: oklch(0.704 0.04 256.788);
+  --ring: oklch(0.68 0.13 222);
   --sidebar: oklch(0.972 0.006 247.896);
   --sidebar-foreground: oklch(0.208 0.042 265.755);
   --sidebar-accent: oklch(0.94 0.012 255.508);
   --sidebar-accent-foreground: oklch(0.278 0.033 256.848);
-  --radius: 1rem;
+  --radius: 1.15rem;
 }
 
 .dark {
@@ -106,7 +106,8 @@ html.dark {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "IBM Plex Sans", "Aptos", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  letter-spacing: -0.01em;
 }
 
 .hljs-keyword,
@@ -130,4 +131,14 @@ body {
 .hljs-quote {
   color: #94a3b8;
   font-style: italic;
+}
+
+
+::selection {
+  background: rgba(34, 211, 238, 0.28);
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
 }
