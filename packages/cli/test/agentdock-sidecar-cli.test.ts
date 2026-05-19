@@ -404,6 +404,40 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     };
   }
 
+  function writeCurrentMcpAuditPolicy(root: string, overrides: Record<string, unknown> = {}) {
+    const dir = join(root, 'assets', 'current', 'mcp-tool-config');
+    mkdirSync(dir, { recursive: true });
+    const policy = {
+      id: 'agentdock:haro-sidecar-mcp-audit-policy',
+      kind: 'mcp-tool-config',
+      policy: {
+        defaultTools: ['haro_observe', 'haro_propose', 'haro_validate', 'haro_asset_query', 'haro_run_daily_workflow'],
+        gatedWriteTools: ['haro_apply', 'haro_rollback'],
+        approvalRequirements: ['自动提案必须包含具体 proposal-content 和 contentHash。'],
+        auditChecklist: [
+          '列出 Haro MCP server 暴露的默认工具和 gated-write 工具。',
+          '确认 proposal-content 落在 $HARO_HOME/evolution/proposal-content/<proposal-id>/。',
+        ],
+      },
+      ...overrides,
+    };
+    writeFileSync(
+      join(dir, `${encodedAssetPathSegment('agentdock:haro-sidecar-mcp-audit-policy')}.json`),
+      `${JSON.stringify(policy, null, 2)}\n`,
+    );
+  }
+
+  function writeMcpAuditSignal(root: string) {
+    const frontierDir = join(root, 'evolution', 'frontier-signals');
+    mkdirSync(frontierDir, { recursive: true });
+    writeFileSync(join(frontierDir, 'audit-api.json'), `${JSON.stringify(frontierSignal('frontier-signal-audit-api', {
+      title: 'GitHub exposes Copilot cloud agent configuration audit via REST API',
+      summary: 'The API audits MCP server configuration, enabled tools, Actions workflow policy, and firewall configuration.',
+      claims: ['Returned fields include MCP server configuration and enabled tools.'],
+      targetDomains: ['mcp-tools', 'haro-sidecar', 'agentdock-kernel'],
+    }), null, 2)}\n`);
+  }
+
   it('connect agent-dock saves sanitized connection config without creating memory', async () => {
     const root = newHome('agentdock-connect');
     const stdout = captureStream();
@@ -808,6 +842,59 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
+  it.each([
+    ['allows compliant MCP candidates', 'default', '', 1, 0, 'loaded', 'allow-actionable-proposal'],
+    ['skips blocked MCP candidates', 'blocking', 'skipped candidate blocked by mcp-audit-policy', 0, 1, 'loaded', 'blocked-by-policy'],
+    ['warns when policy is missing', 'missing', 'no current mcp-audit-policy found', 1, 0, 'missing', undefined],
+    ['errors when policy JSON is corrupt', 'corrupt', 'current mcp-audit-policy failed to parse', 1, 0, 'parse-error', undefined],
+  ] as const)(
+    'propose consumes current mcp-audit-policy: %s',
+    async (_name, policyMode, stderrText, proposalCount, skippedProposalCount, status, decision) => {
+      const root = newHome(`agentdock-propose-policy-${policyMode}`);
+      await runCli(commonOpts(root, captureStream(), captureStream(), [
+        'observe', '--source', 'fake', '--connection', 'fake-agentdock', '--since', 'last', '--json',
+      ]));
+      writeMcpAuditSignal(root);
+      if (policyMode === 'default') writeCurrentMcpAuditPolicy(root);
+      if (policyMode === 'blocking') writeCurrentMcpAuditPolicy(root, {
+        policy: {
+          defaultTools: ['haro_observe'],
+          gatedWriteTools: ['haro_apply', 'haro_rollback'],
+          approvalRequirements: ['自动提案必须包含具体 proposal-content 和 contentHash。'],
+          auditChecklist: ['must mention never-seen-check'],
+        },
+      });
+      if (policyMode === 'corrupt') {
+        const policyDir = join(root, 'assets', 'current', 'mcp-tool-config');
+        mkdirSync(policyDir, { recursive: true });
+        writeFileSync(join(policyDir, `${encodedAssetPathSegment('agentdock:haro-sidecar-mcp-audit-policy')}.json`), '{ broken json');
+      }
+      const stdout = captureStream();
+      const stderr = captureStream();
+
+      const result = await runCli(commonOpts(root, stdout, stderr, ['propose', '--auto-dry-run', '--include-frontier', '--json']));
+
+      expect(result.exitCode).toBe(0);
+      const stderrOutput = stderr.read();
+      if (stderrText) expect(stderrOutput).toContain(stderrText);
+      else expect(stderrOutput).toBe('');
+      const payload = (JSON.parse(stdout.read()) as { data: {
+        proposalCount: number;
+        skippedProposalCount: number;
+        wroteProposal: boolean;
+        policyAudit: { status: string; decision?: string; blockedCount: number; allowedCount: number; evaluations: Array<{ decision: string; auditChecklistHit: boolean }> };
+      } }).data;
+      expect(payload.proposalCount).toBe(proposalCount);
+      expect(payload.skippedProposalCount).toBe(skippedProposalCount);
+      expect(payload.wroteProposal).toBe(proposalCount > 0);
+      expect(payload.policyAudit.status).toBe(status);
+      if (decision) {
+        expect(payload.policyAudit.decision).toBe(decision);
+        expect(payload.policyAudit.evaluations[0]?.decision).toBe(decision);
+      }
+    },
+  );
+
   it('daily workflow turns MCP audit frontier signals into actionable approval requests', async () => {
     const root = newHome('agentdock-actionable-mcp-audit-proposal');
     const observeOut = captureStream();
@@ -841,6 +928,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         uri: 'https://github.blog/changelog/2026-05-18-audit-repository-copilot-cloud-agent-configuration-via-the-rest-api',
       },
     }), null, 2)}\n`);
+    writeCurrentMcpAuditPolicy(root);
 
     const proposeOut = captureStream();
     const proposeErr = captureStream();
@@ -927,6 +1015,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
 
   it('propose --auto-dry-run turns real runner errors into actionable runner-profile content', async () => {
     const root = newHome('agentdock-actionable-runner-profile-proposal');
+    writeCurrentMcpAuditPolicy(root);
     const observationDir = join(root, 'evolution', 'observations');
     mkdirSync(observationDir, { recursive: true });
     const batchId = 'obs-agentdock-local-runner-error';
@@ -1065,6 +1154,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
 
   it('propose --auto-dry-run turns scheduled task errors into actionable schedule-config content', async () => {
     const root = newHome('agentdock-actionable-schedule-config-proposal');
+    writeCurrentMcpAuditPolicy(root);
     const observationDir = join(root, 'evolution', 'observations');
     mkdirSync(observationDir, { recursive: true });
     const batchId = 'obs-agentdock-local-schedule-error';

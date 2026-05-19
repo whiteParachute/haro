@@ -134,6 +134,7 @@ interface ProposeResult {
   mode: 'dry-run';
   includeFrontier: boolean;
   proposalCount: number;
+  skippedProposalCount: number;
   consumedObservationCount: number;
   pendingObservationCount: number;
   includedFrontierSignalCount: number;
@@ -144,6 +145,7 @@ interface ProposeResult {
   wroteProposal: boolean;
   assetEventCount: number;
   assetEventIds: string[];
+  policyAudit?: ProposePolicyAuditSummary;
   proposal?: EvolutionProposal;
   proposalPath?: string;
 }
@@ -156,7 +158,32 @@ interface GeneratedProposalContentFile {
 interface GeneratedProposal {
   proposal: EvolutionProposal;
   contentFiles: GeneratedProposalContentFile[];
+  policyAudit?: McpAuditPolicyEvaluation;
 }
+
+type McpAuditPolicyDecision = 'allow-actionable-proposal' | 'blocked-by-policy' | 'not-applicable';
+
+interface McpAuditPolicyEvaluation {
+  policyId: string; policyContentHash: string; candidateProposalId?: string; candidateTargetKind?: string;
+  defaultToolsHit: boolean; gatedWriteHit: boolean; approvalRequirementsHit: boolean; auditChecklistHit: boolean;
+  decision: McpAuditPolicyDecision; reason: string;
+}
+
+interface ProposePolicyAuditSummary {
+  policyId?: string; policyContentHash?: string; policyPath?: string; status: 'loaded' | 'missing' | 'parse-error';
+  evaluatedCandidateCount: number; blockedCount: number; allowedCount: number; notApplicableCount: number;
+  decision?: McpAuditPolicyDecision; reason?: string; evaluations: McpAuditPolicyEvaluation[];
+}
+
+interface CurrentMcpAuditPolicy {
+  id: string; path: string; contentHash: string; defaultTools: string[]; gatedWriteTools: string[];
+  approvalRequirements: string[]; auditChecklist: string[];
+}
+
+type CurrentMcpAuditPolicyLoadResult =
+  | { status: 'loaded'; policy: CurrentMcpAuditPolicy }
+  | { status: 'missing'; path: string }
+  | { status: 'parse-error'; path: string; reason: string };
 
 interface ValidateResult {
   command: 'validate';
@@ -497,6 +524,7 @@ interface SidecarStatusResult {
 const CONNECTIONS_FILE = 'agentdock-connections.json';
 const DEFAULT_CONNECTION_ID = 'agentdock-local';
 const FRONTIER_CURSOR_CONNECTION_ID = 'frontier-intake';
+const MCP_AUDIT_POLICY_ASSET_ID = 'agentdock:haro-sidecar-mcp-audit-policy';
 
 export function registerAgentDockSidecarCommands(program: Command, app: AppContext): void {
   const connect = program.command('connect').description('Manage sidecar connections');
@@ -632,6 +660,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             mode: result.mode,
             includeFrontier: result.includeFrontier,
             proposalCount: result.proposalCount,
+            skippedProposalCount: result.skippedProposalCount,
             consumedObservationCount: result.consumedObservationCount,
             pendingObservationCount: result.pendingObservationCount,
             includedFrontierSignalCount: result.includedFrontierSignalCount,
@@ -642,6 +671,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             wroteProposal: result.wroteProposal,
             assetEventCount: result.assetEventCount,
             assetEventIds: result.assetEventIds,
+            policyAudit: result.policyAudit,
             proposalId: result.proposal?.id,
             proposalPath: result.proposalPath,
             proposal: result.proposal,
@@ -1069,6 +1099,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         mode: 'dry-run',
         includeFrontier: options.includeFrontier === true,
         proposalCount: 0,
+        skippedProposalCount: 0,
         consumedObservationCount: 0,
         pendingObservationCount: 0,
         includedFrontierSignalCount: 0,
@@ -1083,6 +1114,31 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
     }
 
     const generated = createAutoProposal(app.paths.root, selected, app.now, frontierResult.signals);
+    const policyAudit = generated.proposal.status === 'proposed'
+      ? evaluateGeneratedProposalAgainstPolicy(generated, emitAndLoadCurrentMcpAuditPolicy(app))
+      : undefined;
+    generated.policyAudit = policyAudit?.evaluations[0];
+    if (generated.policyAudit?.decision === 'blocked-by-policy') {
+      app.stderr.write(`haro propose: skipped candidate blocked by mcp-audit-policy: ${generated.policyAudit.reason}\n`);
+      return {
+        command: 'propose',
+        mode: 'dry-run',
+        includeFrontier: options.includeFrontier === true,
+        proposalCount: 0,
+        skippedProposalCount: 1,
+        consumedObservationCount: 0,
+        pendingObservationCount: pending.length,
+        includedFrontierSignalCount: frontierResult.signals.length,
+        availableFrontierSignalCount: frontierResult.signals.length,
+        skippedCorruptObservationCount: pendingResult.corruptCount,
+        skippedCorruptProposalCount: consumedResult.corruptCount,
+        skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
+        wroteProposal: false,
+        assetEventCount: 0,
+        assetEventIds: [],
+        ...(policyAudit ? { policyAudit } : {}),
+      };
+    }
     const proposal = generated.proposal;
     const path = proposalFilePath(app.paths.root, proposal);
     for (const contentFile of generated.contentFiles) {
@@ -1095,6 +1151,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       mode: 'dry-run',
       includeFrontier: options.includeFrontier === true,
       proposalCount: 1,
+      skippedProposalCount: 0,
       consumedObservationCount: selected.length,
       pendingObservationCount: pending.length - selected.length,
       includedFrontierSignalCount: frontierResult.signals.length,
@@ -1105,6 +1162,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       wroteProposal: true,
       assetEventCount: assetEventIds.length,
       assetEventIds,
+      ...(policyAudit ? { policyAudit } : {}),
       proposal,
       proposalPath: path,
     };
@@ -4672,6 +4730,152 @@ function createAutoProposal(
   };
 }
 
+function loadCurrentMcpAuditPolicy(root: string): CurrentMcpAuditPolicyLoadResult {
+  const fileName = `${encodedAssetPathSegment(MCP_AUDIT_POLICY_ASSET_ID)}.json`;
+  const path = join(currentAssetContentDir(root, 'mcp-tool-config'), fileName);
+  if (!existsSync(path) || !lstatSync(path).isFile()) return { status: 'missing', path };
+  try {
+    const content = readFileSync(path);
+    const parsed = JSON.parse(content.toString('utf8')) as unknown;
+    if (!isRecord(parsed) || parsed.id !== MCP_AUDIT_POLICY_ASSET_ID || !isRecord(parsed.policy)) {
+      return { status: 'parse-error', path, reason: 'missing id or policy object' };
+    }
+    return {
+      status: 'loaded',
+      policy: {
+        id: MCP_AUDIT_POLICY_ASSET_ID,
+        path,
+        contentHash: sha256(content),
+        defaultTools: stringArrayField(parsed.policy.defaultTools),
+        gatedWriteTools: stringArrayField(parsed.policy.gatedWriteTools),
+        approvalRequirements: stringArrayField(parsed.policy.approvalRequirements),
+        auditChecklist: stringArrayField(parsed.policy.auditChecklist),
+      },
+    };
+  } catch (error) {
+    return { status: 'parse-error', path, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function emitMcpAuditPolicyLoadProblem(app: AppContext, result: CurrentMcpAuditPolicyLoadResult): void {
+  if (result.status === 'missing') {
+    app.stderr.write('haro propose: no current mcp-audit-policy found, propose runs without policy gating\n');
+  } else if (result.status === 'parse-error') {
+    app.stderr.write(`haro propose: current mcp-audit-policy failed to parse: ${result.reason}\n`);
+  }
+}
+
+function emitAndLoadCurrentMcpAuditPolicy(app: AppContext): CurrentMcpAuditPolicyLoadResult {
+  const result = loadCurrentMcpAuditPolicy(app.paths.root);
+  emitMcpAuditPolicyLoadProblem(app, result);
+  return result;
+}
+
+function evaluateGeneratedProposalAgainstPolicy(
+  generated: GeneratedProposal,
+  policyResult: CurrentMcpAuditPolicyLoadResult,
+): ProposePolicyAuditSummary {
+  if (policyResult.status !== 'loaded') {
+    return {
+      status: policyResult.status,
+      policyPath: policyResult.path,
+      evaluatedCandidateCount: 0,
+      blockedCount: 0,
+      allowedCount: 0,
+      notApplicableCount: 0,
+      evaluations: [],
+    };
+  }
+  const evaluation = evaluateCandidateAgainstPolicy(generated.proposal, policyResult.policy);
+  return {
+    status: 'loaded',
+    policyId: policyResult.policy.id,
+    policyContentHash: policyResult.policy.contentHash,
+    policyPath: policyResult.policy.path,
+    evaluatedCandidateCount: 1,
+    blockedCount: evaluation.decision === 'blocked-by-policy' ? 1 : 0,
+    allowedCount: evaluation.decision === 'allow-actionable-proposal' ? 1 : 0,
+    notApplicableCount: evaluation.decision === 'not-applicable' ? 1 : 0,
+    decision: evaluation.decision,
+    reason: evaluation.reason,
+    evaluations: [evaluation],
+  };
+}
+
+function evaluateCandidateAgainstPolicy(
+  proposal: EvolutionProposal,
+  policy: CurrentMcpAuditPolicy,
+): McpAuditPolicyEvaluation {
+  const text = candidatePolicyText(proposal);
+  const defaultToolsHit = policy.defaultTools.some((tool) => text.includes(tool.toLowerCase()));
+  const gatedWriteHit = policy.gatedWriteTools.some((tool) => text.includes(tool.toLowerCase()));
+  const approvalRequirementsHit = proposal.humanReviewRequired &&
+    proposal.changeSet.every((change) => Boolean(change.contentRef && change.contentHash)) &&
+    proposal.testPlan.manualChecks.length > 0 &&
+    proposal.testPlan.regressionRisks.length > 0;
+  const auditChecklistHit = proposal.targetKind !== 'mcp-tool-config' ||
+    policyItemsSatisfied(policy.auditChecklist, text);
+  const applicable = proposal.targetKind === 'mcp-tool-config' || defaultToolsHit || gatedWriteHit;
+  const decision: McpAuditPolicyDecision = !applicable
+    ? 'not-applicable'
+    : (gatedWriteHit && !approvalRequirementsHit) || !auditChecklistHit
+        ? 'blocked-by-policy'
+        : 'allow-actionable-proposal';
+  const reason = decision === 'not-applicable'
+    ? 'candidate target is outside mcp-audit-policy scope'
+    : decision === 'blocked-by-policy'
+        ? 'candidate does not satisfy mcp-audit-policy approval requirements or checklist'
+        : 'candidate satisfies mcp-audit-policy approval requirements and checklist';
+  return {
+    policyId: policy.id,
+    policyContentHash: policy.contentHash,
+    candidateProposalId: proposal.id,
+    candidateTargetKind: proposal.targetKind,
+    defaultToolsHit,
+    gatedWriteHit,
+    approvalRequirementsHit,
+    auditChecklistHit,
+    decision,
+    reason,
+  };
+}
+
+function candidatePolicyText(proposal: EvolutionProposal): string {
+  return [
+    proposal.title,
+    proposal.targetKind,
+    ...proposal.changeSet.flatMap((change) => [
+      change.targetRef.id,
+      change.targetRef.kind,
+      change.targetRef.uri ?? '',
+      change.contentRef ?? '',
+      change.contentHash ?? '',
+      change.summary,
+    ]),
+    ...proposal.testPlan.manualChecks,
+    ...proposal.testPlan.regressionRisks,
+    ...proposal.testPlan.requiredCommands,
+    proposal.rollbackPlan.strategy,
+  ].join(' ').toLowerCase();
+}
+
+function stringArrayField(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function policyItemsSatisfied(items: readonly string[], text: string): boolean {
+  return items.every((item) => {
+    const lower = item.toLowerCase();
+    if (/默认工具|default tools|enabled tools/.test(lower)) return /默认工具|enabled tools|工具/.test(text);
+    if (/gated|写入|apply|rollback/.test(lower)) return /gated-write|haro_apply|haro_rollback|写入/.test(text);
+    if (/daily|workflow|调度|memory/.test(lower)) return /daily|workflow|调度|agentdock/.test(text);
+    if (/proposal-content|contenthash|assets\/current|allowlist|内容指纹/.test(lower)) {
+      return /proposal-content|contenthash|assets\/current|内容指纹/.test(text);
+    }
+    return text.includes(lower);
+  });
+}
+
 function createActionableRunnerProfileProposal(
   root: string,
   batches: readonly ObservationBatch[],
@@ -5052,7 +5256,7 @@ function createActionableMcpToolConfigProposal(
     ...batches.map(observationBatchRef),
     ...signals.map(frontierSignalRef),
   ];
-  const assetId = 'agentdock:haro-sidecar-mcp-audit-policy';
+  const assetId = MCP_AUDIT_POLICY_ASSET_ID;
   const content = actionableMcpToolConfigContent(assetId, signals);
   const contentHash = sha256(content);
   const fingerprint = sha256(JSON.stringify({
