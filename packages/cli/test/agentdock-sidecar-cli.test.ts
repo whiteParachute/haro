@@ -855,6 +855,263 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
+  it('propose --auto-dry-run turns real runner errors into actionable runner-profile content', async () => {
+    const root = newHome('agentdock-actionable-runner-profile-proposal');
+    const observationDir = join(root, 'evolution', 'observations');
+    mkdirSync(observationDir, { recursive: true });
+    const batchId = 'obs-agentdock-local-runner-error';
+    writeFileSync(join(observationDir, `${batchId}.json`), `${JSON.stringify({
+      id: batchId,
+      connectionId: 'agentdock-local',
+      source: 'agentdock-http',
+      collectedAt: '2026-05-08T11:59:00.000Z',
+      window: { until: '2026-05-08T11:59:00.000Z' },
+      sessions: [],
+      turns: [],
+      toolCalls: [],
+      scheduledTaskRuns: [
+        {
+          id: 'task-run-haro-daily-error',
+          taskId: 'haro-daily-frontier-intake',
+          executionType: 'agent',
+          status: 'error',
+          startedAt: '2026-05-08T11:58:00.000Z',
+          endedAt: '2026-05-08T11:58:30.000Z',
+          resultRef: 'agentdock://tasks/haro-daily-frontier-intake/last-result',
+        },
+      ],
+      memoryMaintenanceLogs: [],
+      runnerErrors: [
+        {
+          id: 'runner-error-timeout-001',
+          sessionId: 'session-runner-error',
+          runnerId: 'codex',
+          code: 'AGENTDOCK_TURN_TIMEOUT',
+          message: 'AgentDock turn turn-123 ended with status timeout',
+          recoverable: true,
+          occurredAt: '2026-05-08T11:58:20.000Z',
+          detailsRef: 'agentdock://sessions/session-runner-error/turns/turn-123',
+        },
+      ],
+      usageRecords: [],
+      rawRefs: ['http://agentdock.local/api/status'],
+      metadata: {},
+    }, null, 2)}\n`);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+
+    expect(propose.exitCode).toBe(0);
+    expect(proposeErr.read()).toBe('');
+    const proposePayload = (JSON.parse(proposeOut.read()) as { data: {
+      proposal: {
+        id: string;
+        status: string;
+        level: string;
+        targetKind: string;
+        riskLevel: string;
+        changeSet: Array<{ contentRef: string; contentHash: string; summary: string; targetRef: { id: string; uri: string } }>;
+      };
+    } }).data;
+    expect(proposePayload.proposal).toMatchObject({
+      status: 'proposed',
+      level: 'L1',
+      targetKind: 'runner-profile',
+      riskLevel: 'medium',
+    });
+    expect(proposePayload.proposal.changeSet[0]?.targetRef.id).toBe('haro-sidecar:runner-profile:error-recovery-policy');
+    expect(proposePayload.proposal.changeSet[0]?.targetRef.uri).toContain('haro-sidecar://assets/current/runner-profile/');
+    expect(proposePayload.proposal.changeSet[0]?.summary).toContain('AGENTDOCK_TURN_TIMEOUT');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', proposePayload.proposal.id);
+    const proposalContentFiles = readdirSync(proposalContentDir);
+    expect(proposalContentFiles).toHaveLength(1);
+    const proposalContent = JSON.parse(readFileSync(join(proposalContentDir, proposalContentFiles[0]!), 'utf8')) as {
+      id: string;
+      kind: string;
+      observedRunnerErrorClasses: Array<{ code: string; messages: string[]; recoverableValues: boolean[]; detailsRefs: string[] }>;
+      scheduledTaskContext: Array<{ taskId: string; messages: string[] }>;
+      sidecarBoundary: { scope: string };
+    };
+    expect(proposalContent).toMatchObject({
+      id: 'haro-sidecar:runner-profile:error-recovery-policy',
+      kind: 'runner-profile',
+    });
+    expect(proposalContent.observedRunnerErrorClasses[0]).toMatchObject({
+      code: 'AGENTDOCK_TURN_TIMEOUT',
+      messages: ['AgentDock turn turn-123 ended with status timeout'],
+      recoverableValues: [true],
+      detailsRefs: ['agentdock://sessions/session-runner-error/turns/turn-123'],
+    });
+    expect(proposalContent.scheduledTaskContext[0]?.taskId).toBe('haro-daily-frontier-intake');
+    expect(proposalContent.sidecarBoundary.scope).toContain('不得修改 AgentDock 代码');
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const validatePayload = (JSON.parse(validateOut.read()) as { data: {
+      validations: Array<{ proposalId: string; riskVerdict: string; applyEligible: boolean; blockingReasons: string[] }>;
+    } }).data;
+    expect(validatePayload.validations[0]).toMatchObject({
+      proposalId: proposePayload.proposal.id,
+      riskVerdict: 'medium',
+      applyEligible: true,
+      blockingReasons: [],
+    });
+
+    const approvalOut = captureStream();
+    const approvalErr = captureStream();
+    const approval = await runCli(commonOpts(root, approvalOut, approvalErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+    expect(approval.exitCode).toBe(0);
+    expect(approvalErr.read()).toBe('');
+    const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
+      approvalRequestCount: number;
+      approvalRequests: Array<{ proposalId: string; howChange: string[]; expectedBenefits: string[] }>;
+      skippedNotActionableApprovalRequestCount: number;
+    } }).data;
+    expect(approvalPayload.approvalRequestCount).toBe(1);
+    expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
+    expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Runner Profile');
+    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('受控应用');
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('propose --auto-dry-run turns scheduled task errors into actionable schedule-config content', async () => {
+    const root = newHome('agentdock-actionable-schedule-config-proposal');
+    const observationDir = join(root, 'evolution', 'observations');
+    mkdirSync(observationDir, { recursive: true });
+    const batchId = 'obs-agentdock-local-schedule-error';
+    writeFileSync(join(observationDir, `${batchId}.json`), `${JSON.stringify({
+      id: batchId,
+      connectionId: 'agentdock-local',
+      source: 'agentdock-http',
+      collectedAt: '2026-05-08T11:59:00.000Z',
+      window: { until: '2026-05-08T11:59:00.000Z' },
+      sessions: [],
+      turns: [],
+      toolCalls: [],
+      scheduledTaskRuns: [
+        {
+          id: 'task-run-haro-daily-error',
+          taskId: 'haro-daily-frontier-intake',
+          executionType: 'agent',
+          status: 'error',
+          startedAt: '2026-05-08T11:58:00.000Z',
+          endedAt: '2026-05-08T11:58:30.000Z',
+          resultRef: 'agentdock://tasks/haro-daily-frontier-intake/last-result',
+        },
+      ],
+      memoryMaintenanceLogs: [],
+      runnerErrors: [],
+      usageRecords: [],
+      rawRefs: ['http://agentdock.local/api/tasks'],
+      metadata: {},
+    }, null, 2)}\n`);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+
+    expect(propose.exitCode).toBe(0);
+    expect(proposeErr.read()).toBe('');
+    const proposePayload = (JSON.parse(proposeOut.read()) as { data: {
+      proposal: {
+        id: string;
+        status: string;
+        level: string;
+        targetKind: string;
+        riskLevel: string;
+        changeSet: Array<{ contentRef: string; contentHash: string; summary: string; targetRef: { id: string; uri: string } }>;
+      };
+    } }).data;
+    expect(proposePayload.proposal).toMatchObject({
+      status: 'proposed',
+      level: 'L1',
+      targetKind: 'schedule-config',
+      riskLevel: 'medium',
+    });
+    expect(proposePayload.proposal.changeSet[0]?.targetRef.id).toBe('haro-sidecar:schedule-config:error-review-policy');
+    expect(proposePayload.proposal.changeSet[0]?.targetRef.uri).toContain('haro-sidecar://assets/current/schedule-config/');
+    expect(proposePayload.proposal.changeSet[0]?.summary).toContain('haro-daily-frontier-intake');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', proposePayload.proposal.id);
+    const proposalContentFiles = readdirSync(proposalContentDir);
+    expect(proposalContentFiles).toHaveLength(1);
+    const proposalContent = JSON.parse(readFileSync(join(proposalContentDir, proposalContentFiles[0]!), 'utf8')) as {
+      id: string;
+      kind: string;
+      observedScheduledTaskErrors: Array<{ taskId: string; messages: string[]; resultRefs: string[] }>;
+      sidecarBoundary: { scope: string };
+    };
+    expect(proposalContent).toMatchObject({
+      id: 'haro-sidecar:schedule-config:error-review-policy',
+      kind: 'schedule-config',
+    });
+    expect(proposalContent.observedScheduledTaskErrors[0]).toMatchObject({
+      taskId: 'haro-daily-frontier-intake',
+      messages: ['scheduled task haro-daily-frontier-intake returned status=error; resultRef=agentdock://tasks/haro-daily-frontier-intake/last-result'],
+      resultRefs: ['agentdock://tasks/haro-daily-frontier-intake/last-result'],
+    });
+    expect(proposalContent.sidecarBoundary.scope).toContain('不得修改 AgentDock scheduler');
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const validatePayload = (JSON.parse(validateOut.read()) as { data: {
+      validations: Array<{ proposalId: string; riskVerdict: string; applyEligible: boolean; blockingReasons: string[] }>;
+    } }).data;
+    expect(validatePayload.validations[0]).toMatchObject({
+      proposalId: proposePayload.proposal.id,
+      riskVerdict: 'medium',
+      applyEligible: true,
+      blockingReasons: [],
+    });
+
+    const approvalOut = captureStream();
+    const approvalErr = captureStream();
+    const approval = await runCli(commonOpts(root, approvalOut, approvalErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+    expect(approval.exitCode).toBe(0);
+    expect(approvalErr.read()).toBe('');
+    const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
+      approvalRequestCount: number;
+      approvalRequests: Array<{ proposalId: string; howChange: string[] }>;
+      skippedNotActionableApprovalRequestCount: number;
+    } }).data;
+    expect(approvalPayload.approvalRequestCount).toBe(1);
+    expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
+    expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('调度配置');
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
   it('propose --auto-dry-run --include-frontier reports corrupt frontier signals', async () => {
     const root = newHome('agentdock-propose-frontier-corrupt');
     const observeOut = captureStream();

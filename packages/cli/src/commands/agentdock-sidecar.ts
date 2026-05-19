@@ -4328,12 +4328,383 @@ function createAutoProposal(
   now: () => Date,
   frontierSignals: readonly FrontierSignal[] = [],
 ): GeneratedProposal {
+  const actionableRunnerProfileProposal = createActionableRunnerProfileProposal(root, batches, now);
+  if (actionableRunnerProfileProposal) return actionableRunnerProfileProposal;
+  const actionableScheduleConfigProposal = createActionableScheduleConfigProposal(root, batches, now);
+  if (actionableScheduleConfigProposal) return actionableScheduleConfigProposal;
   const actionableMcpProposal = createActionableMcpToolConfigProposal(root, batches, now, frontierSignals);
   if (actionableMcpProposal) return actionableMcpProposal;
   return {
     proposal: createDryRunProposal(batches, now, frontierSignals),
     contentFiles: [],
   };
+}
+
+function createActionableRunnerProfileProposal(
+  root: string,
+  batches: readonly ObservationBatch[],
+  now: () => Date,
+): GeneratedProposal | undefined {
+  const diagnostics = collectObservedErrorDiagnostics(batches);
+  if (diagnostics.runnerErrors.length === 0) return undefined;
+
+  const sourceObservationRefs = batches.map(observationBatchRef);
+  const assetId = 'haro-sidecar:runner-profile:error-recovery-policy';
+  const content = actionableRunnerProfileContent(assetId, diagnostics);
+  const contentHash = sha256(content);
+  const fingerprint = sha256(JSON.stringify({
+    kind: 'actionable-runner-profile',
+    assetId,
+    sourceObservationRefs: sourceObservationRefs.map((ref) => ref.id).sort(),
+    contentHash,
+  }));
+  const proposalId = `proposal_${fingerprint.slice(0, 24)}`;
+  const fileName = proposalContentFileName(0, assetId, '.json');
+  const contentRef = proposalContentRef(proposalId, fileName, assetId).uri!;
+  const timestamp = now().toISOString();
+  const runnerErrorCodes = uniqueSorted(diagnostics.runnerErrors.map(({ error }) => error.code));
+  const scheduledTaskIds = uniqueSorted(diagnostics.scheduledTaskErrors.map(({ run }) => run.taskId));
+
+  const proposal = EvolutionProposalSchema.parse({
+    id: proposalId,
+    title: '根据真实 runner 错误建立 Haro sidecar Runner Profile 恢复策略',
+    status: 'proposed',
+    level: 'L1',
+    targetKind: 'runner-profile',
+    riskLevel: 'medium',
+    sourceObservationRefs,
+    changeSet: [
+      {
+        op: 'update',
+        targetRef: {
+          id: assetId,
+          kind: 'runner-profile',
+          uri: `haro-sidecar://assets/current/runner-profile/${encodeURIComponent(assetId)}`,
+        },
+        contentRef,
+        contentHash,
+        summary: [
+          `写入 Haro sidecar 自有 Runner Profile 恢复策略，基于真实 runner error code/message：${runnerErrorCodes.join(', ') || '无'}。`,
+          scheduledTaskIds.length > 0
+            ? `同时把失败定时任务作为上下文纳入策略：${scheduledTaskIds.join(', ')}。`
+            : '',
+          '该变更只落到 Haro sidecar assets/current/runner-profile，不修改 AgentDock 代码或 aria-memory-vault。',
+        ].filter(Boolean).join(' '),
+      },
+    ],
+    testPlan: {
+      requiredCommands: [
+        'pnpm -F @haro/agentdock-contract test',
+        'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
+      ],
+      manualChecks: [
+        '在 Haro Web 审批页确认提案展示了真实 runner error code、message、recoverable 标记和 detailsRef。',
+        '确认 proposal-content JSON 只写入 Haro sidecar 自有 assets/current/runner-profile 目标，不写 AgentDock 代码、AgentDock 配置或 aria-memory-vault。',
+        '确认该策略只指导后续 Haro sidecar runner-profile 选择/降级/重试建议，不会绕过人审直接修改运行时。',
+      ],
+      regressionRisks: [
+        '如果错误聚合过宽，可能把不同根因合并到同一个 runner-profile 策略，需要审批人核对 code/message 样本。',
+        '如果 AgentDock observation schema 变化导致 runnerErrors 缺少 message，提案必须退回 dry-run 或 blocked，而不是生成无证据策略。',
+      ],
+    },
+    rollbackPlan: {
+      strategy:
+        '该提案只写 Haro sidecar 自有 runner-profile asset；如审批后应用，可通过 Haro rollback 恢复旧版本或删除该 current asset。',
+      snapshotRequired: false,
+      rollbackRefs: [],
+    },
+    humanReviewRequired: true,
+    humanApprovalRefs: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  return {
+    proposal,
+    contentFiles: [
+      {
+        path: join(proposalContentDir(root, proposalId), fileName),
+        content: Buffer.from(content, 'utf8'),
+      },
+    ],
+  };
+}
+
+function createActionableScheduleConfigProposal(
+  root: string,
+  batches: readonly ObservationBatch[],
+  now: () => Date,
+): GeneratedProposal | undefined {
+  const diagnostics = collectObservedErrorDiagnostics(batches);
+  if (diagnostics.scheduledTaskErrors.length === 0) return undefined;
+
+  const sourceObservationRefs = batches.map(observationBatchRef);
+  const assetId = 'haro-sidecar:schedule-config:error-review-policy';
+  const content = actionableScheduleConfigContent(assetId, diagnostics);
+  const contentHash = sha256(content);
+  const fingerprint = sha256(JSON.stringify({
+    kind: 'actionable-schedule-config',
+    assetId,
+    sourceObservationRefs: sourceObservationRefs.map((ref) => ref.id).sort(),
+    contentHash,
+  }));
+  const proposalId = `proposal_${fingerprint.slice(0, 24)}`;
+  const fileName = proposalContentFileName(0, assetId, '.json');
+  const contentRef = proposalContentRef(proposalId, fileName, assetId).uri!;
+  const timestamp = now().toISOString();
+  const scheduledTaskIds = uniqueSorted(diagnostics.scheduledTaskErrors.map(({ run }) => run.taskId));
+
+  const proposal = EvolutionProposalSchema.parse({
+    id: proposalId,
+    title: '根据失败定时任务建立 Haro sidecar 调度错误复核策略',
+    status: 'proposed',
+    level: 'L1',
+    targetKind: 'schedule-config',
+    riskLevel: 'medium',
+    sourceObservationRefs,
+    changeSet: [
+      {
+        op: 'update',
+        targetRef: {
+          id: assetId,
+          kind: 'schedule-config',
+          uri: `haro-sidecar://assets/current/schedule-config/${encodeURIComponent(assetId)}`,
+        },
+        contentRef,
+        contentHash,
+        summary: [
+          `写入 Haro sidecar 自有 schedule-config 错误复核策略，覆盖失败任务：${scheduledTaskIds.join(', ') || '未知任务'}。`,
+          '该雏形只约束 Haro sidecar 如何把 scheduledTaskErrors 转换为人审提案，不接管 AgentDock scheduler。',
+        ].join(' '),
+      },
+    ],
+    testPlan: {
+      requiredCommands: [
+        'pnpm -F @haro/agentdock-contract test',
+        'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
+      ],
+      manualChecks: [
+        '在 Haro Web 审批页确认提案展示了失败 taskId、executionType、resultRef 和 startedAt。',
+        '确认 proposal-content JSON 只写入 Haro sidecar 自有 assets/current/schedule-config 目标，不修改 AgentDock scheduler、任务定义或系统服务。',
+        '确认策略不会自动 disable/trigger/retry 任何 AgentDock task；所有执行性变更仍需单独人审。',
+      ],
+      regressionRisks: [
+        '如果 AgentDock task resultRef 无法展开，审批人只能看到失败任务摘要，不能据此批准实际调度变更。',
+        '如果把 Haro sidecar 策略误认为 AgentDock scheduler 配置，可能越过 sidecar-only 边界；审批时必须核对 target URI。',
+      ],
+    },
+    rollbackPlan: {
+      strategy:
+        '该提案只写 Haro sidecar 自有 schedule-config asset；如审批后应用，可通过 Haro rollback 恢复旧版本或删除该 current asset。',
+      snapshotRequired: false,
+      rollbackRefs: [],
+    },
+    humanReviewRequired: true,
+    humanApprovalRefs: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  return {
+    proposal,
+    contentFiles: [
+      {
+        path: join(proposalContentDir(root, proposalId), fileName),
+        content: Buffer.from(content, 'utf8'),
+      },
+    ],
+  };
+}
+
+function collectObservedErrorDiagnostics(batches: readonly ObservationBatch[]): {
+  runnerErrors: Array<{ batch: ObservationBatch; error: ObservationBatch['runnerErrors'][number] }>;
+  scheduledTaskErrors: Array<{ batch: ObservationBatch; run: ObservationBatch['scheduledTaskRuns'][number] }>;
+} {
+  const productionBatches = batches.filter((batch) => batch.source === 'agentdock-http');
+  return {
+    runnerErrors: productionBatches.flatMap((batch) =>
+      batch.runnerErrors.map((error) => ({ batch, error })),
+    ),
+    scheduledTaskErrors: productionBatches.flatMap((batch) =>
+      batch.scheduledTaskRuns
+        .filter((run) => run.status === 'error')
+        .map((run) => ({ batch, run })),
+    ),
+  };
+}
+
+function actionableRunnerProfileContent(
+  assetId: string,
+  diagnostics: ReturnType<typeof collectObservedErrorDiagnostics>,
+): string {
+  const runnerErrorClasses = summarizeRunnerErrorClasses(diagnostics.runnerErrors);
+  const scheduledTaskContexts = summarizeScheduledTaskErrors(diagnostics.scheduledTaskErrors);
+  const payload = {
+    id: assetId,
+    kind: 'runner-profile',
+    version: 1,
+    language: 'zh-CN',
+    owner: 'haro-sidecar',
+    purpose:
+      '根据 AgentDock observation 中真实 runner error code/message，建立 Haro sidecar 自有 runner-profile 恢复策略；该策略只影响 Haro sidecar 后续提案如何解释和处理 runner 错误。',
+    sidecarBoundary: {
+      scope:
+        '仅写入 Haro sidecar assets/current/runner-profile；不得修改 AgentDock 代码、AgentDock scheduler、AgentDock workspace runtime 或 aria-memory-vault。',
+      applyMode: 'human-reviewed-gated-apply-only',
+    },
+    observedRunnerErrorClasses: runnerErrorClasses,
+    scheduledTaskContext: scheduledTaskContexts,
+    policy: {
+      defaultHandling: [
+        '进入审批前必须保留原始 code、message、recoverable 和 detailsRef 作为证据。',
+        'recoverable=true 的错误只能建议 bounded retry/backoff 或更保守的 runner profile，不能自动重放用户任务。',
+        'recoverable=false 的错误必须要求人工复核，不能自动降级或自动 apply。',
+        '如果同一 code/message 已有 pending 或 decided approval request，后续相同 contentHash 不能重复打扰审批人。',
+      ],
+      profilePatch: {
+        evidenceRequired: ['code', 'message', 'recoverable', 'occurredAt'],
+        proposedControls: [
+          '为可恢复 runner 错误保留 bounded retry 建议字段。',
+          '为 timeout/fetch failed 类错误保留 runner health check 和短退避建议字段。',
+          '为非可恢复错误保留 request-changes/人工复核建议字段。',
+        ],
+      },
+      tests: [
+        'pnpm -F @haro/agentdock-contract test',
+        'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
+      ],
+      rollback:
+        '删除或回滚 assets/current/runner-profile 下该 asset 即可撤销；不得触碰 AgentDock runtime。',
+    },
+  };
+  return `${JSON.stringify(payload, null, 2)}\n`;
+}
+
+function actionableScheduleConfigContent(
+  assetId: string,
+  diagnostics: ReturnType<typeof collectObservedErrorDiagnostics>,
+): string {
+  const scheduledTaskErrors = summarizeScheduledTaskErrors(diagnostics.scheduledTaskErrors);
+  const payload = {
+    id: assetId,
+    kind: 'schedule-config',
+    version: 1,
+    language: 'zh-CN',
+    owner: 'haro-sidecar',
+    purpose:
+      '根据 AgentDock observation 中真实 scheduledTaskErrors，建立 Haro sidecar 自有调度错误复核策略；该策略只描述 Haro 如何把失败定时任务转换为人审提案。',
+    sidecarBoundary: {
+      scope:
+        '仅写入 Haro sidecar assets/current/schedule-config；不得修改 AgentDock scheduler、任务定义、systemd service、AgentDock 代码或 aria-memory-vault。',
+      applyMode: 'human-reviewed-gated-apply-only',
+    },
+    observedScheduledTaskErrors: scheduledTaskErrors,
+    policy: {
+      defaultHandling: [
+        '记录失败 taskId、executionType、status、startedAt 和 resultRef。',
+        '如果只有 task failure 摘要而没有可审查 resultRef，提案必须要求人工补充证据或 request-changes。',
+        '不得自动 disable、trigger、retry 或改写任何 AgentDock task；执行性调度变更必须另起提案并人审。',
+        '相同 taskId/resultRef 生成相同 contentHash 时，approval-request 去重必须阻止重复打扰审批人。',
+      ],
+      proposalRequirements: [
+        '说明为什么该 task failure 需要 sidecar 策略而不是 AgentDock 代码改动。',
+        '说明策略如何保持 Haro daily workflow 只经 MCP 运行，不绕过 AgentDock。',
+        '列出 rollback plan：删除或回滚 Haro sidecar schedule-config asset。',
+      ],
+      tests: [
+        'pnpm -F @haro/agentdock-contract test',
+        'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
+      ],
+      rollback:
+        '删除或回滚 assets/current/schedule-config 下该 asset 即可撤销；不得触碰 AgentDock scheduler。',
+    },
+  };
+  return `${JSON.stringify(payload, null, 2)}\n`;
+}
+
+function summarizeRunnerErrorClasses(
+  items: ReadonlyArray<{ batch: ObservationBatch; error: ObservationBatch['runnerErrors'][number] }>,
+): Array<{
+  code: string;
+  messages: string[];
+  recoverableValues: boolean[];
+  runnerIds: string[];
+  detailsRefs: string[];
+}> {
+  const byCode = new Map<string, {
+    messages: Set<string>;
+    recoverableValues: Set<boolean>;
+    runnerIds: Set<string>;
+    detailsRefs: Set<string>;
+  }>();
+  for (const { error } of items) {
+    const entry = byCode.get(error.code) ?? {
+      messages: new Set<string>(),
+      recoverableValues: new Set<boolean>(),
+      runnerIds: new Set<string>(),
+      detailsRefs: new Set<string>(),
+    };
+    entry.messages.add(normalizeEvidenceText(error.message));
+    entry.recoverableValues.add(error.recoverable);
+    if (error.runnerId) entry.runnerIds.add(error.runnerId);
+    if (error.detailsRef) entry.detailsRefs.add(error.detailsRef);
+    byCode.set(error.code, entry);
+  }
+  return Array.from(byCode.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([code, entry]) => ({
+      code,
+      messages: uniqueSorted(Array.from(entry.messages)),
+      recoverableValues: Array.from(entry.recoverableValues).sort((a, b) => Number(a) - Number(b)),
+      runnerIds: uniqueSorted(Array.from(entry.runnerIds)),
+      detailsRefs: uniqueSorted(Array.from(entry.detailsRefs)),
+    }));
+}
+
+function summarizeScheduledTaskErrors(
+  items: ReadonlyArray<{ batch: ObservationBatch; run: ObservationBatch['scheduledTaskRuns'][number] }>,
+): Array<{
+  taskId: string;
+  executionTypes: string[];
+  messages: string[];
+  resultRefs: string[];
+}> {
+  const byTask = new Map<string, {
+    executionTypes: Set<string>;
+    messages: Set<string>;
+    resultRefs: Set<string>;
+  }>();
+  for (const { run } of items) {
+    const entry = byTask.get(run.taskId) ?? {
+      executionTypes: new Set<string>(),
+      messages: new Set<string>(),
+      resultRefs: new Set<string>(),
+    };
+    entry.executionTypes.add(run.executionType);
+    entry.messages.add(normalizeEvidenceText(
+      run.resultRef
+        ? `scheduled task ${run.taskId} returned status=error; resultRef=${run.resultRef}`
+        : `scheduled task ${run.taskId} returned status=error`,
+    ));
+    if (run.resultRef) entry.resultRefs.add(run.resultRef);
+    byTask.set(run.taskId, entry);
+  }
+  return Array.from(byTask.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([taskId, entry]) => ({
+      taskId,
+      executionTypes: uniqueSorted(Array.from(entry.executionTypes)),
+      messages: uniqueSorted(Array.from(entry.messages)),
+      resultRefs: uniqueSorted(Array.from(entry.resultRefs)),
+    }));
+}
+
+function normalizeEvidenceText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
+function uniqueSorted(values: readonly string[]): string[] {
+  return Array.from(new Set(values.filter((value) => value.trim().length > 0))).sort();
 }
 
 function createActionableMcpToolConfigProposal(
