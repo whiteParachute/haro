@@ -71,7 +71,7 @@ function commonOpts(root: string, stdout: Capture, stderr: Capture, argv: string
   };
 }
 
-function autoApplyApp(root: string): AppContext {
+function autoApplyApp(root: string, logs: { warn: unknown[]; error: unknown[] } = { warn: [], error: [] }): AppContext {
   const stdout = captureStream();
   const stderr = captureStream();
   return {
@@ -79,7 +79,12 @@ function autoApplyApp(root: string): AppContext {
     stdout: stdout.stream,
     stderr: stderr.stream,
     now: () => new Date('2026-05-08T12:10:00.000Z'),
-    logger: { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined },
+    logger: {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (...args: unknown[]) => { logs.warn.push(args); },
+      error: (...args: unknown[]) => { logs.error.push(args); },
+    },
   } as unknown as AppContext;
 }
 
@@ -4623,5 +4628,91 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(second).toMatchObject({ attempted: false, status: 'skipped', gateCode: 'ALREADY_APPLIED' });
     expect(readApplicationRecords(root)).toHaveLength(1);
     expect(readAssetEvents(root).filter((event) => event.eventType === 'applied')).toHaveLength(1);
+  });
+
+  it('sends post-apply feedback after successful auto apply', () => {
+    const root = newHome('agentdock-auto-apply-feedback-success');
+    writeAutoApplyFixture(root, 'proposal_auto_apply_feedback_success');
+    const sent: Array<{ text: string; idempotencyKey: string }> = [];
+
+    const first = autoApplyApprovedProposal(autoApplyApp(root), {
+      proposalId: 'proposal_auto_apply_feedback_success',
+      feedback: {
+        channel: 'feishu:oc_fixture',
+        send: (message) => { sent.push({ text: message.text, idempotencyKey: message.idempotencyKey }); },
+      },
+    });
+    const second = autoApplyApprovedProposal(autoApplyApp(root), {
+      proposalId: 'proposal_auto_apply_feedback_success',
+      feedback: {
+        channel: 'feishu:oc_fixture',
+        send: (message) => { sent.push({ text: message.text, idempotencyKey: message.idempotencyKey }); },
+      },
+    });
+
+    expect(first.feedback).toMatchObject({ attempted: true, status: 'sent' });
+    expect(second.feedback).toMatchObject({ attempted: false, status: 'skipped' });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('Haro 自动落地结果：已落地');
+    expect(sent[0]!.text).toContain('application：application_');
+    expect(sent[0]!.idempotencyKey).toContain('haro-auto-apply-application_');
+  });
+
+  it('sends post-apply feedback with gate details when auto apply is blocked', () => {
+    const root = newHome('agentdock-auto-apply-feedback-blocked');
+    writeAutoApplyFixture(root, 'proposal_auto_apply_feedback_blocked', { corruptContentHash: true });
+    const sent: string[] = [];
+
+    const result = autoApplyApprovedProposal(autoApplyApp(root), {
+      proposalId: 'proposal_auto_apply_feedback_blocked',
+      feedback: {
+        channel: 'feishu:oc_fixture',
+        send: (message) => { sent.push(message.text); },
+      },
+    });
+
+    expect(result.feedback).toMatchObject({ attempted: true, status: 'sent' });
+    expect(sent[0]).toContain('Haro 自动落地结果：落地失败');
+    expect(sent[0]).toContain('APPLY_CONTENT_HASH_MISMATCH');
+  });
+
+  it('skips post-apply feedback when HARO_FEEDBACK_CHANNEL is not configured', () => {
+    const root = newHome('agentdock-auto-apply-feedback-no-channel');
+    writeAutoApplyFixture(root, 'proposal_auto_apply_feedback_no_channel');
+    const logs = { warn: [] as unknown[], error: [] as unknown[] };
+    const previous = process.env.HARO_FEEDBACK_CHANNEL;
+    delete process.env.HARO_FEEDBACK_CHANNEL;
+    try {
+      const result = autoApplyApprovedProposal(autoApplyApp(root, logs), {
+        proposalId: 'proposal_auto_apply_feedback_no_channel',
+        feedback: { send: () => { throw new Error('should not send without channel'); } },
+      });
+
+      expect(result.status).toBe('applied');
+      expect(result.feedback).toMatchObject({ attempted: false, status: 'skipped' });
+      expect(logs.warn.length).toBeGreaterThan(0);
+    } finally {
+      if (previous === undefined) delete process.env.HARO_FEEDBACK_CHANNEL;
+      else process.env.HARO_FEEDBACK_CHANNEL = previous;
+    }
+  });
+
+  it('does not fail auto apply when post-apply feedback sending fails', () => {
+    const root = newHome('agentdock-auto-apply-feedback-send-fails');
+    writeAutoApplyFixture(root, 'proposal_auto_apply_feedback_send_fails');
+    const logs = { warn: [] as unknown[], error: [] as unknown[] };
+
+    const result = autoApplyApprovedProposal(autoApplyApp(root, logs), {
+      proposalId: 'proposal_auto_apply_feedback_send_fails',
+      feedback: {
+        channel: 'feishu:oc_fixture',
+        send: () => { throw new Error('mock send failed'); },
+      },
+    });
+
+    expect(result.status).toBe('applied');
+    expect(result.feedback).toMatchObject({ attempted: true, status: 'failed' });
+    expect(readApplicationRecords(root)[0]).toMatchObject({ status: 'applied' });
+    expect(logs.error.length).toBeGreaterThan(0);
   });
 });

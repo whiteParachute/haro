@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -346,6 +347,24 @@ interface AutoApplyApprovedResult {
   gateCode?: ApplyGateCode | 'ALREADY_APPLIED' | 'AUTO_APPLY_ALREADY_ATTEMPTED' | 'AUTO_APPLY_NOT_APPLICABLE';
   blockingReasons?: string[];
   applicationId?: string;
+  feedback?: AutoApplyFeedbackResult;
+}
+
+interface AutoApplyFeedbackMessage {
+  channel: string;
+  idempotencyKey: string;
+  text: string;
+}
+
+interface AutoApplyFeedbackResult {
+  attempted: boolean;
+  status: 'sent' | 'skipped' | 'failed';
+  reason?: string;
+}
+
+interface AutoApplyFeedbackOptions {
+  channel?: string;
+  send?: (message: AutoApplyFeedbackMessage) => void;
 }
 
 type RollbackGateCode =
@@ -1758,7 +1777,7 @@ export function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyRes
 
 export function autoApplyApprovedProposal(
   app: AppContext,
-  options: { proposalId: string },
+  options: { proposalId: string; feedback?: AutoApplyFeedbackOptions },
 ): AutoApplyApprovedResult {
   const proposal = readProposalById(app.paths.root, options.proposalId);
   if (!proposal) {
@@ -1774,50 +1793,148 @@ export function autoApplyApprovedProposal(
   const existingApplication = readApplicationRecordsForProposal(app.paths.root, proposal.id)
     .find((record) => record.status === 'applied' || record.status === 'failed');
   if (existingApplication) {
-    return {
+    return finishAutoApplyResult(app, proposal, {
       attempted: false,
       status: 'skipped',
       proposalId: proposal.id,
       gateCode: existingApplication.status === 'applied' ? 'ALREADY_APPLIED' : 'AUTO_APPLY_ALREADY_ATTEMPTED',
       applicationId: existingApplication.id,
       blockingReasons: [`Auto apply already has application ${existingApplication.id} with status=${existingApplication.status}.`],
-    };
+    }, options.feedback);
   }
 
   const validation = readLatestValidationForProposal(app.paths.root, proposal.id);
   const skipReason = autoApplySkipReason(proposal, validation);
   if (skipReason) {
-    return {
+    return finishAutoApplyResult(app, proposal, {
       attempted: false,
       status: 'skipped',
       proposalId: proposal.id,
       gateCode: 'AUTO_APPLY_NOT_APPLICABLE',
       blockingReasons: [skipReason],
-    };
+    }, options.feedback);
   }
 
   const result = applyAgentDock(app, { proposalId: proposal.id });
   if (result.applied) {
-    return {
+    return finishAutoApplyResult(app, proposal, {
       attempted: true,
       status: 'applied',
       proposalId: proposal.id,
       gateCode: result.gateCode,
       applicationId: result.applicationRecord?.id,
-    };
+    }, options.feedback);
   }
 
   const failed = createFailedApplicationRecord(app, proposal, validation!, result);
   const failedPath = applicationFilePath(app.paths.root, failed);
   writeJsonFile(failedPath, failed);
-  return {
+  return finishAutoApplyResult(app, proposal, {
     attempted: true,
     status: 'blocked',
     proposalId: proposal.id,
     gateCode: result.gateCode,
     blockingReasons: result.blockingReasons,
     applicationId: failed.id,
+  }, options.feedback);
+}
+
+function finishAutoApplyResult(
+  app: AppContext,
+  proposal: EvolutionProposal,
+  result: AutoApplyApprovedResult,
+  feedback?: AutoApplyFeedbackOptions,
+): AutoApplyApprovedResult {
+  return { ...result, feedback: sendPostApplyFeedback(app, proposal, result, feedback) };
+}
+
+function sendPostApplyFeedback(
+  app: AppContext,
+  proposal: EvolutionProposal,
+  result: AutoApplyApprovedResult,
+  feedback: AutoApplyFeedbackOptions = {},
+): AutoApplyFeedbackResult {
+  const channel = feedback.channel ?? process.env.HARO_FEEDBACK_CHANNEL;
+  if (!channel) {
+    app.logger.warn?.('HARO_FEEDBACK_CHANNEL is not configured; skip post-apply feedback.');
+    return { attempted: false, status: 'skipped', reason: 'HARO_FEEDBACK_CHANNEL not configured' };
+  }
+
+  const markerId = result.applicationId ?? sha256(`${proposal.id}:${result.status}:${result.gateCode ?? ''}`).slice(0, 24);
+  const markerPath = autoApplyFeedbackMarkerPath(app.paths.root, markerId);
+  if (existsSync(markerPath)) {
+    return { attempted: false, status: 'skipped', reason: `feedback already sent for ${markerId}` };
+  }
+
+  const application = result.applicationId ? readApplicationById(app.paths.root, result.applicationId) : undefined;
+  const message: AutoApplyFeedbackMessage = {
+    channel,
+    idempotencyKey: `haro-auto-apply-${markerId}`,
+    text: formatPostApplyFeedback(app.now().toISOString(), proposal, result, application),
   };
+  try {
+    (feedback.send ?? sendFeedbackWithLarkCli)(message);
+    mkdirSync(dirname(markerPath), { recursive: true });
+    writeJsonFile(markerPath, {
+      id: `feedback_${markerId}`,
+      proposalId: proposal.id,
+      applicationId: result.applicationId,
+      channel,
+      status: result.status,
+      createdAt: app.now().toISOString(),
+    });
+    return { attempted: true, status: 'sent' };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    app.logger.error?.({ error: reason, proposalId: proposal.id }, 'post-apply feedback failed');
+    return { attempted: true, status: 'failed', reason };
+  }
+}
+
+function autoApplyFeedbackMarkerPath(root: string, markerId: string): string {
+  return join(root, 'evolution', 'feedback-events', `feedback_${markerId}.json`);
+}
+
+function formatPostApplyFeedback(
+  timestamp: string,
+  proposal: EvolutionProposal,
+  result: AutoApplyApprovedResult,
+  application: ApplicationRecord | undefined,
+): string {
+  const statusText = result.status === 'applied' ? '已落地' : result.status === 'blocked' ? '落地失败' : '未自动落地';
+  const reason = result.blockingReasons?.[0] ?? (result.gateCode ? `gate=${result.gateCode}` : '无阻断原因');
+  return [
+    `Haro 自动落地结果：${statusText}`,
+    `提案：${proposal.title}（${proposal.id}）`,
+    `说明：${result.status === 'applied' ? '提案已通过受控落地。' : reason}`,
+    `application：${application?.id ?? result.applicationId ?? '未生成'}`,
+    `applied_event：${application?.assetEventRefs[0]?.id ?? '未生成'}`,
+    `snapshot：${application?.snapshotRef?.id ?? '未生成'}`,
+    `rollback：${application?.rollbackRef?.id ?? '未生成'}`,
+    `gate：${result.gateCode ?? 'READY'}`,
+    `时间：${timestamp}`,
+  ].join('\n');
+}
+
+function sendFeedbackWithLarkCli(message: AutoApplyFeedbackMessage): void {
+  const chatId = message.channel.startsWith('feishu:') ? message.channel.slice('feishu:'.length) : message.channel;
+  if (!chatId.startsWith('oc_')) throw new Error(`unsupported feedback channel: ${message.channel}`);
+  const bin = process.env.HARO_LARK_CLI_BIN ?? 'lark-cli';
+  const result = spawnSync(bin, [
+    'im',
+    '+messages-send',
+    '--as',
+    'bot',
+    '--chat-id',
+    chatId,
+    '--text',
+    message.text,
+    '--idempotency-key',
+    message.idempotencyKey,
+  ], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || `lark-cli exited with ${result.status ?? 'unknown status'}`).trim());
+  }
 }
 
 function autoApplySkipReason(
