@@ -37,6 +37,7 @@ export type ProposalTargetKind =
   | 'haro-code'
   | 'agentdock-contract';
 export type ApprovalDecisionOption = 'approve' | 'reject' | 'request-changes';
+export type ApprovalLifecycleStatus = 'undecided' | 'approved' | 'rejected' | 'applied' | 'rolled-back';
 
 export interface RollbackPlan {
   strategy: string;
@@ -91,7 +92,59 @@ export interface ApprovalDecisionRecord {
   updatedAt: string;
 }
 
+export interface ApprovalRequestLifecycle {
+  status: ApprovalLifecycleStatus;
+  decision?: {
+    id: string;
+    decision: ApprovalDecisionOption;
+    direction?: string;
+    reviewer: ApprovalDecisionRecord['reviewer'];
+    createdAt: string;
+    updatedAt: string;
+  };
+  application?: {
+    id: string;
+    status: 'ready' | 'blocked' | 'applied' | 'rolled-back';
+    gateCode: string;
+    applied: boolean;
+    snapshotId?: string;
+    rollbackId?: string;
+    assetEventIds: string[];
+    blockingReasons: string[];
+    createdAt: string;
+    updatedAt: string;
+  };
+  assetEvents: Array<{
+    id: string;
+    eventType: string;
+    status: string;
+    assetId: string;
+    kind: string;
+    contentHash: string;
+    createdAt: string;
+  }>;
+  snapshot?: {
+    id: string;
+    createdAt: string;
+    entryCount: number;
+    assetIds: string[];
+  };
+  rollback?: {
+    id: string;
+    createdAt: string;
+    reversible: boolean;
+    entryCount: number;
+    rolledBack: boolean;
+  };
+  proposalContent?: {
+    contentHashes: string[];
+    contentRefs: string[];
+    targetRefs: string[];
+  };
+}
+
 export interface ApprovalRequestView {
   request: ApprovalRequestRecord;
   latestDecision?: ApprovalDecisionRecord;
+  lifecycle: ApprovalRequestLifecycle;
 }

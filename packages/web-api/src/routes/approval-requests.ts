@@ -16,10 +16,19 @@ import {
   ApprovalDecisionRecordSchema,
   ApprovalDecisionOptionSchema,
   ApprovalRequestRecordSchema,
+  ApplicationRecordSchema,
+  AssetEventSchema,
+  AssetSnapshotRecordSchema,
   EvolutionProposalSchema,
+  RollbackRecordSchema,
   type ApprovalDecisionRecord,
   type ApprovalDecisionOption,
   type ApprovalRequestRecord,
+  type ApplicationRecord,
+  type AssetEvent,
+  type AssetSnapshotRecord,
+  type EvolutionProposal,
+  type RollbackRecord,
 } from '@haro/agentdock-contract';
 import { readWebAuth, requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
@@ -28,6 +37,60 @@ import type { WebRuntime } from '../runtime.js';
 interface ApprovalRequestView {
   request: ApprovalRequestRecord;
   latestDecision?: ApprovalDecisionRecord;
+  lifecycle: ApprovalRequestLifecycle;
+}
+
+type ApprovalLifecycleStatus = 'undecided' | 'approved' | 'rejected' | 'applied' | 'rolled-back';
+
+interface ApprovalRequestLifecycle {
+  status: ApprovalLifecycleStatus;
+  decision?: {
+    id: string;
+    decision: ApprovalDecisionOption;
+    direction?: string;
+    reviewer: ApprovalDecisionRecord['reviewer'];
+    createdAt: string;
+    updatedAt: string;
+  };
+  application?: {
+    id: string;
+    status: ApplicationRecord['status'];
+    gateCode: ApplicationRecord['gateCode'];
+    applied: boolean;
+    snapshotId?: string;
+    rollbackId?: string;
+    assetEventIds: string[];
+    blockingReasons: string[];
+    createdAt: string;
+    updatedAt: string;
+  };
+  assetEvents: Array<{
+    id: string;
+    eventType: AssetEvent['eventType'];
+    status: AssetEvent['status'];
+    assetId: string;
+    kind: AssetEvent['kind'];
+    contentHash: string;
+    createdAt: string;
+  }>;
+  snapshot?: {
+    id: string;
+    createdAt: string;
+    entryCount: number;
+    assetIds: string[];
+  };
+  rollback?: {
+    id: string;
+    createdAt: string;
+    reversible: boolean;
+    entryCount: number;
+    rolledBack: boolean;
+  };
+  proposalContent?: {
+    contentHashes: string[];
+    contentRefs: string[];
+    targetRefs: string[];
+  };
 }
 
 export function createApprovalRequestsRoute(
@@ -99,6 +162,22 @@ function proposalsDir(root: string): string {
   return path.join(root, 'evolution', 'proposals');
 }
 
+function applicationsDir(root: string): string {
+  return path.join(root, 'evolution', 'applications');
+}
+
+function assetEventsDir(root: string): string {
+  return path.join(root, 'assets', 'events');
+}
+
+function snapshotsDir(root: string): string {
+  return path.join(root, 'evolution', 'snapshots');
+}
+
+function rollbacksDir(root: string): string {
+  return path.join(root, 'evolution', 'rollbacks');
+}
+
 function safeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, '-');
 }
@@ -118,6 +197,17 @@ function readJson<T>(filePath: string, schema: z.ZodTypeAny): T | null {
   }
 }
 
+function listJsonRecords<T>(dir: string, schema: z.ZodTypeAny): T[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .flatMap((name) => {
+      const record = readJson<T>(path.join(dir, name), schema);
+      return record ? [record] : [];
+    });
+}
+
 function writeJsonAtomic(filePath: string, value: unknown): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -131,15 +221,7 @@ function writeJsonAtomic(filePath: string, value: unknown): void {
 }
 
 function listDecisionRecords(root: string): ApprovalDecisionRecord[] {
-  const dir = approvalDecisionsDir(root);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => name.endsWith('.json'))
-    .sort()
-    .flatMap((name) => {
-      const record = readJson<ApprovalDecisionRecord>(path.join(dir, name), ApprovalDecisionRecordSchema);
-      return record ? [record] : [];
-    });
+  return listJsonRecords<ApprovalDecisionRecord>(approvalDecisionsDir(root), ApprovalDecisionRecordSchema);
 }
 
 function latestDecisions(root: string): Map<string, ApprovalDecisionRecord> {
@@ -170,7 +252,7 @@ function listApprovalRequests(
       const decided = Boolean(latestDecision);
       if (status === 'pending' && decided) return [];
       if (status === 'decided' && !decided) return [];
-      return [{ request, ...(latestDecision ? { latestDecision } : {}) }];
+      return [buildApprovalRequestView(root, request, latestDecision)];
     });
   return views.sort(compareApprovalRequestViews);
 }
@@ -199,7 +281,197 @@ function getApprovalRequest(root: string, id: string): ApprovalRequestView | nul
   );
   if (!request || request.id !== id) return null;
   const latestDecision = latestDecisions(root).get(id);
-  return { request, ...(latestDecision ? { latestDecision } : {}) };
+  return buildApprovalRequestView(root, request, latestDecision);
+}
+
+function buildApprovalRequestView(
+  root: string,
+  request: ApprovalRequestRecord,
+  latestDecision?: ApprovalDecisionRecord,
+): ApprovalRequestView {
+  return {
+    request,
+    ...(latestDecision ? { latestDecision } : {}),
+    lifecycle: buildApprovalLifecycle(root, request, latestDecision),
+  };
+}
+
+function buildApprovalLifecycle(
+  root: string,
+  request: ApprovalRequestRecord,
+  latestDecision?: ApprovalDecisionRecord,
+): ApprovalRequestLifecycle {
+  const proposal = readProposal(root, request.proposalId);
+  const application = latestApplicationForProposal(root, request.proposalId);
+  const assetEvents = listAssetEventsForProposal(root, request.proposalId, application)
+    .sort((a, b) => compareIsoDateTime(a.createdAt, b.createdAt))
+    .map((event) => ({
+      id: event.id,
+      eventType: event.eventType,
+      status: event.status,
+      assetId: event.assetId,
+      kind: event.kind,
+      contentHash: event.contentHash,
+      createdAt: event.createdAt,
+    }));
+  const snapshot = application?.snapshotRef
+    ? readJson<AssetSnapshotRecord>(
+        path.join(snapshotsDir(root), `${safeSegment(application.snapshotRef.id)}.json`),
+        AssetSnapshotRecordSchema,
+      )
+    : latestSnapshotForProposal(root, request.proposalId);
+  const rollback = application?.rollbackRef
+    ? readJson<RollbackRecord>(
+        path.join(rollbacksDir(root), `${safeSegment(application.rollbackRef.id)}.json`),
+        RollbackRecordSchema,
+      )
+    : latestRollbackForProposal(root, request.proposalId);
+  const rolledBack = Boolean(
+    application?.status === 'rolled-back' || assetEvents.some((event) => event.eventType === 'rolled-back'),
+  );
+
+  const status = deriveLifecycleStatus(latestDecision, application, assetEvents, rolledBack);
+  const lifecycle: ApprovalRequestLifecycle = {
+    status,
+    assetEvents,
+    ...(latestDecision
+      ? {
+          decision: {
+            id: latestDecision.id,
+            decision: latestDecision.decision,
+            ...(latestDecision.direction ? { direction: latestDecision.direction } : {}),
+            reviewer: latestDecision.reviewer,
+            createdAt: latestDecision.createdAt,
+            updatedAt: latestDecision.updatedAt,
+          },
+        }
+      : {}),
+    ...(application
+      ? {
+          application: {
+            id: application.id,
+            status: application.status,
+            gateCode: application.gateCode,
+            applied: application.applied,
+            ...(application.snapshotRef ? { snapshotId: application.snapshotRef.id } : {}),
+            ...(application.rollbackRef ? { rollbackId: application.rollbackRef.id } : {}),
+            assetEventIds: application.assetEventRefs.map((ref) => ref.id),
+            blockingReasons: application.blockingReasons,
+            createdAt: application.createdAt,
+            updatedAt: application.updatedAt,
+          },
+        }
+      : {}),
+    ...(snapshot
+      ? {
+          snapshot: {
+            id: snapshot.id,
+            createdAt: snapshot.createdAt,
+            entryCount: snapshot.entries.length,
+            assetIds: snapshot.entries.map((entry) => entry.assetId),
+          },
+        }
+      : {}),
+    ...(rollback
+      ? {
+          rollback: {
+            id: rollback.id,
+            createdAt: rollback.createdAt,
+            reversible: rollback.reversible,
+            entryCount: rollback.entries.length,
+            rolledBack,
+          },
+        }
+      : {}),
+    ...(proposal ? { proposalContent: summarizeProposalContent(proposal) } : {}),
+  };
+  return lifecycle;
+}
+
+function deriveLifecycleStatus(
+  latestDecision: ApprovalDecisionRecord | undefined,
+  application: ApplicationRecord | null,
+  assetEvents: ApprovalRequestLifecycle['assetEvents'],
+  rolledBack: boolean,
+): ApprovalLifecycleStatus {
+  if (!latestDecision) return 'undecided';
+  if (latestDecision.decision !== 'approve') return 'rejected';
+  if (rolledBack) return 'rolled-back';
+  if (application?.status === 'applied' || assetEvents.some((event) => event.eventType === 'applied')) {
+    return 'applied';
+  }
+  return 'approved';
+}
+
+function readProposal(root: string, proposalId: string): EvolutionProposal | null {
+  return readJson<EvolutionProposal>(
+    path.join(proposalsDir(root), `${safeSegment(proposalId)}.json`),
+    EvolutionProposalSchema,
+  );
+}
+
+function latestApplicationForProposal(root: string, proposalId: string): ApplicationRecord | null {
+  return latestByUpdatedAt(
+    listJsonRecords<ApplicationRecord>(applicationsDir(root), ApplicationRecordSchema)
+      .filter((record) => record.proposalId === proposalId),
+  );
+}
+
+function latestSnapshotForProposal(root: string, proposalId: string): AssetSnapshotRecord | null {
+  return latestByCreatedAt(
+    listJsonRecords<AssetSnapshotRecord>(snapshotsDir(root), AssetSnapshotRecordSchema)
+      .filter((record) => record.proposalId === proposalId),
+  );
+}
+
+function latestRollbackForProposal(root: string, proposalId: string): RollbackRecord | null {
+  return latestByCreatedAt(
+    listJsonRecords<RollbackRecord>(rollbacksDir(root), RollbackRecordSchema)
+      .filter((record) => record.proposalId === proposalId),
+  );
+}
+
+function listAssetEventsForProposal(
+  root: string,
+  proposalId: string,
+  application: ApplicationRecord | null,
+): AssetEvent[] {
+  const applicationEventIds = new Set(application?.assetEventRefs.map((ref) => ref.id) ?? []);
+  return listJsonRecords<AssetEvent>(assetEventsDir(root), AssetEventSchema)
+    .filter((event) => {
+      if (applicationEventIds.has(event.id)) return true;
+      return event.proposalRef?.id === proposalId && (event.eventType === 'applied' || event.eventType === 'rolled-back');
+    });
+}
+
+function summarizeProposalContent(proposal: EvolutionProposal): ApprovalRequestLifecycle['proposalContent'] {
+  return {
+    contentHashes: uniqueStrings(proposal.changeSet.flatMap((change) => change.contentHash ? [change.contentHash] : [])),
+    contentRefs: uniqueStrings(proposal.changeSet.flatMap((change) => change.contentRef ? [change.contentRef] : [])),
+    targetRefs: uniqueStrings(proposal.changeSet.map((change) => change.targetRef.id)),
+  };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function latestByUpdatedAt<T extends { createdAt: string; updatedAt: string }>(records: T[]): T | null {
+  return records
+    .slice()
+    .sort((a, b) => {
+      const updated = compareIsoDateTime(a.updatedAt, b.updatedAt);
+      if (updated !== 0) return updated;
+      return compareIsoDateTime(a.createdAt, b.createdAt);
+    })
+    .at(-1) ?? null;
+}
+
+function latestByCreatedAt<T extends { createdAt: string }>(records: T[]): T | null {
+  return records
+    .slice()
+    .sort((a, b) => compareIsoDateTime(a.createdAt, b.createdAt))
+    .at(-1) ?? null;
 }
 
 async function readDecisionBody(readJsonBody: () => Promise<unknown>): Promise<

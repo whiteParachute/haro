@@ -72,6 +72,17 @@ describe('approval request review API', () => {
     expect(decided.status).toBe(200);
     const decidedBody = await decided.json();
     expect(decidedBody.data.total).toBe(1);
+    expect(decidedBody.data.items[0].lifecycle.status).toBe('approved');
+
+    writeAppliedLifecycleFixture(root);
+    const applied = await app.request('/api/v1/approval-requests/approval_request_smoke');
+    expect(applied.status).toBe(200);
+    const appliedBody = await applied.json();
+    expect(appliedBody.data.lifecycle.status).toBe('applied');
+    expect(appliedBody.data.lifecycle.application.id).toBe('application_smoke');
+    expect(appliedBody.data.lifecycle.snapshot.id).toBe('snapshot_smoke');
+    expect(appliedBody.data.lifecycle.rollback.id).toBe('rollback_smoke');
+    expect(appliedBody.data.lifecycle.assetEvents[0].id).toBe('asset_event_smoke');
   });
 
   it('requires direction for request-changes decisions', async () => {
@@ -218,6 +229,108 @@ function writeFixture(haroHome: string): void {
       evidenceRefs: [],
       createdAt: '2026-05-13T00:00:00.000Z',
       updatedAt: '2026-05-13T00:00:00.000Z',
+    }, null, 2)}\n`,
+    'utf8',
+  );
+}
+
+function writeAppliedLifecycleFixture(haroHome: string): void {
+  const now = '2026-05-14T00:30:00.000Z';
+  const applicationDir = path.join(haroHome, 'evolution/applications');
+  const snapshotDir = path.join(haroHome, 'evolution/snapshots');
+  const rollbackDir = path.join(haroHome, 'evolution/rollbacks');
+  const eventDir = path.join(haroHome, 'assets/events');
+  mkdirSync(applicationDir, { recursive: true });
+  mkdirSync(snapshotDir, { recursive: true });
+  mkdirSync(rollbackDir, { recursive: true });
+  mkdirSync(eventDir, { recursive: true });
+
+  writeFileSync(
+    path.join(snapshotDir, 'snapshot_smoke.json'),
+    `${JSON.stringify({
+      id: 'snapshot_smoke',
+      proposalId: 'proposal_smoke',
+      validationId: 'validation_smoke',
+      level: 'L1',
+      targetKind: 'skill',
+      sourceRef: { id: 'proposal_smoke', kind: 'evolution-proposal' },
+      entries: [
+        {
+          changeIndex: 0,
+          targetRef: { id: 'skill_smoke', kind: 'skill' },
+          assetId: 'skill_smoke',
+          existed: false,
+          snapshotSource: 'absent',
+        },
+      ],
+      createdAt: now,
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(rollbackDir, 'rollback_smoke.json'),
+    `${JSON.stringify({
+      id: 'rollback_smoke',
+      proposalId: 'proposal_smoke',
+      validationId: 'validation_smoke',
+      snapshotRef: { id: 'snapshot_smoke', kind: 'asset-snapshot' },
+      sourceRef: { id: 'snapshot_smoke', kind: 'asset-snapshot' },
+      reversible: true,
+      entries: [
+        {
+          changeIndex: 0,
+          targetRef: { id: 'skill_smoke', kind: 'skill' },
+          assetId: 'skill_smoke',
+          action: 'delete-created-asset',
+          existedBefore: false,
+        },
+      ],
+      createdAt: now,
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(eventDir, 'asset_event_smoke.json'),
+    `${JSON.stringify({
+      id: 'asset_event_smoke',
+      assetId: 'skill_smoke',
+      kind: 'skill',
+      version: 'hash-smoke',
+      sourceRef: { id: 'application_smoke', kind: 'application-record' },
+      contentRef: { id: 'skill_smoke.json', kind: 'sidecar-current-content' },
+      contentHash: 'hash-smoke',
+      status: 'applied',
+      eventType: 'applied',
+      actor: 'haro',
+      proposalRef: { id: 'proposal_smoke', kind: 'evolution-proposal' },
+      validationRef: { id: 'validation_smoke', kind: 'validation-report' },
+      rollbackMetadata: {
+        rollbackRef: { id: 'rollback_smoke', kind: 'rollback-ref' },
+        snapshotRef: { id: 'snapshot_smoke', kind: 'asset-snapshot' },
+        reversible: true,
+      },
+      createdAt: now,
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(applicationDir, 'application_smoke.json'),
+    `${JSON.stringify({
+      id: 'application_smoke',
+      proposalId: 'proposal_smoke',
+      validationId: 'validation_smoke',
+      status: 'applied',
+      gateCode: 'READY',
+      level: 'L1',
+      targetKind: 'skill',
+      applied: true,
+      snapshotRef: { id: 'snapshot_smoke', kind: 'asset-snapshot' },
+      rollbackRef: { id: 'rollback_smoke', kind: 'rollback-ref' },
+      assetEventRefs: [{ id: 'asset_event_smoke', kind: 'asset-event' }],
+      evidenceRefs: [{ id: 'proposal_smoke', kind: 'evolution-proposal' }],
+      blockingReasons: [],
+      createdAt: now,
+      updatedAt: now,
     }, null, 2)}\n`,
     'utf8',
   );
