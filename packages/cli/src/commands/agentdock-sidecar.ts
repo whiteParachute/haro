@@ -88,6 +88,7 @@ interface ValidateOptions extends OutputFlags {
 
 interface ApprovalRequestOptions extends OutputFlags {
   pending?: boolean;
+  rewriteDescriptions?: boolean;
   limit?: string;
 }
 
@@ -174,10 +175,12 @@ interface ValidateResult {
 
 interface ApprovalRequestResult {
   command: 'approval-request';
-  mode: 'pending';
+  mode: 'pending' | 'rewrite-descriptions';
   approvalRequestCount: number;
   requestedProposalCount: number;
   pendingProposalCount: number;
+  descriptionRewriteCount: number;
+  descriptionRewrittenRequestIds: string[];
   skippedDuplicatePendingApprovalRequestCount: number;
   skippedNotActionableApprovalRequestCount: number;
   skippedCorruptProposalCount: number;
@@ -760,6 +763,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
     .command('approval-request')
     .description('Render validated proposals into human approval request artifacts')
     .option('--pending', 'generate approval requests for validated proposals that do not yet have one')
+    .option('--rewrite-descriptions', 'rewrite pending approval request human-readable descriptions in place')
     .option('--limit <n>', 'maximum pending approval requests to write')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
@@ -774,6 +778,8 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             approvalRequestCount: result.approvalRequestCount,
             requestedProposalCount: result.requestedProposalCount,
             pendingProposalCount: result.pendingProposalCount,
+            descriptionRewriteCount: result.descriptionRewriteCount,
+            descriptionRewrittenRequestIds: result.descriptionRewrittenRequestIds,
             skippedDuplicatePendingApprovalRequestCount: result.skippedDuplicatePendingApprovalRequestCount,
             skippedNotActionableApprovalRequestCount: result.skippedNotActionableApprovalRequestCount,
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
@@ -792,6 +798,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             [
               `Approval requests: ${result.approvalRequestCount}`,
               `Requested proposals: ${result.requestedProposalCount}`,
+              `Description rewrites: ${result.descriptionRewriteCount}`,
               `Pending proposals after run: ${result.pendingProposalCount}`,
               `Skipped duplicate pending approval requests: ${result.skippedDuplicatePendingApprovalRequestCount}`,
               `Skipped non-actionable approval requests: ${result.skippedNotActionableApprovalRequestCount}`,
@@ -803,6 +810,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
         app.stdout.write(
           [
             'No validated proposals need approval requests.',
+            `Description rewrites: ${result.descriptionRewriteCount}`,
             `Pending proposals after run: ${result.pendingProposalCount}`,
             `Skipped duplicate pending approval requests: ${result.skippedDuplicatePendingApprovalRequestCount}`,
             `Skipped non-actionable approval requests: ${result.skippedNotActionableApprovalRequestCount}`,
@@ -1176,6 +1184,9 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
 }
 
 function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptions): ApprovalRequestResult {
+  if (options.rewriteDescriptions) {
+    return rewritePendingApprovalRequestDescriptions(app, options);
+  }
   if (!options.pending) {
     throw new CommanderExit(
       2,
@@ -1214,6 +1225,8 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
         approvalRequestCount: 0,
         requestedProposalCount: 0,
         pendingProposalCount: 0,
+        descriptionRewriteCount: 0,
+        descriptionRewrittenRequestIds: [],
         skippedDuplicatePendingApprovalRequestCount,
         skippedNotActionableApprovalRequestCount,
         skippedCorruptProposalCount: pendingResult.corruptCount,
@@ -1237,6 +1250,8 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
       approvalRequestCount: approvalRequests.length,
       requestedProposalCount: selected.length,
       pendingProposalCount: pending.length - selected.length,
+      descriptionRewriteCount: 0,
+      descriptionRewrittenRequestIds: [],
       skippedDuplicatePendingApprovalRequestCount,
       skippedNotActionableApprovalRequestCount,
       skippedCorruptProposalCount: pendingResult.corruptCount,
@@ -1250,6 +1265,101 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
   } finally {
     releaseConnectionLock(lockDir);
   }
+}
+
+function rewritePendingApprovalRequestDescriptions(
+  app: AppContext,
+  options: ApprovalRequestOptions,
+): ApprovalRequestResult {
+  const limit = normalizeOptionalPositiveInt(options.limit, '--limit');
+  const dir = approvalRequestsDir(app.paths.root);
+  const rewritten: ApprovalRequestRecord[] = [];
+  const paths: string[] = [];
+  let corruptRequestCount = 0;
+  let skippedCorruptProposalCount = 0;
+  let skippedCorruptValidationCount = 0;
+  if (!existsSync(dir)) {
+    return {
+      command: 'approval-request',
+      mode: 'rewrite-descriptions',
+      approvalRequestCount: 0,
+      requestedProposalCount: 0,
+      pendingProposalCount: 0,
+      descriptionRewriteCount: 0,
+      descriptionRewrittenRequestIds: [],
+      skippedDuplicatePendingApprovalRequestCount: 0,
+      skippedNotActionableApprovalRequestCount: 0,
+      skippedCorruptProposalCount: 0,
+      skippedCorruptValidationCount: 0,
+      skippedCorruptApprovalRequestCount: 0,
+      skippedCorruptApprovalDecisionCount: 0,
+      wroteApprovalRequests: false,
+      approvalRequests: [],
+      approvalRequestPaths: [],
+    };
+  }
+
+  const requestFiles = readdirSync(dir).filter((name) => name.endsWith('.json')).sort();
+  for (const name of requestFiles) {
+    if (typeof limit === 'number' && rewritten.length >= limit) break;
+    const path = join(dir, name);
+    let request: ApprovalRequestRecord;
+    try {
+      request = ApprovalRequestRecordSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+    } catch {
+      corruptRequestCount += 1;
+      continue;
+    }
+    if (request.status !== 'pending') continue;
+    const proposal = readProposalById(app.paths.root, request.proposalId);
+    if (!proposal) {
+      skippedCorruptProposalCount += 1;
+      continue;
+    }
+    const validation = readValidationById(app.paths.root, request.validationId) ??
+      readLatestValidationForProposal(app.paths.root, request.proposalId);
+    if (!validation) {
+      skippedCorruptValidationCount += 1;
+      continue;
+    }
+    const readable = readableApprovalRequestFields(proposal, validation);
+    const timestamp = app.now().toISOString();
+    const next = ApprovalRequestRecordSchema.parse({
+      ...request,
+      title: readable.title,
+      whyChange: readable.whyChange,
+      howChange: readable.howChange,
+      expectedBenefits: readable.expectedBenefits,
+      manualChecks: readable.manualChecks,
+      regressionRisks: readable.regressionRisks,
+      rollbackPlan: readable.rollbackPlan,
+      reviewerInstruction: readable.reviewerInstruction,
+      descriptionRewrittenAt: timestamp,
+      updatedAt: timestamp,
+    });
+    writeJsonFile(path, next);
+    rewritten.push(next);
+    paths.push(path);
+  }
+
+  return {
+    command: 'approval-request',
+    mode: 'rewrite-descriptions',
+    approvalRequestCount: rewritten.length,
+    requestedProposalCount: 0,
+    pendingProposalCount: 0,
+    descriptionRewriteCount: rewritten.length,
+    descriptionRewrittenRequestIds: rewritten.map((request) => request.id),
+    skippedDuplicatePendingApprovalRequestCount: 0,
+    skippedNotActionableApprovalRequestCount: 0,
+    skippedCorruptProposalCount,
+    skippedCorruptValidationCount,
+    skippedCorruptApprovalRequestCount: corruptRequestCount,
+    skippedCorruptApprovalDecisionCount: 0,
+    wroteApprovalRequests: rewritten.length > 0,
+    approvalRequests: rewritten,
+    approvalRequestPaths: paths,
+  };
 }
 
 export async function runAgentDockDailyWorkflow(
@@ -2728,6 +2838,17 @@ function readLatestValidationForProposal(root: string, proposalId: string): Vali
   return reports.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id))[0];
 }
 
+function readValidationById(root: string, validationId: string): ValidationReport | undefined {
+  const path = join(validationsDir(root), `${safePathSegment(validationId)}.json`);
+  if (!existsSync(path)) return undefined;
+  try {
+    const report = ValidationReportSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+    return report.id === validationId ? report : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function readSnapshotById(root: string, snapshotId: string): AssetSnapshotRecord | undefined {
   const path = join(snapshotsDir(root), `${safePathSegment(snapshotId)}.json`);
   if (!existsSync(path)) return undefined;
@@ -3974,6 +4095,7 @@ function createApprovalRequestRecord(
 ): ApprovalRequestRecord {
   const timestamp = app.now().toISOString();
   const changeRefs = proposal.changeSet.map((_change, index) => proposalChangeRef(proposal, index));
+  const readable = readableApprovalRequestFields(proposal, validation);
   const id = `approval_request_${sha256(JSON.stringify({
     proposalId: proposal.id,
     validationId: validation.id,
@@ -3992,27 +4114,23 @@ function createApprovalRequestRecord(
     proposalId: proposal.id,
     validationId: validation.id,
     status: 'pending',
-    title: proposal.title,
+    title: readable.title,
     level: proposal.level,
     targetKind: proposal.targetKind,
     riskLevel: proposal.riskLevel,
     sourceRef: evolutionProposalRef(proposal),
     validationRef: validationReportRef(validation),
-    whyChange: approvalWhyChange(proposal, validation),
-    howChange: approvalHowChange(proposal),
-    expectedBenefits: approvalExpectedBenefits(proposal),
+    whyChange: readable.whyChange,
+    howChange: readable.howChange,
+    expectedBenefits: readable.expectedBenefits,
     requiredTests: validation.requiredTests.length > 0
       ? validation.requiredTests
       : proposal.testPlan.requiredCommands,
-    manualChecks: [
-      ...proposal.testPlan.manualChecks,
-      '审批人必须在 AgentDock 中选择通过（approve）、驳回（reject）或要求修改（request-changes）后，Haro 才能继续。',
-    ],
-    regressionRisks: proposal.testPlan.regressionRisks,
-    rollbackPlan: proposal.rollbackPlan,
+    manualChecks: readable.manualChecks,
+    regressionRisks: readable.regressionRisks,
+    rollbackPlan: readable.rollbackPlan,
     decisionOptions: ['approve', 'reject', 'request-changes'],
-    reviewerInstruction:
-      '请审阅为什么改、怎么改、预期收益、证据、测试、风险和回滚方案，然后选择通过（approve）、驳回（reject）或要求修改（request-changes）；如果要求修改，请写明方向。',
+    reviewerInstruction: readable.reviewerInstruction,
     humanReviewRequired: true,
     evidenceRefs: [
       evolutionProposalRef(proposal),
@@ -4026,64 +4144,247 @@ function createApprovalRequestRecord(
   });
 }
 
-function approvalWhyChange(proposal: EvolutionProposal, validation: ValidationReport): string[] {
-  const sourceKinds = new Set(proposal.sourceObservationRefs.map((ref) => ref.kind));
+interface ReadableApprovalRequestFields {
+  title: string;
+  whyChange: string[];
+  howChange: string[];
+  expectedBenefits: string[];
+  manualChecks: string[];
+  regressionRisks: string[];
+  rollbackPlan: EvolutionProposal['rollbackPlan'];
+  reviewerInstruction: string;
+}
+
+function readableApprovalRequestFields(
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+): ReadableApprovalRequestFields {
+  const rollbackPlan = {
+    ...proposal.rollbackPlan,
+    strategy: readableRollbackStrategy(proposal),
+  };
+  return {
+    title: readableApprovalTitle(proposal),
+    whyChange: readableWhyChange(proposal, validation),
+    howChange: readableHowChange(proposal),
+    expectedBenefits: readableExpectedBenefits(proposal),
+    manualChecks: readableManualChecks(proposal),
+    regressionRisks: readableRegressionRisks(proposal),
+    rollbackPlan,
+    reviewerInstruction: [
+      '请选择 approve（同意）、reject（驳回）或 request-changes（要求修改）。',
+      '只有当你能用自己的话说清“为什么改、改哪里、坏了怎么撤”时才 approve。',
+      '如果你看完仍然不知道为什么改，请直接 request-changes，并要求 Haro 重写描述。',
+    ].join(' '),
+  };
+}
+
+function readableApprovalTitle(proposal: EvolutionProposal): string {
+  if (isGenericDryRunProposal(proposal)) {
+    return '历史演练提案：没有具体改动文件，建议驳回或要求 Haro 重新生成';
+  }
+  if (proposal.targetKind === 'mcp-tool-config') {
+    return '给 Haro 自动提案加审批门：没写清工具、边界和撤回办法的提案不再进审批页';
+  }
+  if (proposal.targetKind === 'runner-profile') {
+    return '给 Haro 运行错误加恢复策略：遇到同类错误时先说明证据和建议，不自动重试任务';
+  }
+  if (proposal.targetKind === 'schedule-config') {
+    return '给 Haro 定时任务失败加复核规则：失败原因没说清前不自动改调度';
+  }
+  return `让 Haro 的 ${readableTargetKind(proposal.targetKind)} 改动先讲清影响范围，再进入审批`;
+}
+
+function readableWhyChange(proposal: EvolutionProposal, validation: ValidationReport): string[] {
+  if (isGenericDryRunProposal(proposal)) {
+    return [
+      '这是早期版本留下的演练请求：它只把 Haro 自检和外部资料摘要送进审批页，但没有给出可执行的具体改动文件。',
+      '如果直接通过，审批人其实不知道 Haro 会改哪里；更安全的处理是驳回，或要求 Haro 重新生成一条带具体改动内容的提案。',
+    ];
+  }
+  const evidence = readableEvidenceSummary(proposal);
+  const risk = validation.applyEligible
+    ? '自动检查已经确认：这条提案有人审通过后才允许继续，不会直接改 AgentDock 代码。'
+    : '自动检查还没通过：这条提案暂时只能看，不能继续应用。';
+  if (proposal.targetKind === 'mcp-tool-config') {
+    return [
+      `过去的问题是：Haro 已经能自动生成提案，但审批页没有强制要求它先说清“会用哪些工具、哪些写入能力默认关闭、出问题怎么撤”。${evidence}`,
+      `不补这道门，审批人会反复看到看似正式、实际说不清边界的提案，容易误判能不能通过。${risk}`,
+    ];
+  }
+  if (proposal.targetKind === 'runner-profile') {
+    return [
+      `本轮 Haro 自检快照里已经出现真实运行错误，提案会保留原始错误码、错误消息和是否可恢复，避免把运行故障包装成泛泛的优化建议。${evidence}`,
+      `不做这层策略，Haro 下次遇到同类错误时仍只能生成难懂的 dry-run，审批人看不出是否应该重试、降级还是要求人工处理。${risk}`,
+    ];
+  }
+  if (proposal.targetKind === 'schedule-config') {
+    return [
+      `本轮 Haro 自检快照里已经出现失败的定时任务，提案会把失败 taskId、结果引用和人工复核要求写清楚。${evidence}`,
+      `不做这层规则，Haro 可能继续把“定时任务失败”描述成内部状态，审批人不知道是否需要改调度、重跑还是先补证据。${risk}`,
+    ];
+  }
   return [
-    `提案基于 ${proposal.sourceObservationRefs.length} 条证据：${Array.from(sourceKinds).sort().map(localizeRefKind).join('、') || '无'}。`,
-    `验证风险结论为 ${localizeRiskVerdict(validation.riskVerdict)}；应用条件：${validation.applyEligible ? '人审通过后可进入受控应用（apply gate）' : '暂不满足受控应用（apply gate）'}。`,
-    `目标为 ${localizeRefKind(proposal.targetKind)}（${proposal.targetKind}），级别 ${proposal.level}，提案风险 ${localizeRiskVerdict(proposal.riskLevel)}。`,
+    `这条提案要改的是 Haro 自己的 ${readableTargetKind(proposal.targetKind)}，不是 AgentDock 代码。${evidence}`,
+    `现在需要审批人判断这项改动是否值得继续；${risk}`,
   ];
 }
 
-function approvalHowChange(proposal: EvolutionProposal): string[] {
-  return proposal.changeSet.map((change, index) => (
-    `${index + 1}. ${localizeChangeOperation(change.op)} ${localizeRefKind(change.targetRef.kind)}:${change.targetRef.id} — ${change.summary}`
-  ));
+function readableHowChange(proposal: EvolutionProposal): string[] {
+  return proposal.changeSet.map((change, index) => {
+    const target = readableChangeTarget(proposal, change);
+    const perspective = readableUserVisibleChange(proposal);
+    const contentEvidence = change.contentHash
+      ? '本次改动带有“具体内容文件 + 内容指纹”，审批前后可以核对内容有没有被替换。'
+      : '这一步没有提供可核对的具体内容文件，因此只适合要求修改或驳回。';
+    return `${index + 1}. 改动对象：${target}。${perspective} ${contentEvidence}`;
+  });
 }
 
-function approvalExpectedBenefits(proposal: EvolutionProposal): string[] {
+function readableExpectedBenefits(proposal: EvolutionProposal): string[] {
+  if (isGenericDryRunProposal(proposal)) {
+    return [
+      '审批人可以一眼识别这是历史演练请求，避免误点通过。',
+      '要求 Haro 重新生成后，新的提案必须带清楚的改动内容、影响范围和撤回办法。',
+    ];
+  }
+  if (proposal.targetKind === 'mcp-tool-config') {
+    return [
+      '审批人不用懂 Haro 内部实现，也能判断提案是否列清了工具、权限边界和撤回办法。',
+      '描述不完整的自动提案会被挡在审批页外，减少“看不懂但像是真的”的待审项。',
+      '只影响 Haro 自己的工具配置，不会修改 AgentDock 代码或用户记忆。',
+    ];
+  }
+  if (proposal.targetKind === 'runner-profile') {
+    return [
+      '审批人能直接看到错误码和错误消息，判断该让 Haro 重试、降级，还是要求人工处理。',
+      'Haro 下次遇到同类运行错误时，会先给出带证据的建议，而不是生成空泛演练提案。',
+      '只影响 Haro 自己的运行策略文件，不会自动重放用户任务。',
+    ];
+  }
+  if (proposal.targetKind === 'schedule-config') {
+    return [
+      '审批人能看到哪个定时任务失败、失败结果在哪里查，而不是只看到内部状态名。',
+      'Haro 不会自动改调度；它只会把失败转成需要人审的清晰提案。',
+      '只影响 Haro 自己的调度复核规则，不接管 AgentDock scheduler。',
+    ];
+  }
   return [
-    `保持${localizeRefKind(proposal.targetKind)}的演进在执行前可审查、可追踪。`,
-    '在允许任何写入路径前，保留结构化测试计划和回滚方案。',
-    proposal.level === 'L0' || proposal.level === 'L1'
-      ? '低风险 sidecar 自有变更也必须人审通过后，才能进入受控应用（gated apply）。'
-      : '代码级变更必须走补丁分支（patch branch）和人审路径，不能直接应用（apply）。',
+    `审批人能用普通话理解这次 ${readableTargetKind(proposal.targetKind)} 改动的影响范围。`,
+    'Haro 保留测试和撤回步骤，避免通过后才发现不知道怎么恢复。',
   ];
 }
 
-function localizeRefKind(kind: string): string {
-  const labels: Record<string, string> = {
-    'approval-request': '审批请求',
-    'evolution-proposal': '演进提案',
-    'frontier-signal': '前沿信号',
-    'mcp-tool-config': 'MCP 工具配置',
-    'observation-batch': '观察批次',
-    'proposal-change': '提案变更',
-    'runner-profile': 'Runner Profile',
-    'schedule-config': '调度配置',
-    'validation-report': '验证报告',
-  };
-  return labels[kind] ?? kind;
+function readableManualChecks(proposal: EvolutionProposal): string[] {
+  if (isGenericDryRunProposal(proposal)) {
+    return [
+      '确认这是一条历史演练请求：它没有真正可应用的改动内容。',
+      '如果你不想保留它，请在审批页选择 reject；如果希望 Haro 重新产出，请选择 request-changes 并写明要补具体改动文件。',
+    ];
+  }
+  if (proposal.targetKind === 'mcp-tool-config') {
+    return [
+      '在审批页确认：这条规则讲清了 Haro 会用哪些工具、哪些写入能力默认关闭、出问题怎么撤。',
+      '确认改动范围只限 Haro 自己维护的 MCP 工具配置文件，不会修改 AgentDock 代码、AgentDock 配置或用户记忆。',
+      '如果你看不懂这条规则具体拦什么提案，请选择 request-changes 要求重写说明。',
+    ];
+  }
+  if (proposal.targetKind === 'runner-profile') {
+    return [
+      '在审批页确认：这条策略展示了真实错误码、错误消息、是否可恢复和详情引用。',
+      '确认它只给 Haro 后续处理同类运行错误提供建议，不会自动重试用户任务。',
+      '如果错误证据不足以判断，请选择 request-changes 要求补充日志或拆分错误类型。',
+    ];
+  }
+  if (proposal.targetKind === 'schedule-config') {
+    return [
+      '在审批页确认：这条策略展示了失败任务、任务结果引用和人工复核要求。',
+      '确认它不会自动禁用、触发、重跑或改写任何 AgentDock 定时任务。',
+      '如果失败原因没有讲清，请选择 request-changes 要求补充任务结果或失败日志。',
+    ];
+  }
+  return [
+    `确认这条提案只影响 ${readableTargetKind(proposal.targetKind)}。`,
+    '如果你无法判断改动范围或撤回办法，请选择 request-changes 要求 Haro 重写描述。',
+  ];
 }
 
-function localizeRiskVerdict(value: string): string {
-  const labels: Record<string, string> = {
-    low: '低风险',
-    medium: '中风险',
-    high: '高风险',
-    blocked: '已阻塞',
-  };
-  return labels[value] ?? value;
+function readableRegressionRisks(proposal: EvolutionProposal): string[] {
+  if (isGenericDryRunProposal(proposal)) {
+    return [
+      '最坏情况：审批人误以为这条历史演练请求是真改动并点了通过；最先感知的是审批人自己，因为后续找不到具体文件变化；恢复方式是在审批页 request-changes 或 reject，通常几分钟内能清掉。',
+    ];
+  }
+  if (proposal.targetKind === 'mcp-tool-config') {
+    return [
+      '最坏情况：审批门设得过严，Haro 的低风险提案也进不了审批页；最先感知的是审批人，因为待审列表变少或缺少预期提案；恢复方式是在审批页 request-changes 要求放宽规则，若已应用则运行 `haro rollback --application-id <application-id>`，通常几分钟内恢复。',
+    ];
+  }
+  if (proposal.targetKind === 'runner-profile') {
+    return [
+      '最坏情况：不同根因的错误被合并成同一条恢复策略；最先感知的是审批人或后续运行 Haro 的人，因为错误处理建议不匹配；恢复方式是在审批页 request-changes 要求拆分错误类型，若已应用则运行 `haro rollback --application-id <application-id>`，通常几分钟内恢复。',
+    ];
+  }
+  if (proposal.targetKind === 'schedule-config') {
+    return [
+      '最坏情况：失败任务只有摘要没有足够证据，审批人仍看不出该不该改；最先感知的是审批人；恢复方式是 request-changes 要求补 resultRef 或失败日志，若已应用则运行 `haro rollback --application-id <application-id>`，通常几分钟内恢复。',
+    ];
+  }
+  return [
+    `最坏情况：${readableTargetKind(proposal.targetKind)} 的影响范围没有写清；最先感知的是审批人；恢复方式是在审批页 request-changes 要求重写描述，若已应用则运行 \`haro rollback --application-id <application-id>\`。`,
+  ];
 }
 
-function localizeChangeOperation(op: string): string {
+function readableRollbackStrategy(proposal: EvolutionProposal): string {
+  if (isGenericDryRunProposal(proposal)) {
+    return '如果还没通过：在 Haro Web 审批页选择 reject；如果只是看不懂：选择 request-changes 并要求 Haro 重新生成带具体改动文件的提案。这类历史演练请求没有实际可应用内容，不需要运行回滚命令。';
+  }
+  return [
+    '如果还没通过：在 Haro Web 审批页选择 reject，或选择 request-changes 写明要 Haro 改哪里。',
+    '如果已经通过并应用：先运行 `haro doctor --component sidecar --json` 或查看 Haro Web 的应用记录找到 application id，再运行 `haro rollback --application-id <application-id>` 恢复到上一个 Haro sidecar 资产版本。',
+    `本次撤回只影响 ${readableTargetKind(proposal.targetKind)}，不会回滚 AgentDock 代码或 aria-memory-vault。`,
+  ].join(' ');
+}
+
+function readableEvidenceSummary(proposal: EvolutionProposal): string {
+  const kinds = new Set(proposal.sourceObservationRefs.map((ref) => ref.kind));
+  const parts: string[] = [];
+  if (kinds.has('observation-batch')) parts.push('本轮 Haro 自检快照');
+  if (kinds.has('frontier-signal')) parts.push('外部一手情报（如 GitHub Changelog 等）');
+  if (parts.length === 0) return '证据已经随提案保留，审批页可以继续展开查看。';
+  return `证据来自${parts.join('和')}，审批页仍会保留原始引用供复核。`;
+}
+
+function readableChangeTarget(proposal: EvolutionProposal, change: ChangeOperation): string {
+  const label = readableTargetKind(change.targetRef.kind || proposal.targetKind);
+  return `${label}（asset id: ${change.targetRef.id}）`;
+}
+
+function readableTargetKind(kind: string): string {
   const labels: Record<string, string> = {
-    add: '新增',
-    archive: '归档',
-    delete: '删除',
-    update: '更新',
+    'mcp-tool-config': 'Haro 自己维护的 MCP 工具配置文件',
+    'runner-profile': 'Haro 自己的运行策略文件',
+    'schedule-config': 'Haro 自己的调度复核规则',
+    prompt: 'Haro 自己的提示词文件',
+    skill: 'Haro 自己的 skill 文件',
+    'routing-rule': 'Haro 自己的路由规则',
+    'haro-code': 'Haro 代码',
+    'agentdock-contract': 'AgentDock/Haro sidecar 契约',
   };
-  return labels[op] ?? op;
+  return labels[kind] ?? `Haro 自己的 ${kind} 资产`;
+}
+
+function readableUserVisibleChange(proposal: EvolutionProposal): string {
+  if (proposal.targetKind === 'mcp-tool-config') {
+    return '审批人会看到：后续自动提案必须列清工具、权限边界和撤回办法；Haro 会把没写清这些信息的提案挡在审批页外。';
+  }
+  if (proposal.targetKind === 'runner-profile') {
+    return '用户和审批人会看到：运行错误会显示原始错误码、错误消息和可恢复判断；Haro 会先给建议，不会自动重试任务。';
+  }
+  if (proposal.targetKind === 'schedule-config') {
+    return '审批人会看到：失败的定时任务、结果引用和下一步复核要求；Haro 不会自动改调度或重跑任务。';
+  }
+  return '审批人会看到：这次改动的影响范围、预期变化和撤回方式；Haro 会等待人审结果再继续。';
 }
 
 function createSnapshotArtifacts(

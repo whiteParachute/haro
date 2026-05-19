@@ -164,12 +164,14 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
       reviewerInstruction: 'Reply with approve, reject, or request-changes plus optional direction.',
       humanReviewRequired: true,
       evidenceRefs: [{ id: 'proposal-001', kind: 'evolution-proposal' }],
+      descriptionRewrittenAt: now,
       createdAt: now,
       updatedAt: now,
     });
 
     expect(record.humanReviewRequired).toBe(true);
     expect(record.decisionOptions).toContain('request-changes');
+    expect(record.descriptionRewrittenAt).toBe(now);
   });
 
   it('accepts approval decision records and requires direction for request-changes', () => {

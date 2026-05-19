@@ -38,6 +38,7 @@ export const ApprovalRequestRecordSchema = z.object({
   reviewerInstruction: NonEmptyStringSchema,
   humanReviewRequired: z.literal(true),
   evidenceRefs: z.array(RefSchema).default([]),
+  descriptionRewrittenAt: IsoDateTimeSchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });

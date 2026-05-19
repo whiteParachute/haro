@@ -154,6 +154,45 @@ function readApprovalRequestRecords(root: string): ApprovalRequestRecord[] {
     .map((name) => ApprovalRequestRecordSchema.parse(readJson(join(dir, name))));
 }
 
+function assertReadableApprovalRequest(record: ApprovalRequestRecord): void {
+  const humanText = [
+    record.title,
+    ...record.whyChange,
+    ...record.howChange,
+    ...record.expectedBenefits,
+    ...record.manualChecks,
+    ...record.regressionRisks,
+    record.rollbackPlan.strategy,
+    record.reviewerInstruction,
+  ].join('\n');
+  const forbiddenPatterns = [
+    /\bfrontier signal\b/i,
+    /\bobservation batch\b/i,
+    /proposal-content/i,
+    /contentHash/i,
+    /gated-write/i,
+    /mcp-tool-config asset/i,
+    /\bL0\b/,
+    /\bL1\b/,
+  ];
+  for (const pattern of forbiddenPatterns) {
+    expect(humanText).not.toMatch(pattern);
+  }
+  expect(record.whyChange.join('\n')).toMatch(/问题|风险|必须|不做|过去|本轮/);
+  for (const step of record.howChange) {
+    expect(step).toMatch(/改动对象/);
+    expect(step).toMatch(/用户.*会看到|审批人.*会看到|Haro 会/);
+  }
+  expect(record.expectedBenefits.join('\n')).toMatch(/审批人|用户|Haro/);
+  expect(record.regressionRisks.join('\n')).toMatch(/最坏情况/);
+  expect(record.regressionRisks.join('\n')).toMatch(/恢复/);
+  expect(record.rollbackPlan.strategy).toMatch(/Haro Web|haro rollback|reject|request-changes/);
+  expect(record.reviewerInstruction).toContain('approve');
+  expect(record.reviewerInstruction).toContain('reject');
+  expect(record.reviewerInstruction).toContain('request-changes');
+  expect(record.reviewerInstruction).toContain('如果你看完仍然不知道为什么改');
+}
+
 function writeApprovalDecisionRecord(root: string, record: ApprovalDecisionRecord): void {
   const dir = join(root, 'evolution', 'approval-decisions');
   mkdirSync(dir, { recursive: true });
@@ -843,14 +882,16 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(approvalErr.read()).toBe('');
     const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
       approvalRequestCount: number;
-      approvalRequests: Array<{ proposalId: string; howChange: string[]; expectedBenefits: string[] }>;
+      approvalRequests: ApprovalRequestRecord[];
       skippedNotActionableApprovalRequestCount: number;
     } }).data;
     expect(approvalPayload.approvalRequestCount).toBe(1);
     expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
     expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
-    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('MCP 工具配置审计策略');
-    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('受控应用');
+    expect(approvalPayload.approvalRequests[0]?.title).toContain('审批门');
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 自己维护的 MCP 工具配置文件');
+    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('审批人不用懂 Haro 内部实现');
+    assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
     expect(observeErr.read()).toBe('');
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
@@ -980,14 +1021,16 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(approvalErr.read()).toBe('');
     const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
       approvalRequestCount: number;
-      approvalRequests: Array<{ proposalId: string; howChange: string[]; expectedBenefits: string[] }>;
+      approvalRequests: ApprovalRequestRecord[];
       skippedNotActionableApprovalRequestCount: number;
     } }).data;
     expect(approvalPayload.approvalRequestCount).toBe(1);
     expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
     expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
-    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Runner Profile');
-    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('受控应用');
+    expect(approvalPayload.approvalRequests[0]?.title).toContain('运行错误');
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 自己的运行策略文件');
+    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('错误码');
+    assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
@@ -1102,13 +1145,15 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(approvalErr.read()).toBe('');
     const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
       approvalRequestCount: number;
-      approvalRequests: Array<{ proposalId: string; howChange: string[] }>;
+      approvalRequests: ApprovalRequestRecord[];
       skippedNotActionableApprovalRequestCount: number;
     } }).data;
     expect(approvalPayload.approvalRequestCount).toBe(1);
     expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
     expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
-    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('调度配置');
+    expect(approvalPayload.approvalRequests[0]?.title).toContain('定时任务失败');
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 自己的调度复核规则');
+    assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
@@ -1417,6 +1462,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       validationId: validationPayload.validationIds[0],
       humanReviewRequired: true,
     });
+    assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
 
     writeApprovalDecisionRecord(root, {
       id: 'approval_decision_executable_quality_gate',
@@ -1462,6 +1508,96 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     });
     expect(existsSync(join(root, 'assets', 'current', 'mcp-tool-config', `${encodedAssetPathSegment(assetId)}.json`))).toBe(true);
     expect(readApplicationRecords(root)).toHaveLength(1);
+  });
+
+  it('approval-request --rewrite-descriptions refreshes pending human-readable fields only', async () => {
+    const root = newHome('agentdock-approval-request-readable-rewrite');
+    const proposalId = 'proposal_rewrite_description';
+    const validationId = 'validation_rewrite_description';
+    const assetId = 'agentdock:haro-proposal-quality-gate';
+    writeExecutableMcpToolConfigProposal(root, proposalId, assetId);
+    const proposalPath = join(root, 'evolution', 'proposals', `${proposalId}.json`);
+    const proposal = readJson<Record<string, unknown>>(proposalPath);
+    writeFileSync(proposalPath, `${JSON.stringify({ ...proposal, status: 'validated' }, null, 2)}\n`);
+    mkdirSync(join(root, 'evolution', 'validations'), { recursive: true });
+    writeFileSync(join(root, 'evolution', 'validations', `${validationId}.json`), `${JSON.stringify({
+      id: validationId,
+      proposalId,
+      riskVerdict: 'low',
+      requiredTests: ['pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts'],
+      rollbackReady: true,
+      applyEligible: true,
+      blockingReasons: [],
+      evidenceRefs: [{ id: proposalId, kind: 'evolution-proposal' }],
+      createdAt: '2026-05-08T12:01:00.000Z',
+    }, null, 2)}\n`);
+
+    const request: ApprovalRequestRecord = ApprovalRequestRecordSchema.parse({
+      id: 'approval_request_rewrite_description',
+      proposalId,
+      validationId,
+      status: 'pending',
+      title: '建立 Haro sidecar MCP 工具配置审计策略',
+      level: 'L0',
+      targetKind: 'mcp-tool-config',
+      riskLevel: 'low',
+      sourceRef: { id: proposalId, kind: 'evolution-proposal' },
+      validationRef: { id: validationId, kind: 'validation-report' },
+      whyChange: ['frontier signal and observation batch show a need for mcp-tool-config asset updates.'],
+      howChange: ['Update proposal-content and contentHash for the gated-write tool path.'],
+      expectedBenefits: ['Keeps L0 changes in gated-write review.'],
+      requiredTests: ['pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts'],
+      manualChecks: ['Check proposal-content manually.'],
+      regressionRisks: ['contentHash mismatch may block apply.'],
+      rollbackPlan: {
+        strategy: 'Use Haro rollback.',
+        snapshotRequired: false,
+        rollbackRefs: [],
+      },
+      decisionOptions: ['approve', 'reject', 'request-changes'],
+      reviewerInstruction: 'Approve, reject, or request-changes.',
+      humanReviewRequired: true,
+      evidenceRefs: [
+        { id: proposalId, kind: 'evolution-proposal' },
+        { id: validationId, kind: 'validation-report' },
+      ],
+      createdAt: '2026-05-08T12:02:00.000Z',
+      updatedAt: '2026-05-08T12:02:00.000Z',
+    });
+    const requestDir = join(root, 'evolution', 'approval-requests');
+    mkdirSync(requestDir, { recursive: true });
+    writeFileSync(join(requestDir, `${request.id}.json`), `${JSON.stringify(request, null, 2)}\n`);
+    const before = readApprovalRequestRecords(root)[0]!;
+
+    const rewriteOut = captureStream();
+    const rewriteErr = captureStream();
+    const rewrite = await runCli(commonOpts(root, rewriteOut, rewriteErr, [
+      'approval-request',
+      '--rewrite-descriptions',
+      '--json',
+    ]));
+
+    expect(rewrite.exitCode).toBe(0);
+    expect(rewriteErr.read()).toBe('');
+    const payload = (JSON.parse(rewriteOut.read()) as { data: {
+      descriptionRewriteCount: number;
+      descriptionRewrittenRequestIds: string[];
+      approvalRequests: ApprovalRequestRecord[];
+    } }).data;
+    expect(payload.descriptionRewriteCount).toBe(1);
+    expect(payload.descriptionRewrittenRequestIds).toEqual([request.id]);
+    const after = readApprovalRequestRecords(root)[0]!;
+    expect(after.id).toBe(before.id);
+    expect(after.proposalId).toBe(before.proposalId);
+    expect(after.validationId).toBe(before.validationId);
+    expect(after.status).toBe('pending');
+    expect(after.evidenceRefs).toEqual(before.evidenceRefs);
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(after.updatedAt).toBe('2026-05-08T12:00:00.000Z');
+    expect(after.descriptionRewrittenAt).toBe('2026-05-08T12:00:00.000Z');
+    expect(after.title).toContain('审批门');
+    assertReadableApprovalRequest(after);
+    assertReadableApprovalRequest(payload.approvalRequests[0]!);
   });
 
   it('approval-request --pending skips proposals that already have a decision artifact', async () => {

@@ -66,6 +66,7 @@ export interface ApprovalRequestRecord {
   reviewerInstruction: string;
   humanReviewRequired: true;
   evidenceRefs: Ref[];
+  descriptionRewrittenAt?: string;
   createdAt: string;
   updatedAt: string;
 }
