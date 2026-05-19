@@ -147,6 +147,16 @@ interface ProposeResult {
   proposalPath?: string;
 }
 
+interface GeneratedProposalContentFile {
+  path: string;
+  content: Buffer;
+}
+
+interface GeneratedProposal {
+  proposal: EvolutionProposal;
+  contentFiles: GeneratedProposalContentFile[];
+}
+
 interface ValidateResult {
   command: 'validate';
   mode: 'pending';
@@ -1064,8 +1074,12 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       };
     }
 
-    const proposal = createDryRunProposal(selected, app.now, frontierResult.signals);
+    const generated = createAutoProposal(app.paths.root, selected, app.now, frontierResult.signals);
+    const proposal = generated.proposal;
     const path = proposalFilePath(app.paths.root, proposal);
+    for (const contentFile of generated.contentFiles) {
+      writeContentFile(contentFile.path, contentFile.content);
+    }
     writeJsonFile(path, proposal);
     const assetEventIds = recordProposalAssetEvents(app.paths.root, proposal).map((event) => event.id);
     return {
@@ -1175,7 +1189,7 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
     const requestedResult = readApprovalRequestedProposalIds(app.paths.root);
     const decidedResult = readApprovalDecisionProposalIds(app.paths.root);
     const validationStats = readValidationStats(app.paths.root);
-    const pendingDedupeKeys = readPendingApprovalRequestProposalDedupeKeys(app.paths.root, decidedResult.decided);
+    const existingApprovalRequestDedupeKeys = readApprovalRequestProposalDedupeKeys(app.paths.root);
     const pendingResult = readValidatedProposalsNeedingApprovalRequest(
       app.paths.root,
       validationStats.validatedProposalIds,
@@ -1186,8 +1200,8 @@ function approvalRequestAgentDock(app: AppContext, options: ApprovalRequestOptio
     const pending: Array<{ proposal: EvolutionProposal; validation: ValidationReport }> = [];
     for (const candidate of actionableResult.proposals) {
       const dedupeKey = proposalApprovalRequestDedupeKey(candidate.proposal);
-      if (pendingDedupeKeys.has(dedupeKey)) continue;
-      pendingDedupeKeys.add(dedupeKey);
+      if (existingApprovalRequestDedupeKeys.has(dedupeKey)) continue;
+      existingApprovalRequestDedupeKeys.add(dedupeKey);
       pending.push(candidate);
     }
     const skippedDuplicatePendingApprovalRequestCount = actionableResult.proposals.length - pending.length;
@@ -2544,10 +2558,7 @@ function readApprovalRequestedProposalIds(root: string): { requested: Set<string
   return { requested, corruptCount };
 }
 
-function readPendingApprovalRequestProposalDedupeKeys(
-  root: string,
-  decidedProposalIds: ReadonlySet<string>,
-): Set<string> {
+function readApprovalRequestProposalDedupeKeys(root: string): Set<string> {
   const dir = approvalRequestsDir(root);
   const keys = new Set<string>();
   if (!existsSync(dir)) return keys;
@@ -2555,7 +2566,6 @@ function readPendingApprovalRequestProposalDedupeKeys(
     if (!name.endsWith('.json')) continue;
     try {
       const record = ApprovalRequestRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
-      if (decidedProposalIds.has(record.proposalId)) continue;
       const proposal = readProposalById(root, record.proposalId);
       if (proposal) keys.add(proposalApprovalRequestDedupeKey(proposal));
     } catch {
@@ -2575,6 +2585,7 @@ function proposalApprovalRequestDedupeKey(proposal: EvolutionProposal): string {
     changeSet: proposal.changeSet
       .map((change) => ({
         op: change.op,
+        contentHash: change.contentHash ?? '',
         targetRef: {
           id: change.targetRef.id,
           kind: change.targetRef.kind,
@@ -4309,6 +4320,172 @@ function createDryRunProposal(
     createdAt: timestamp,
     updatedAt: timestamp,
   });
+}
+
+function createAutoProposal(
+  root: string,
+  batches: readonly ObservationBatch[],
+  now: () => Date,
+  frontierSignals: readonly FrontierSignal[] = [],
+): GeneratedProposal {
+  const actionableMcpProposal = createActionableMcpToolConfigProposal(root, batches, now, frontierSignals);
+  if (actionableMcpProposal) return actionableMcpProposal;
+  return {
+    proposal: createDryRunProposal(batches, now, frontierSignals),
+    contentFiles: [],
+  };
+}
+
+function createActionableMcpToolConfigProposal(
+  root: string,
+  batches: readonly ObservationBatch[],
+  now: () => Date,
+  frontierSignals: readonly FrontierSignal[],
+): GeneratedProposal | undefined {
+  const signals = selectMcpToolAuditSignals(frontierSignals);
+  if (signals.length === 0) return undefined;
+
+  const sourceObservationRefs = [
+    ...batches.map(observationBatchRef),
+    ...signals.map(frontierSignalRef),
+  ];
+  const assetId = 'agentdock:haro-sidecar-mcp-audit-policy';
+  const content = actionableMcpToolConfigContent(assetId, signals);
+  const contentHash = sha256(content);
+  const fingerprint = sha256(JSON.stringify({
+    kind: 'actionable-mcp-tool-config',
+    assetId,
+    signalIds: signals.map((signal) => signal.id).sort(),
+    contentHash,
+  }));
+  const proposalId = `proposal_${fingerprint.slice(0, 24)}`;
+  const fileName = proposalContentFileName(0, assetId, '.json');
+  const contentRef = proposalContentRef(proposalId, fileName, assetId).uri!;
+  const timestamp = now().toISOString();
+
+  const proposal = EvolutionProposalSchema.parse({
+    id: proposalId,
+    title: '建立 Haro sidecar MCP 工具配置审计策略',
+    status: 'proposed',
+    level: 'L0',
+    targetKind: 'mcp-tool-config',
+    riskLevel: 'low',
+    sourceObservationRefs,
+    changeSet: [
+      {
+        op: 'update',
+        targetRef: {
+          id: assetId,
+          kind: 'mcp-tool-config',
+          uri: 'haro-sidecar://assets/current/mcp-tool-config/agentdock:haro-sidecar-mcp-audit-policy',
+        },
+        contentRef,
+        contentHash,
+        summary:
+          '写入 Haro sidecar MCP 工具配置审计策略：审批前必须展示 MCP server、默认工具、gated-write 工具、调度入口和网络/执行边界，防止自动提案在缺少具体工具配置证据时进入人审。',
+      },
+    ],
+    testPlan: {
+      requiredCommands: [
+        'pnpm -F @haro/agentdock-contract test',
+        'pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test.ts',
+      ],
+      manualChecks: [
+        '在 Haro Web 审批页确认本提案展示了为什么改、怎么改、收益、风险和回滚方案。',
+        '确认 proposal-content JSON 只写入 Haro sidecar 自有 assets/current/mcp-tool-config 目标，不写 AgentDock 代码、AgentDock 配置或 aria-memory-vault。',
+        '确认 `haro_apply` / `haro_rollback` 仍只在显式 gated-write 启用且人审通过后可用。',
+      ],
+      regressionRisks: [
+        '过严的 MCP 工具配置审计策略可能导致低价值但无害的 sidecar 配置提案无法进入审批。',
+        '如果上游 AgentDock MCP 注册结构变化，该 sidecar-local 配置需要同步扩展字段，而不是直接改 AgentDock 代码。',
+      ],
+    },
+    rollbackPlan: {
+      strategy:
+        '该提案只写 Haro sidecar 自有 mcp-tool-config asset；如审批后应用，可通过 Haro rollback 恢复旧版本或删除该 current asset。',
+      snapshotRequired: false,
+      rollbackRefs: [],
+    },
+    humanReviewRequired: true,
+    humanApprovalRefs: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  return {
+    proposal,
+    contentFiles: [
+      {
+        path: join(proposalContentDir(root, proposalId), fileName),
+        content: Buffer.from(content, 'utf8'),
+      },
+    ],
+  };
+}
+
+function selectMcpToolAuditSignals(signals: readonly FrontierSignal[]): FrontierSignal[] {
+  return signals.filter((signal) => {
+    if (signal.status !== 'active') return false;
+    if (!signal.targetDomains.includes('mcp-tools') && !signal.targetDomains.includes('haro-sidecar')) {
+      return false;
+    }
+    const haystack = [
+      signal.id,
+      signal.title,
+      signal.summary,
+      signal.sourceRef.id,
+      signal.sourceRef.kind,
+      signal.sourceRef.uri ?? '',
+      signal.rawRef?.uri ?? '',
+      ...signal.claims,
+    ].join(' ').toLowerCase();
+    return /audit|审计|cloud agent configuration|enabled tools|firewall configuration|actions workflow policy|rest api/.test(haystack);
+  });
+}
+
+function actionableMcpToolConfigContent(assetId: string, signals: readonly FrontierSignal[]): string {
+  const payload = {
+    id: assetId,
+    kind: 'mcp-tool-config',
+    version: 1,
+    language: 'zh-CN',
+    owner: 'haro-sidecar',
+    purpose:
+      '为 Haro sidecar 自动提案建立 MCP 工具配置审计策略，确保进入人审前能说明工具暴露、权限边界、调度入口和回滚方式。',
+    sourceSignals: signals.map((signal) => ({
+      id: signal.id,
+      title: signal.title,
+      sourceType: signal.sourceType,
+      sourceRef: signal.sourceRef,
+      publishedAt: signal.publishedAt,
+      confidence: signal.confidence,
+    })),
+    policy: {
+      scope:
+        '仅约束 Haro sidecar 自有 MCP 工具配置资产；不得直接修改 AgentDock 代码、AgentDock 运行时配置或 aria-memory-vault。',
+      defaultTools: [
+        'haro_observe',
+        'haro_propose',
+        'haro_validate',
+        'haro_asset_query',
+        'haro_run_daily_workflow',
+      ],
+      gatedWriteTools: ['haro_apply', 'haro_rollback'],
+      approvalRequirements: [
+        '自动提案必须包含具体 proposal-content 和 contentHash。',
+        '审批请求必须展示 why/how/expected benefits/risks/rollback plan。',
+        'gated-write 工具必须保持默认关闭；只有显式启用且人审通过后才能进入 apply/rollback。',
+        '如果 frontier signal 只提供泛化趋势，proposer 必须输出 blocked dry-run，而不是生成审批请求。',
+      ],
+      auditChecklist: [
+        '列出 Haro MCP server 暴露的默认工具和 gated-write 工具。',
+        '确认每个 gated-write 工具只能接受 proposal/application id，不接受自由文本 patch。',
+        '确认 daily workflow 只写 Haro sidecar artifacts，不写 AgentDock memory 或 aria-memory-vault。',
+        '确认 proposal-content 落在 $HARO_HOME/evolution/proposal-content/<proposal-id>/，apply 目标只在 $HARO_HOME/assets/current/ allowlist 内。',
+      ],
+    },
+  };
+  return `${JSON.stringify(payload, null, 2)}\n`;
 }
 
 function createValidationReport(

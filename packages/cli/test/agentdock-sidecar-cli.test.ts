@@ -741,6 +741,120 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
+  it('daily workflow turns MCP audit frontier signals into actionable approval requests', async () => {
+    const root = newHome('agentdock-actionable-mcp-audit-proposal');
+    const observeOut = captureStream();
+    const observeErr = captureStream();
+
+    const observe = await runCli(commonOpts(root, observeOut, observeErr, [
+      'observe',
+      '--source',
+      'fake',
+      '--connection',
+      'fake-agentdock',
+      '--since',
+      'last',
+      '--json',
+    ]));
+    expect(observe.exitCode).toBe(0);
+
+    const frontierDir = join(root, 'evolution', 'frontier-signals');
+    mkdirSync(frontierDir, { recursive: true });
+    writeFileSync(join(frontierDir, 'audit-api.json'), `${JSON.stringify(frontierSignal('frontier-signal-audit-api', {
+      title: 'GitHub exposes Copilot cloud agent configuration audit via REST API',
+      summary: 'The API audits MCP server configuration, enabled tools, Actions workflow policy, and firewall configuration.',
+      claims: [
+        'Returned fields include MCP server configuration and enabled tools.',
+        'Returned fields include Actions workflow policy and firewall configuration.',
+      ],
+      targetDomains: ['mcp-tools', 'haro-sidecar', 'agentdock-kernel'],
+      sourceRef: {
+        id: 'github-copilot-cloud-agent-config-audit-api-2026-05-18',
+        kind: 'github-changelog',
+        uri: 'https://github.blog/changelog/2026-05-18-audit-repository-copilot-cloud-agent-configuration-via-the-rest-api',
+      },
+    }), null, 2)}\n`);
+
+    const proposeOut = captureStream();
+    const proposeErr = captureStream();
+    const propose = await runCli(commonOpts(root, proposeOut, proposeErr, [
+      'propose',
+      '--auto-dry-run',
+      '--include-frontier',
+      '--json',
+    ]));
+
+    expect(propose.exitCode).toBe(0);
+    expect(proposeErr.read()).toBe('');
+    const proposePayload = (JSON.parse(proposeOut.read()) as { data: {
+      proposal: {
+        id: string;
+        status: string;
+        targetKind: string;
+        changeSet: Array<{ contentRef: string; contentHash: string; summary: string }>;
+      };
+    } }).data;
+    expect(proposePayload.proposal.status).toBe('proposed');
+    expect(proposePayload.proposal.targetKind).toBe('mcp-tool-config');
+    expect(proposePayload.proposal.changeSet[0]?.contentRef).toContain('/proposal-content/');
+    expect(proposePayload.proposal.changeSet[0]?.summary).toContain('MCP 工具配置审计策略');
+    const proposalContentDir = join(root, 'evolution', 'proposal-content', proposePayload.proposal.id);
+    const proposalContentFiles = readdirSync(proposalContentDir);
+    expect(proposalContentFiles).toHaveLength(1);
+    const proposalContent = JSON.parse(readFileSync(join(proposalContentDir, proposalContentFiles[0]!), 'utf8')) as {
+      id: string;
+      kind: string;
+      policy: { gatedWriteTools: string[]; approvalRequirements: string[] };
+    };
+    expect(proposalContent).toMatchObject({
+      id: 'agentdock:haro-sidecar-mcp-audit-policy',
+      kind: 'mcp-tool-config',
+    });
+    expect(proposalContent.policy.gatedWriteTools).toEqual(['haro_apply', 'haro_rollback']);
+    expect(proposalContent.policy.approvalRequirements.join('\n')).toContain('proposal-content');
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const validatePayload = (JSON.parse(validateOut.read()) as { data: {
+      validations: Array<{ proposalId: string; riskVerdict: string; applyEligible: boolean; blockingReasons: string[] }>;
+    } }).data;
+    expect(validatePayload.validations[0]).toMatchObject({
+      proposalId: proposePayload.proposal.id,
+      riskVerdict: 'low',
+      applyEligible: true,
+      blockingReasons: [],
+    });
+
+    const approvalOut = captureStream();
+    const approvalErr = captureStream();
+    const approval = await runCli(commonOpts(root, approvalOut, approvalErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+    expect(approval.exitCode).toBe(0);
+    expect(approvalErr.read()).toBe('');
+    const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
+      approvalRequestCount: number;
+      approvalRequests: Array<{ proposalId: string; howChange: string[]; expectedBenefits: string[] }>;
+      skippedNotActionableApprovalRequestCount: number;
+    } }).data;
+    expect(approvalPayload.approvalRequestCount).toBe(1);
+    expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
+    expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('MCP 工具配置审计策略');
+    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('受控应用');
+    expect(observeErr.read()).toBe('');
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
   it('propose --auto-dry-run --include-frontier reports corrupt frontier signals', async () => {
     const root = newHome('agentdock-propose-frontier-corrupt');
     const observeOut = captureStream();
@@ -1165,6 +1279,82 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(readApprovalRequestRecords(root)).toHaveLength(1);
 
     writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_new');
+    const secondValidateOut = captureStream();
+    const secondValidateErr = captureStream();
+    const secondValidate = await runCli(commonOpts(root, secondValidateOut, secondValidateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(secondValidate.exitCode).toBe(0);
+    expect(secondValidateErr.read()).toBe('');
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toBe('');
+    const payload = (JSON.parse(secondOut.read()) as { data: {
+      approvalRequestCount: number;
+      requestedProposalCount: number;
+      skippedDuplicatePendingApprovalRequestCount: number;
+      wroteApprovalRequests: boolean;
+    } }).data;
+    expect(payload.approvalRequestCount).toBe(0);
+    expect(payload.requestedProposalCount).toBe(0);
+    expect(payload.skippedDuplicatePendingApprovalRequestCount).toBe(1);
+    expect(payload.wroteApprovalRequests).toBe(false);
+    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+  });
+
+  it('approval-request --pending skips new proposals that duplicate a decided approval request', async () => {
+    const root = newHome('agentdock-approval-request-duplicate-decided');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_decided_old');
+    const firstValidateOut = captureStream();
+    const firstValidateErr = captureStream();
+    const firstValidate = await runCli(commonOpts(root, firstValidateOut, firstValidateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(firstValidate.exitCode).toBe(0);
+    expect(firstValidateErr.read()).toBe('');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const existingRequest = readApprovalRequestRecords(root)[0]!;
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_duplicate_decided',
+      approvalRequestId: existingRequest.id,
+      proposalId: existingRequest.proposalId,
+      validationId: existingRequest.validationId,
+      decision: 'reject',
+      reviewer: {
+        source: 'agentdock',
+        username: 'reviewer',
+        role: 'owner',
+      },
+      sourceRef: {
+        id: existingRequest.id,
+        kind: 'approval-request',
+      },
+      createdAt: '2026-05-08T12:03:00.000Z',
+      updatedAt: '2026-05-08T12:03:00.000Z',
+    });
+
+    writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_decided_new');
     const secondValidateOut = captureStream();
     const secondValidateErr = captureStream();
     const secondValidate = await runCli(commonOpts(root, secondValidateOut, secondValidateErr, [
