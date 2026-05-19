@@ -1322,7 +1322,7 @@ function rewritePendingApprovalRequestDescriptions(
       skippedCorruptValidationCount += 1;
       continue;
     }
-    const readable = readableApprovalRequestFields(proposal, validation);
+    const readable = formatApprovalRequestDescription(proposal, validation);
     const timestamp = app.now().toISOString();
     const next = ApprovalRequestRecordSchema.parse({
       ...request,
@@ -1330,6 +1330,7 @@ function rewritePendingApprovalRequestDescriptions(
       whyChange: readable.whyChange,
       howChange: readable.howChange,
       expectedBenefits: readable.expectedBenefits,
+      scope: readable.scope,
       manualChecks: readable.manualChecks,
       regressionRisks: readable.regressionRisks,
       rollbackPlan: readable.rollbackPlan,
@@ -4095,7 +4096,7 @@ function createApprovalRequestRecord(
 ): ApprovalRequestRecord {
   const timestamp = app.now().toISOString();
   const changeRefs = proposal.changeSet.map((_change, index) => proposalChangeRef(proposal, index));
-  const readable = readableApprovalRequestFields(proposal, validation);
+  const readable = formatApprovalRequestDescription(proposal, validation);
   const id = `approval_request_${sha256(JSON.stringify({
     proposalId: proposal.id,
     validationId: validation.id,
@@ -4123,6 +4124,7 @@ function createApprovalRequestRecord(
     whyChange: readable.whyChange,
     howChange: readable.howChange,
     expectedBenefits: readable.expectedBenefits,
+    scope: readable.scope,
     requiredTests: validation.requiredTests.length > 0
       ? validation.requiredTests
       : proposal.testPlan.requiredCommands,
@@ -4144,247 +4146,276 @@ function createApprovalRequestRecord(
   });
 }
 
-interface ReadableApprovalRequestFields {
+interface FormattedApprovalRequestDescription {
   title: string;
   whyChange: string[];
   howChange: string[];
   expectedBenefits: string[];
+  scope: string[];
   manualChecks: string[];
   regressionRisks: string[];
   rollbackPlan: EvolutionProposal['rollbackPlan'];
   reviewerInstruction: string;
 }
 
-function readableApprovalRequestFields(
+function formatApprovalRequestDescription(
   proposal: EvolutionProposal,
   validation: ValidationReport,
-): ReadableApprovalRequestFields {
-  const rollbackPlan = {
-    ...proposal.rollbackPlan,
-    strategy: readableRollbackStrategy(proposal),
-  };
+): FormattedApprovalRequestDescription {
   return {
-    title: readableApprovalTitle(proposal),
-    whyChange: readableWhyChange(proposal, validation),
-    howChange: readableHowChange(proposal),
-    expectedBenefits: readableExpectedBenefits(proposal),
-    manualChecks: readableManualChecks(proposal),
-    regressionRisks: readableRegressionRisks(proposal),
-    rollbackPlan,
+    title: formatApprovalTitle(proposal),
+    whyChange: formatWhyChange(proposal),
+    howChange: formatHowChange(proposal),
+    expectedBenefits: formatExpectedBenefits(proposal),
+    scope: formatScope(proposal, validation),
+    manualChecks: formatManualChecks(proposal),
+    regressionRisks: formatRegressionRisks(proposal),
+    rollbackPlan: {
+      ...proposal.rollbackPlan,
+      strategy: formatRollbackStrategy(proposal),
+    },
     reviewerInstruction: [
-      '请选择 approve（同意）、reject（驳回）或 request-changes（要求修改）。',
-      '只有当你能用自己的话说清“为什么改、改哪里、坏了怎么撤”时才 approve。',
-      '如果你看完仍然不知道为什么改，请直接 request-changes，并要求 Haro 重写描述。',
+      '可选 approve、reject 或 request-changes。',
+      '能说清为什么改、改哪里、怎么撤，再 approve。',
+      '如果仍看不懂，请要求修改。',
+      '让 Haro 重写描述。',
     ].join(' '),
   };
 }
 
-function readableApprovalTitle(proposal: EvolutionProposal): string {
+function formatApprovalTitle(proposal: EvolutionProposal): string {
   if (isGenericDryRunProposal(proposal)) {
-    return '历史演练提案：没有具体改动文件，建议驳回或要求 Haro 重新生成';
+    return '历史演练提案：没有具体改动，建议退回';
   }
   if (proposal.targetKind === 'mcp-tool-config') {
-    return '给 Haro 自动提案加审批门：没写清工具、边界和撤回办法的提案不再进审批页';
+    return '给 Haro 提案加审批门：看不懂的工具改动不进审批页';
   }
   if (proposal.targetKind === 'runner-profile') {
-    return '给 Haro 运行错误加恢复策略：遇到同类错误时先说明证据和建议，不自动重试任务';
+    return '给 Haro 运行错误加处理规则：先说明错误，再给建议';
   }
   if (proposal.targetKind === 'schedule-config') {
-    return '给 Haro 定时任务失败加复核规则：失败原因没说清前不自动改调度';
+    return '给 Haro 定时任务失败加复核规则：先查清原因再处理';
   }
-  return `让 Haro 的 ${readableTargetKind(proposal.targetKind)} 改动先讲清影响范围，再进入审批`;
+  return `让 Haro 的${humanTargetKind(proposal.targetKind)}先讲清楚再审批`;
 }
 
-function readableWhyChange(proposal: EvolutionProposal, validation: ValidationReport): string[] {
+function formatWhyChange(proposal: EvolutionProposal): string[] {
   if (isGenericDryRunProposal(proposal)) {
     return [
-      '这是早期版本留下的演练请求：它只把 Haro 自检和外部资料摘要送进审批页，但没有给出可执行的具体改动文件。',
-      '如果直接通过，审批人其实不知道 Haro 会改哪里；更安全的处理是驳回，或要求 Haro 重新生成一条带具体改动内容的提案。',
+      '这是早期演练请求。',
+      '它没有说明会改哪个文件。',
+      '通过它没有实际价值。',
     ];
   }
-  const evidence = readableEvidenceSummary(proposal);
-  const risk = validation.applyEligible
-    ? '自动检查已经确认：这条提案有人审通过后才允许继续，不会直接改 AgentDock 代码。'
-    : '自动检查还没通过：这条提案暂时只能看，不能继续应用。';
   if (proposal.targetKind === 'mcp-tool-config') {
     return [
-      `过去的问题是：Haro 已经能自动生成提案，但审批页没有强制要求它先说清“会用哪些工具、哪些写入能力默认关闭、出问题怎么撤”。${evidence}`,
-      `不补这道门，审批人会反复看到看似正式、实际说不清边界的提案，容易误判能不能通过。${risk}`,
+      'Haro 已经会自动生成提案。',
+      '有些提案没有说清会改哪里。',
+      '不拦住这类提案，审批人容易误点通过。',
     ];
   }
   if (proposal.targetKind === 'runner-profile') {
     return [
-      `本轮 Haro 自检快照里已经出现真实运行错误，提案会保留原始错误码、错误消息和是否可恢复，避免把运行故障包装成泛泛的优化建议。${evidence}`,
-      `不做这层策略，Haro 下次遇到同类错误时仍只能生成难懂的 dry-run，审批人看不出是否应该重试、降级还是要求人工处理。${risk}`,
+      'Haro 已经出现真实运行错误。',
+      '旧提案没有讲清错误该怎么处理。',
+      '不补规则，后续仍会给出空泛建议。',
     ];
   }
   if (proposal.targetKind === 'schedule-config') {
     return [
-      `本轮 Haro 自检快照里已经出现失败的定时任务，提案会把失败 taskId、结果引用和人工复核要求写清楚。${evidence}`,
-      `不做这层规则，Haro 可能继续把“定时任务失败”描述成内部状态，审批人不知道是否需要改调度、重跑还是先补证据。${risk}`,
+      'Haro 已经发现定时任务失败。',
+      '旧提案没有讲清失败原因。',
+      '不补规则，审批人难以判断下一步。',
     ];
   }
   return [
-    `这条提案要改的是 Haro 自己的 ${readableTargetKind(proposal.targetKind)}，不是 AgentDock 代码。${evidence}`,
-    `现在需要审批人判断这项改动是否值得继续；${risk}`,
+    `Haro 的${humanTargetKind(proposal.targetKind)}需要调整。`,
+    '当前说明不足以支撑人工审批。',
+    '不补清楚，审批人容易误判。',
   ];
 }
 
-function readableHowChange(proposal: EvolutionProposal): string[] {
-  return proposal.changeSet.map((change, index) => {
-    const target = readableChangeTarget(proposal, change);
-    const perspective = readableUserVisibleChange(proposal);
-    const contentEvidence = change.contentHash
-      ? '本次改动带有“具体内容文件 + 内容指纹”，审批前后可以核对内容有没有被替换。'
-      : '这一步没有提供可核对的具体内容文件，因此只适合要求修改或驳回。';
-    return `${index + 1}. 改动对象：${target}。${perspective} ${contentEvidence}`;
-  });
-}
-
-function readableExpectedBenefits(proposal: EvolutionProposal): string[] {
+function formatHowChange(proposal: EvolutionProposal): string[] {
   if (isGenericDryRunProposal(proposal)) {
     return [
-      '审批人可以一眼识别这是历史演练请求，避免误点通过。',
-      '要求 Haro 重新生成后，新的提案必须带清楚的改动内容、影响范围和撤回办法。',
+      '改动对象：历史演练占位内容。审批页只显示旧队列项。Haro 只保留记录。',
+    ];
+  }
+  return proposal.changeSet.map((change, index) => (
+    `${index + 1}. 改动对象：${humanChangeTarget(proposal, change)}。${humanVisibleChange(proposal)}`
+  ));
+}
+
+function formatExpectedBenefits(proposal: EvolutionProposal): string[] {
+  if (isGenericDryRunProposal(proposal)) {
+    return [
+      '审批人能识别旧演练项。',
+      '待审队列会保留清楚记录。',
+      '退回后可重新生成真实提案。',
     ];
   }
   if (proposal.targetKind === 'mcp-tool-config') {
     return [
-      '审批人不用懂 Haro 内部实现，也能判断提案是否列清了工具、权限边界和撤回办法。',
-      '描述不完整的自动提案会被挡在审批页外，减少“看不懂但像是真的”的待审项。',
-      '只影响 Haro 自己的工具配置，不会修改 AgentDock 代码或用户记忆。',
+      '审批人能更快判断是否通过。',
+      '看不懂的提案会先退回修改。',
+      '自动提案队列会更干净。',
     ];
   }
   if (proposal.targetKind === 'runner-profile') {
     return [
-      '审批人能直接看到错误码和错误消息，判断该让 Haro 重试、降级，还是要求人工处理。',
-      'Haro 下次遇到同类运行错误时，会先给出带证据的建议，而不是生成空泛演练提案。',
-      '只影响 Haro 自己的运行策略文件，不会自动重放用户任务。',
+      '审批人能直接看到错误处理建议。',
+      'Haro 后续遇到同类错误时更稳。',
+      '运行故障会更容易分类处理。',
     ];
   }
   if (proposal.targetKind === 'schedule-config') {
     return [
-      '审批人能看到哪个定时任务失败、失败结果在哪里查，而不是只看到内部状态名。',
-      'Haro 不会自动改调度；它只会把失败转成需要人审的清晰提案。',
-      '只影响 Haro 自己的调度复核规则，不接管 AgentDock scheduler。',
+      '审批人能看清失败任务。',
+      '失败原因不清时会先退回补证据。',
+      '定时任务问题会更容易复盘。',
     ];
   }
   return [
-    `审批人能用普通话理解这次 ${readableTargetKind(proposal.targetKind)} 改动的影响范围。`,
-    'Haro 保留测试和撤回步骤，避免通过后才发现不知道怎么恢复。',
+    '审批人能更快看懂影响。',
+    'Haro 的后续修改更可控。',
   ];
 }
 
-function readableManualChecks(proposal: EvolutionProposal): string[] {
+function formatScope(proposal: EvolutionProposal, validation: ValidationReport): string[] {
   if (isGenericDryRunProposal(proposal)) {
     return [
-      '确认这是一条历史演练请求：它没有真正可应用的改动内容。',
-      '如果你不想保留它，请在审批页选择 reject；如果希望 Haro 重新产出，请选择 request-changes 并写明要补具体改动文件。',
+      '范围：历史演练请求。',
+      '不包含真实可应用内容。',
+      '不应继续应用。',
+    ];
+  }
+  const base = [
+    `范围：${humanTargetKind(proposal.targetKind)}。`,
+    '不改 AgentDock 代码。',
+    '不写用户记忆。',
+  ];
+  base.push(validation.applyEligible
+    ? '通过审批前不会执行写入。'
+    : '自动检查未通过，暂不能应用。');
+  return base;
+}
+
+function formatManualChecks(proposal: EvolutionProposal): string[] {
+  if (isGenericDryRunProposal(proposal)) {
+    return [
+      '确认它是历史演练请求。',
+      '确认它没有真实改动文件。',
+      '建议在审批页退回。',
+    ];
+  }
+  if (proposal.targetKind === 'runner-profile') {
+    return [
+      '检查是否写清错误码。',
+      '检查是否写清错误消息。',
+      '检查是否写清处理建议。',
+      '核对详情里的内容指纹。',
+    ];
+  }
+  if (proposal.targetKind === 'schedule-config') {
+    return [
+      '检查是否写清失败任务。',
+      '检查是否写清失败结果。',
+      '检查是否写清人工复核要求。',
+      '核对详情里的内容指纹。',
+    ];
+  }
+  return [
+    '检查提案是否说清改动对象。',
+    '检查是否说清审批后的变化。',
+    '检查是否写清撤回入口。',
+    '核对详情里的内容指纹。',
+  ];
+}
+
+function formatRegressionRisks(proposal: EvolutionProposal): string[] {
+  if (isGenericDryRunProposal(proposal)) {
+    return [
+      '误通过后，后续找不到具体改动。',
+      '审批人会最先发现结果不匹配。',
+      '恢复窗口通常是几分钟。',
     ];
   }
   if (proposal.targetKind === 'mcp-tool-config') {
     return [
-      '在审批页确认：这条规则讲清了 Haro 会用哪些工具、哪些写入能力默认关闭、出问题怎么撤。',
-      '确认改动范围只限 Haro 自己维护的 MCP 工具配置文件，不会修改 AgentDock 代码、AgentDock 配置或用户记忆。',
-      '如果你看不懂这条规则具体拦什么提案，请选择 request-changes 要求重写说明。',
+      '规则过严时，合格提案也可能被挡住。',
+      '审批人会最先发现待审数量异常。',
+      '恢复窗口通常是几分钟。',
     ];
   }
   if (proposal.targetKind === 'runner-profile') {
     return [
-      '在审批页确认：这条策略展示了真实错误码、错误消息、是否可恢复和详情引用。',
-      '确认它只给 Haro 后续处理同类运行错误提供建议，不会自动重试用户任务。',
-      '如果错误证据不足以判断，请选择 request-changes 要求补充日志或拆分错误类型。',
+      '不同错误可能被归到同一类。',
+      '运行 Haro 的人会先看到建议不匹配。',
+      '恢复窗口通常是几分钟。',
     ];
   }
   if (proposal.targetKind === 'schedule-config') {
     return [
-      '在审批页确认：这条策略展示了失败任务、任务结果引用和人工复核要求。',
-      '确认它不会自动禁用、触发、重跑或改写任何 AgentDock 定时任务。',
-      '如果失败原因没有讲清，请选择 request-changes 要求补充任务结果或失败日志。',
+      '失败原因可能仍然不够清楚。',
+      '审批人会最先发现证据不足。',
+      '恢复窗口通常是几分钟。',
     ];
   }
   return [
-    `确认这条提案只影响 ${readableTargetKind(proposal.targetKind)}。`,
-    '如果你无法判断改动范围或撤回办法，请选择 request-changes 要求 Haro 重写描述。',
+    '影响范围可能仍需补充说明。',
+    '审批人会最先发现说明不足。',
+    '恢复窗口通常是几分钟。',
   ];
 }
 
-function readableRegressionRisks(proposal: EvolutionProposal): string[] {
+function formatRollbackStrategy(proposal: EvolutionProposal): string {
   if (isGenericDryRunProposal(proposal)) {
     return [
-      '最坏情况：审批人误以为这条历史演练请求是真改动并点了通过；最先感知的是审批人自己，因为后续找不到具体文件变化；恢复方式是在审批页 request-changes 或 reject，通常几分钟内能清掉。',
-    ];
-  }
-  if (proposal.targetKind === 'mcp-tool-config') {
-    return [
-      '最坏情况：审批门设得过严，Haro 的低风险提案也进不了审批页；最先感知的是审批人，因为待审列表变少或缺少预期提案；恢复方式是在审批页 request-changes 要求放宽规则，若已应用则运行 `haro rollback --application-id <application-id>`，通常几分钟内恢复。',
-    ];
-  }
-  if (proposal.targetKind === 'runner-profile') {
-    return [
-      '最坏情况：不同根因的错误被合并成同一条恢复策略；最先感知的是审批人或后续运行 Haro 的人，因为错误处理建议不匹配；恢复方式是在审批页 request-changes 要求拆分错误类型，若已应用则运行 `haro rollback --application-id <application-id>`，通常几分钟内恢复。',
-    ];
-  }
-  if (proposal.targetKind === 'schedule-config') {
-    return [
-      '最坏情况：失败任务只有摘要没有足够证据，审批人仍看不出该不该改；最先感知的是审批人；恢复方式是 request-changes 要求补 resultRef 或失败日志，若已应用则运行 `haro rollback --application-id <application-id>`，通常几分钟内恢复。',
-    ];
+      '未通过时，在审批页点 reject。',
+      '看不懂时，点 request-changes。',
+      '这类请求没有可回滚内容。',
+    ].join(' ');
   }
   return [
-    `最坏情况：${readableTargetKind(proposal.targetKind)} 的影响范围没有写清；最先感知的是审批人；恢复方式是在审批页 request-changes 要求重写描述，若已应用则运行 \`haro rollback --application-id <application-id>\`。`,
-  ];
-}
-
-function readableRollbackStrategy(proposal: EvolutionProposal): string {
-  if (isGenericDryRunProposal(proposal)) {
-    return '如果还没通过：在 Haro Web 审批页选择 reject；如果只是看不懂：选择 request-changes 并要求 Haro 重新生成带具体改动文件的提案。这类历史演练请求没有实际可应用内容，不需要运行回滚命令。';
-  }
-  return [
-    '如果还没通过：在 Haro Web 审批页选择 reject，或选择 request-changes 写明要 Haro 改哪里。',
-    '如果已经通过并应用：先运行 `haro doctor --component sidecar --json` 或查看 Haro Web 的应用记录找到 application id，再运行 `haro rollback --application-id <application-id>` 恢复到上一个 Haro sidecar 资产版本。',
-    `本次撤回只影响 ${readableTargetKind(proposal.targetKind)}，不会回滚 AgentDock 代码或 aria-memory-vault。`,
+    '未通过时，在审批页点 reject。',
+    '看不懂时，点 request-changes。',
+    '已应用时，先找到 application id。',
+    '再运行 `haro rollback --application-id <application-id>`。',
   ].join(' ');
 }
 
-function readableEvidenceSummary(proposal: EvolutionProposal): string {
-  const kinds = new Set(proposal.sourceObservationRefs.map((ref) => ref.kind));
-  const parts: string[] = [];
-  if (kinds.has('observation-batch')) parts.push('本轮 Haro 自检快照');
-  if (kinds.has('frontier-signal')) parts.push('外部一手情报（如 GitHub Changelog 等）');
-  if (parts.length === 0) return '证据已经随提案保留，审批页可以继续展开查看。';
-  return `证据来自${parts.join('和')}，审批页仍会保留原始引用供复核。`;
+function humanChangeTarget(proposal: EvolutionProposal, change: ChangeOperation): string {
+  if (proposal.targetKind === 'mcp-tool-config') return 'Haro 的工具配置';
+  if (proposal.targetKind === 'runner-profile') return 'Haro 的运行策略';
+  if (proposal.targetKind === 'schedule-config') return 'Haro 的定时任务复核规则';
+  return humanTargetKind(change.targetRef.kind || proposal.targetKind);
 }
 
-function readableChangeTarget(proposal: EvolutionProposal, change: ChangeOperation): string {
-  const label = readableTargetKind(change.targetRef.kind || proposal.targetKind);
-  return `${label}（asset id: ${change.targetRef.id}）`;
-}
-
-function readableTargetKind(kind: string): string {
+function humanTargetKind(kind: string): string {
   const labels: Record<string, string> = {
-    'mcp-tool-config': 'Haro 自己维护的 MCP 工具配置文件',
-    'runner-profile': 'Haro 自己的运行策略文件',
-    'schedule-config': 'Haro 自己的调度复核规则',
-    prompt: 'Haro 自己的提示词文件',
-    skill: 'Haro 自己的 skill 文件',
-    'routing-rule': 'Haro 自己的路由规则',
+    'mcp-tool-config': 'Haro 的工具配置',
+    'runner-profile': 'Haro 的运行策略',
+    'schedule-config': 'Haro 的定时任务复核规则',
+    prompt: 'Haro 的提示词',
+    skill: 'Haro 的 skill',
+    'routing-rule': 'Haro 的路由规则',
     'haro-code': 'Haro 代码',
-    'agentdock-contract': 'AgentDock/Haro sidecar 契约',
+    'agentdock-contract': 'AgentDock 与 Haro 的契约',
   };
-  return labels[kind] ?? `Haro 自己的 ${kind} 资产`;
+  return labels[kind] ?? `Haro 的 ${kind} 资产`;
 }
 
-function readableUserVisibleChange(proposal: EvolutionProposal): string {
+function humanVisibleChange(proposal: EvolutionProposal): string {
   if (proposal.targetKind === 'mcp-tool-config') {
-    return '审批人会看到：后续自动提案必须列清工具、权限边界和撤回办法；Haro 会把没写清这些信息的提案挡在审批页外。';
+    return '审批页会增加一条规则。Haro 会拦住没写清边界的提案。';
   }
   if (proposal.targetKind === 'runner-profile') {
-    return '用户和审批人会看到：运行错误会显示原始错误码、错误消息和可恢复判断；Haro 会先给建议，不会自动重试任务。';
+    return '审批页会显示错误处理规则。Haro 会先给建议，不自动重试。';
   }
   if (proposal.targetKind === 'schedule-config') {
-    return '审批人会看到：失败的定时任务、结果引用和下一步复核要求；Haro 不会自动改调度或重跑任务。';
+    return '审批页会显示失败任务。Haro 会先要求复核原因。';
   }
-  return '审批人会看到：这次改动的影响范围、预期变化和撤回方式；Haro 会等待人审结果再继续。';
+  return '审批页会显示影响范围。Haro 会等待人工决策。';
 }
 
 function createSnapshotArtifacts(

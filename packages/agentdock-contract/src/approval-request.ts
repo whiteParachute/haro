@@ -30,6 +30,7 @@ export const ApprovalRequestRecordSchema = z.object({
   whyChange: z.array(NonEmptyStringSchema).min(1),
   howChange: z.array(NonEmptyStringSchema).min(1),
   expectedBenefits: z.array(NonEmptyStringSchema).min(1),
+  scope: z.array(NonEmptyStringSchema).default([]),
   requiredTests: z.array(NonEmptyStringSchema).default([]),
   manualChecks: z.array(NonEmptyStringSchema).default([]),
   regressionRisks: z.array(NonEmptyStringSchema).default([]),

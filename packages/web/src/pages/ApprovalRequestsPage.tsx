@@ -298,6 +298,9 @@ function ApprovalRequestCard({
         </div>
 
         <div className="mt-5 grid min-w-0 gap-4 rounded-[1.35rem] border border-slate-950/10 bg-slate-950/[0.025] p-4 text-sm dark:border-white/10 dark:bg-white/[0.035] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          {request.scope?.length ? (
+            <InfoBlock label="范围边界" text={request.scope.join(' ')} />
+          ) : null}
           <InfoBlock label="审阅说明" text={request.reviewerInstruction} />
           <InfoBlock
             label="回滚方案"

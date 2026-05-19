@@ -160,6 +160,7 @@ function assertReadableApprovalRequest(record: ApprovalRequestRecord): void {
     ...record.whyChange,
     ...record.howChange,
     ...record.expectedBenefits,
+    ...record.scope,
     ...record.manualChecks,
     ...record.regressionRisks,
     record.rollbackPlan.strategy,
@@ -178,19 +179,46 @@ function assertReadableApprovalRequest(record: ApprovalRequestRecord): void {
   for (const pattern of forbiddenPatterns) {
     expect(humanText).not.toMatch(pattern);
   }
-  expect(record.whyChange.join('\n')).toMatch(/问题|风险|必须|不做|过去|本轮/);
+
+  for (const sentence of readableSentences(humanText)) {
+    expect(sentence.length).toBeLessThanOrEqual(35);
+  }
+
+  const whyText = record.whyChange.join('\n');
+  expect(whyText).toMatch(/没有|不|难以|需要|价值|容易/);
+  expect(whyText).not.toMatch(/证据|引用|自检快照|外部一手情报|自动检查|人审通过|AgentDock 代码|用户记忆|内容指纹/);
+
   for (const step of record.howChange) {
     expect(step).toMatch(/改动对象/);
-    expect(step).toMatch(/用户.*会看到|审批人.*会看到|Haro 会/);
+    expect(step).toMatch(/审批页|用户|审批人|Haro/);
   }
-  expect(record.expectedBenefits.join('\n')).toMatch(/审批人|用户|Haro/);
-  expect(record.regressionRisks.join('\n')).toMatch(/最坏情况/);
-  expect(record.regressionRisks.join('\n')).toMatch(/恢复/);
-  expect(record.rollbackPlan.strategy).toMatch(/Haro Web|haro rollback|reject|request-changes/);
+  expect(record.howChange.join('\n')).not.toMatch(/内容指纹|证据|核对|haro rollback|只影响|不会回滚/);
+
+  expect(record.expectedBenefits.join('\n')).toMatch(/审批人|用户|Haro|队列|复盘|退回/);
+  expect(record.expectedBenefits.join('\n')).not.toMatch(/不会|不改|只影响|不接管|范围|边界/);
+
+  const riskText = record.regressionRisks.join('\n');
+  expect(riskText).toMatch(/最先|恢复窗口/);
+  expect(riskText).not.toMatch(/haro rollback|request-changes|reject|审批页点|运行 `|恢复方式|命令/);
+
+  expect(record.rollbackPlan.strategy).toMatch(/haro rollback|reject|request-changes/);
+  expect(record.rollbackPlan.strategy).not.toMatch(/只影响|不会回滚|不改 AgentDock|aria-memory-vault|用户记忆|范围/);
+
+  expect(record.scope.length).toBeGreaterThan(0);
+  expect(record.scope.join('\n')).toMatch(/范围|不改|不写|审批|应用/);
   expect(record.reviewerInstruction).toContain('approve');
   expect(record.reviewerInstruction).toContain('reject');
   expect(record.reviewerInstruction).toContain('request-changes');
-  expect(record.reviewerInstruction).toContain('如果你看完仍然不知道为什么改');
+  expect(record.reviewerInstruction).toContain('如果仍看不懂');
+}
+
+function readableSentences(text: string): string[] {
+  return text
+    .replace(/`[^`]+`/g, '命令')
+    .replace(/[A-Za-z0-9_:/.-]{24,}/g, '编号')
+    .split(/[。！？\n]/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
 }
 
 function writeApprovalDecisionRecord(root: string, record: ApprovalDecisionRecord): void {
@@ -889,8 +917,9 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
     expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
     expect(approvalPayload.approvalRequests[0]?.title).toContain('审批门');
-    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 自己维护的 MCP 工具配置文件');
-    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('审批人不用懂 Haro 内部实现');
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 的工具配置');
+    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('审批人能更快判断');
+    expect(approvalPayload.approvalRequests[0]?.scope.join('\n')).toContain('不改 AgentDock 代码');
     assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
     expect(observeErr.read()).toBe('');
     expect(existsSync(join(root, 'memory'))).toBe(false);
@@ -1028,8 +1057,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
     expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
     expect(approvalPayload.approvalRequests[0]?.title).toContain('运行错误');
-    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 自己的运行策略文件');
-    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('错误码');
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 的运行策略');
+    expect(approvalPayload.approvalRequests[0]?.expectedBenefits.join('\n')).toContain('错误处理建议');
     assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
@@ -1152,7 +1181,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(approvalPayload.skippedNotActionableApprovalRequestCount).toBe(0);
     expect(approvalPayload.approvalRequests[0]?.proposalId).toBe(proposePayload.proposal.id);
     expect(approvalPayload.approvalRequests[0]?.title).toContain('定时任务失败');
-    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 自己的调度复核规则');
+    expect(approvalPayload.approvalRequests[0]?.howChange.join('\n')).toContain('Haro 的定时任务复核规则');
     assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });

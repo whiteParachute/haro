@@ -156,6 +156,7 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
       whyChange: ['AgentDock observation shows prompt clarity drift.'],
       howChange: ['Update the target prompt text through sidecar-owned assets/current.'],
       expectedBenefits: ['Improves operator understanding before apply.'],
+      scope: ['Only touches Haro sidecar-owned prompt assets.'],
       requiredTests: ['git diff --check'],
       manualChecks: ['Review the generated approval request.'],
       regressionRisks: ['Prompt wording can drift.'],
@@ -172,6 +173,7 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
     expect(record.humanReviewRequired).toBe(true);
     expect(record.decisionOptions).toContain('request-changes');
     expect(record.descriptionRewrittenAt).toBe(now);
+    expect(record.scope).toEqual(['Only touches Haro sidecar-owned prompt assets.']);
   });
 
   it('accepts approval decision records and requires direction for request-changes', () => {

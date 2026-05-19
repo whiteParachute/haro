@@ -27,6 +27,7 @@ Haro 已经可以把外部一手情报和 AgentDock 自检结果转换为真实�
 - G3: 保留必要 asset id、proposal id、evidence refs 和 contentHash，但必须配普通话注释，不允许裸露术语。
 - G4: 已存在 pending approval request 可以只重写人读字段，保持 proposal/validation/evidence/contentHash/status 不变。
 - G5: 如果证据不足以写出人话 whyChange，提案应留在 blocked dry-run，不得编造收益或降低风险。
+- G6: 每个展示板块只承担一个职责，范围/边界声明统一放入 `scope` 字段。
 
 ## 3. Non-Goals / 不做的事
 
@@ -54,6 +55,13 @@ Haro 已经可以把外部一手情报和 AgentDock 自检结果转换为真实�
   - `mcp-tool-config asset` → “Haro 自己维护的 MCP 工具配置文件”。
   - `L0/L1` 首次出现必须加注：`L0=只动 Haro 自己的配置，不改 AgentDock 代码` / `L1=只动 Haro 自己的运行策略资产，不改 AgentDock 代码`。
 - R10: 现有 pending approval request 的人读字段必须可重写，并写入 `descriptionRewrittenAt`，但不得改 evidence/contentHash/validation/status。
+- R11: `whyChange / howChange / expectedBenefits / regressionRisks / rollbackPlan.strategy` 必须单一职责：
+  - `whyChange` 只写问题和不改的代价。
+  - `howChange` 只写改动对象和可见变化。
+  - `expectedBenefits` 只写正向收益，不写“不会修改 X”。
+  - `regressionRisks` 只写坏结果、谁先感知和恢复窗口，不写恢复命令。
+  - `rollbackPlan.strategy` 只写撤回操作，不重申范围边界。
+- R12: 中文行文必须短句优先；测试中每句不得超过 35 字，命令和 id 先脱敏后计数。
 
 ## 5. Design / 设计要点
 
@@ -65,6 +73,7 @@ Haro 已经可以把外部一手情报和 AgentDock 自检结果转换为真实�
 2. 所有 lane 共用 `createReadableApprovalDescription(context)` 生成 title、whyChange、howChange、expectedBenefits、regressionRisks、rollbackPlan.strategy、reviewerInstruction。
 3. 术语翻译在共享层完成，避免某条 lane 里漏掉裸术语。
 4. generic dry-run 如无法给出具体改动内容，仍应被 approval gate 阻止，不进入 pending。
+5. `scope` 独立承载范围和边界声明，避免污染 why/how/benefit/risk/rollback。
 
 ### 5.2 pending 描述重写
 
@@ -80,6 +89,8 @@ Haro 已经可以把外部一手情报和 AgentDock 自检结果转换为真实�
 测试层提供 `assertReadableApprovalRequest(record)`：
 
 - 禁止出现术语表裸词。
+- 禁止板块串味：why 不写证据，benefits 不写负向边界，risks 不写命令，rollback 不写范围声明。
+- 每句中文说明不超过 35 字；命令和长 id 脱敏后再计数。
 - whyChange 至少包含一句中文解释，不能只是 id / ref。
 - howChange 每条必须包含“用户会看到 / 审批人会看到 / Haro 会”的视角说明之一。
 - regressionRisks 必须包含最坏情况和恢复方式。
@@ -93,6 +104,7 @@ Haro 已经可以把外部一手情报和 AgentDock 自检结果转换为真实�
 - AC4: whyChange / howChange / benefits / risks / rollback 均通过可读性 lint。（对应 R3–R8）
 - AC5: 现有 4 条 pending approval request 被重写描述后仍保持 pending，proposal/validation/evidence/contentHash 不变，并新增 `descriptionRewrittenAt`。（对应 R10）
 - AC6: 手动运行一次 `haro_run_daily_workflow` 后，不 auto approve/apply/rollback，输出的新 request 或既有 request 可由审批人复核是否看得懂。
+- AC7: 现有 4 条 pending request 第二轮重写后，pending 数量仍为 4，且 `scope` 承载边界声明。
 
 ## 7. Test Plan / 测试计划
 
@@ -108,3 +120,4 @@ Haro 已经可以把外部一手情报和 AgentDock 自检结果转换为真实�
 ## 9. Changelog / 变更记录
 
 - 2026-05-19: Haroway — 初稿并完成实现，所有审批描述改为共享可读模板，并支持 pending 描述重写。
+- 2026-05-19: Haroway — 第二轮收口板块单一职责，新增 `scope` 字段，并把短句中文写入 lint。

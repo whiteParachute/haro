@@ -58,6 +58,7 @@ export interface ApprovalRequestRecord {
   whyChange: string[];
   howChange: string[];
   expectedBenefits: string[];
+  scope?: string[];
   requiredTests: string[];
   manualChecks: string[];
   regressionRisks: string[];
