@@ -339,6 +339,15 @@ interface ApplyResult {
   applicationRecordPath?: string;
 }
 
+interface AutoApplyApprovedResult {
+  attempted: boolean;
+  status: 'applied' | 'blocked' | 'skipped';
+  proposalId: string;
+  gateCode?: ApplyGateCode | 'ALREADY_APPLIED' | 'AUTO_APPLY_ALREADY_ATTEMPTED' | 'AUTO_APPLY_NOT_APPLICABLE';
+  blockingReasons?: string[];
+  applicationId?: string;
+}
+
 type RollbackGateCode =
   | 'READY'
   | 'APPLICATION_NOT_FOUND'
@@ -1747,6 +1756,87 @@ export function applyAgentDock(app: AppContext, options: ApplyOptions): ApplyRes
   }
 }
 
+export function autoApplyApprovedProposal(
+  app: AppContext,
+  options: { proposalId: string },
+): AutoApplyApprovedResult {
+  const proposal = readProposalById(app.paths.root, options.proposalId);
+  if (!proposal) {
+    return {
+      attempted: false,
+      status: 'skipped',
+      proposalId: options.proposalId,
+      gateCode: 'PROPOSAL_NOT_FOUND',
+      blockingReasons: [`No proposal artifact found for ${options.proposalId}.`],
+    };
+  }
+
+  const existingApplication = readApplicationRecordsForProposal(app.paths.root, proposal.id)
+    .find((record) => record.status === 'applied' || record.status === 'failed');
+  if (existingApplication) {
+    return {
+      attempted: false,
+      status: 'skipped',
+      proposalId: proposal.id,
+      gateCode: existingApplication.status === 'applied' ? 'ALREADY_APPLIED' : 'AUTO_APPLY_ALREADY_ATTEMPTED',
+      applicationId: existingApplication.id,
+      blockingReasons: [`Auto apply already has application ${existingApplication.id} with status=${existingApplication.status}.`],
+    };
+  }
+
+  const validation = readLatestValidationForProposal(app.paths.root, proposal.id);
+  const skipReason = autoApplySkipReason(proposal, validation);
+  if (skipReason) {
+    return {
+      attempted: false,
+      status: 'skipped',
+      proposalId: proposal.id,
+      gateCode: 'AUTO_APPLY_NOT_APPLICABLE',
+      blockingReasons: [skipReason],
+    };
+  }
+
+  const result = applyAgentDock(app, { proposalId: proposal.id });
+  if (result.applied) {
+    return {
+      attempted: true,
+      status: 'applied',
+      proposalId: proposal.id,
+      gateCode: result.gateCode,
+      applicationId: result.applicationRecord?.id,
+    };
+  }
+
+  const failed = createFailedApplicationRecord(app, proposal, validation!, result);
+  const failedPath = applicationFilePath(app.paths.root, failed);
+  writeJsonFile(failedPath, failed);
+  return {
+    attempted: true,
+    status: 'blocked',
+    proposalId: proposal.id,
+    gateCode: result.gateCode,
+    blockingReasons: result.blockingReasons,
+    applicationId: failed.id,
+  };
+}
+
+function autoApplySkipReason(
+  proposal: EvolutionProposal,
+  validation: ValidationReport | undefined,
+): string | undefined {
+  if (proposal.level === 'L2' || proposal.level === 'L3') {
+    return `Auto apply is limited to L0/L1 sidecar-local proposals; received ${proposal.level}.`;
+  }
+  const unsupportedTargetReason = unsupportedL0L1TargetReason(proposal);
+  if (unsupportedTargetReason) return unsupportedTargetReason;
+  if (!validation) return `No validation report found for proposal ${proposal.id}.`;
+  if (!validation.applyEligible) return 'Validation report has applyEligible=false.';
+  if (validation.riskVerdict !== 'low' && validation.riskVerdict !== 'medium') {
+    return `Auto apply only accepts low/medium risk; validation riskVerdict=${validation.riskVerdict}.`;
+  }
+  return undefined;
+}
+
 export function rollbackAgentDock(app: AppContext, options: RollbackOptions): RollbackResult {
   const applicationId = options.applicationId.trim();
   if (!applicationId) {
@@ -2878,6 +2968,23 @@ function readApplicationById(root: string, applicationId: string): ApplicationRe
   } catch {
     return undefined;
   }
+}
+
+function readApplicationRecordsForProposal(root: string, proposalId: string): ApplicationRecord[] {
+  const dir = applicationsDir(root);
+  if (!existsSync(dir)) return [];
+  const records: ApplicationRecord[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = ApplicationRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (record.proposalId === proposalId) records.push(record);
+    } catch {
+      // Corrupt application artifacts are surfaced by status/doctor; auto apply
+      // ignores them so a valid application record can still provide idempotence.
+    }
+  }
+  return records;
 }
 
 function readLatestValidationForProposal(root: string, proposalId: string): ValidationReport | undefined {
@@ -4057,6 +4164,42 @@ function createAppliedApplicationRecord(
       ...assetEventRefs,
     ],
     blockingReasons: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+function createFailedApplicationRecord(
+  app: AppContext,
+  proposal: EvolutionProposal,
+  validation: ValidationReport,
+  result: ApplyResult,
+): ApplicationRecord {
+  const timestamp = app.now().toISOString();
+  return ApplicationRecordSchema.parse({
+    id: `application_${sha256(JSON.stringify({
+      proposalId: proposal.id,
+      validationId: validation.id,
+      gateCode: result.gateCode,
+      blockingReasons: result.blockingReasons,
+      autoApply: true,
+    })).slice(0, 24)}`,
+    proposalId: proposal.id,
+    validationId: validation.id,
+    status: 'failed',
+    gateCode: result.gateCode === 'READY' ? 'APPLY_EXECUTION_FAILED' : result.gateCode,
+    level: proposal.level,
+    targetKind: proposal.targetKind,
+    applied: false,
+    assetEventRefs: [],
+    evidenceRefs: [
+      evolutionProposalRef(proposal),
+      validationReportRef(validation),
+      ...proposal.humanApprovalRefs,
+    ],
+    blockingReasons: result.blockingReasons.length > 0
+      ? result.blockingReasons
+      : [`Auto apply was blocked with gateCode=${result.gateCode}.`],
     createdAt: timestamp,
     updatedAt: timestamp,
   });

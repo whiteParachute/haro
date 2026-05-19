@@ -86,6 +86,7 @@ import { registerConfigWriteCommands } from './commands/config.js';
 import { registerCronCommands } from './commands/cron.js';
 import {
   applyAgentDock,
+  autoApplyApprovedProposal,
   readAgentDockSidecarStatus,
   registerAgentDockSidecarCommands,
   rollbackAgentDock,
@@ -1474,6 +1475,7 @@ function registerWebCommand(program: Command, app: AppContext): void {
                 root: app.opts.root,
                 projectRoot: app.opts.projectRoot ?? process.cwd(),
                 dbFile: app.paths.dbFile,
+                autoApplyApprovedDecision: (input) => autoApplyApprovedProposal(app, { proposalId: input.proposalId }),
               },
             }),
             { port, host: options.host },

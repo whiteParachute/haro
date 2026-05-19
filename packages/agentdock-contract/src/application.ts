@@ -24,6 +24,7 @@ export const ApplyGateCodeSchema = z.enum([
 export const ApplicationStatusSchema = z.enum([
   'ready',
   'blocked',
+  'failed',
   'applied',
   'rolled-back',
 ]);
@@ -112,19 +113,19 @@ export const ApplicationRecordSchema = z.object({
     });
   }
 
-  if (record.status !== 'blocked' && record.gateCode !== 'READY') {
+  if (record.status !== 'blocked' && record.status !== 'failed' && record.gateCode !== 'READY') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['gateCode'],
-      message: 'non-blocked application records require gateCode=READY',
+      message: 'non-blocked/non-failed application records require gateCode=READY',
     });
   }
 
-  if (record.status === 'blocked' && record.gateCode === 'READY') {
+  if ((record.status === 'blocked' || record.status === 'failed') && record.gateCode === 'READY') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['gateCode'],
-      message: 'blocked application records require a non-READY gate code',
+      message: 'blocked/failed application records require a non-READY gate code',
     });
   }
 
@@ -136,11 +137,11 @@ export const ApplicationRecordSchema = z.object({
     });
   }
 
-  if (record.status !== 'blocked' && (!record.snapshotRef || !record.rollbackRef)) {
+  if (record.status !== 'blocked' && record.status !== 'failed' && (!record.snapshotRef || !record.rollbackRef)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['snapshotRef'],
-      message: 'non-blocked application records require snapshotRef and rollbackRef',
+      message: 'non-blocked/non-failed application records require snapshotRef and rollbackRef',
     });
   }
 

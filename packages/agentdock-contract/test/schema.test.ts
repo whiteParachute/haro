@@ -230,6 +230,27 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
     }
   });
 
+  it('accepts failed application records with gate reasons and no snapshot refs', () => {
+    const record = ApplicationRecordSchema.parse({
+      id: 'application-failed-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      status: 'failed',
+      gateCode: 'APPLY_CONTENT_HASH_MISMATCH',
+      level: 'L0',
+      targetKind: 'mcp-tool-config',
+      applied: false,
+      assetEventRefs: [],
+      evidenceRefs: [{ id: 'proposal-001', kind: 'evolution-proposal' }],
+      blockingReasons: ['content hash mismatch'],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(record.status).toBe('failed');
+    expect(record.gateCode).toBe('APPLY_CONTENT_HASH_MISMATCH');
+  });
+
   it('accepts snapshot and rollback metadata records for gate preflight', () => {
     const snapshot = AssetSnapshotRecordSchema.parse({
       id: 'snapshot-001',

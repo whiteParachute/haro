@@ -20,9 +20,10 @@ import {
   type PatchBranchPlanRecord,
   type RollbackRecord,
 } from '@haro/agentdock-contract';
-import { AgentRegistry, ProviderRegistry } from '@haro/core';
+import { AgentRegistry, ProviderRegistry, buildHaroPaths } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
-import { runCli } from '../src/index.js';
+import { runCli, type AppContext } from '../src/index.js';
+import { autoApplyApprovedProposal } from '../src/commands/agentdock-sidecar.js';
 
 class StubProvider implements AgentProvider {
   readonly id = 'codex';
@@ -68,6 +69,18 @@ function commonOpts(root: string, stdout: Capture, stderr: Capture, argv: string
     loadAgentRegistry: async () => createAgentRegistry(),
     createAdditionalChannels: async () => [],
   };
+}
+
+function autoApplyApp(root: string): AppContext {
+  const stdout = captureStream();
+  const stderr = captureStream();
+  return {
+    paths: buildHaroPaths(root),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    now: () => new Date('2026-05-08T12:10:00.000Z'),
+    logger: { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined },
+  } as unknown as AppContext;
 }
 
 function jsonResponse(value: unknown) {
@@ -329,6 +342,55 @@ function writeExecutableMcpToolConfigProposal(root: string, proposalId: string, 
     createdAt: '2026-05-08T12:00:00.000Z',
     updatedAt: '2026-05-08T12:00:00.000Z',
   }, null, 2)}\n`);
+}
+
+function writeAutoApplyFixture(root: string, proposalId: string, overrides: {
+  level?: string;
+  targetKind?: string;
+  applyEligible?: boolean;
+  corruptContentHash?: boolean;
+} = {}): void {
+  writeExecutableMcpToolConfigProposal(root, proposalId);
+  const proposalPath = join(root, 'evolution', 'proposals', `${proposalId}.json`);
+  const proposal = readJson<Record<string, unknown> & { changeSet: Array<Record<string, unknown>> }>(proposalPath);
+  proposal.status = 'validated';
+  proposal.level = overrides.level ?? 'L0';
+  proposal.targetKind = overrides.targetKind ?? 'mcp-tool-config';
+  if (overrides.corruptContentHash) {
+    proposal.changeSet[0]!.contentHash = 'sha256-mismatch';
+  }
+  writeFileSync(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`);
+
+  const validationDir = join(root, 'evolution', 'validations');
+  mkdirSync(validationDir, { recursive: true });
+  writeFileSync(join(validationDir, `validation_${proposalId}.json`), `${JSON.stringify({
+    id: `validation_${proposalId}`,
+    proposalId,
+    riskVerdict: 'medium',
+    requiredTests: ['git diff --check'],
+    rollbackReady: true,
+    applyEligible: overrides.applyEligible ?? true,
+    blockingReasons: overrides.applyEligible === false ? ['fixture not eligible'] : [],
+    evidenceRefs: [{ id: proposalId, kind: 'evolution-proposal' }],
+    createdAt: '2026-05-08T12:01:00.000Z',
+  }, null, 2)}\n`);
+
+  writeApprovalDecisionRecord(root, {
+    id: `approval_decision_${proposalId}`,
+    approvalRequestId: `approval_request_${proposalId}`,
+    proposalId,
+    validationId: `validation_${proposalId}`,
+    decision: 'approve',
+    reviewer: { source: 'haro-web', username: 'fixture', role: 'owner' },
+    sourceRef: { id: `approval_request_${proposalId}`, kind: 'approval-request' },
+    approvalRef: {
+      id: `approval_decision_${proposalId}`,
+      kind: 'human-approval',
+      uri: `haro-sidecar://approval-decisions/approval_decision_${proposalId}`,
+    },
+    createdAt: '2026-05-08T12:02:00.000Z',
+    updatedAt: '2026-05-08T12:02:00.000Z',
+  });
 }
 
 function readPatchBranchPlanRecords(root: string): PatchBranchPlanRecord[] {
@@ -4504,5 +4566,62 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(stdout.read()).toBe('');
     const error = JSON.parse(stderr.read()) as { error: { message: string } };
     expect(error.error.message).toContain('already running');
+  });
+
+  it('auto-applies an approved L0 sidecar-local proposal once', () => {
+    const root = newHome('agentdock-auto-apply-success');
+    writeAutoApplyFixture(root, 'proposal_auto_apply_success');
+
+    const result = autoApplyApprovedProposal(autoApplyApp(root), { proposalId: 'proposal_auto_apply_success' });
+
+    expect(result).toMatchObject({ attempted: true, status: 'applied', gateCode: 'READY' });
+    expect(readApplicationRecords(root)).toHaveLength(1);
+    expect(readApplicationRecords(root)[0]).toMatchObject({ status: 'applied', applied: true });
+    expect(readAssetEvents(root).some((event) => event.eventType === 'applied')).toBe(true);
+    expect(readSnapshotRecords(root)).toHaveLength(1);
+    expect(readRollbackRecords(root)).toHaveLength(1);
+  });
+
+  it('records a failed application when auto apply hits the content gate', () => {
+    const root = newHome('agentdock-auto-apply-content-gate');
+    writeAutoApplyFixture(root, 'proposal_auto_apply_content_gate', { corruptContentHash: true });
+
+    const result = autoApplyApprovedProposal(autoApplyApp(root), { proposalId: 'proposal_auto_apply_content_gate' });
+
+    expect(result).toMatchObject({ attempted: true, status: 'blocked', gateCode: 'APPLY_CONTENT_HASH_MISMATCH' });
+    const applications = readApplicationRecords(root);
+    expect(applications).toHaveLength(1);
+    expect(applications[0]).toMatchObject({
+      status: 'failed',
+      gateCode: 'APPLY_CONTENT_HASH_MISMATCH',
+      applied: false,
+    });
+    expect(readAssetEvents(root).some((event) => event.eventType === 'applied')).toBe(false);
+  });
+
+  it('skips auto apply for L2 proposals or applyEligible=false validations', () => {
+    const root = newHome('agentdock-auto-apply-skip');
+    writeAutoApplyFixture(root, 'proposal_auto_apply_l2', { level: 'L2' });
+    writeAutoApplyFixture(root, 'proposal_auto_apply_not_eligible', { applyEligible: false });
+
+    const l2 = autoApplyApprovedProposal(autoApplyApp(root), { proposalId: 'proposal_auto_apply_l2' });
+    const notEligible = autoApplyApprovedProposal(autoApplyApp(root), { proposalId: 'proposal_auto_apply_not_eligible' });
+
+    expect(l2).toMatchObject({ attempted: false, status: 'skipped', gateCode: 'AUTO_APPLY_NOT_APPLICABLE' });
+    expect(notEligible).toMatchObject({ attempted: false, status: 'skipped', gateCode: 'AUTO_APPLY_NOT_APPLICABLE' });
+    expect(readApplicationRecords(root)).toHaveLength(0);
+  });
+
+  it('does not auto-apply a proposal that already has an applied application', () => {
+    const root = newHome('agentdock-auto-apply-idempotent');
+    writeAutoApplyFixture(root, 'proposal_auto_apply_idempotent');
+
+    const first = autoApplyApprovedProposal(autoApplyApp(root), { proposalId: 'proposal_auto_apply_idempotent' });
+    const second = autoApplyApprovedProposal(autoApplyApp(root), { proposalId: 'proposal_auto_apply_idempotent' });
+
+    expect(first.status).toBe('applied');
+    expect(second).toMatchObject({ attempted: false, status: 'skipped', gateCode: 'ALREADY_APPLIED' });
+    expect(readApplicationRecords(root)).toHaveLength(1);
+    expect(readAssetEvents(root).filter((event) => event.eventType === 'applied')).toHaveLength(1);
   });
 });

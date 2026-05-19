@@ -61,6 +61,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
     ...(options.runtime?.root ? { root: options.runtime.root } : {}),
     ...(options.runtime?.projectRoot ? { projectRoot: options.runtime.projectRoot } : {}),
     ...(options.runtime?.dbFile ? { dbFile: options.runtime.dbFile } : {}),
+    ...(options.runtime?.autoApplyApprovedDecision ? { autoApplyApprovedDecision: options.runtime.autoApplyApprovedDecision } : {}),
     logger,
     startedAt: options.runtime?.startedAt ?? Date.now(),
   };

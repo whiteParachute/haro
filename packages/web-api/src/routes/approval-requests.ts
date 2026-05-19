@@ -32,7 +32,7 @@ import {
 } from '@haro/agentdock-contract';
 import { readWebAuth, requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
-import type { WebRuntime } from '../runtime.js';
+import type { ApprovalDecisionAutoApplyResult, WebRuntime } from '../runtime.js';
 
 interface ApprovalRequestView {
   request: ApprovalRequestRecord;
@@ -140,10 +140,39 @@ export function createApprovalRequestsRoute(
     if (!result.ok) {
       return c.json({ error: result.error.message, code: result.error.code }, result.error.status);
     }
-    return c.json({ success: true, data: result.value });
+    const autoApply = await triggerAutoApplyAfterApprove(runtime, result.value, c.get('logger'));
+    return c.json({ success: true, data: { ...result.value, ...(autoApply ? { autoApply } : {}) } });
   });
 
   return route;
+}
+
+async function triggerAutoApplyAfterApprove(
+  runtime: WebRuntime,
+  value: {
+    request: ApprovalRequestRecord;
+    decision: ApprovalDecisionRecord;
+  },
+  logger: ApiKeyAuthEnv['Variables']['logger'],
+): Promise<ApprovalDecisionAutoApplyResult | undefined> {
+  if (value.decision.decision !== 'approve' || !runtime.autoApplyApprovedDecision) return undefined;
+  try {
+    return await runtime.autoApplyApprovedDecision({
+      requestId: value.request.id,
+      proposalId: value.request.proposalId,
+      validationId: value.request.validationId,
+      decisionId: value.decision.id,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger?.error({ error: message, proposalId: value.request.proposalId }, 'auto apply after approve failed');
+    return {
+      attempted: true,
+      status: 'error',
+      proposalId: value.request.proposalId,
+      blockingReasons: [message],
+    };
+  }
 }
 
 function resolveHaroHome(runtime: WebRuntime): string {
