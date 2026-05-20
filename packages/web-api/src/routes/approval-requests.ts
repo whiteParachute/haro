@@ -21,6 +21,7 @@ import {
   AssetSnapshotRecordSchema,
   EvolutionProposalSchema,
   RollbackRecordSchema,
+  lintApprovalDecisionDescription,
   type ApprovalDecisionRecord,
   type ApprovalDecisionOption,
   type ApprovalRequestRecord,
@@ -875,7 +876,7 @@ function decideApprovalRequest(
     .update(JSON.stringify({ requestId: request.id, decision: input.decision, direction: input.direction ?? '', timestamp }))
     .digest('hex')
     .slice(0, 24)}`;
-  const baseDecision = ApprovalDecisionRecordSchema.parse({
+  const parsedDecision = ApprovalDecisionRecordSchema.parse({
     id,
     approvalRequestId: request.id,
     proposalId: request.proposalId,
@@ -895,6 +896,10 @@ function decideApprovalRequest(
     },
     createdAt: timestamp,
     updatedAt: timestamp,
+  });
+  const baseDecision = ApprovalDecisionRecordSchema.parse({
+    ...parsedDecision,
+    descriptionLint: lintApprovalDecisionDescription(parsedDecision),
   });
   const decision = input.decision === 'approve'
     ? ApprovalDecisionRecordSchema.parse({

@@ -111,6 +111,24 @@ export type {
   PatchBranchPlanStatus,
 } from './patch-branch.js';
 
+
+export {
+  DescriptionLintIssueSchema,
+  DescriptionLintReportSchema,
+  DescriptionLintSeveritySchema,
+  lintApprovalDecisionDescription,
+  lintApprovalRequestDescription,
+  lintEvolutionProposalDescription,
+  lintValidationDescription,
+  mergeDescriptionLintReports,
+} from './description-lint.js';
+export type {
+  DescriptionLintTarget,
+  DescriptionLintIssue,
+  DescriptionLintReport,
+  DescriptionLintSeverity,
+} from './description-lint.js';
+
 export {
   FrontierConfidenceSchema,
   FrontierSignalSchema,

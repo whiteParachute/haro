@@ -55,6 +55,7 @@ describe('approval request review API', () => {
     expect(approved.status).toBe(200);
     const approvedBody = await approved.json();
     expect(approvedBody.data.decision.decision).toBe('approve');
+    expect(approvedBody.data.decision.descriptionLint.status).toBe('pass');
     expect(approvedBody.data.proposalUpdated).toBe(true);
 
     const proposal = JSON.parse(readFileSync(path.join(root, 'evolution/proposals/proposal_smoke.json'), 'utf8'));
@@ -167,6 +168,7 @@ describe('approval request review API', () => {
     expect(decidedBody.data.decision.direction).toContain('对话摘要');
     expect(decidedBody.data.decision.direction).toContain('请把用户收益和回滚方案说清楚');
     expect(decidedBody.data.decision.direction).toContain('haro-sidecar://approval-conversations/');
+    expect(decidedBody.data.decision.descriptionLint.status).toBe('pass');
   });
 
   it('records request-changes decisions and supersedes the proposal', async () => {
@@ -185,6 +187,7 @@ describe('approval request review API', () => {
     const body = await response.json();
     expect(body.data.decision.decision).toBe('request-changes');
     expect(body.data.decision.direction).toContain('approval review page');
+    expect(body.data.decision.descriptionLint.status).toBe('blocker');
     expect(body.data.proposalUpdated).toBe(true);
 
     const proposal = JSON.parse(readFileSync(path.join(root, 'evolution/proposals/proposal_smoke.json'), 'utf8'));

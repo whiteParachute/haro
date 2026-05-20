@@ -13,6 +13,7 @@ import {
   createSidecarAssetRegistry,
   createSidecarRegistry,
   type SidecarGatedWriteHandlers,
+  type SidecarLintHandlers,
   type SidecarWorkflowHandlers,
 } from '../src/index.js';
 import { McpServer } from '../src/server.js';
@@ -52,7 +53,7 @@ afterEach(() => {
 async function runSidecarWith(
   e: TestEnv,
   requests: JsonRpcMessage[],
-  options: { gatedWrite?: SidecarGatedWriteHandlers; workflow?: SidecarWorkflowHandlers } = {},
+  options: { gatedWrite?: SidecarGatedWriteHandlers; workflow?: SidecarWorkflowHandlers; lint?: SidecarLintHandlers } = {},
 ): Promise<JsonRpcMessage[]> {
   const transport = new InMemoryTransport();
   for (const req of requests) transport.push(req);
@@ -65,6 +66,7 @@ async function runSidecarWith(
     audit,
     now: () => new Date('2026-05-08T06:00:00.000Z'),
     ...(options.workflow ? { workflow: options.workflow } : {}),
+    ...(options.lint ? { lint: options.lint } : {}),
     ...(options.gatedWrite ? { gatedWrite: options.gatedWrite } : {}),
   });
   const server = new McpServer({
@@ -238,6 +240,47 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
       summary: {
         approvalRequestIds: ['approval-request-001'],
       },
+    });
+  });
+
+  it('lists and invokes the readability lint tool only when a lint handler is provided', async () => {
+    const e = (env = setupEnv());
+    const responses = await runSidecarWith(
+      e,
+      [
+        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: {
+            name: 'haro_lint_descriptions',
+            arguments: { fixDryRun: true },
+          },
+        },
+      ],
+      {
+        lint: {
+          descriptions: (input) => ({
+            command: 'lint descriptions',
+            fixDryRun: input.fixDryRun === true,
+            scannedArtifactCount: 1,
+          }),
+        },
+      },
+    );
+
+    const listed = responses[0]! as { result: { tools: Array<{ name: string }> } };
+    expect(listed.result.tools.map((tool) => tool.name).sort()).toEqual([
+      'haro_asset_query',
+      'haro_lint_descriptions',
+      'haro_observe',
+      'haro_propose',
+      'haro_validate',
+    ]);
+    expect(callResult<{ command: string; fixDryRun: boolean }>(responses[1]!)).toMatchObject({
+      command: 'lint descriptions',
+      fixDryRun: true,
     });
   });
 

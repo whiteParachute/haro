@@ -26,6 +26,7 @@ import {
   type AssetEvent,
   type AssetKind,
   type ChangeOperation,
+  type DescriptionLintReport,
   type EvolutionProposal,
   type FrontierSignal,
   type ObservationBatch,
@@ -42,6 +43,13 @@ import {
   collectFrontierSignalsFromConfig,
   type FrontierSourceSummary,
 } from '../frontier-sources/index.js';
+import {
+  lintApprovalDecisionDescription,
+  lintApprovalRequestDescription,
+  lintEvolutionProposalDescription,
+  lintValidationDescription,
+  mergeDescriptionLintReports,
+} from '../readability-lint.js';
 import { renderError, renderJson, resolveOutputMode } from '../output/index.js';
 
 interface OutputFlags {
@@ -125,6 +133,10 @@ interface CleanupOptions extends OutputFlags {
   confirm?: boolean;
 }
 
+interface LintDescriptionsOptions extends OutputFlags {
+  fixDryRun?: boolean;
+}
+
 interface ObserveResult {
   command: 'observe';
   connectionId: string;
@@ -183,6 +195,7 @@ interface ProposePolicyAuditSummary {
   policyId?: string; policyContentHash?: string; policyPath?: string; status: 'loaded' | 'missing' | 'parse-error';
   evaluatedCandidateCount: number; blockedCount: number; allowedCount: number; notApplicableCount: number;
   decision?: McpAuditPolicyDecision; reason?: string; evaluations: McpAuditPolicyEvaluation[];
+  descriptionLint?: DescriptionLintReport;
 }
 
 interface CurrentMcpAuditPolicy {
@@ -443,6 +456,30 @@ interface IntakeFrontierResult {
   sourceSummaries: FrontierSourceSummary[];
   signalIds: string[];
   signalPaths: string[];
+}
+
+interface DescriptionLintArtifactResult {
+  kind: 'proposal' | 'validation' | 'approval-request' | 'approval-decision';
+  id: string;
+  path: string;
+  status: DescriptionLintReport['status'];
+  warningCount: number;
+  blockerCount: number;
+  issueCount: number;
+  suggestions: string[];
+}
+
+interface DescriptionLintResult {
+  command: 'lint descriptions';
+  fixDryRun: boolean;
+  scannedArtifactCount: number;
+  corruptArtifactCount: number;
+  violationArtifactCount: number;
+  warningCount: number;
+  blockerCount: number;
+  issueCount: number;
+  ruleCounts: Record<string, number>;
+  artifacts: DescriptionLintArtifactResult[];
 }
 
 export interface AgentDockDailyWorkflowResult {
@@ -1072,6 +1109,45 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
       }
     });
 
+  const lint = program
+    .command('lint')
+    .description('Inspect sidecar artifact readability without changing business fields');
+
+  lint
+    .command('descriptions')
+    .description('Scan proposal, validation, approval request, and approval decision text for FEAT-052 readability regressions')
+    .option('--fix-dry-run', 'print rewrite suggestions only; do not modify artifacts')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: LintDescriptionsOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = lintDescriptions(app, options);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(
+          [
+            `Description lint: ${result.issueCount === 0 ? 'pass' : 'needs-attention'}`,
+            `Scanned: ${result.scannedArtifactCount}`,
+            `Corrupt: ${result.corruptArtifactCount}`,
+            `Artifacts with issues: ${result.violationArtifactCount}`,
+            `Warnings: ${result.warningCount}`,
+            `Blockers: ${result.blockerCount}`,
+            `Fix dry-run: ${result.fixDryRun ? 'yes' : 'no'}`,
+            ...result.artifacts.slice(0, 20).map((artifact) => (
+              `- ${artifact.kind}/${artifact.id}: ${artifact.issueCount} issue(s), ${artifact.suggestions[0] ?? 'review text'}`
+            )),
+          ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
   program
     .command('cleanup')
     .description('Archive rejected sidecar approval artifacts without touching approved/applied records')
@@ -1517,7 +1593,7 @@ function rewritePendingApprovalRequestDescriptions(
     }
     const readable = formatApprovalRequestDescription(proposal, validation);
     const timestamp = app.now().toISOString();
-    const next = ApprovalRequestRecordSchema.parse({
+    const rewrittenRequest = ApprovalRequestRecordSchema.parse({
       ...request,
       title: readable.title,
       whyChange: readable.whyChange,
@@ -1530,6 +1606,10 @@ function rewritePendingApprovalRequestDescriptions(
       reviewerInstruction: readable.reviewerInstruction,
       descriptionRewrittenAt: timestamp,
       updatedAt: timestamp,
+    });
+    const next = ApprovalRequestRecordSchema.parse({
+      ...rewrittenRequest,
+      descriptionLint: lintApprovalRequestDescription(rewrittenRequest),
     });
     writeJsonFile(path, next);
     rewritten.push(next);
@@ -2332,6 +2412,81 @@ function emitFrontierSourceWarnings(app: AppContext, summaries: readonly Frontie
       `Warning: frontier source ${summary.id} (${summary.type}) skipped: ${summary.reason ?? 'unknown error'}.\n`,
     );
   }
+}
+
+export function lintDescriptions(app: AppContext, options: LintDescriptionsOptions): DescriptionLintResult {
+  const artifacts: DescriptionLintArtifactResult[] = [];
+  const ruleCounts: Record<string, number> = {};
+  let scannedArtifactCount = 0;
+  let corruptArtifactCount = 0;
+  const push = (
+    kind: DescriptionLintArtifactResult['kind'],
+    id: string,
+    path: string,
+    report: DescriptionLintReport,
+  ) => {
+    scannedArtifactCount += 1;
+    for (const issue of report.issues) {
+      ruleCounts[issue.ruleId] = (ruleCounts[issue.ruleId] ?? 0) + 1;
+    }
+    if (report.issueCount === 0) return;
+    artifacts.push({
+      kind,
+      id,
+      path,
+      status: report.status,
+      warningCount: report.warningCount,
+      blockerCount: report.blockerCount,
+      issueCount: report.issueCount,
+      suggestions: report.issues.slice(0, 3).map((issue) => `${issue.field}: ${issue.message}`),
+    });
+  };
+  const scanDir = <T>(
+    dir: string,
+    schemaName: string,
+    parse: (value: unknown) => T,
+    visit: (record: T, path: string) => void,
+  ) => {
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir).sort()) {
+      if (!name.endsWith('.json')) continue;
+      const path = join(dir, name);
+      try {
+        visit(parse(JSON.parse(readFileSync(path, 'utf8'))), path);
+      } catch {
+        corruptArtifactCount += 1;
+        ruleCounts[`corrupt-${schemaName}`] = (ruleCounts[`corrupt-${schemaName}`] ?? 0) + 1;
+      }
+    }
+  };
+
+  scanDir(proposalsDir(app.paths.root), 'proposal', (value) => EvolutionProposalSchema.parse(value), (proposal, path) => {
+    push('proposal', proposal.id, path, lintEvolutionProposalDescription(proposal));
+  });
+  scanDir(validationsDir(app.paths.root), 'validation', (value) => ValidationReportSchema.parse(value), (validation, path) => {
+    push('validation', validation.id, path, lintValidationDescription(validation));
+  });
+  scanDir(approvalRequestsDir(app.paths.root), 'approval-request', (value) => ApprovalRequestRecordSchema.parse(value), (request, path) => {
+    push('approval-request', request.id, path, lintApprovalRequestDescription(request));
+  });
+  scanDir(approvalDecisionsDir(app.paths.root), 'approval-decision', (value) => ApprovalDecisionRecordSchema.parse(value), (decision, path) => {
+    push('approval-decision', decision.id, path, lintApprovalDecisionDescription(decision));
+  });
+
+  const warningCount = artifacts.reduce((sum, artifact) => sum + artifact.warningCount, 0);
+  const blockerCount = artifacts.reduce((sum, artifact) => sum + artifact.blockerCount, 0);
+  return {
+    command: 'lint descriptions',
+    fixDryRun: options.fixDryRun === true,
+    scannedArtifactCount,
+    corruptArtifactCount,
+    violationArtifactCount: artifacts.length,
+    warningCount,
+    blockerCount,
+    issueCount: warningCount + blockerCount,
+    ruleCounts,
+    artifacts,
+  };
 }
 
 
@@ -4765,7 +4920,7 @@ function createApprovalRequestRecord(
       summary: change.summary,
     })),
   })).slice(0, 24)}`;
-  return ApprovalRequestRecordSchema.parse({
+  const request = ApprovalRequestRecordSchema.parse({
     id,
     proposalId: proposal.id,
     validationId: validation.id,
@@ -4798,6 +4953,10 @@ function createApprovalRequestRecord(
     ],
     createdAt: timestamp,
     updatedAt: timestamp,
+  });
+  return ApprovalRequestRecordSchema.parse({
+    ...request,
+    descriptionLint: lintApprovalRequestDescription(request),
   });
 }
 
@@ -5316,15 +5475,24 @@ function createAutoProposal(
   frontierSignals: readonly FrontierSignal[] = [],
 ): GeneratedProposal {
   const actionableRunnerProfileProposal = createActionableRunnerProfileProposal(root, batches, now);
-  if (actionableRunnerProfileProposal) return actionableRunnerProfileProposal;
+  if (actionableRunnerProfileProposal) return attachProposalDescriptionLint(actionableRunnerProfileProposal);
   const actionableScheduleConfigProposal = createActionableScheduleConfigProposal(root, batches, now);
-  if (actionableScheduleConfigProposal) return actionableScheduleConfigProposal;
+  if (actionableScheduleConfigProposal) return attachProposalDescriptionLint(actionableScheduleConfigProposal);
   const actionableMcpProposal = createActionableMcpToolConfigProposal(root, batches, now, frontierSignals);
-  if (actionableMcpProposal) return actionableMcpProposal;
-  return {
+  if (actionableMcpProposal) return attachProposalDescriptionLint(actionableMcpProposal);
+  return attachProposalDescriptionLint({
     proposal: createDryRunProposal(batches, now, frontierSignals),
     contentFiles: [],
-  };
+  });
+}
+
+function attachProposalDescriptionLint(generated: GeneratedProposal): GeneratedProposal {
+  const report = lintEvolutionProposalDescription(generated.proposal);
+  generated.proposal = EvolutionProposalSchema.parse({
+    ...generated.proposal,
+    descriptionLint: report,
+  });
+  return generated;
 }
 
 function loadCurrentMcpAuditPolicy(root: string): CurrentMcpAuditPolicyLoadResult {
@@ -5379,6 +5547,7 @@ function evaluateProposalAgainstPolicy(
   proposal: EvolutionProposal,
   policyResult: CurrentMcpAuditPolicyLoadResult,
 ): ProposePolicyAuditSummary {
+  const descriptionLint = proposal.descriptionLint ?? lintEvolutionProposalDescription(proposal);
   if (policyResult.status !== 'loaded') {
     return {
       status: policyResult.status,
@@ -5388,6 +5557,7 @@ function evaluateProposalAgainstPolicy(
       allowedCount: 0,
       notApplicableCount: 0,
       evaluations: [],
+      descriptionLint,
     };
   }
   const evaluation = evaluateCandidateAgainstPolicy(proposal, policyResult.policy);
@@ -5403,6 +5573,7 @@ function evaluateProposalAgainstPolicy(
     decision: evaluation.decision,
     reason: evaluation.reason,
     evaluations: [evaluation],
+    descriptionLint,
   };
 }
 
@@ -5420,6 +5591,7 @@ function mergePolicyAuditSummaries(summaries: readonly ProposePolicyAuditSummary
     allowedCount: summaries.reduce((sum, summary) => sum + summary.allowedCount, 0),
     notApplicableCount: summaries.reduce((sum, summary) => sum + summary.notApplicableCount, 0),
     evaluations,
+    descriptionLint: mergeDescriptionLintReports(summaries.map((summary) => summary.descriptionLint).filter(isDefined)),
   };
 }
 
@@ -5997,6 +6169,7 @@ function actionableMcpToolConfigContent(assetId: string, signals: readonly Front
         'haro_validate',
         'haro_asset_query',
         'haro_run_daily_workflow',
+        'haro_lint_descriptions',
       ],
       gatedWriteTools: ['haro_apply', 'haro_rollback'],
       approvalRequirements: [
@@ -6027,6 +6200,10 @@ function createValidationReport(
   if (policyAudit?.decision === 'blocked-by-policy') {
     blockingReasons.push(`mcp-audit-policy 阻断：${policyAudit.reason}`);
   }
+  const proposalDescriptionLint = proposal.descriptionLint ?? lintEvolutionProposalDescription(proposal);
+  if (proposalDescriptionLint.blockerCount > 0) {
+    blockingReasons.push(`description lint 阻断：${proposalDescriptionLint.blockerCount} 个 blocker 级可读性问题`);
+  }
   const riskVerdict = blockingReasons.length > 0
     ? 'blocked'
     : proposal.riskLevel;
@@ -6043,6 +6220,18 @@ function createValidationReport(
     },
     ...proposal.sourceObservationRefs,
   ];
+  const validationDescriptionLint = lintValidationDescription({
+    id: 'validation_pending',
+    proposalId: proposal.id,
+    riskVerdict,
+    requiredTests: proposal.testPlan.requiredCommands,
+    rollbackReady,
+    applyEligible,
+    blockingReasons,
+    evidenceRefs,
+    createdAt: now().toISOString(),
+  });
+  const descriptionLint = mergeDescriptionLintReports([proposalDescriptionLint, validationDescriptionLint]);
   const fingerprint = sha256(JSON.stringify({
     proposalId: proposal.id,
     proposalUpdatedAt: proposal.updatedAt,
@@ -6053,6 +6242,7 @@ function createValidationReport(
     humanReviewRequired: proposal.humanReviewRequired,
     humanApprovalRefs: proposal.humanApprovalRefs,
     policyAudit,
+    descriptionLint,
   }));
   return ValidationReportSchema.parse({
     id: `validation_${fingerprint.slice(0, 24)}`,
@@ -6063,7 +6253,14 @@ function createValidationReport(
     applyEligible,
     blockingReasons,
     evidenceRefs,
-    ...(policyAudit ? { policyAudit: { ...policyAudit, blocked: policyAudit.decision === 'blocked-by-policy' } } : {}),
+    descriptionLint,
+    ...(policyAudit ? {
+      policyAudit: {
+        ...policyAudit,
+        blocked: policyAudit.decision === 'blocked-by-policy',
+        descriptionLint,
+      },
+    } : {}),
     createdAt: now().toISOString(),
   });
 }
@@ -6547,6 +6744,10 @@ function encodedAssetPathSegment(value: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }
 
 function countSemanticObservations(batch: ObservationBatch): number {

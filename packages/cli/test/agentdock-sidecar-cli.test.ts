@@ -239,6 +239,11 @@ function assertReadableApprovalRequest(record: ApprovalRequestRecord): void {
   expect(record.rollbackPlan.strategy).toMatch(/haro rollback|reject|request-changes/);
   expect(record.rollbackPlan.strategy).not.toMatch(/只影响|不会回滚|不改 AgentDock|aria-memory-vault|用户记忆|范围/);
 
+  if (record.descriptionLint) {
+    expect(record.descriptionLint.status).toBe('pass');
+    expect(record.descriptionLint.issueCount).toBe(0);
+  }
+
   expect(record.scope.length).toBeGreaterThan(0);
   expect(record.scope.join('\n')).toMatch(/范围|不改|不写|审批|应用/);
   expect(record.reviewerInstruction).toContain('approve');
@@ -574,7 +579,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       id: 'agentdock:haro-sidecar-mcp-audit-policy',
       kind: 'mcp-tool-config',
       policy: {
-        defaultTools: ['haro_observe', 'haro_propose', 'haro_validate', 'haro_asset_query', 'haro_run_daily_workflow'],
+        defaultTools: ['haro_observe', 'haro_propose', 'haro_validate', 'haro_asset_query', 'haro_run_daily_workflow', 'haro_lint_descriptions'],
         gatedWriteTools: ['haro_apply', 'haro_rollback'],
         approvalRequirements: ['自动提案必须包含具体 proposal-content 和 contentHash。'],
         auditChecklist: [
@@ -1060,8 +1065,15 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         proposalCount: number;
         skippedProposalCount: number;
         wroteProposal: boolean;
-        policyAudit: { status: string; decision?: string; blockedCount: number; allowedCount: number; evaluations: Array<{ decision: string; auditChecklistHit: boolean }> };
-      } }).data;
+      policyAudit: {
+        status: string;
+        decision?: string;
+        blockedCount: number;
+        allowedCount: number;
+        descriptionLint?: { issueCount: number; status: string };
+        evaluations: Array<{ decision: string; auditChecklistHit: boolean }>;
+      };
+    } }).data;
       expect(payload.proposalCount).toBe(proposalCount);
       expect(payload.skippedProposalCount).toBe(skippedProposalCount);
       expect(payload.wroteProposal).toBe(proposalCount > 0);
@@ -1070,6 +1082,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         expect(payload.policyAudit.decision).toBe(decision);
         expect(payload.policyAudit.evaluations[0]?.decision).toBe(decision);
       }
+      expect(payload.policyAudit.descriptionLint).toBeDefined();
     },
   );
 
@@ -1795,6 +1808,105 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       applyEligible: true,
     });
     expect(payload.validations[0]?.policyAudit).toBeUndefined();
+  });
+
+  it('validate --pending marks blocker-level description lint as not apply-eligible', async () => {
+    const root = newHome('agentdock-validate-description-lint-blocker');
+    const proposalId = 'proposal_lint_blocked';
+    writeExecutableMcpToolConfigProposal(root, proposalId);
+    const proposalPath = join(root, 'evolution', 'proposals', `${proposalId}.json`);
+    const proposal = readJson<Record<string, unknown>>(proposalPath);
+    writeFileSync(proposalPath, `${JSON.stringify({
+      ...proposal,
+      title: 'frontier signal 直接进入审批页',
+    }, null, 2)}\n`);
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const payload = (JSON.parse(validateOut.read()) as { data: {
+      policyAudit?: { status: string; descriptionLint?: { status: string; blockerCount: number } };
+      validations: Array<{
+        riskVerdict: string;
+        applyEligible: boolean;
+        blockingReasons: string[];
+        descriptionLint?: { status: string; blockerCount: number };
+      }>;
+    } }).data;
+    expect(payload.policyAudit?.descriptionLint).toMatchObject({
+      status: 'blocker',
+      blockerCount: 1,
+    });
+    expect(payload.validations[0]).toMatchObject({
+      riskVerdict: 'blocked',
+      applyEligible: false,
+      descriptionLint: {
+        status: 'blocker',
+        blockerCount: 1,
+      },
+    });
+    expect(payload.validations[0]?.blockingReasons.join('\n')).toContain('description lint 阻断');
+  });
+
+  it('lint descriptions scans history and fix-dry-run does not rewrite artifacts', async () => {
+    const root = newHome('agentdock-lint-descriptions');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_lint_scan');
+    const decisionDir = join(root, 'evolution', 'approval-decisions');
+    mkdirSync(decisionDir, { recursive: true });
+    const decisionPath = join(decisionDir, 'approval_decision_lint_scan.json');
+    writeFileSync(decisionPath, `${JSON.stringify({
+      id: 'approval_decision_lint_scan',
+      approvalRequestId: 'approval_request_lint_scan',
+      proposalId: 'proposal_lint_scan',
+      validationId: 'validation_lint_scan',
+      decision: 'request-changes',
+      direction: 'frontier signal 和 observation batch 需要先解释清楚，再进入 request-changes。',
+      reviewer: { source: 'haro-web', username: 'reviewer', role: 'owner' },
+      sourceRef: { id: 'approval_request_lint_scan', kind: 'approval-request' },
+      createdAt: '2026-05-08T12:02:00.000Z',
+      updatedAt: '2026-05-08T12:02:00.000Z',
+    }, null, 2)}\n`);
+    const before = readFileSync(decisionPath, 'utf8');
+
+    const stdout = captureStream();
+    const stderr = captureStream();
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'lint',
+      'descriptions',
+      '--fix-dry-run',
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(result.action).toBe('lint');
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      command: string;
+      fixDryRun: boolean;
+      scannedArtifactCount: number;
+      violationArtifactCount: number;
+      ruleCounts: Record<string, number>;
+      artifacts: Array<{ kind: string; id: string; blockerCount: number; suggestions: string[] }>;
+    } }).data;
+    expect(payload.command).toBe('lint descriptions');
+    expect(payload.fixDryRun).toBe(true);
+    expect(payload.scannedArtifactCount).toBeGreaterThanOrEqual(2);
+    expect(payload.violationArtifactCount).toBeGreaterThan(0);
+    expect(payload.ruleCounts['naked-term']).toBeGreaterThan(0);
+    expect(payload.artifacts.some((artifact) =>
+      artifact.kind === 'approval-decision' &&
+      artifact.id === 'approval_decision_lint_scan' &&
+      artifact.blockerCount > 0 &&
+      artifact.suggestions.join('\n').includes('frontier signal')
+    )).toBe(true);
+    expect(readFileSync(decisionPath, 'utf8')).toBe(before);
   });
 
   it('approval-request --pending does not render generic dry-run proposals for human review', async () => {

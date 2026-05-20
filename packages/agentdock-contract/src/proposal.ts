@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IsoDateTimeSchema, NonEmptyStringSchema, RefSchema } from './primitives.js';
+import { DescriptionLintReportSchema } from './description-lint.js';
 
 export const ProposalTargetKindSchema = z.enum([
   'prompt',
@@ -47,6 +48,7 @@ export const EvolutionProposalSchema = z.object({
   rollbackPlan: RollbackPlanSchema,
   humanReviewRequired: z.boolean().default(true),
   humanApprovalRefs: z.array(RefSchema).default([]),
+  descriptionLint: DescriptionLintReportSchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });

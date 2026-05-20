@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IsoDateTimeSchema, NonEmptyStringSchema, RefSchema } from './primitives.js';
+import { DescriptionLintReportSchema } from './description-lint.js';
 import {
   EvolutionLevelSchema,
   ProposalTargetKindSchema,
@@ -39,6 +40,7 @@ export const ApprovalRequestRecordSchema = z.object({
   reviewerInstruction: NonEmptyStringSchema,
   humanReviewRequired: z.literal(true),
   evidenceRefs: z.array(RefSchema).default([]),
+  descriptionLint: DescriptionLintReportSchema.optional(),
   descriptionRewrittenAt: IsoDateTimeSchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
@@ -54,6 +56,7 @@ export const ApprovalDecisionRecordSchema = z.object({
   reviewer: ApprovalDecisionReviewerSchema,
   sourceRef: RefSchema,
   approvalRef: RefSchema.optional(),
+  descriptionLint: DescriptionLintReportSchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 }).superRefine((record, ctx) => {

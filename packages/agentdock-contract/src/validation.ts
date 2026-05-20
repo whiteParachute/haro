@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IsoDateTimeSchema, NonEmptyStringSchema, RefSchema } from './primitives.js';
+import { DescriptionLintReportSchema } from './description-lint.js';
 
 export const ValidationPolicyAuditSchema = z.object({
   policyId: NonEmptyStringSchema,
@@ -13,6 +14,7 @@ export const ValidationPolicyAuditSchema = z.object({
   decision: z.enum(['allow-actionable-proposal', 'blocked-by-policy', 'not-applicable']),
   reason: NonEmptyStringSchema,
   blocked: z.boolean(),
+  descriptionLint: DescriptionLintReportSchema.optional(),
 });
 
 export const ValidationReportSchema = z.object({
@@ -24,6 +26,7 @@ export const ValidationReportSchema = z.object({
   applyEligible: z.boolean(),
   blockingReasons: z.array(NonEmptyStringSchema).default([]),
   evidenceRefs: z.array(RefSchema).default([]),
+  descriptionLint: DescriptionLintReportSchema.optional(),
   policyAudit: ValidationPolicyAuditSchema.optional(),
   createdAt: IsoDateTimeSchema,
 }).superRefine((report, ctx) => {

@@ -108,6 +108,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       const names = payload.result.tools.map((tool) => tool.name).sort();
       expect(names).toEqual([
         'haro_asset_query',
+        'haro_lint_descriptions',
         'haro_observe',
         'haro_propose',
         'haro_run_daily_workflow',
@@ -267,6 +268,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       expect(names).toEqual([
         'haro_apply',
         'haro_asset_query',
+        'haro_lint_descriptions',
         'haro_observe',
         'haro_propose',
         'haro_rollback',

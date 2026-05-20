@@ -88,6 +88,7 @@ import { registerCronCommands } from './commands/cron.js';
 import {
   applyAgentDock,
   autoApplyApprovedProposal,
+  lintDescriptions,
   readAgentDockSidecarStatus,
   registerAgentDockSidecarCommands,
   rollbackAgentDock,
@@ -193,6 +194,7 @@ export type RunCliAction =
   | 'rollback'
   | 'patch-branch'
   | 'intake'
+  | 'lint'
   | 'channel'
   | 'skills'
   | 'eat'
@@ -1416,6 +1418,11 @@ function registerMcpCommand(program: Command, app: AppContext): void {
             now: app.now,
             workflow: {
               runDaily: (input) => runAgentDockDailyWorkflow(app, input),
+            },
+            lint: {
+              descriptions: (input) => lintDescriptions(app, {
+                ...(input.fixDryRun !== undefined ? { fixDryRun: input.fixDryRun } : {}),
+              }),
             },
             ...(options.enableGatedWrite ? {
               gatedWrite: {
@@ -3184,7 +3191,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'approval-request' || first === 'snapshot' || first === 'apply' || first === 'rollback' || first === 'patch-branch' || first === 'intake' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'approval-request' || first === 'snapshot' || first === 'apply' || first === 'rollback' || first === 'patch-branch' || first === 'intake' || first === 'lint' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

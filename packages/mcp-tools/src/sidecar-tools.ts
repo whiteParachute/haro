@@ -39,6 +39,7 @@ const SIDECAR_TOOL_NAMES = [
   'haro_validate',
   'haro_asset_query',
   'haro_run_daily_workflow',
+  'haro_lint_descriptions',
 ] as const;
 
 const SIDECAR_TOOL_NAME_SET = new Set<string>(SIDECAR_TOOL_NAMES);
@@ -54,8 +55,13 @@ export interface SidecarWorkflowHandlers {
   runDaily(input: HaroRunDailyWorkflowInput): Promise<unknown> | unknown;
 }
 
+export interface SidecarLintHandlers {
+  descriptions(input: HaroLintDescriptionsInput): Promise<unknown> | unknown;
+}
+
 export interface SidecarRegistryOptions extends RegistryOptions {
   workflow?: SidecarWorkflowHandlers;
+  lint?: SidecarLintHandlers;
   gatedWrite?: SidecarGatedWriteHandlers;
 }
 
@@ -351,6 +357,12 @@ export const HaroRunDailyWorkflowInputSchema = z.object({
 
 export type HaroRunDailyWorkflowInput = z.infer<typeof HaroRunDailyWorkflowInputSchema>;
 
+export const HaroLintDescriptionsInputSchema = z.object({
+  fixDryRun: z.boolean().optional(),
+});
+
+export type HaroLintDescriptionsInput = z.infer<typeof HaroLintDescriptionsInputSchema>;
+
 export function createHaroRunDailyWorkflowTool(
   handler: SidecarWorkflowHandlers['runDaily'],
 ): ToolDefinition<typeof HaroRunDailyWorkflowInputSchema, unknown> {
@@ -360,6 +372,21 @@ export function createHaroRunDailyWorkflowTool(
       'Run the AgentDock workspace/agent daily sidecar workflow: observe, optionally intake frontier evidence, propose, validate, and render approval requests. Writes Haro sidecar artifacts only; it does not apply changes.',
     inputSchema: HaroRunDailyWorkflowInputSchema,
     timeoutMs: 30_000,
+    async execute(params): Promise<unknown> {
+      return handler(params);
+    },
+  };
+}
+
+export function createHaroLintDescriptionsTool(
+  handler: SidecarLintHandlers['descriptions'],
+): ToolDefinition<typeof HaroLintDescriptionsInputSchema, unknown> {
+  return {
+    name: 'haro_lint_descriptions',
+    description:
+      'Scan Haro sidecar proposal, validation, approval request, and approval decision text for FEAT-052 readability regressions. Read-only; fixDryRun only returns suggestions.',
+    inputSchema: HaroLintDescriptionsInputSchema,
+    timeoutMs: 10_000,
     async execute(params): Promise<unknown> {
       return handler(params);
     },
@@ -445,6 +472,9 @@ export function createSidecarRegistry(options: SidecarRegistryOptions): ToolRegi
   registry.register(haroAssetQueryTool);
   if (options.workflow) {
     registry.register(createHaroRunDailyWorkflowTool(options.workflow.runDaily));
+  }
+  if (options.lint) {
+    registry.register(createHaroLintDescriptionsTool(options.lint.descriptions));
   }
   if (options.gatedWrite) {
     registry.register(createHaroApplyTool(options.gatedWrite.apply));
