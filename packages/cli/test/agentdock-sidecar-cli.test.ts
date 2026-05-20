@@ -349,6 +349,41 @@ function writeExecutableMcpToolConfigProposal(root: string, proposalId: string, 
   }, null, 2)}\n`);
 }
 
+function writePolicyAuditTestProposal(root: string, proposalId: string): void {
+  const proposalDir = join(root, 'evolution', 'proposals');
+  mkdirSync(proposalDir, { recursive: true });
+  writeFileSync(join(proposalDir, `${proposalId}.json`), `${JSON.stringify({
+    id: proposalId,
+    title: '调整 Haro 代码执行计划',
+    status: 'proposed',
+    level: 'L2',
+    targetKind: 'haro-code',
+    riskLevel: 'low',
+    sourceObservationRefs: [{ id: `obs_${proposalId}`, kind: 'observation-batch' }],
+    changeSet: [
+      {
+        op: 'update',
+        targetRef: { id: 'packages/cli/src/example.ts', kind: 'haro-code' },
+        summary: 'Update Haro code planning notes without touching MCP tool configuration.',
+      },
+    ],
+    testPlan: {
+      requiredCommands: ['pnpm test'],
+      manualChecks: ['Human reviewer confirms this is outside MCP tool config scope.'],
+      regressionRisks: ['Code patch planning may need a separate executor.'],
+    },
+    rollbackPlan: {
+      strategy: 'Discard the generated patch branch.',
+      snapshotRequired: false,
+      rollbackRefs: [],
+    },
+    humanReviewRequired: true,
+    humanApprovalRefs: [],
+    createdAt: '2026-05-08T12:00:00.000Z',
+    updatedAt: '2026-05-08T12:00:00.000Z',
+  }, null, 2)}\n`);
+}
+
 function rewriteExecutableProposalContent(root: string, proposalId: string, marker: string): void {
   const contentDir = join(root, 'evolution', 'proposal-content', proposalId);
   const fileName = readdirSync(contentDir).find((name) => name.endsWith('.json'));
@@ -1619,6 +1654,130 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(readAssetEvents(root)).toHaveLength(2);
     expect(observeErr.read()).toBe('');
     expect(proposeErr.read()).toBe('');
+  });
+
+  it('validate --pending records mcp-audit-policy not-applicable results and remains idempotent', async () => {
+    const root = newHome('agentdock-validate-policy-not-applicable');
+    writeCurrentMcpAuditPolicy(root);
+    writePolicyAuditTestProposal(root, 'proposal_policy_not_applicable');
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const payload = (JSON.parse(validateOut.read()) as { data: {
+      policyAudit: { status: string; evaluatedCandidateCount: number; notApplicableCount: number };
+      validations: Array<{
+        proposalId: string;
+        riskVerdict: string;
+        applyEligible: boolean;
+        policyAudit?: { decision: string; blocked: boolean };
+      }>;
+    } }).data;
+    expect(payload.policyAudit).toMatchObject({
+      status: 'loaded',
+      evaluatedCandidateCount: 1,
+      notApplicableCount: 1,
+    });
+    expect(payload.validations[0]).toMatchObject({
+      proposalId: 'proposal_policy_not_applicable',
+      riskVerdict: 'low',
+      applyEligible: false,
+      policyAudit: {
+        decision: 'not-applicable',
+        blocked: false,
+      },
+    });
+
+    const repeatOut = captureStream();
+    const repeatErr = captureStream();
+    const repeat = await runCli(commonOpts(root, repeatOut, repeatErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(repeat.exitCode).toBe(0);
+    expect(repeatErr.read()).toBe('');
+    const repeatPayload = (JSON.parse(repeatOut.read()) as { data: { validationCount: number; wroteValidations: boolean } }).data;
+    expect(repeatPayload.validationCount).toBe(0);
+    expect(repeatPayload.wroteValidations).toBe(false);
+    expect(readdirSync(join(root, 'evolution', 'validations')).filter((name) => name.endsWith('.json'))).toHaveLength(1);
+  });
+
+  it('validate --pending blocks proposals that violate current mcp-audit-policy but keeps an audit trail', async () => {
+    const root = newHome('agentdock-validate-policy-blocked');
+    writeCurrentMcpAuditPolicy(root);
+    writeExecutableMcpToolConfigProposal(root, 'proposal_policy_blocked');
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const payload = (JSON.parse(validateOut.read()) as { data: {
+      policyAudit: { status: string; blockedCount: number; allowedCount: number };
+      validations: Array<{
+        proposalId: string;
+        riskVerdict: string;
+        applyEligible: boolean;
+        blockingReasons: string[];
+        policyAudit?: { decision: string; blocked: boolean; auditChecklistHit: boolean };
+      }>;
+    } }).data;
+    expect(payload.policyAudit).toMatchObject({
+      status: 'loaded',
+      blockedCount: 1,
+      allowedCount: 0,
+    });
+    expect(payload.validations[0]).toMatchObject({
+      proposalId: 'proposal_policy_blocked',
+      riskVerdict: 'blocked',
+      applyEligible: false,
+      policyAudit: {
+        decision: 'blocked-by-policy',
+        blocked: true,
+        auditChecklistHit: false,
+      },
+    });
+    expect(payload.validations[0]?.blockingReasons.join('\n')).toContain('mcp-audit-policy 阻断');
+    expect(readJson<{ status: string }>(join(root, 'evolution', 'proposals', 'proposal_policy_blocked.json')).status).toBe('proposed');
+  });
+
+  it('validate --pending continues when current mcp-audit-policy is missing', async () => {
+    const root = newHome('agentdock-validate-policy-missing');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_policy_missing');
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const payload = (JSON.parse(validateOut.read()) as { data: {
+      policyAudit: { status: string; evaluatedCandidateCount: number };
+      validations: Array<{ riskVerdict: string; applyEligible: boolean; policyAudit?: unknown }>;
+    } }).data;
+    expect(payload.policyAudit).toMatchObject({
+      status: 'missing',
+      evaluatedCandidateCount: 0,
+    });
+    expect(payload.validations[0]).toMatchObject({
+      riskVerdict: 'low',
+      applyEligible: true,
+    });
+    expect(payload.validations[0]?.policyAudit).toBeUndefined();
   });
 
   it('approval-request --pending does not render generic dry-run proposals for human review', async () => {

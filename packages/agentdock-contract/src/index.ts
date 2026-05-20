@@ -61,8 +61,8 @@ export type {
   TestPlan,
 } from './proposal.js';
 
-export { ValidationReportSchema } from './validation.js';
-export type { ValidationReport } from './validation.js';
+export { ValidationPolicyAuditSchema, ValidationReportSchema } from './validation.js';
+export type { ValidationPolicyAudit, ValidationReport } from './validation.js';
 
 export {
   ApprovalDecisionRecordSchema,

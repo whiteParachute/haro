@@ -202,6 +202,7 @@ interface ValidateResult {
   wroteValidations: boolean;
   assetEventCount: number;
   assetEventIds: string[];
+  policyAudit?: ProposePolicyAuditSummary;
   validations: ValidationReport[];
   validationPaths: string[];
 }
@@ -798,6 +799,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             wroteValidations: result.wroteValidations,
             assetEventCount: result.assetEventCount,
             assetEventIds: result.assetEventIds,
+            policyAudit: result.policyAudit,
             validationIds: result.validations.map((report) => report.id),
             validationPaths: result.validationPaths,
             validations: result.validations,
@@ -1330,7 +1332,11 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
       };
     }
 
-    const validations = selected.map((proposal) => createValidationReport(app.paths.root, proposal, app.now));
+    const policyResult = loadCurrentMcpAuditPolicy(app.paths.root);
+    const policyAuditSummaries = selected.map((proposal) => evaluateProposalAgainstPolicy(proposal, policyResult));
+    const validations = selected.map((proposal, index) =>
+      createValidationReport(app.paths.root, proposal, app.now, policyAuditSummaries[index]?.evaluations[0]),
+    );
     const validationPaths = validations.map((report) => validationFilePath(app.paths.root, report));
     const assetEventIds: string[] = [];
     for (let i = 0; i < validations.length; i += 1) {
@@ -1356,6 +1362,7 @@ function validateAgentDock(app: AppContext, options: ValidateOptions): ValidateR
       wroteValidations: true,
       assetEventCount: assetEventIds.length,
       assetEventIds,
+      policyAudit: mergePolicyAuditSummaries(policyAuditSummaries),
       validations,
       validationPaths,
     };
@@ -5367,6 +5374,13 @@ function evaluateGeneratedProposalAgainstPolicy(
   generated: GeneratedProposal,
   policyResult: CurrentMcpAuditPolicyLoadResult,
 ): ProposePolicyAuditSummary {
+  return evaluateProposalAgainstPolicy(generated.proposal, policyResult);
+}
+
+function evaluateProposalAgainstPolicy(
+  proposal: EvolutionProposal,
+  policyResult: CurrentMcpAuditPolicyLoadResult,
+): ProposePolicyAuditSummary {
   if (policyResult.status !== 'loaded') {
     return {
       status: policyResult.status,
@@ -5378,7 +5392,7 @@ function evaluateGeneratedProposalAgainstPolicy(
       evaluations: [],
     };
   }
-  const evaluation = evaluateCandidateAgainstPolicy(generated.proposal, policyResult.policy);
+  const evaluation = evaluateCandidateAgainstPolicy(proposal, policyResult.policy);
   return {
     status: 'loaded',
     policyId: policyResult.policy.id,
@@ -5391,6 +5405,23 @@ function evaluateGeneratedProposalAgainstPolicy(
     decision: evaluation.decision,
     reason: evaluation.reason,
     evaluations: [evaluation],
+  };
+}
+
+function mergePolicyAuditSummaries(summaries: readonly ProposePolicyAuditSummary[]): ProposePolicyAuditSummary | undefined {
+  if (summaries.length === 0) return undefined;
+  const first = summaries[0]!;
+  const evaluations = summaries.flatMap((summary) => summary.evaluations);
+  return {
+    status: first.status,
+    ...(first.policyId ? { policyId: first.policyId } : {}),
+    ...(first.policyContentHash ? { policyContentHash: first.policyContentHash } : {}),
+    ...(first.policyPath ? { policyPath: first.policyPath } : {}),
+    evaluatedCandidateCount: summaries.reduce((sum, summary) => sum + summary.evaluatedCandidateCount, 0),
+    blockedCount: summaries.reduce((sum, summary) => sum + summary.blockedCount, 0),
+    allowedCount: summaries.reduce((sum, summary) => sum + summary.allowedCount, 0),
+    notApplicableCount: summaries.reduce((sum, summary) => sum + summary.notApplicableCount, 0),
+    evaluations,
   };
 }
 
@@ -5991,9 +6022,13 @@ function createValidationReport(
   root: string,
   proposal: EvolutionProposal,
   now: () => Date,
+  policyAudit?: McpAuditPolicyEvaluation,
 ): ValidationReport {
   const rollbackReady = !proposal.rollbackPlan.snapshotRequired || proposal.rollbackPlan.rollbackRefs.length > 0;
   const blockingReasons = validationBlockingReasons(root, proposal, rollbackReady);
+  if (policyAudit?.decision === 'blocked-by-policy') {
+    blockingReasons.push(`mcp-audit-policy 阻断：${policyAudit.reason}`);
+  }
   const riskVerdict = blockingReasons.length > 0
     ? 'blocked'
     : proposal.riskLevel;
@@ -6019,6 +6054,7 @@ function createValidationReport(
     requiredTests: proposal.testPlan.requiredCommands,
     humanReviewRequired: proposal.humanReviewRequired,
     humanApprovalRefs: proposal.humanApprovalRefs,
+    policyAudit,
   }));
   return ValidationReportSchema.parse({
     id: `validation_${fingerprint.slice(0, 24)}`,
@@ -6029,6 +6065,7 @@ function createValidationReport(
     applyEligible,
     blockingReasons,
     evidenceRefs,
+    ...(policyAudit ? { policyAudit: { ...policyAudit, blocked: policyAudit.decision === 'blocked-by-policy' } } : {}),
     createdAt: now().toISOString(),
   });
 }

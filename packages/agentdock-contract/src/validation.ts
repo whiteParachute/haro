@@ -1,6 +1,20 @@
 import { z } from 'zod';
 import { IsoDateTimeSchema, NonEmptyStringSchema, RefSchema } from './primitives.js';
 
+export const ValidationPolicyAuditSchema = z.object({
+  policyId: NonEmptyStringSchema,
+  policyContentHash: NonEmptyStringSchema,
+  candidateProposalId: NonEmptyStringSchema.optional(),
+  candidateTargetKind: NonEmptyStringSchema.optional(),
+  defaultToolsHit: z.boolean(),
+  gatedWriteHit: z.boolean(),
+  approvalRequirementsHit: z.boolean(),
+  auditChecklistHit: z.boolean(),
+  decision: z.enum(['allow-actionable-proposal', 'blocked-by-policy', 'not-applicable']),
+  reason: NonEmptyStringSchema,
+  blocked: z.boolean(),
+});
+
 export const ValidationReportSchema = z.object({
   id: NonEmptyStringSchema,
   proposalId: NonEmptyStringSchema,
@@ -10,6 +24,7 @@ export const ValidationReportSchema = z.object({
   applyEligible: z.boolean(),
   blockingReasons: z.array(NonEmptyStringSchema).default([]),
   evidenceRefs: z.array(RefSchema).default([]),
+  policyAudit: ValidationPolicyAuditSchema.optional(),
   createdAt: IsoDateTimeSchema,
 }).superRefine((report, ctx) => {
   if (report.applyEligible && !report.rollbackReady) {
@@ -29,4 +44,5 @@ export const ValidationReportSchema = z.object({
   }
 });
 
+export type ValidationPolicyAudit = z.infer<typeof ValidationPolicyAuditSchema>;
 export type ValidationReport = z.infer<typeof ValidationReportSchema>;
