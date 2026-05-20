@@ -1,5 +1,36 @@
 import type { WebLogger } from './types.js';
 
+export interface ApprovalConversationMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ReviewConversationReplyInput {
+  approvalRequest: {
+    id: string;
+    title: string;
+    level: string;
+    targetKind: string;
+    riskLevel: string;
+    whyChange: string[];
+    howChange: string[];
+    expectedBenefits: string[];
+    regressionRisks: string[];
+  };
+  messages: ApprovalConversationMessage[];
+  onText?: (chunk: string) => void;
+}
+
+export interface ReviewConversationReplyResult {
+  content: string;
+  provider?: string;
+  model?: string;
+  sessionId?: string;
+}
+
 export interface ApprovalDecisionAutoApplyInput {
   requestId: string;
   proposalId: string;
@@ -27,6 +58,10 @@ export interface WebRuntime {
   autoApplyApprovedDecision?: (
     input: ApprovalDecisionAutoApplyInput,
   ) => ApprovalDecisionAutoApplyResult | Promise<ApprovalDecisionAutoApplyResult>;
+  /** Optional Haro provider/modelhub-backed helper for request-changes review conversations. */
+  reviewConversationReply?: (
+    input: ReviewConversationReplyInput,
+  ) => ReviewConversationReplyResult | Promise<ReviewConversationReplyResult>;
   logger: WebLogger;
   startedAt: number;
 }

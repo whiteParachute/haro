@@ -99,6 +99,76 @@ describe('approval request review API', () => {
     expect(body.error).toContain('requires direction');
   });
 
+  it('persists request-changes conversations and streams an agent reply', async () => {
+    const app = createWebApp({
+      logger,
+      runtime: {
+        root,
+        reviewConversationReply: async (input) => {
+          input.onText?.('收到，');
+          input.onText?.('我会整理修改点。');
+          return {
+            content: '收到，我会整理修改点。',
+            provider: 'stub-provider',
+            model: 'stub-model',
+            sessionId: 'session_review_smoke',
+          };
+        },
+      },
+    });
+
+    const created = await app.request('/api/v1/approval-requests/approval_request_smoke/conversations', {
+      method: 'POST',
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json();
+    const conversationId = createdBody.data.id as string;
+
+    const appended = await app.request(
+      `/api/v1/approval-requests/approval_request_smoke/conversations/${conversationId}/messages`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: '请把用户收益和回滚方案说清楚。' }),
+      },
+    );
+    expect(appended.status).toBe(200);
+
+    const reply = await app.request(
+      `/api/v1/approval-requests/approval_request_smoke/conversations/${conversationId}/agent-reply`,
+      { method: 'POST' },
+    );
+    expect(reply.status).toBe(200);
+    const stream = await reply.text();
+    expect(stream).toContain('event: delta');
+    expect(stream).toContain('event: done');
+    expect(stream).toContain('我会整理修改点');
+
+    const listed = await app.request('/api/v1/approval-requests/approval_request_smoke/conversations');
+    expect(listed.status).toBe(200);
+    const listedBody = await listed.json();
+    expect(listedBody.data.total).toBe(1);
+    expect(listedBody.data.items[0].messages.map((message: { role: string }) => message.role)).toEqual([
+      'user',
+      'assistant',
+    ]);
+
+    const decided = await app.request('/api/v1/approval-requests/approval_request_smoke/decision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        decision: 'request-changes',
+        conversationId,
+        direction: '请按对话中的修改意见重写提案。',
+      }),
+    });
+    expect(decided.status).toBe(200);
+    const decidedBody = await decided.json();
+    expect(decidedBody.data.decision.direction).toContain('对话摘要');
+    expect(decidedBody.data.decision.direction).toContain('请把用户收益和回滚方案说清楚');
+    expect(decidedBody.data.decision.direction).toContain('haro-sidecar://approval-conversations/');
+  });
+
   it('records request-changes decisions and supersedes the proposal', async () => {
     const app = createWebApp({ logger, runtime: { root } });
 

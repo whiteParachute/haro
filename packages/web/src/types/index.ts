@@ -38,6 +38,7 @@ export type ProposalTargetKind =
   | 'agentdock-contract';
 export type ApprovalDecisionOption = 'approve' | 'reject' | 'request-changes';
 export type ApprovalLifecycleStatus = 'undecided' | 'approved' | 'rejected' | 'applied' | 'rolled-back';
+export type ApprovalConversationRole = 'user' | 'assistant';
 
 export interface RollbackPlan {
   strategy: string;
@@ -147,4 +148,22 @@ export interface ApprovalRequestView {
   request: ApprovalRequestRecord;
   latestDecision?: ApprovalDecisionRecord;
   lifecycle: ApprovalRequestLifecycle;
+}
+
+export interface ApprovalConversationMessage {
+  id: string;
+  role: ApprovalConversationRole;
+  content: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ApprovalConversationRecord {
+  id: string;
+  associatedApprovalRequestId: string;
+  proposalId: string;
+  validationId: string;
+  messages: ApprovalConversationMessage[];
+  createdAt: string;
+  updatedAt: string;
 }

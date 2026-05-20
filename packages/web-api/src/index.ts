@@ -13,7 +13,12 @@ import type { WebRuntime } from './runtime.js';
 import type { ApiKeyAuthEnv, WebApp, WebLogger } from './types.js';
 
 export { startWebServer, type WebServerHandle } from './server.js';
-export type { WebRuntime } from './runtime.js';
+export type {
+  ApprovalConversationMessage,
+  ReviewConversationReplyInput,
+  ReviewConversationReplyResult,
+  WebRuntime,
+} from './runtime.js';
 export type { WebApp, WebLogger, WebServerOptions, ApiKeyAuthEnv } from './types.js';
 
 const VITE_DEV_ORIGIN = 'http://localhost:5173';
@@ -62,6 +67,7 @@ export function createWebApp(options: CreateWebAppOptions = {}): WebApp {
     ...(options.runtime?.projectRoot ? { projectRoot: options.runtime.projectRoot } : {}),
     ...(options.runtime?.dbFile ? { dbFile: options.runtime.dbFile } : {}),
     ...(options.runtime?.autoApplyApprovedDecision ? { autoApplyApprovedDecision: options.runtime.autoApplyApprovedDecision } : {}),
+    ...(options.runtime?.reviewConversationReply ? { reviewConversationReply: options.runtime.reviewConversationReply } : {}),
     logger,
     startedAt: options.runtime?.startedAt ?? Date.now(),
   };

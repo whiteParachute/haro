@@ -1,9 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
-import { decideApprovalRequest, listApprovalRequests } from '@/api/client';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  appendApprovalConversationMessage,
+  createApprovalConversation,
+  decideApprovalRequest,
+  listApprovalConversations,
+  listApprovalRequests,
+  streamApprovalConversationAgentReply,
+} from '@/api/client';
 import { Button } from '@/components/ui/Button';
-import type { ApprovalDecisionOption, ApprovalLifecycleStatus, ApprovalRequestView } from '@/types';
+import type {
+  ApprovalConversationMessage,
+  ApprovalConversationRecord,
+  ApprovalDecisionOption,
+  ApprovalLifecycleStatus,
+  ApprovalRequestView,
+} from '@/types';
 
 const EXPANDED_STORAGE_KEY = 'haro.approval.expanded.v1';
+const USE_LEGACY_REQUEST_CHANGES_PROMPT = import.meta.env.VITE_HARO_LEGACY_REQUEST_CHANGES_PROMPT === '1';
 
 const lifecycleOrder: ApprovalLifecycleStatus[] = ['undecided', 'approved', 'applied', 'rejected', 'rolled-back'];
 
@@ -70,6 +84,7 @@ export function ApprovalRequestsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [conversationView, setConversationView] = useState<ApprovalRequestView | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -132,6 +147,10 @@ export function ApprovalRequestsPage() {
   async function submitDecision(view: ApprovalRequestView, decision: ApprovalDecisionOption) {
     let direction: string | undefined;
     if (decision === 'request-changes') {
+      if (!USE_LEGACY_REQUEST_CHANGES_PROMPT) {
+        setConversationView(view);
+        return;
+      }
       direction = window.prompt('请输入希望 Haro 按什么方向修改这个提案：')?.trim();
       if (!direction) return;
     }
@@ -245,6 +264,17 @@ export function ApprovalRequestsPage() {
           ))}
         </div>
       </section>
+      {conversationView ? (
+        <ReviewConversationPanel
+          view={conversationView}
+          onClose={() => setConversationView(null)}
+          onSubmitted={async () => {
+            setConversationView(null);
+            setNotice(`已提交修改要求：${conversationView.request.title}`);
+            await refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -387,6 +417,242 @@ function DecisionPanel({
         {latestDecision ? `已${decisionLabel[latestDecision]}。` : busy ? '正在写入决策记录…' : '所有自动提案初期都必须人审。'}
       </p>
     </aside>
+  );
+}
+
+function ReviewConversationPanel({
+  view,
+  onClose,
+  onSubmitted,
+}: {
+  view: ApprovalRequestView;
+  onClose: () => void;
+  onSubmitted: () => Promise<void>;
+}) {
+  const [conversation, setConversation] = useState<ApprovalConversationRecord | null>(null);
+  const [historyCount, setHistoryCount] = useState(0);
+  const [draft, setDraft] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [replying, setReplying] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadConversation() {
+      setLoading(true);
+      setError(null);
+      try {
+        const listed = await listApprovalConversations(view.request.id);
+        const latest = listed.data.items.at(-1);
+        const record = latest ?? (await createApprovalConversation(view.request.id)).data;
+        if (!cancelled) {
+          setHistoryCount(listed.data.total);
+          setConversation(record);
+        }
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : String(loadError));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void loadConversation();
+    return () => {
+      cancelled = true;
+    };
+  }, [view.request.id]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [conversation?.messages.length, replying]);
+
+  async function sendMessage() {
+    const content = draft.trim();
+    if (!conversation || !content || replying) return;
+    setDraft('');
+    setReplying(true);
+    setError(null);
+    const requestId = view.request.id;
+    try {
+      const appended = await appendApprovalConversationMessage(requestId, conversation.id, content);
+      const streaming: ApprovalConversationMessage = {
+        id: 'approval_message_streaming',
+        role: 'assistant',
+        content: '',
+        createdAt: new Date().toISOString(),
+      };
+      setConversation({ ...appended.data, messages: [...appended.data.messages, streaming] });
+      let streamed = '';
+      const done = await streamApprovalConversationAgentReply(requestId, conversation.id, {
+        onDelta: (chunk) => {
+          streamed += chunk;
+          setConversation((current) =>
+            current
+              ? {
+                  ...current,
+                  messages: current.messages.map((message) =>
+                    message.id === streaming.id ? { ...message, content: streamed } : message,
+                  ),
+                }
+              : current,
+          );
+        },
+      });
+      if (done) setConversation(done);
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : String(sendError));
+    } finally {
+      setReplying(false);
+    }
+  }
+
+  async function submitRequestChanges() {
+    if (!conversation || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      let record = conversation;
+      const pendingDraft = draft.trim();
+      if (pendingDraft) {
+        record = (await appendApprovalConversationMessage(view.request.id, conversation.id, pendingDraft)).data;
+        setDraft('');
+        setConversation(record);
+      }
+      if (!record.messages.length) {
+        setError('请先写下修改意见，再提交要求修改。');
+        return;
+      }
+      if (!window.confirm(`确认要求修改提案「${view.request.title}」？`)) return;
+      await decideApprovalRequest(view.request.id, {
+        decision: 'request-changes',
+        conversationId: record.id,
+        direction: '请按审批对话中的修改意见重写提案。',
+      });
+      await onSubmitted();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : String(submitError));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/58 backdrop-blur-sm">
+      <section className="absolute inset-y-0 right-0 flex w-full max-w-6xl flex-col border-l border-white/12 bg-[#f7f4ef] shadow-[0_32px_120px_rgba(15,23,42,0.38)] dark:bg-[#080d18]">
+        <header className="border-b border-slate-950/10 bg-white/76 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/80 md:px-7">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-[0.32em] text-cyan-700 dark:text-cyan-300">
+                Request changes conversation
+              </p>
+              <h2 className="mt-2 break-words text-2xl font-black tracking-[-0.04em] text-slate-950 [overflow-wrap:anywhere] dark:text-white">
+                和 Haro 讨论要怎么改
+              </h2>
+              <p className="mt-1 max-w-3xl break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                {view.request.title}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge>{riskLevelLabel[view.request.riskLevel] ?? view.request.riskLevel}</Badge>
+              <Badge>{targetKindLabel[view.request.targetKind] ?? view.request.targetKind}</Badge>
+              <Button variant="secondary" className="rounded-xl" onClick={onClose} disabled={submitting}>
+                关闭
+              </Button>
+            </div>
+          </div>
+        </header>
+
+        <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[340px_minmax(0,1fr)] lg:grid-rows-1">
+          <aside className="hidden min-h-0 overflow-y-auto border-r border-slate-950/10 bg-white/50 p-5 dark:border-white/10 dark:bg-white/[0.035] lg:block">
+            <div className="space-y-5">
+              <InfoBlock label="提案范围" text={view.request.scope?.join(' ') ?? view.request.targetKind} />
+              <SectionList variant="why" title="为什么改" items={view.request.whyChange} />
+              <SectionList variant="how" title="怎么改" items={view.request.howChange} />
+              <InfoBlock label="对话记录" text={`已加载 ${historyCount || (conversation ? 1 : 0)} 个历史对话。提交后会把摘要写入 direction，完整记录单独保存。`} />
+            </div>
+          </aside>
+
+          <main className="flex min-h-0 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
+              {error ? (
+                <p role="alert" className="mb-4 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                  {error}
+                </p>
+              ) : null}
+              {loading ? (
+                <div className="h-40 animate-pulse rounded-[1.5rem] bg-slate-950/5 dark:bg-white/8" />
+              ) : null}
+              {!loading && conversation ? (
+                <div className="space-y-4">
+                  {conversation.messages.length === 0 ? (
+                    <div className="rounded-[1.5rem] border border-dashed border-slate-950/15 bg-white/68 p-6 text-sm leading-6 text-muted-foreground dark:border-white/15 dark:bg-white/[0.045]">
+                      先把你的修改意见写成大段文本。Haro 会继续追问或帮你整理成可执行的修改方向。
+                    </div>
+                  ) : null}
+                  {conversation.messages.map((message) => (
+                    <ConversationBubble key={message.id} message={message} />
+                  ))}
+                  {replying ? (
+                    <p className="pl-2 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-700 dark:text-cyan-300">
+                      Haro 正在回复…
+                    </p>
+                  ) : null}
+                  <div ref={bottomRef} />
+                </div>
+              ) : null}
+            </div>
+
+            <footer className="border-t border-slate-950/10 bg-white/80 p-4 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/82 md:p-5">
+              <textarea
+                className="min-h-[180px] w-full resize-y rounded-[1.4rem] border border-slate-950/10 bg-[#fffcf5] p-4 text-sm leading-7 text-slate-950 shadow-inner outline-none transition focus:border-cyan-400 focus:ring-4 focus:ring-cyan-300/20 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                placeholder="写下你的修改意见，可以是 Markdown、分点列表或长段背景。比如：这条提案还没有说清楚用户收益，请补充不改会怎样。"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                disabled={replying || submitting}
+              />
+              <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <p className="text-xs leading-5 text-muted-foreground">
+                  对话不会直接改提案。只有点击“提交要求修改”后，才会写入审批决定。
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" className="rounded-xl" onClick={() => void sendMessage()} disabled={!draft.trim() || !conversation || replying || submitting}>
+                    发送给 Haro
+                  </Button>
+                  <Button className="rounded-xl" onClick={() => void submitRequestChanges()} disabled={!conversation || replying || submitting}>
+                    提交要求修改
+                  </Button>
+                </div>
+              </div>
+            </footer>
+          </main>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ConversationBubble({ message }: { message: ApprovalConversationMessage }) {
+  const isUser = message.role === 'user';
+  return (
+    <div className={`flex min-w-0 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <article
+        className={[
+          'max-w-[min(780px,100%)] rounded-[1.35rem] border p-4 shadow-sm',
+          isUser
+            ? 'border-slate-950/10 bg-slate-950 text-white'
+            : 'border-cyan-500/20 bg-white text-slate-950 dark:bg-slate-900 dark:text-white',
+        ].join(' ')}
+      >
+        <div className="mb-2 flex items-center justify-between gap-3 text-xs opacity-70">
+          <span className="font-bold">{isUser ? '你' : 'Haro'}</span>
+          <span>{formatDate(message.createdAt)}</span>
+        </div>
+        <div className="whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]">
+          {message.content || '…'}
+        </div>
+      </article>
+    </div>
   );
 }
 

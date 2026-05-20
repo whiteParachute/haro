@@ -1,5 +1,10 @@
 import { AUTH_API_KEY_STORAGE_KEY, readPersistedApiKey, useAuthStore } from '@/stores/auth';
-import type { ApiResponse, ApprovalDecisionOption, ApprovalRequestView } from '@/types';
+import type {
+  ApiResponse,
+  ApprovalConversationRecord,
+  ApprovalDecisionOption,
+  ApprovalRequestView,
+} from '@/types';
 
 interface ErrorPayload {
   error?: string;
@@ -23,6 +28,19 @@ export function resolveApiBaseUrl() {
 function resolveApiKey(): string | null {
   const storeApiKey = useAuthStore.getState().apiKey?.trim();
   return storeApiKey && storeApiKey.length > 0 ? storeApiKey : readPersistedApiKey();
+}
+
+function createHeaders(init?: HeadersInit, body?: BodyInit | null): Headers {
+  const headers = new Headers(init);
+  if (!headers.has('Content-Type') && body && !(body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const apiKey = resolveApiKey();
+  if (apiKey && !headers.has('x-api-key')) {
+    headers.set('x-api-key', apiKey);
+  }
+  return headers;
 }
 
 async function readPayload<T>(response: Response): Promise<ApiResponse<T> | ErrorPayload> {
@@ -56,16 +74,7 @@ function createRequestError(
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<ApiResponse<T>> {
-  const headers = new Headers(init.headers);
-  if (!headers.has('Content-Type') && init.body && !(init.body instanceof FormData)) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  const apiKey = resolveApiKey();
-  if (apiKey && !headers.has('x-api-key')) {
-    headers.set('x-api-key', apiKey);
-  }
-
+  const headers = createHeaders(init.headers, init.body);
   const response = await fetch(`${resolveApiBaseUrl()}${normalizePath(path)}`, {
     ...init,
     headers,
@@ -116,7 +125,7 @@ export function getApprovalRequest(id: string, init?: RequestInit) {
 
 export function decideApprovalRequest(
   id: string,
-  input: { decision: ApprovalDecisionOption; direction?: string },
+  input: { decision: ApprovalDecisionOption; direction?: string; conversationId?: string },
   init?: RequestInit,
 ) {
   return post<{
@@ -124,4 +133,98 @@ export function decideApprovalRequest(
     decision: ApprovalRequestView['latestDecision'];
     proposalUpdated: boolean;
   }>(`/v1/approval-requests/${encodeURIComponent(id)}/decision`, input, init);
+}
+
+export function listApprovalConversations(id: string, init?: RequestInit) {
+  return get<{ items: ApprovalConversationRecord[]; total: number }>(
+    `/v1/approval-requests/${encodeURIComponent(id)}/conversations`,
+    init,
+  );
+}
+
+export function createApprovalConversation(id: string, init?: RequestInit) {
+  return post<ApprovalConversationRecord>(
+    `/v1/approval-requests/${encodeURIComponent(id)}/conversations`,
+    undefined,
+    init,
+  );
+}
+
+export function appendApprovalConversationMessage(
+  id: string,
+  conversationId: string,
+  content: string,
+  init?: RequestInit,
+) {
+  return post<ApprovalConversationRecord>(
+    `/v1/approval-requests/${encodeURIComponent(id)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { content },
+    init,
+  );
+}
+
+export async function streamApprovalConversationAgentReply(
+  id: string,
+  conversationId: string,
+  handlers: {
+    onDelta?: (chunk: string) => void;
+    onDone?: (conversation: ApprovalConversationRecord) => void;
+  } = {},
+  init?: RequestInit,
+): Promise<ApprovalConversationRecord | null> {
+  const response = await fetch(
+    `${resolveApiBaseUrl()}${normalizePath(
+      `/v1/approval-requests/${encodeURIComponent(id)}/conversations/${encodeURIComponent(conversationId)}/agent-reply`,
+    )}`,
+    {
+      ...init,
+      method: 'POST',
+      headers: createHeaders(init?.headers),
+      credentials: 'include',
+    },
+  );
+  if (!response.ok) {
+    const payload = await readPayload<unknown>(response);
+    throw createRequestError(response, payload);
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return null;
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let doneRecord: ApprovalConversationRecord | null = null;
+  let reading = true;
+  while (reading) {
+    const result = await reader.read();
+    buffer += decoder.decode(result.value, { stream: !result.done });
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+    for (const frame of frames) {
+      const event = parseServerSentEvent(frame);
+      if (!event) continue;
+      if (event.event === 'delta' && typeof event.data.content === 'string') {
+        handlers.onDelta?.(event.data.content);
+      }
+      if (event.event === 'done' && event.data.conversation) {
+        doneRecord = event.data.conversation as ApprovalConversationRecord;
+        handlers.onDone?.(doneRecord);
+      }
+      if (event.event === 'error') {
+        throw new Error(String(event.data.error ?? 'Review conversation agent failed'));
+      }
+    }
+    reading = !result.done;
+  }
+  return doneRecord;
+}
+
+function parseServerSentEvent(frame: string): { event: string; data: Record<string, unknown> } | null {
+  const lines = frame.split('\n');
+  const event = lines.find((line) => line.startsWith('event: '))?.slice('event: '.length).trim();
+  const data = lines.find((line) => line.startsWith('data: '))?.slice('data: '.length);
+  if (!event || !data) return null;
+  try {
+    return { event, data: JSON.parse(data) as Record<string, unknown> };
+  } catch {
+    return null;
+  }
 }

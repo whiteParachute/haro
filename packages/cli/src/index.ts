@@ -39,6 +39,7 @@ import {
   type TeamWorkflowExecutionResult,
 } from '@haro/core';
 import { createCodexProvider } from '@haro/provider-codex';
+import type { ReviewConversationReplyInput, ReviewConversationReplyResult } from '@haro/web-api';
 import {
   SkillsManager,
   type RuntimeSkillSyncItem,
@@ -114,6 +115,7 @@ import {
 const VERSION = '0.1.0';
 const CLI_CHANNEL_STATE_FILE = 'state.json';
 const DEFAULT_TASK = '列出当前目录下的 TypeScript 文件';
+const REVIEW_CONVERSATION_AGENT_ID = 'haro-review-conversation';
 
 type CliLogger = Pick<HaroLogger, 'debug' | 'info' | 'warn' | 'error'>;
 type MemoryWrapupHook = NonNullable<ConstructorParameters<typeof AgentRunner>[0]['memoryWrapupHook']>;
@@ -1476,6 +1478,7 @@ function registerWebCommand(program: Command, app: AppContext): void {
                 projectRoot: app.opts.projectRoot ?? process.cwd(),
                 dbFile: app.paths.dbFile,
                 autoApplyApprovedDecision: (input) => autoApplyApprovedProposal(app, { proposalId: input.proposalId }),
+                reviewConversationReply: (input) => runReviewConversationReply(app, input),
               },
             }),
             { port, host: options.host },
@@ -1486,6 +1489,78 @@ function registerWebCommand(program: Command, app: AppContext): void {
     },
     program,
   );
+}
+
+async function runReviewConversationReply(
+  app: AppContext,
+  input: ReviewConversationReplyInput,
+): Promise<ReviewConversationReplyResult> {
+  ensureReviewConversationAgent(app);
+  const result = await app.createRunner().run({
+    task: formatReviewConversationTask(input),
+    agentId: REVIEW_CONVERSATION_AGENT_ID,
+    ...(app.cliState.defaultProvider ? { provider: app.cliState.defaultProvider } : {}),
+    ...(app.cliState.defaultModel ? { model: app.cliState.defaultModel } : {}),
+    noMemory: true,
+    continueLatestSession: false,
+    onEvent: (event) => {
+      if (event.type === 'text' && event.delta === true) input.onText?.(event.content);
+    },
+  });
+  if (result.finalEvent.type !== 'result') {
+    throw new Error(`Haro review conversation failed: ${result.finalEvent.message}`);
+  }
+  return {
+    content: result.finalEvent.content,
+    provider: result.provider,
+    model: result.model,
+    sessionId: result.sessionId,
+  };
+}
+
+function ensureReviewConversationAgent(app: AppContext): void {
+  if (app.agentRegistry.has(REVIEW_CONVERSATION_AGENT_ID)) return;
+  app.agentRegistry.register({
+    id: REVIEW_CONVERSATION_AGENT_ID,
+    name: 'Haro 审批修改讨论助手',
+    systemPrompt: [
+      '你只在 Haro Web 的 request-changes 对话面板中工作。',
+      '你没有工具，也不能要求执行写入、审批、应用或回滚。',
+      '你的唯一职责是帮助用户把“要求修改”的意见说清楚。',
+      '始终使用简体中文，结论先行，必要时追问。',
+    ].join('\n'),
+    tools: [],
+    ...(app.cliState.defaultProvider ? { defaultProvider: app.cliState.defaultProvider } : {}),
+    ...(app.cliState.defaultModel ? { defaultModel: app.cliState.defaultModel } : {}),
+  });
+}
+
+function formatReviewConversationTask(input: ReviewConversationReplyInput): string {
+  const transcript = input.messages.length
+    ? input.messages
+        .map((message) => `${message.role === 'user' ? '用户' : 'Haro'}：${message.content}`)
+        .join('\n\n')
+    : '暂无对话。';
+  return [
+    '你是 Haro 提案审批页里的“要求修改”讨论助手。',
+    '你只能帮助用户把修改意见说清楚，不能替用户 approve、reject、apply 或 rollback。',
+    '不要修改 proposal、validation、approval-request 或任何文件；只输出一段给用户继续讨论的中文回复。',
+    '如果用户意见不完整，先问 1-3 个澄清问题；如果已经足够清楚，整理成可执行的修改方向。',
+    '',
+    `提案：${input.approvalRequest.title}`,
+    `范围：${input.approvalRequest.level} / ${input.approvalRequest.targetKind} / ${input.approvalRequest.riskLevel}`,
+    '为什么改：',
+    ...input.approvalRequest.whyChange.map((item) => `- ${item}`),
+    '怎么改：',
+    ...input.approvalRequest.howChange.map((item) => `- ${item}`),
+    '预期收益：',
+    ...input.approvalRequest.expectedBenefits.map((item) => `- ${item}`),
+    '风险：',
+    ...input.approvalRequest.regressionRisks.map((item) => `- ${item}`),
+    '',
+    '当前对话：',
+    transcript,
+  ].join('\n');
 }
 
 function parseWebPort(value: string): number {

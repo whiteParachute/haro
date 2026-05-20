@@ -32,7 +32,40 @@ import {
 } from '@haro/agentdock-contract';
 import { readWebAuth, requireWebPermission } from '../auth.js';
 import type { ApiKeyAuthEnv } from '../types.js';
-import type { ApprovalDecisionAutoApplyResult, WebRuntime } from '../runtime.js';
+import type {
+  ApprovalConversationMessage,
+  ApprovalDecisionAutoApplyResult,
+  ReviewConversationReplyInput,
+  WebRuntime,
+} from '../runtime.js';
+
+interface ApprovalConversationRecord {
+  id: string;
+  associatedApprovalRequestId: string;
+  proposalId: string;
+  validationId: string;
+  messages: ApprovalConversationMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+const ApprovalConversationMessageSchema = z.object({
+  id: z.string().min(1),
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1),
+  createdAt: z.string().datetime(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const ApprovalConversationRecordSchema = z.object({
+  id: z.string().min(1),
+  associatedApprovalRequestId: z.string().min(1),
+  proposalId: z.string().min(1),
+  validationId: z.string().min(1),
+  messages: z.array(ApprovalConversationMessageSchema),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
 
 interface ApprovalRequestView {
   request: ApprovalRequestRecord;
@@ -113,6 +146,62 @@ export function createApprovalRequestsRoute(
     });
   });
 
+  route.get('/:id/conversations', requireWebPermission('read-only'), (c) => {
+    const view = getApprovalRequest(resolveHaroHome(runtime), c.req.param('id'));
+    if (!view) return c.json({ error: 'Approval request not found' }, 404);
+    const items = listApprovalConversations(resolveHaroHome(runtime), view.request.id);
+    return c.json({ success: true, data: { items, total: items.length } });
+  });
+
+  route.post('/:id/conversations', requireWebPermission('config-write'), (c) => {
+    const view = getApprovalRequest(resolveHaroHome(runtime), c.req.param('id'));
+    if (!view) return c.json({ error: 'Approval request not found' }, 404);
+    const record = createApprovalConversation(resolveHaroHome(runtime), view.request);
+    return c.json({ success: true, data: record });
+  });
+
+  route.get('/:id/conversations/:conversationId', requireWebPermission('read-only'), (c) => {
+    const view = getApprovalRequest(resolveHaroHome(runtime), c.req.param('id'));
+    if (!view) return c.json({ error: 'Approval request not found' }, 404);
+    const record = readApprovalConversation(
+      resolveHaroHome(runtime),
+      view.request.id,
+      c.req.param('conversationId'),
+    );
+    if (!record) return c.json({ error: 'Approval conversation not found' }, 404);
+    return c.json({ success: true, data: record });
+  });
+
+  route.post('/:id/conversations/:conversationId/messages', requireWebPermission('config-write'), async (c) => {
+    const view = getApprovalRequest(resolveHaroHome(runtime), c.req.param('id'));
+    if (!view) return c.json({ error: 'Approval request not found' }, 404);
+    const body = await readConversationMessageBody(c.req.json.bind(c.req));
+    if (!body.ok) return c.json({ error: body.error }, 400);
+    const record = appendApprovalConversationMessage(
+      resolveHaroHome(runtime),
+      view.request.id,
+      c.req.param('conversationId'),
+      {
+        role: 'user',
+        content: body.value.content,
+      },
+    );
+    if (!record) return c.json({ error: 'Approval conversation not found' }, 404);
+    return c.json({ success: true, data: record });
+  });
+
+  route.post('/:id/conversations/:conversationId/agent-reply', requireWebPermission('config-write'), (c) => {
+    const root = resolveHaroHome(runtime);
+    const view = getApprovalRequest(root, c.req.param('id'));
+    if (!view) return c.json({ error: 'Approval request not found' }, 404);
+    const conversation = readApprovalConversation(root, view.request.id, c.req.param('conversationId'));
+    if (!conversation) return c.json({ error: 'Approval conversation not found' }, 404);
+    if (!runtime.reviewConversationReply) {
+      return c.json({ error: 'Review conversation agent is not configured' }, 503);
+    }
+    return streamApprovalConversationReply(runtime, root, view.request, conversation, c.get('logger'));
+  });
+
   route.get('/:id', requireWebPermission('read-only'), (c) => {
     const view = getApprovalRequest(resolveHaroHome(runtime), c.req.param('id'));
     if (!view) return c.json({ error: 'Approval request not found' }, 404);
@@ -120,13 +209,19 @@ export function createApprovalRequestsRoute(
   });
 
   route.post('/:id/decision', requireWebPermission('config-write'), async (c) => {
+    const root = resolveHaroHome(runtime);
     const body = await readDecisionBody(c.req.json.bind(c.req));
     if (!body.ok) return c.json({ error: body.error }, 400);
+    const direction =
+      body.value.decision === 'request-changes'
+        ? buildRequestChangesDirection(root, c.req.param('id'), body.value.direction, body.value.conversationId)
+        : undefined;
+    if (direction && !direction.ok) return c.json({ error: direction.error }, 400);
     const auth = readWebAuth(c);
-    const result = decideApprovalRequest(resolveHaroHome(runtime), {
+    const result = decideApprovalRequest(root, {
       requestId: c.req.param('id'),
       decision: body.value.decision,
-      direction: body.value.direction,
+      direction: direction?.direction ?? body.value.direction,
       reviewer: {
         ...(auth?.kind === 'session'
           ? {
@@ -235,6 +330,208 @@ function listJsonRecords<T>(dir: string, schema: z.ZodTypeAny): T[] {
       const record = readJson<T>(path.join(dir, name), schema);
       return record ? [record] : [];
     });
+}
+
+
+function approvalConversationsDir(root: string, approvalRequestId: string): string {
+  return path.join(root, 'evolution', 'approval-conversations', safeSegment(approvalRequestId));
+}
+
+function approvalConversationFilePath(root: string, approvalRequestId: string, conversationId: string): string {
+  return path.join(approvalConversationsDir(root, approvalRequestId), `${safeSegment(conversationId)}.json`);
+}
+
+function listApprovalConversations(root: string, approvalRequestId: string): ApprovalConversationRecord[] {
+  const dir = approvalConversationsDir(root, approvalRequestId);
+  const records = listJsonRecords<ApprovalConversationRecord>(dir, ApprovalConversationRecordSchema);
+  return records
+    .filter((record) => record.associatedApprovalRequestId === approvalRequestId)
+    .sort((a, b) => compareIsoDateTime(a.updatedAt, b.updatedAt) || a.id.localeCompare(b.id));
+}
+
+function readApprovalConversation(
+  root: string,
+  approvalRequestId: string,
+  conversationId: string,
+): ApprovalConversationRecord | null {
+  const record = readJson<ApprovalConversationRecord>(
+    approvalConversationFilePath(root, approvalRequestId, conversationId),
+    ApprovalConversationRecordSchema,
+  );
+  return record?.associatedApprovalRequestId === approvalRequestId ? record : null;
+}
+
+function createApprovalConversation(root: string, request: ApprovalRequestRecord): ApprovalConversationRecord {
+  const timestamp = new Date().toISOString();
+  const id = `approval_conversation_${crypto
+    .createHash('sha256')
+    .update(JSON.stringify({ requestId: request.id, timestamp }))
+    .digest('hex')
+    .slice(0, 24)}`;
+  const record = ApprovalConversationRecordSchema.parse({
+    id,
+    associatedApprovalRequestId: request.id,
+    proposalId: request.proposalId,
+    validationId: request.validationId,
+    messages: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+  writeApprovalConversation(root, record);
+  return record;
+}
+
+function appendApprovalConversationMessage(
+  root: string,
+  approvalRequestId: string,
+  conversationId: string,
+  input: { role: ApprovalConversationMessage['role']; content: string; metadata?: Record<string, unknown> },
+): ApprovalConversationRecord | null {
+  const record = readApprovalConversation(root, approvalRequestId, conversationId);
+  if (!record) return null;
+  const timestamp = new Date().toISOString();
+  const message = ApprovalConversationMessageSchema.parse({
+    id: `approval_message_${crypto
+      .createHash('sha256')
+      .update(JSON.stringify({ conversationId, role: input.role, content: input.content, timestamp }))
+      .digest('hex')
+      .slice(0, 24)}`,
+    role: input.role,
+    content: input.content.trim(),
+    createdAt: timestamp,
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  });
+  const next = ApprovalConversationRecordSchema.parse({
+    ...record,
+    messages: [...record.messages, message],
+    updatedAt: timestamp,
+  });
+  writeApprovalConversation(root, next);
+  return next;
+}
+
+function writeApprovalConversation(root: string, record: ApprovalConversationRecord): void {
+  writeJsonAtomic(
+    approvalConversationFilePath(root, record.associatedApprovalRequestId, record.id),
+    record,
+  );
+}
+
+async function readConversationMessageBody(readJsonBody: () => Promise<unknown>): Promise<
+  | { ok: true; value: { content: string } }
+  | { ok: false; error: string }
+> {
+  let body: unknown;
+  try {
+    body = await readJsonBody();
+  } catch {
+    return { ok: false, error: 'Request body must be valid JSON' };
+  }
+  const parsed = z.object({ content: z.string().min(1) }).safeParse(body);
+  if (!parsed.success) return { ok: false, error: parsed.error.message };
+  const content = parsed.data.content.trim();
+  if (!content) return { ok: false, error: 'Message content is required' };
+  return { ok: true, value: { content } };
+}
+
+function streamApprovalConversationReply(
+  runtime: WebRuntime,
+  root: string,
+  request: ApprovalRequestRecord,
+  conversation: ApprovalConversationRecord,
+  logger: ApiKeyAuthEnv['Variables']['logger'],
+): Response {
+  const encoder = new TextEncoder();
+  let streamedContent = '';
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: string, data: unknown): void => {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+      try {
+        const result = await runtime.reviewConversationReply!({
+          approvalRequest: conversationRequestContext(request),
+          messages: conversation.messages,
+          onText: (chunk) => {
+            if (!chunk) return;
+            streamedContent += chunk;
+            send('delta', { content: chunk });
+          },
+        });
+        const content = result.content.trim() || streamedContent.trim();
+        if (!content) throw new Error('Review conversation agent returned an empty response');
+        if (!streamedContent.trim()) send('delta', { content });
+        const next = appendApprovalConversationMessage(root, request.id, conversation.id, {
+          role: 'assistant',
+          content,
+          metadata: {
+            ...(result.provider ? { provider: result.provider } : {}),
+            ...(result.model ? { model: result.model } : {}),
+            ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+          },
+        });
+        send('done', { conversation: next });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger?.error({ error: message, approvalRequestId: request.id }, 'approval conversation agent failed');
+        send('error', { error: message });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache',
+    },
+  });
+}
+
+function conversationRequestContext(request: ApprovalRequestRecord): ReviewConversationReplyInput['approvalRequest'] {
+  return {
+    id: request.id,
+    title: request.title,
+    level: request.level,
+    targetKind: request.targetKind,
+    riskLevel: request.riskLevel,
+    whyChange: request.whyChange,
+    howChange: request.howChange,
+    expectedBenefits: request.expectedBenefits,
+    regressionRisks: request.regressionRisks,
+  };
+}
+
+function buildRequestChangesDirection(
+  root: string,
+  requestId: string,
+  direction: string | undefined,
+  conversationId: string | undefined,
+): { ok: true; direction: string } | { ok: false; error: string } {
+  if (!conversationId) return direction?.trim() ? { ok: true, direction: direction.trim() } : { ok: false, error: 'request-changes requires direction' };
+  const conversation = readApprovalConversation(root, requestId, conversationId);
+  if (!conversation) return { ok: false, error: 'Approval conversation not found' };
+  const summary = summarizeApprovalConversation(conversation);
+  const parts = [
+    direction?.trim() ? `用户最终要求：${direction.trim()}` : '用户通过对话面板要求修改。',
+    '对话摘要：',
+    summary,
+    `原始对话：haro-sidecar://approval-conversations/${encodeURIComponent(requestId)}/${encodeURIComponent(conversation.id)}`,
+  ];
+  return { ok: true, direction: parts.join('\n') };
+}
+
+function summarizeApprovalConversation(conversation: ApprovalConversationRecord): string {
+  const lines = conversation.messages.slice(-12).map((message) => {
+    const role = message.role === 'user' ? '用户' : 'Haro';
+    return `- ${role}: ${truncateForDirection(message.content, 500)}`;
+  });
+  return lines.length > 0 ? lines.join('\n') : '- 用户没有留下对话内容。';
+}
+
+function truncateForDirection(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized;
 }
 
 function writeJsonAtomic(filePath: string, value: unknown): void {
@@ -506,7 +803,7 @@ function latestByCreatedAt<T extends { createdAt: string }>(records: T[]): T | n
 async function readDecisionBody(readJsonBody: () => Promise<unknown>): Promise<
   | {
       ok: true;
-      value: { decision: ApprovalDecisionOption; direction?: string };
+      value: { decision: ApprovalDecisionOption; direction?: string; conversationId?: string };
     }
   | { ok: false; error: string }
 > {
@@ -519,9 +816,14 @@ async function readDecisionBody(readJsonBody: () => Promise<unknown>): Promise<
   const parsed = z.object({
     decision: ApprovalDecisionOptionSchema,
     direction: z.string().optional(),
+    conversationId: z.string().min(1).optional(),
   }).safeParse(body);
   if (!parsed.success) return { ok: false, error: parsed.error.message };
-  if (parsed.data.decision === 'request-changes' && !parsed.data.direction?.trim()) {
+  if (
+    parsed.data.decision === 'request-changes' &&
+    !parsed.data.direction?.trim() &&
+    !parsed.data.conversationId?.trim()
+  ) {
     return { ok: false, error: 'request-changes requires direction' };
   }
   return {
@@ -529,6 +831,7 @@ async function readDecisionBody(readJsonBody: () => Promise<unknown>): Promise<
     value: {
       decision: parsed.data.decision,
       ...(parsed.data.direction?.trim() ? { direction: parsed.data.direction.trim() } : {}),
+      ...(parsed.data.conversationId?.trim() ? { conversationId: parsed.data.conversationId.trim() } : {}),
     },
   };
 }
