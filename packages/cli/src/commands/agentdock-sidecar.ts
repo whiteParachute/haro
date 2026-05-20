@@ -1167,6 +1167,27 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         ...(policyAudit ? { policyAudit } : {}),
       };
     }
+    if (readActiveProposalTargetDedupeKeys(app.paths.root).has(proposalTargetDedupeKey(generated.proposal))) {
+      app.stderr.write(`haro propose: skipped candidate because an undecided proposal already targets ${proposalTargetSummary(generated.proposal)}\n`);
+      return {
+        command: 'propose',
+        mode: 'dry-run',
+        includeFrontier: options.includeFrontier === true,
+        proposalCount: 0,
+        skippedProposalCount: 1,
+        consumedObservationCount: 0,
+        pendingObservationCount: pending.length,
+        includedFrontierSignalCount: frontierResult.signals.length,
+        availableFrontierSignalCount: frontierResult.signals.length,
+        skippedCorruptObservationCount: pendingResult.corruptCount,
+        skippedCorruptProposalCount: consumedResult.corruptCount,
+        skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
+        wroteProposal: false,
+        assetEventCount: 0,
+        assetEventIds: [],
+        ...(policyAudit ? { policyAudit } : {}),
+      };
+    }
     const proposal = generated.proposal;
     const path = proposalFilePath(app.paths.root, proposal);
     for (const contentFile of generated.contentFiles) {
@@ -2938,10 +2959,12 @@ function readApprovalRequestProposalDedupeKeys(root: string): Set<string> {
   const dir = approvalRequestsDir(root);
   const keys = new Set<string>();
   if (!existsSync(dir)) return keys;
+  const decidedProposalIds = readApprovalDecisionProposalIds(root).decided;
   for (const name of readdirSync(dir).sort()) {
     if (!name.endsWith('.json')) continue;
     try {
       const record = ApprovalRequestRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (decidedProposalIds.has(record.proposalId)) continue;
       const proposal = readProposalById(root, record.proposalId);
       if (proposal) keys.add(proposalApprovalRequestDedupeKey(proposal));
     } catch {
@@ -2954,25 +2977,49 @@ function readApprovalRequestProposalDedupeKeys(root: string): Set<string> {
 }
 
 function proposalApprovalRequestDedupeKey(proposal: EvolutionProposal): string {
+  return proposalTargetDedupeKey(proposal);
+}
+
+function proposalTargetDedupeKey(proposal: EvolutionProposal): string {
   return JSON.stringify({
     level: proposal.level,
     targetKind: proposal.targetKind,
-    riskLevel: proposal.riskLevel,
-    changeSet: proposal.changeSet
+    targets: proposal.changeSet
       .map((change) => ({
-        op: change.op,
-        contentHash: change.contentHash ?? '',
-        targetRef: {
-          id: change.targetRef.id,
-          kind: change.targetRef.kind,
-          uri: change.targetRef.uri ?? '',
-        },
+        id: change.targetRef.id,
+        kind: change.targetRef.kind,
       }))
-      .sort((a, b) => (
-        `${a.op}:${a.targetRef.kind}:${a.targetRef.id}:${a.targetRef.uri}`
-          .localeCompare(`${b.op}:${b.targetRef.kind}:${b.targetRef.id}:${b.targetRef.uri}`)
-      )),
+      .sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)),
   });
+}
+
+function proposalTargetSummary(proposal: EvolutionProposal): string {
+  const targets = proposal.changeSet
+    .map((change) => `${change.targetRef.kind}:${change.targetRef.id}`)
+    .sort()
+    .join(',');
+  return `${proposal.level}/${proposal.targetKind}/${targets}`;
+}
+
+function readActiveProposalTargetDedupeKeys(root: string): Set<string> {
+  const dir = proposalsDir(root);
+  const keys = new Set<string>();
+  if (!existsSync(dir)) return keys;
+  const decidedProposalIds = readApprovalDecisionProposalIds(root).decided;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const proposal = EvolutionProposalSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (decidedProposalIds.has(proposal.id)) continue;
+      if (proposal.humanApprovalRefs.length > 0) continue;
+      if (proposal.status !== 'proposed' && proposal.status !== 'validated') continue;
+      keys.add(proposalTargetDedupeKey(proposal));
+    } catch {
+      // Corrupt proposals are counted elsewhere; ignore them so a broken file
+      // cannot permanently block a valid proposal for the same target.
+    }
+  }
+  return keys;
 }
 
 function readApprovalDecisionProposalIds(root: string): { decided: Set<string>; corruptCount: number } {

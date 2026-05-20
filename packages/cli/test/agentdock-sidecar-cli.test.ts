@@ -349,6 +349,50 @@ function writeExecutableMcpToolConfigProposal(root: string, proposalId: string, 
   }, null, 2)}\n`);
 }
 
+function rewriteExecutableProposalContent(root: string, proposalId: string, marker: string): void {
+  const contentDir = join(root, 'evolution', 'proposal-content', proposalId);
+  const fileName = readdirSync(contentDir).find((name) => name.endsWith('.json'));
+  if (!fileName) throw new Error(`missing proposal content for ${proposalId}`);
+  const content = `${JSON.stringify({ marker, updatedAt: '2026-05-08T12:00:00.000Z' }, null, 2)}\n`;
+  writeFileSync(join(contentDir, fileName), content);
+  const proposalPath = join(root, 'evolution', 'proposals', `${proposalId}.json`);
+  const proposal = readJson<Record<string, unknown> & { changeSet: Array<Record<string, unknown>> }>(proposalPath);
+  proposal.changeSet[0]!.contentHash = sha256(content);
+  writeFileSync(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`);
+}
+
+function writeRunnerErrorObservation(root: string, batchId: string, message: string): void {
+  const observationDir = join(root, 'evolution', 'observations');
+  mkdirSync(observationDir, { recursive: true });
+  writeFileSync(join(observationDir, `${batchId}.json`), `${JSON.stringify({
+    id: batchId,
+    connectionId: 'agentdock-local',
+    source: 'agentdock-http',
+    collectedAt: '2026-05-08T11:59:00.000Z',
+    window: { until: '2026-05-08T11:59:00.000Z' },
+    sessions: [],
+    turns: [],
+    toolCalls: [],
+    scheduledTaskRuns: [],
+    memoryMaintenanceLogs: [],
+    runnerErrors: [
+      {
+        id: `${batchId}-runner-error`,
+        sessionId: `${batchId}-session`,
+        runnerId: 'codex',
+        code: 'AGENTDOCK_TURN_TIMEOUT',
+        message,
+        recoverable: true,
+        occurredAt: '2026-05-08T11:58:20.000Z',
+        detailsRef: `agentdock://sessions/${batchId}/turns/turn-123`,
+      },
+    ],
+    usageRecords: [],
+    rawRefs: ['http://agentdock.local/api/status'],
+    metadata: {},
+  }, null, 2)}\n`);
+}
+
 function writeAutoApplyFixture(root: string, proposalId: string, overrides: {
   level?: string;
   targetKind?: string;
@@ -1219,6 +1263,63 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
+  it('propose --auto-dry-run skips a new runner-profile candidate while the same target is undecided', async () => {
+    const root = newHome('agentdock-propose-duplicate-active-target');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-old', 'AgentDock turn old ended with status timeout');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const firstPayload = (JSON.parse(firstOut.read()) as { data: {
+      proposalCount: number;
+      proposal: { id: string; changeSet: Array<{ targetRef: { id: string } }> };
+    } }).data;
+    expect(firstPayload.proposalCount).toBe(1);
+    expect(firstPayload.proposal.changeSet[0]?.targetRef.id).toBe('haro-sidecar:runner-profile:error-recovery-policy');
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+
+    writeRunnerErrorObservation(root, 'obs-runner-error-new', 'AgentDock turn new ended with status timeout');
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, [
+      'propose',
+      '--auto-dry-run',
+      '--json',
+    ]));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toContain('undecided proposal already targets');
+    const secondPayload = (JSON.parse(secondOut.read()) as { data: {
+      proposalCount: number;
+      skippedProposalCount: number;
+      consumedObservationCount: number;
+      wroteProposal: boolean;
+    } }).data;
+    expect(secondPayload).toMatchObject({
+      proposalCount: 0,
+      skippedProposalCount: 1,
+      consumedObservationCount: 0,
+      wroteProposal: false,
+    });
+    expect(readdirSync(join(root, 'evolution', 'proposals')).filter((name) => name.endsWith('.json'))).toHaveLength(1);
+  });
+
   it('propose --auto-dry-run turns scheduled task errors into actionable schedule-config content', async () => {
     const root = newHome('agentdock-actionable-schedule-config-proposal');
     writeCurrentMcpAuditPolicy(root);
@@ -1858,6 +1959,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(readApprovalRequestRecords(root)).toHaveLength(1);
 
     writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_new');
+    rewriteExecutableProposalContent(root, 'proposal_duplicate_new', 'new evidence changes content hash');
     const secondValidateOut = captureStream();
     const secondValidateErr = captureStream();
     const secondValidate = await runCli(commonOpts(root, secondValidateOut, secondValidateErr, [
@@ -1891,7 +1993,42 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(readApprovalRequestRecords(root)).toHaveLength(1);
   });
 
-  it('approval-request --pending skips new proposals that duplicate a decided approval request', async () => {
+  it('approval-request --pending allows a new proposal for a different target', async () => {
+    const root = newHome('agentdock-approval-request-different-target');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_target_old', 'agentdock:haro-proposal-quality-gate');
+    let stdout = captureStream();
+    let stderr = captureStream();
+    expect((await runCli(commonOpts(root, stdout, stderr, ['validate', '--pending', '--json']))).exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    stdout = captureStream();
+    stderr = captureStream();
+    expect((await runCli(commonOpts(root, stdout, stderr, ['approval-request', '--pending', '--json']))).exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+
+    writeExecutableMcpToolConfigProposal(root, 'proposal_target_new', 'agentdock:haro-other-quality-gate');
+    stdout = captureStream();
+    stderr = captureStream();
+    expect((await runCli(commonOpts(root, stdout, stderr, ['validate', '--pending', '--json']))).exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    stdout = captureStream();
+    stderr = captureStream();
+    const second = await runCli(commonOpts(root, stdout, stderr, ['approval-request', '--pending', '--json']));
+
+    expect(second.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      approvalRequestCount: number;
+      requestedProposalCount: number;
+      skippedDuplicatePendingApprovalRequestCount: number;
+    } }).data;
+    expect(payload.approvalRequestCount).toBe(1);
+    expect(payload.requestedProposalCount).toBe(1);
+    expect(payload.skippedDuplicatePendingApprovalRequestCount).toBe(0);
+    expect(readApprovalRequestRecords(root)).toHaveLength(2);
+  });
+
+  it('approval-request --pending allows a new same-target proposal after a reject decision', async () => {
     const root = newHome('agentdock-approval-request-duplicate-decided');
     writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_decided_old');
     const firstValidateOut = captureStream();
@@ -1934,6 +2071,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     });
 
     writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_decided_new');
+    rewriteExecutableProposalContent(root, 'proposal_duplicate_decided_new', 'new proposal after reject');
     const secondValidateOut = captureStream();
     const secondValidateErr = captureStream();
     const secondValidate = await runCli(commonOpts(root, secondValidateOut, secondValidateErr, [
@@ -1960,11 +2098,88 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       skippedDuplicatePendingApprovalRequestCount: number;
       wroteApprovalRequests: boolean;
     } }).data;
-    expect(payload.approvalRequestCount).toBe(0);
-    expect(payload.requestedProposalCount).toBe(0);
-    expect(payload.skippedDuplicatePendingApprovalRequestCount).toBe(1);
-    expect(payload.wroteApprovalRequests).toBe(false);
-    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+    expect(payload.approvalRequestCount).toBe(1);
+    expect(payload.requestedProposalCount).toBe(1);
+    expect(payload.skippedDuplicatePendingApprovalRequestCount).toBe(0);
+    expect(payload.wroteApprovalRequests).toBe(true);
+    expect(readApprovalRequestRecords(root)).toHaveLength(2);
+  });
+
+  it('approval-request --pending allows a new same-target proposal after an approve decision', async () => {
+    const root = newHome('agentdock-approval-request-duplicate-approved');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_approved_old');
+    const firstValidateOut = captureStream();
+    const firstValidateErr = captureStream();
+    const firstValidate = await runCli(commonOpts(root, firstValidateOut, firstValidateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(firstValidate.exitCode).toBe(0);
+    expect(firstValidateErr.read()).toBe('');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const existingRequest = readApprovalRequestRecords(root)[0]!;
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_duplicate_approved',
+      approvalRequestId: existingRequest.id,
+      proposalId: existingRequest.proposalId,
+      validationId: existingRequest.validationId,
+      decision: 'approve',
+      reviewer: {
+        source: 'agentdock',
+        username: 'reviewer',
+        role: 'owner',
+      },
+      sourceRef: {
+        id: existingRequest.id,
+        kind: 'approval-request',
+      },
+      createdAt: '2026-05-08T12:03:00.000Z',
+      updatedAt: '2026-05-08T12:03:00.000Z',
+    });
+
+    writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_approved_new');
+    rewriteExecutableProposalContent(root, 'proposal_duplicate_approved_new', 'new proposal after approve');
+    const secondValidateOut = captureStream();
+    const secondValidateErr = captureStream();
+    const secondValidate = await runCli(commonOpts(root, secondValidateOut, secondValidateErr, [
+      'validate',
+      '--pending',
+      '--json',
+    ]));
+    expect(secondValidate.exitCode).toBe(0);
+    expect(secondValidateErr.read()).toBe('');
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, [
+      'approval-request',
+      '--pending',
+      '--json',
+    ]));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toBe('');
+    const payload = (JSON.parse(secondOut.read()) as { data: {
+      approvalRequestCount: number;
+      requestedProposalCount: number;
+      skippedDuplicatePendingApprovalRequestCount: number;
+      wroteApprovalRequests: boolean;
+    } }).data;
+    expect(payload.approvalRequestCount).toBe(1);
+    expect(payload.requestedProposalCount).toBe(1);
+    expect(payload.skippedDuplicatePendingApprovalRequestCount).toBe(0);
+    expect(payload.wroteApprovalRequests).toBe(true);
+    expect(readApprovalRequestRecords(root)).toHaveLength(2);
   });
 
   it('validate --pending --limit only validates the selected pending proposal count', async () => {
