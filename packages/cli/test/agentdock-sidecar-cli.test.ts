@@ -23,7 +23,7 @@ import {
 import { AgentRegistry, ProviderRegistry, buildHaroPaths } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli, type AppContext } from '../src/index.js';
-import { autoApplyApprovedProposal } from '../src/commands/agentdock-sidecar.js';
+import { autoApplyApprovedProposal, runAgentDockDailyWorkflow } from '../src/commands/agentdock-sidecar.js';
 
 class StubProvider implements AgentProvider {
   readonly id = 'codex';
@@ -88,12 +88,29 @@ function autoApplyApp(root: string, logs: { warn: unknown[]; error: unknown[] } 
   } as unknown as AppContext;
 }
 
-function jsonResponse(value: unknown) {
+function jsonResponse(value: unknown, init: { ok?: boolean; status?: number; statusText?: string } = {}) {
   return {
-    ok: true,
-    status: 200,
-    statusText: 'OK',
+    ok: init.ok ?? true,
+    status: init.status ?? 200,
+    statusText: init.statusText ?? 'OK',
     async json() {
+      return value;
+    },
+    async text() {
+      return JSON.stringify(value);
+    },
+  };
+}
+
+function textResponse(value: string, init: { ok?: boolean; status?: number; statusText?: string } = {}) {
+  return {
+    ok: init.ok ?? true,
+    status: init.status ?? 200,
+    statusText: init.statusText ?? 'OK',
+    async json() {
+      return JSON.parse(value) as unknown;
+    },
+    async text() {
       return value;
     },
   };
@@ -4692,6 +4709,203 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(error.error.message).toContain('sourceRef');
     expect(error.error.message).toContain('summary');
     expect(existsSync(join(root, 'evolution', 'frontier-signals'))).toBe(false);
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('intake frontier fetches configured GitHub releases as schema-valid signals', async () => {
+    const root = newHome('frontier-intake-github');
+    const sourceConfigPath = join(root, 'frontier-sources.json');
+    writeFileSync(sourceConfigPath, JSON.stringify({
+      sources: [{
+        id: 'github-mcp-ts-sdk',
+        type: 'github-releases',
+        repo: 'modelcontextprotocol/typescript-sdk',
+        targetDomains: ['mcp-tools', 'haro-sidecar'],
+        limit: 1,
+      }],
+    }, null, 2));
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toContain('api.github.com/repos/modelcontextprotocol/typescript-sdk/releases');
+      return jsonResponse([{
+        tag_name: 'v1.2.3',
+        name: 'MCP TypeScript SDK v1.2.3',
+        html_url: 'https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v1.2.3',
+        published_at: '2026-05-08T09:00:00.000Z',
+        body: 'Release notes mention tool metadata and safer MCP integrations.',
+      }]);
+    }) as typeof fetch;
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'intake',
+      'frontier',
+      '--source-config',
+      sourceConfigPath,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      signalCount: number;
+      wroteSignalCount: number;
+      sourceSummaries: Array<{ id: string; type: string; status: string; signalCount: number }>;
+      signalPaths: string[];
+    } }).data;
+    expect(payload.signalCount).toBe(1);
+    expect(payload.wroteSignalCount).toBe(1);
+    expect(payload.sourceSummaries).toEqual([
+      { id: 'github-mcp-ts-sdk', type: 'github-releases', status: 'loaded', signalCount: 1 },
+    ]);
+    const signal = readJson<Record<string, unknown>>(payload.signalPaths[0]!);
+    expect(signal).toMatchObject({
+      sourceType: 'repo-release',
+      title: 'MCP TypeScript SDK v1.2.3',
+      publishedAt: '2026-05-08T09:00:00.000Z',
+      targetDomains: ['mcp-tools', 'haro-sidecar'],
+      confidence: 'high',
+      status: 'active',
+    });
+    expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('intake frontier logs source HTTP failures without blocking the workflow', async () => {
+    const root = newHome('frontier-intake-http-error');
+    const sourceConfigPath = join(root, 'frontier-sources.json');
+    writeFileSync(sourceConfigPath, JSON.stringify({
+      sources: [{ id: 'github-broken', type: 'github-releases', repo: 'owner/repo' }],
+    }, null, 2));
+    globalThis.fetch = vi.fn(async () => jsonResponse({ message: 'server error' }, {
+      ok: false,
+      status: 503,
+      statusText: 'Service Unavailable',
+    })) as typeof fetch;
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'intake',
+      'frontier',
+      '--source-config',
+      sourceConfigPath,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toContain('frontier source github-broken');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      signalCount: number;
+      wroteSignalCount: number;
+      sourceSummaries: Array<{ status: string; reason: string }>;
+    } }).data;
+    expect(payload.signalCount).toBe(0);
+    expect(payload.wroteSignalCount).toBe(0);
+    expect(payload.sourceSummaries[0]?.status).toBe('error');
+    expect(payload.sourceSummaries[0]?.reason).toContain('HTTP 503');
+    expect(existsSync(join(root, 'evolution', 'frontier-signals'))).toBe(false);
+  });
+
+  it('intake frontier dedupes adapter signals by source URI and publishedAt', async () => {
+    const root = newHome('frontier-intake-dedupe-uri-date');
+    const sourceConfigPath = join(root, 'frontier-sources.json');
+    const frontierDir = join(root, 'evolution', 'frontier-signals');
+    mkdirSync(frontierDir, { recursive: true });
+    writeFileSync(join(frontierDir, 'existing.json'), JSON.stringify(frontierSignal('existing-same-uri-date', {
+      sourceType: 'repo-release',
+      sourceRef: {
+        id: 'different-id',
+        kind: 'repo-release',
+        uri: 'https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v1.2.3',
+      },
+      title: 'Existing release signal',
+      publishedAt: '2026-05-08T09:00:00.000Z',
+    }), null, 2));
+    writeFileSync(sourceConfigPath, JSON.stringify({
+      sources: [{
+        id: 'github-mcp-ts-sdk',
+        type: 'github-releases',
+        repo: 'modelcontextprotocol/typescript-sdk',
+        targetDomains: ['mcp-tools', 'haro-sidecar'],
+        limit: 1,
+      }],
+    }, null, 2));
+    globalThis.fetch = vi.fn(async () => jsonResponse([{
+      tag_name: 'v1.2.3',
+      html_url: 'https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v1.2.3',
+      published_at: '2026-05-08T09:00:00.000Z',
+      body: 'Same release.',
+    }])) as typeof fetch;
+    const stdout = captureStream();
+    const stderr = captureStream();
+
+    const result = await runCli(commonOpts(root, stdout, stderr, [
+      'intake',
+      'frontier',
+      '--source-config',
+      sourceConfigPath,
+      '--json',
+    ]));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      wroteSignalCount: number;
+      duplicateSignalCount: number;
+    } }).data;
+    expect(payload.wroteSignalCount).toBe(0);
+    expect(payload.duplicateSignalCount).toBe(1);
+    expect(readdirSync(frontierDir)).toHaveLength(1);
+  });
+
+  it('daily workflow runs frontier source adapters and writes new signals', async () => {
+    const root = newHome('frontier-daily-workflow-adapter');
+    const sourceConfigPath = join(root, 'frontier-sources.json');
+    writeFileSync(sourceConfigPath, JSON.stringify({
+      sources: [{
+        id: 'openai-changelog-feed',
+        type: 'rss-feed',
+        url: 'https://example.com/openai/changelog.xml',
+        sourceType: 'official-doc',
+        targetDomains: ['haro-sidecar', 'mcp-tools'],
+        limit: 1,
+      }],
+    }, null, 2));
+    globalThis.fetch = vi.fn(async () => textResponse([
+      '<?xml version=\"1.0\"?>',
+      '<rss><channel><item>',
+      '<title>OpenAI tool calling changelog</title>',
+      '<link>https://example.com/openai/tool-calling</link>',
+      '<pubDate>Fri, 08 May 2026 09:30:00 GMT</pubDate>',
+      '<description>Official changelog entry about tool calling reliability.</description>',
+      '</item></channel></rss>',
+    ].join(''))) as typeof fetch;
+    const app = autoApplyApp(root);
+
+    const result = await runAgentDockDailyWorkflow(app, {
+      source: 'fake',
+      since: 'last',
+      includeFrontier: true,
+      frontierSourceConfigPath: sourceConfigPath,
+      observeLimit: 500,
+      frontierLimit: 10,
+      proposalLimit: 20,
+      validationLimit: 20,
+      approvalRequestLimit: 20,
+    });
+
+    expect(result.steps.frontierIntake?.wroteSignalCount).toBe(1);
+    expect(result.steps.frontierIntake?.sourceSummaries[0]).toMatchObject({
+      id: 'openai-changelog-feed',
+      type: 'rss-feed',
+      status: 'loaded',
+      signalCount: 1,
+    });
+    const signals = readdirSync(join(root, 'evolution', 'frontier-signals')).filter((name) => name.endsWith('.json'));
+    expect(signals).toHaveLength(1);
+    const signal = readJson<Record<string, unknown>>(join(root, 'evolution', 'frontier-signals', signals[0]!));
+    expect(signal.title).toBe('OpenAI tool calling changelog');
+    expect(signal.sourceRef).toMatchObject({ uri: 'https://example.com/openai/tool-calling' });
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 

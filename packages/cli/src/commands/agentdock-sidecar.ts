@@ -38,6 +38,10 @@ import {
 } from '@haro/agentdock-contract';
 import { createSidecarAssetRegistry, type HaroRunDailyWorkflowInput } from '@haro/mcp-tools';
 import { CommanderExit, type AppContext } from '../index.js';
+import {
+  collectFrontierSignalsFromConfig,
+  type FrontierSourceSummary,
+} from '../frontier-sources/index.js';
 import { renderError, renderJson, resolveOutputMode } from '../output/index.js';
 
 interface OutputFlags {
@@ -111,7 +115,7 @@ interface PatchBranchOptions extends OutputFlags {
 }
 
 interface IntakeFrontierOptions extends OutputFlags {
-  sourceConfig: string;
+  sourceConfig?: string;
   since?: string;
   limit?: string;
 }
@@ -436,6 +440,7 @@ interface IntakeFrontierResult {
   skippedBySinceCount: number;
   pendingSignalCount: number;
   skippedCorruptSignalCount: number;
+  sourceSummaries: FrontierSourceSummary[];
   signalIds: string[];
   signalPaths: string[];
 }
@@ -1035,15 +1040,15 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
   intake
     .command('frontier')
     .description('Normalize curated frontier intelligence signals into the sidecar store')
-    .requiredOption('--source-config <file>', 'JSON file containing FrontierSignal[] or { signals: FrontierSignal[] }')
+    .option('--source-config <file>', 'JSON file containing FrontierSignal[] or { signals?: FrontierSignal[], sources?: FrontierSource[] }')
     .option('--since <cursor>', 'last | none | ISO timestamp', 'last')
     .option('--limit <n>', 'maximum new frontier signals to write')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
-    .action((options: IntakeFrontierOptions) => {
+    .action(async (options: IntakeFrontierOptions) => {
       const mode = resolveOutputMode(options, app.stdout);
       try {
-        const result = intakeFrontierSignals(app, options);
+        const result = await intakeFrontierSignals(app, options);
         if (mode === 'json') {
           renderJson(result, { stdout: app.stdout });
           return;
@@ -1561,16 +1566,17 @@ export async function runAgentDockDailyWorkflow(
     since: options.since ?? 'last',
     ...(options.observeLimit ? { limit: String(options.observeLimit) } : {}),
   });
-  const frontierIntake = options.frontierSourceConfigPath
-    ? intakeFrontierSignals(app, {
-        sourceConfig: options.frontierSourceConfigPath,
+  const frontierSourceConfigPath = resolveDailyFrontierSourceConfigPath(app.paths.root, options.frontierSourceConfigPath);
+  const frontierIntake = frontierSourceConfigPath
+    ? await intakeFrontierSignals(app, {
+        sourceConfig: frontierSourceConfigPath,
         since: 'last',
         ...(options.frontierLimit ? { limit: String(options.frontierLimit) } : {}),
       })
     : undefined;
   const propose = proposeAgentDock(app, {
     autoDryRun: true,
-    includeFrontier: options.includeFrontier ?? Boolean(options.frontierSourceConfigPath),
+    includeFrontier: options.includeFrontier ?? Boolean(frontierSourceConfigPath),
     ...(options.proposalLimit ? { limit: String(options.proposalLimit) } : {}),
   });
   const validate = validateAgentDock(app, {
@@ -2219,10 +2225,15 @@ function patchBranchAgentDock(app: AppContext, options: PatchBranchOptions): Pat
   }
 }
 
-function intakeFrontierSignals(app: AppContext, options: IntakeFrontierOptions): IntakeFrontierResult {
+async function intakeFrontierSignals(app: AppContext, options: IntakeFrontierOptions): Promise<IntakeFrontierResult> {
   const limit = normalizeOptionalPositiveInt(options.limit, '--limit');
-  const sourceConfigPath = resolve(options.sourceConfig);
-  const signals = readFrontierSourceConfig(sourceConfigPath);
+  const sourceConfigPath = resolve(options.sourceConfig ?? process.env.HARO_FRONTIER_SOURCE_CONFIG ?? defaultFrontierSourceConfigPath(app.paths.root));
+  const sourceResult = await collectFrontierSignalsFromConfig({
+    configPath: sourceConfigPath,
+    now: app.now,
+  });
+  const signals = sourceResult.signals;
+  emitFrontierSourceWarnings(app, sourceResult.sourceSummaries);
   const lockDir = acquireFrontierIntakeLock(app.paths.root);
   try {
     const storedCursor = options.since === undefined || options.since === 'last'
@@ -2294,11 +2305,32 @@ function intakeFrontierSignals(app: AppContext, options: IntakeFrontierOptions):
       skippedBySinceCount,
       pendingSignalCount,
       skippedCorruptSignalCount: existingResult.corruptCount,
+      sourceSummaries: sourceResult.sourceSummaries,
       signalIds: selected.map((signal) => signal.id),
       signalPaths,
     };
   } finally {
     releaseConnectionLock(lockDir);
+  }
+}
+
+function resolveDailyFrontierSourceConfigPath(root: string, explicit: string | undefined): string | undefined {
+  if (explicit) return explicit;
+  if (process.env.HARO_FRONTIER_SOURCE_CONFIG) return process.env.HARO_FRONTIER_SOURCE_CONFIG;
+  const defaultPath = defaultFrontierSourceConfigPath(root);
+  return existsSync(defaultPath) ? defaultPath : undefined;
+}
+
+function defaultFrontierSourceConfigPath(root: string): string {
+  return join(root, 'frontier-sources.json');
+}
+
+function emitFrontierSourceWarnings(app: AppContext, summaries: readonly FrontierSourceSummary[]): void {
+  for (const summary of summaries) {
+    if (summary.status !== 'error') continue;
+    app.stderr.write(
+      `Warning: frontier source ${summary.id} (${summary.type}) skipped: ${summary.reason ?? 'unknown error'}.\n`,
+    );
   }
 }
 
@@ -3773,40 +3805,6 @@ function readRollbackStats(root: string): { count: number; corruptCount: number 
     }
   }
   return { count, corruptCount };
-}
-
-function readFrontierSourceConfig(path: string): FrontierSignal[] {
-  let value: unknown;
-  try {
-    value = JSON.parse(readFileSync(path, 'utf8'));
-  } catch (error) {
-    throw new CommanderExit(
-      1,
-      `Invalid frontier source config at ${path}; expected JSON FrontierSignal[] or { signals: [...] }. ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const items = Array.isArray(value)
-    ? value
-    : isRecord(value) && Array.isArray(value.signals)
-      ? value.signals
-      : undefined;
-  if (!items) {
-    throw new CommanderExit(
-      1,
-      `Invalid frontier source config at ${path}; expected FrontierSignal[] or { signals: FrontierSignal[] }.`,
-    );
-  }
-  return items.map((item, index) => {
-    const parsed = FrontierSignalSchema.safeParse(item);
-    if (parsed.success) return parsed.data;
-    const details = parsed.error.issues
-      .map((issue) => `${issue.path.length > 0 ? issue.path.join('.') : '(root)'}: ${issue.message}`)
-      .join('; ');
-    throw new CommanderExit(
-      1,
-      `Invalid FrontierSignal at ${path}#signals[${index}]: ${details}`,
-    );
-  });
 }
 
 function readExistingFrontierSignalRefs(root: string): { sourceKeys: Set<string>; corruptCount: number } {
@@ -6508,12 +6506,8 @@ function proposalSummary(
 
 function frontierSignalSourceKey(signal: FrontierSignal): string {
   return JSON.stringify({
-    sourceType: signal.sourceType,
-    sourceRef: {
-      id: signal.sourceRef.id,
-      kind: signal.sourceRef.kind,
-      uri: signal.sourceRef.uri ?? '',
-    },
+    uri: signal.sourceRef.uri ?? signal.sourceRef.id,
+    publishedAt: signal.publishedAt ?? signal.collectedAt,
   });
 }
 
