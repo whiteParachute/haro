@@ -549,6 +549,21 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     }), null, 2)}\n`);
   }
 
+  async function validateAndRequestPending(root: string): Promise<ApprovalRequestRecord[]> {
+    let stdout = captureStream();
+    let stderr = captureStream();
+    const validate = await runCli(commonOpts(root, stdout, stderr, ['validate', '--pending', '--json']));
+    expect(validate.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+
+    stdout = captureStream();
+    stderr = captureStream();
+    const approval = await runCli(commonOpts(root, stdout, stderr, ['approval-request', '--pending', '--json']));
+    expect(approval.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    return (JSON.parse(stdout.read()) as { data: { approvalRequests: ApprovalRequestRecord[] } }).data.approvalRequests;
+  }
+
   it('connect agent-dock saves sanitized connection config without creating memory', async () => {
     const root = newHome('agentdock-connect');
     const stdout = captureStream();
@@ -2180,6 +2195,168 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(payload.skippedDuplicatePendingApprovalRequestCount).toBe(0);
     expect(payload.wroteApprovalRequests).toBe(true);
     expect(readApprovalRequestRecords(root)).toHaveLength(2);
+  });
+
+
+  it('cleanup --rejected dry-run reports rejected approval artifacts without moving files', async () => {
+    const root = newHome('agentdock-cleanup-rejected-dry-run');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_cleanup_rejected');
+    const requests = await validateAndRequestPending(root);
+    const request = requests[0]!;
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_cleanup_rejected',
+      approvalRequestId: request.id,
+      proposalId: request.proposalId,
+      validationId: request.validationId,
+      decision: 'reject',
+      reviewer: { source: 'agentdock', username: 'reviewer', role: 'owner' },
+      sourceRef: { id: request.id, kind: 'approval-request' },
+      createdAt: '2026-05-08T12:03:00.000Z',
+      updatedAt: '2026-05-08T12:03:00.000Z',
+    });
+
+    const stdout = captureStream();
+    const stderr = captureStream();
+    const result = await runCli(commonOpts(root, stdout, stderr, ['cleanup', '--rejected', '--json']));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      dryRun: boolean;
+      candidateCount: number;
+      archivedCount: number;
+      candidates: Array<{ approvalRequestId: string; proposalId: string; artifacts: Array<{ sourcePath: string; archivePath: string }> }>;
+    } }).data;
+    expect(payload.dryRun).toBe(true);
+    expect(payload.candidateCount).toBe(1);
+    expect(payload.archivedCount).toBe(0);
+    expect(payload.candidates[0]?.approvalRequestId).toBe(request.id);
+    expect(payload.candidates[0]?.proposalId).toBe(request.proposalId);
+    expect(payload.candidates[0]?.artifacts.length).toBeGreaterThanOrEqual(5);
+    expect(payload.candidates[0]?.artifacts.every((artifact) => existsSync(artifact.sourcePath))).toBe(true);
+    expect(readApprovalRequestRecords(root)).toHaveLength(1);
+    expect(existsSync(join(root, 'evolution', 'proposals', `${request.proposalId}.json`))).toBe(true);
+  });
+
+  it('cleanup --rejected --confirm archives rejected approval artifacts out of active dirs', async () => {
+    const root = newHome('agentdock-cleanup-rejected-confirm');
+    const proposalId = 'proposal_cleanup_confirm_rejected';
+    writeExecutableMcpToolConfigProposal(root, proposalId);
+    const request = (await validateAndRequestPending(root))[0]!;
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_cleanup_confirm_rejected',
+      approvalRequestId: request.id,
+      proposalId: request.proposalId,
+      validationId: request.validationId,
+      decision: 'reject',
+      reviewer: { source: 'agentdock', username: 'reviewer', role: 'owner' },
+      sourceRef: { id: request.id, kind: 'approval-request' },
+      createdAt: '2026-05-08T12:03:00.000Z',
+      updatedAt: '2026-05-08T12:03:00.000Z',
+    });
+
+    const stdout = captureStream();
+    const stderr = captureStream();
+    const result = await runCli(commonOpts(root, stdout, stderr, ['cleanup', '--rejected', '--confirm', '--json']));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: {
+      dryRun: boolean;
+      candidateCount: number;
+      archivedCount: number;
+      archiveRoot: string;
+      candidates: Array<{ approvalRequestId: string; artifacts: Array<{ archivePath: string }> }>;
+    } }).data;
+    expect(payload.dryRun).toBe(false);
+    expect(payload.candidateCount).toBe(1);
+    expect(payload.archivedCount).toBe(1);
+    expect(existsSync(payload.archiveRoot)).toBe(true);
+    expect(readApprovalRequestRecords(root)).toHaveLength(0);
+    expect(existsSync(join(root, 'evolution', 'proposals', `${proposalId}.json`))).toBe(false);
+    expect(existsSync(join(root, 'evolution', 'validations', request.validationId + '.json'))).toBe(false);
+    expect(existsSync(join(root, 'evolution', 'approval-decisions', 'approval_decision_cleanup_confirm_rejected.json'))).toBe(false);
+    expect(existsSync(join(root, 'evolution', 'proposal-content', proposalId))).toBe(false);
+    expect(payload.candidates[0]?.artifacts.every((artifact) => existsSync(artifact.archivePath))).toBe(true);
+  });
+
+  it('cleanup --rejected keeps approved and undecided approval requests active', async () => {
+    const root = newHome('agentdock-cleanup-rejected-keeps-active');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_cleanup_keep_rejected', 'agentdock:haro-cleanup-rejected');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_cleanup_keep_approved', 'agentdock:haro-cleanup-approved');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_cleanup_keep_undecided', 'agentdock:haro-cleanup-undecided');
+    writeExecutableMcpToolConfigProposal(root, 'proposal_cleanup_keep_applied', 'agentdock:haro-cleanup-applied');
+    const requests = await validateAndRequestPending(root);
+    const rejected = requests.find((request) => request.proposalId === 'proposal_cleanup_keep_rejected')!;
+    const approved = requests.find((request) => request.proposalId === 'proposal_cleanup_keep_approved')!;
+    const undecided = requests.find((request) => request.proposalId === 'proposal_cleanup_keep_undecided')!;
+    const applied = requests.find((request) => request.proposalId === 'proposal_cleanup_keep_applied')!;
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_cleanup_keep_rejected',
+      approvalRequestId: rejected.id,
+      proposalId: rejected.proposalId,
+      validationId: rejected.validationId,
+      decision: 'reject',
+      reviewer: { source: 'agentdock', username: 'reviewer', role: 'owner' },
+      sourceRef: { id: rejected.id, kind: 'approval-request' },
+      createdAt: '2026-05-08T12:03:00.000Z',
+      updatedAt: '2026-05-08T12:03:00.000Z',
+    });
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_cleanup_keep_approved',
+      approvalRequestId: approved.id,
+      proposalId: approved.proposalId,
+      validationId: approved.validationId,
+      decision: 'approve',
+      reviewer: { source: 'agentdock', username: 'reviewer', role: 'owner' },
+      sourceRef: { id: approved.id, kind: 'approval-request' },
+      approvalRef: { id: 'approval_decision_cleanup_keep_approved', kind: 'human-approval' },
+      createdAt: '2026-05-08T12:03:00.000Z',
+      updatedAt: '2026-05-08T12:03:00.000Z',
+    });
+    writeApprovalDecisionRecord(root, {
+      id: 'approval_decision_cleanup_keep_applied',
+      approvalRequestId: applied.id,
+      proposalId: applied.proposalId,
+      validationId: applied.validationId,
+      decision: 'reject',
+      reviewer: { source: 'agentdock', username: 'reviewer', role: 'owner' },
+      sourceRef: { id: applied.id, kind: 'approval-request' },
+      createdAt: '2026-05-08T12:03:00.000Z',
+      updatedAt: '2026-05-08T12:03:00.000Z',
+    });
+    mkdirSync(join(root, 'evolution', 'applications'), { recursive: true });
+    writeFileSync(join(root, 'evolution', 'applications', 'application_cleanup_keep_applied.json'), `${JSON.stringify(ApplicationRecordSchema.parse({
+      id: 'application_cleanup_keep_applied',
+      proposalId: applied.proposalId,
+      validationId: applied.validationId,
+      status: 'failed',
+      gateCode: 'APPLY_CONTENT_HASH_MISMATCH',
+      level: 'L0',
+      targetKind: 'mcp-tool-config',
+      applied: false,
+      assetEventRefs: [],
+      evidenceRefs: [],
+      blockingReasons: ['fixture application protects this proposal from cleanup'],
+      createdAt: '2026-05-08T12:04:00.000Z',
+      updatedAt: '2026-05-08T12:04:00.000Z',
+    }), null, 2)}
+`);
+
+    const stdout = captureStream();
+    const stderr = captureStream();
+    const result = await runCli(commonOpts(root, stdout, stderr, ['cleanup', '--rejected', '--confirm', '--json']));
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr.read()).toBe('');
+    const payload = (JSON.parse(stdout.read()) as { data: { candidateCount: number; archivedCount: number; skippedCount: number } }).data;
+    expect(payload.candidateCount).toBe(1);
+    expect(payload.archivedCount).toBe(1);
+    expect(payload.skippedCount).toBe(1);
+    expect(readApprovalRequestRecords(root).map((request) => request.id).sort()).toEqual([approved.id, applied.id, undecided.id].sort());
+    expect(existsSync(join(root, 'evolution', 'proposals', `${approved.proposalId}.json`))).toBe(true);
+    expect(existsSync(join(root, 'evolution', 'proposals', `${applied.proposalId}.json`))).toBe(true);
+    expect(existsSync(join(root, 'evolution', 'proposals', `${undecided.proposalId}.json`))).toBe(true);
   });
 
   it('validate --pending --limit only validates the selected pending proposal count', async () => {

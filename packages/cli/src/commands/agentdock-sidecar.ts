@@ -116,6 +116,11 @@ interface IntakeFrontierOptions extends OutputFlags {
   limit?: string;
 }
 
+interface CleanupOptions extends OutputFlags {
+  rejected?: boolean;
+  confirm?: boolean;
+}
+
 interface ObserveResult {
   command: 'observe';
   connectionId: string;
@@ -458,6 +463,43 @@ export interface AgentDockDailyWorkflowResult {
     wroteSidecarArtifacts: boolean;
   };
   nextActions: string[];
+}
+
+
+interface CleanupRejectedArtifact {
+  kind: 'approval-request' | 'approval-decision' | 'proposal' | 'validation' | 'proposal-content';
+  sourcePath: string;
+  archivePath: string;
+  entryType: 'file' | 'directory';
+}
+
+interface CleanupRejectedCandidate {
+  approvalRequestId: string;
+  proposalId: string;
+  validationId: string;
+  decisionId: string;
+  title: string;
+  createdAt: string;
+  decisionCreatedAt: string;
+  artifacts: CleanupRejectedArtifact[];
+}
+
+interface CleanupRejectedSkipped {
+  approvalRequestId: string;
+  proposalId: string;
+  reason: string;
+}
+
+interface CleanupRejectedResult {
+  command: 'cleanup';
+  mode: 'rejected';
+  dryRun: boolean;
+  candidateCount: number;
+  archivedCount: number;
+  skippedCount: number;
+  archiveRoot: string;
+  candidates: CleanupRejectedCandidate[];
+  skipped: CleanupRejectedSkipped[];
 }
 
 interface SidecarStatusResult {
@@ -1014,6 +1056,38 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             `Skipped corrupt existing signals: ${result.skippedCorruptSignalCount}`,
             result.cursor ? `Cursor: ${result.cursor}` : 'Cursor: (unchanged)',
             result.signalPaths.length > 0 ? `Files: ${result.signalPaths.join(', ')}` : 'Files: (none)',
+          ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+  program
+    .command('cleanup')
+    .description('Archive rejected sidecar approval artifacts without touching approved/applied records')
+    .option('--rejected', 'archive rejected approval requests')
+    .option('--confirm', 'perform the archive; default is dry-run')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: CleanupOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = cleanupAgentDock(app, options);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(
+          [
+            `Cleanup rejected approval requests: ${result.dryRun ? 'dry-run' : 'confirmed'}`,
+            `Candidates: ${result.candidateCount}`,
+            `Archived: ${result.archivedCount}`,
+            `Skipped: ${result.skippedCount}`,
+            `Archive root: ${result.archiveRoot}`,
+            ...result.candidates.map((candidate) => `- ${candidate.approvalRequestId} -> ${candidate.proposalId}`),
           ].join('\n') + '\n',
         );
       } catch (error) {
@@ -2221,6 +2295,198 @@ function intakeFrontierSignals(app: AppContext, options: IntakeFrontierOptions):
   }
 }
 
+
+function cleanupAgentDock(app: AppContext, options: CleanupOptions): CleanupRejectedResult {
+  if (!options.rejected) {
+    throw new CommanderExit(2, '`haro cleanup` requires a cleanup target; pass `--rejected`.');
+  }
+  const lockDir = acquireCleanupLock(app.paths.root);
+  try {
+    const dryRun = options.confirm !== true;
+    const archiveRoot = cleanupArchiveRunDir(app.paths.root, app.now().toISOString());
+    const { candidates, skipped } = collectRejectedApprovalCleanupCandidates(app.paths.root, archiveRoot);
+    if (!dryRun) {
+      for (const candidate of candidates) {
+        for (const artifact of candidate.artifacts) {
+          if (!existsSync(artifact.sourcePath)) continue;
+          mkdirSync(dirname(artifact.archivePath), { recursive: true });
+          renameSync(artifact.sourcePath, artifact.archivePath);
+        }
+      }
+    }
+    return {
+      command: 'cleanup',
+      mode: 'rejected',
+      dryRun,
+      candidateCount: candidates.length,
+      archivedCount: dryRun ? 0 : candidates.length,
+      skippedCount: skipped.length,
+      archiveRoot,
+      candidates,
+      skipped,
+    };
+  } finally {
+    releaseConnectionLock(lockDir);
+  }
+}
+
+function collectRejectedApprovalCleanupCandidates(
+  root: string,
+  archiveRoot: string,
+): { candidates: CleanupRejectedCandidate[]; skipped: CleanupRejectedSkipped[] } {
+  const dir = approvalRequestsDir(root);
+  const candidates: CleanupRejectedCandidate[] = [];
+  const skipped: CleanupRejectedSkipped[] = [];
+  if (!existsSync(dir)) return { candidates, skipped };
+  const decisionRecords = readAllApprovalDecisionRecords(root);
+  const decisionsByRequest = groupApprovalDecisionsByRequest(decisionRecords);
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    const requestPath = join(dir, name);
+    let request: ApprovalRequestRecord;
+    try {
+      request = ApprovalRequestRecordSchema.parse(JSON.parse(readFileSync(requestPath, 'utf8')));
+    } catch {
+      continue;
+    }
+    const latestDecision = latestApprovalDecision(decisionsByRequest.get(request.id) ?? []);
+    if (!latestDecision || latestDecision.decision !== 'reject') continue;
+    const proposalDecisions = decisionRecords.filter((decision) => decision.proposalId === request.proposalId);
+    if (proposalDecisions.some((decision) => decision.decision === 'approve')) {
+      skipped.push({ approvalRequestId: request.id, proposalId: request.proposalId, reason: 'proposal has an approve decision' });
+      continue;
+    }
+    if (readApplicationRecordsForProposal(root, request.proposalId).length > 0) {
+      skipped.push({ approvalRequestId: request.id, proposalId: request.proposalId, reason: 'proposal has application records' });
+      continue;
+    }
+    candidates.push({
+      approvalRequestId: request.id,
+      proposalId: request.proposalId,
+      validationId: request.validationId,
+      decisionId: latestDecision.id,
+      title: request.title,
+      createdAt: request.createdAt,
+      decisionCreatedAt: latestDecision.createdAt,
+      artifacts: collectRejectedApprovalArtifacts(root, archiveRoot, request, decisionRecords),
+    });
+  }
+  return { candidates, skipped };
+}
+
+function collectRejectedApprovalArtifacts(
+  root: string,
+  archiveRoot: string,
+  request: ApprovalRequestRecord,
+  decisions: ApprovalDecisionRecord[],
+): CleanupRejectedArtifact[] {
+  const entries: CleanupRejectedArtifact[] = [];
+  const seen = new Set<string>();
+  const add = (
+    kind: CleanupRejectedArtifact['kind'],
+    sourcePath: string,
+    entryType: CleanupRejectedArtifact['entryType'] = 'file',
+  ) => {
+    if (!existsSync(sourcePath) || seen.has(sourcePath)) return;
+    seen.add(sourcePath);
+    entries.push({
+      kind,
+      sourcePath,
+      archivePath: rejectedApprovalArchivePath(archiveRoot, request.id, kind, sourcePath, entryType),
+      entryType,
+    });
+  };
+
+  add('approval-request', approvalRequestFilePath(root, request));
+  for (const decision of decisions.filter((record) => record.approvalRequestId === request.id)) {
+    add('approval-decision', approvalDecisionFilePath(root, decision));
+  }
+  const proposal = readProposalById(root, request.proposalId);
+  if (proposal) add('proposal', proposalFilePath(root, proposal));
+  for (const report of readValidationRecordsForProposal(root, request.proposalId)) {
+    add('validation', validationFilePath(root, report));
+  }
+  const requestValidation = readValidationById(root, request.validationId);
+  if (requestValidation) add('validation', validationFilePath(root, requestValidation));
+  add('proposal-content', proposalContentDir(root, request.proposalId), 'directory');
+  return entries;
+}
+
+function readAllApprovalDecisionRecords(root: string): ApprovalDecisionRecord[] {
+  const dir = approvalDecisionsDir(root);
+  if (!existsSync(dir)) return [];
+  const records: ApprovalDecisionRecord[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      records.push(ApprovalDecisionRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8'))));
+    } catch {
+      // Corrupt decision records stay in place; cleanup must not hide artifacts it cannot parse.
+    }
+  }
+  return records;
+}
+
+function groupApprovalDecisionsByRequest(
+  records: ApprovalDecisionRecord[],
+): Map<string, ApprovalDecisionRecord[]> {
+  const grouped = new Map<string, ApprovalDecisionRecord[]>();
+  for (const record of records) {
+    const list = grouped.get(record.approvalRequestId) ?? [];
+    list.push(record);
+    grouped.set(record.approvalRequestId, list);
+  }
+  return grouped;
+}
+
+function latestApprovalDecision(records: ApprovalDecisionRecord[]): ApprovalDecisionRecord | undefined {
+  return [...records].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id))[0];
+}
+
+function readValidationRecordsForProposal(root: string, proposalId: string): ValidationReport[] {
+  const dir = validationsDir(root);
+  if (!existsSync(dir)) return [];
+  const reports: ValidationReport[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const report = ValidationReportSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (report.proposalId === proposalId) reports.push(report);
+    } catch {
+      // Corrupt validation artifacts stay in place and are surfaced by status/doctor.
+    }
+  }
+  return reports;
+}
+
+function approvalDecisionFilePath(root: string, record: ApprovalDecisionRecord): string {
+  return join(approvalDecisionsDir(root), `${safePathSegment(record.id)}.json`);
+}
+
+function cleanupArchiveRunDir(root: string, timestamp: string): string {
+  return join(
+    root,
+    'evolution',
+    'archived',
+    'rejected-approval-requests',
+    safePathSegment(timestamp),
+  );
+}
+
+function rejectedApprovalArchivePath(
+  archiveRoot: string,
+  requestId: string,
+  kind: CleanupRejectedArtifact['kind'],
+  sourcePath: string,
+  entryType: CleanupRejectedArtifact['entryType'],
+): string {
+  const fileName = entryType === 'directory' ? safePathSegment(requestId) : sourcePath.split('/').pop()!;
+  if (kind === 'proposal-content') {
+    return join(archiveRoot, safePathSegment(requestId), kind, sourcePath.split('/').pop()!);
+  }
+  return join(archiveRoot, safePathSegment(requestId), kind, fileName);
+}
+
 export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult {
   const validationStats = readValidationStats(app.paths.root);
   const proposalStats = readProposalStats(app.paths.root, validationStats.validatedProposalIds);
@@ -2778,6 +3044,25 @@ function acquireFrontierIntakeLock(root: string): string {
       throw new CommanderExit(
         1,
         'Another haro intake frontier process is already running.',
+      );
+    }
+    throw error;
+  }
+  return dir;
+}
+
+function acquireCleanupLock(root: string): string {
+  const parent = join(root, 'evolution', 'locks');
+  mkdirSync(parent, { recursive: true });
+  const dir = join(parent, 'cleanup.lock');
+  try {
+    mkdirSync(dir);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === 'EEXIST') {
+      throw new CommanderExit(
+        1,
+        'Another haro cleanup process is already running.',
       );
     }
     throw error;
