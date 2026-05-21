@@ -152,6 +152,11 @@ self-heal 可以发现残留重复项。
 
 **强推荐 C：分阶段开关。**
 
+当前实现状态：手动 `haro self-heal duplicates --confirm` 已支持，
+但 daily 自动 confirm 仍未开启。
+因此 OQ-2 的默认答案仍是：daily 只 dry-run，
+除非后续显式配置 `selfHeal.duplicates.autoConfirm=true`。
+
 首版 daily 只 dry-run。
 配置打开后才自动 reject。
 配置名建议为：

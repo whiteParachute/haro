@@ -88,19 +88,19 @@ FEAT-072 只把反馈写进上下文。
 
 ### 6.2 触发入口
 
-首版支持两个入口。
+首版支持三个入口形态。
 
 1. `haro self-heal duplicates --dry-run`
-2. daily workflow 的自检阶段
+2. `haro self-heal duplicates --confirm`
+3. daily workflow 的自检阶段
+
+CLI 必须 fail-closed。
+`--dry-run` 与 `--confirm` 必须二选一。
+不传或同时传都应拒绝执行。
 
 默认 daily 只 dry-run。
-真正写入需要显式开启。
-
-建议参数：
-
-```bash
-haro self-heal duplicates --confirm
-```
+真正自动写入仍需要显式配置开启。
+手动 `--confirm` 只处理 dry-run 能命中的确定性候选。
 
 ### 6.3 输入
 
@@ -129,8 +129,13 @@ haro self-heal duplicates --confirm
 
 | 判断 | 规则 |
 | --- | --- |
-| 内容等价 | `changeSet[*].contentHash` 排序后相同 |
+| 内容等价 | 所有 `changeSet[*].contentHash` 都存在，排序后集合相同 |
 | 语义等价 | `title + summary + policy.defaultHandling` 指纹相同 |
+
+contentHash 必须完整覆盖整个 `changeSet`。
+如果当前或历史 proposal 只有部分 change 缺 hash，
+即使过滤后剩余 hash 看起来相同，
+也必须进入 manual check，不能自动命中或 confirm。
 
 ### 6.5 时间窗
 
@@ -147,7 +152,9 @@ FEAT-069 上线时间来自配置。
 
 ### 6.6 输出
 
-命中后写三类 artifact。
+dry-run 只输出候选和 `plannedActions`，不写文件。
+
+confirm 命中后写三类 artifact。
 
 1. `approval-decision`
 2. proposal status 更新为 `superseded`
@@ -164,13 +171,21 @@ decision 字段如下。
 blocked event 使用 FEAT-069 结构。
 reason 为 `AWAITING_FEEDBACK_INCORPORATION`。
 
+JSON 输出契约：
+
+- `result.dryRun` 是 boolean。
+- `result.confirmed` 是 boolean。
+- dry-run candidate 只返回 `plannedActions`。
+- confirm candidate 只返回 `actualActions`。
+- `plannedActions` 与 `actualActions` 必须互斥。
+
 ### 6.7 不确定处理
 
 以下情况不自动 reject。
 
 - target 无法解析。
 - 旧 proposal 缺失。
-- contentHash 缺失。
+- contentHash 缺失或仅部分覆盖。
 - policy.defaultHandling 缺失。
 - 指纹只能部分匹配。
 
@@ -396,7 +411,29 @@ type SelfHealDecisionMetadata = {
   matchedPriorProposalId: string;
   matchType: 'contentHash' | 'semanticFingerprint';
   dryRun: boolean;
+  confirmedBySelfHeal?: boolean;
 }
+
+type SelfHealCandidateAction =
+  | {
+      dryRun: true;
+      plannedActions: {
+        wouldReject: true;
+        wouldSupersede: true;
+        wouldWriteBlockedEvent: true;
+      };
+    }
+  | {
+      dryRun: false;
+      actualActions: {
+        rejected: true;
+        superseded: true;
+        wroteBlockedEvent: true;
+        proposalStatus: 'superseded';
+        decisionId: string;
+        blockedEventId: string;
+      };
+    };
 ```
 
 该字段可以放在 decision metadata。
@@ -424,8 +461,11 @@ feedbackIntent?: FeedbackRewriteIntent;
 - 旧 decision 是 `request-changes`。
 - 新 pending 与旧 proposal contentHash 相同。
 - 结果写 reject decision。
+- self-heal decision 的 `descriptionLint.blockerCount` 为 0。
 - proposal 状态变 `superseded`。
 - 写 blocked event。
+- `--confirm --json` 返回 `actualActions`，且 id 与落盘文件一致。
+- 重复 `--confirm` 不重复写 decision / blocked event。
 
 - contentHash 不同。
 - 语义指纹相同。
