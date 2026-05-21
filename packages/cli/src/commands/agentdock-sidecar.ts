@@ -167,6 +167,7 @@ interface ProposeResult {
   skippedCorruptProposalCount: number;
   skippedCorruptFrontierSignalCount: number;
   skippedAwaitingFeedbackCount: number;
+  proposalsWithFeedbackContext: number;
   awaitingFeedbackEvents: string[];
   awaitingFeedbackEventPaths: string[];
   awaitingFeedbackBlocks: BlockedProposalEvent[];
@@ -507,6 +508,7 @@ export interface AgentDockDailyWorkflowResult {
     observationCount: number;
     proposalCount: number;
     skippedAwaitingFeedbackCount: number;
+    proposalsWithFeedbackContext: number;
     validationCount: number;
     approvalRequestCount: number;
     approvalRequestIds: string[];
@@ -789,6 +791,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
             skippedCorruptFrontierSignalCount: result.skippedCorruptFrontierSignalCount,
             skippedAwaitingFeedbackCount: result.skippedAwaitingFeedbackCount,
+            proposalsWithFeedbackContext: result.proposalsWithFeedbackContext,
             awaitingFeedbackEvents: result.awaitingFeedbackEvents,
             awaitingFeedbackEventPaths: result.awaitingFeedbackEventPaths,
             awaitingFeedbackBlocks: result.awaitingFeedbackBlocks,
@@ -1314,6 +1317,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
         skippedAwaitingFeedbackCount: 0,
+        proposalsWithFeedbackContext: 0,
         awaitingFeedbackEvents: [],
         awaitingFeedbackEventPaths: [],
         awaitingFeedbackBlocks: [],
@@ -1323,7 +1327,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       };
     }
 
-    const generated = createAutoProposal(app.paths.root, selected, app.now, frontierResult.signals);
+    let generated = createAutoProposal(app.paths.root, selected, app.now, frontierResult.signals);
     const policyAudit = generated.proposal.status === 'proposed'
       ? evaluateGeneratedProposalAgainstPolicy(generated, emitAndLoadCurrentMcpAuditPolicy(app))
       : undefined;
@@ -1344,6 +1348,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
         skippedAwaitingFeedbackCount: 0,
+        proposalsWithFeedbackContext: 0,
         awaitingFeedbackEvents: [],
         awaitingFeedbackEventPaths: [],
         awaitingFeedbackBlocks: [],
@@ -1369,6 +1374,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
         skippedAwaitingFeedbackCount: 0,
+        proposalsWithFeedbackContext: 0,
         awaitingFeedbackEvents: [],
         awaitingFeedbackEventPaths: [],
         awaitingFeedbackBlocks: [],
@@ -1398,6 +1404,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
         skippedAwaitingFeedbackCount: 1,
+        proposalsWithFeedbackContext: 0,
         awaitingFeedbackEvents: [awaitingFeedbackBlock.event.id],
         awaitingFeedbackEventPaths: [awaitingFeedbackBlock.path],
         awaitingFeedbackBlocks: [awaitingFeedbackBlock.event],
@@ -1406,6 +1413,10 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         assetEventIds: [],
         ...(policyAudit ? { policyAudit } : {}),
       };
+    }
+    generated = attachFeedbackContextIfNeeded(app.paths.root, generated, app.now());
+    if (policyAudit && generated.proposal.descriptionLint) {
+      policyAudit.descriptionLint = generated.proposal.descriptionLint;
     }
     const proposal = generated.proposal;
     const path = proposalFilePath(app.paths.root, proposal);
@@ -1428,6 +1439,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       skippedCorruptProposalCount: consumedResult.corruptCount,
       skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
       skippedAwaitingFeedbackCount: 0,
+      proposalsWithFeedbackContext: proposal.feedbackContext ? 1 : 0,
       awaitingFeedbackEvents: [],
       awaitingFeedbackEventPaths: [],
       awaitingFeedbackBlocks: [],
@@ -1760,6 +1772,7 @@ export async function runAgentDockDailyWorkflow(
       observationCount: observe.observationCount,
       proposalCount: propose.proposalCount,
       skippedAwaitingFeedbackCount: propose.skippedAwaitingFeedbackCount,
+      proposalsWithFeedbackContext: propose.proposalsWithFeedbackContext,
       validationCount: validate.validationCount,
       approvalRequestCount: approvalRequest.approvalRequestCount,
       approvalRequestIds,
@@ -3694,6 +3707,51 @@ function maybeBlockProposalAwaitingFeedback(
   return { event, path: blockedProposalEventFilePath(root, event) };
 }
 
+function attachFeedbackContextIfNeeded(root: string, generated: GeneratedProposal, now: Date): GeneratedProposal {
+  const latest = readLatestApprovalDecisionForProposalTarget(root, generated.proposal);
+  if (!isFeedbackRevisionDecision(latest?.decision.decision)) return generated;
+
+  const priorDirection = latest!.decision.direction?.trim() || '审批人未提供具体修改说明。';
+  const manualChecks = [
+    ...generated.proposal.testPlan.manualChecks,
+    feedbackContextManualCheck(priorDirection),
+  ];
+  const next = EvolutionProposalSchema.parse({
+    ...generated.proposal,
+    feedbackContext: {
+      priorDecisionId: latest!.decision.id,
+      priorProposalId: latest!.proposal.id,
+      priorDirection,
+      incorporatedAt: now.toISOString(),
+      incorporationNote: '已引用上一次审批意见；本轮仍需人工核对是否真正回应。',
+    },
+    testPlan: {
+      ...generated.proposal.testPlan,
+      manualChecks,
+    },
+  });
+  const descriptionLint = lintEvolutionProposalDescription(next);
+  return {
+    ...generated,
+    proposal: EvolutionProposalSchema.parse({
+      ...next,
+      descriptionLint,
+    }),
+  };
+}
+
+function feedbackContextManualCheck(direction: string): string {
+  return [
+    '本次是否回应上次审批意见？',
+    `意见：${truncateForLog(direction, 28)}。`,
+    '未回应请 request-changes。',
+  ].join(' ');
+}
+
+function isFeedbackRevisionDecision(decision: ApprovalDecisionRecord['decision'] | undefined): boolean {
+  return decision === 'request-changes' || decision === 'reject';
+}
+
 function readActiveProposalTargetDedupeKeys(root: string): Set<string> {
   const dir = proposalsDir(root);
   const keys = new Set<string>();
@@ -5247,8 +5305,10 @@ function formatApprovalTitle(proposal: EvolutionProposal): string {
 }
 
 function formatWhyChange(proposal: EvolutionProposal): string[] {
+  const feedbackPrefix = formatFeedbackContextWhyChange(proposal);
   if (isGenericDryRunProposal(proposal)) {
     return [
+      ...feedbackPrefix,
       '这是早期演练请求。',
       '它没有说明会改哪个文件。',
       '通过它没有实际价值。',
@@ -5256,6 +5316,7 @@ function formatWhyChange(proposal: EvolutionProposal): string[] {
   }
   if (proposal.targetKind === 'mcp-tool-config') {
     return [
+      ...feedbackPrefix,
       'Haro 已经会自动生成提案。',
       '有些提案没有说清会改哪里。',
       '不拦住这类提案，审批人容易误点通过。',
@@ -5263,6 +5324,7 @@ function formatWhyChange(proposal: EvolutionProposal): string[] {
   }
   if (proposal.targetKind === 'runner-profile') {
     return [
+      ...feedbackPrefix,
       'Haro 已经出现真实运行错误。',
       '旧提案没有讲清错误该怎么处理。',
       '不补规则，后续仍会给出空泛建议。',
@@ -5270,16 +5332,38 @@ function formatWhyChange(proposal: EvolutionProposal): string[] {
   }
   if (proposal.targetKind === 'schedule-config') {
     return [
+      ...feedbackPrefix,
       'Haro 已经发现定时任务失败。',
       '旧提案没有讲清失败原因。',
       '不补规则，审批人难以判断下一步。',
     ];
   }
   return [
+    ...feedbackPrefix,
     `Haro 的${humanTargetKind(proposal.targetKind)}需要调整。`,
     '当前说明不足以支撑人工审批。',
     '不补清楚，审批人容易误判。',
   ];
+}
+
+function formatFeedbackContextWhyChange(proposal: EvolutionProposal): string[] {
+  const context = proposal.feedbackContext;
+  if (!context) return [];
+  return [
+    '上一次审批意见：',
+    ...chunkReadableText(context.priorDirection, 30),
+    `决策 ID：${context.priorDecisionId}`,
+  ];
+}
+
+function chunkReadableText(value: string, maxLength: number): string[] {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  const chunks: string[] = [];
+  for (let index = 0; index < normalized.length; index += maxLength) {
+    chunks.push(normalized.slice(index, index + maxLength));
+  }
+  return chunks;
 }
 
 function formatHowChange(proposal: EvolutionProposal): string[] {
@@ -6792,6 +6876,7 @@ function stringToRef(value: string, kind: string): Ref {
 
 function validationBlockingReasons(root: string, proposal: EvolutionProposal, rollbackReady: boolean): string[] {
   const reasons = proposalExecutionReadinessBlockingReasons(root, proposal);
+  reasons.push(...feedbackContextValidationBlockingReasons(root, proposal));
   if (!rollbackReady) {
     reasons.push('回滚方案需要快照（snapshot）或回滚引用（rollback refs）后，才允许进入应用判断。');
   }
@@ -6799,6 +6884,15 @@ function validationBlockingReasons(root: string, proposal: EvolutionProposal, ro
     reasons.push('高风险提案进入任何应用门禁（apply gate）前都必须人工复核。');
   }
   return reasons;
+}
+
+function feedbackContextValidationBlockingReasons(root: string, proposal: EvolutionProposal): string[] {
+  const latest = readLatestApprovalDecisionForProposalTarget(root, proposal);
+  if (!isFeedbackRevisionDecision(latest?.decision.decision)) return [];
+  if (proposal.feedbackContext?.priorDecisionId === latest!.decision.id) return [];
+  return [
+    `MISSING_FEEDBACK_CONTEXT：同目标最近有退回意见 ${latest!.decision.id}，当前提案必须引用该意见后才能应用。`,
+  ];
 }
 
 function proposalExecutionReadinessBlockingReasons(root: string, proposal: EvolutionProposal): string[] {

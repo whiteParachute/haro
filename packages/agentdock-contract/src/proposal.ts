@@ -35,6 +35,16 @@ export const RollbackPlanSchema = z.object({
   rollbackRefs: z.array(RefSchema).default([]),
 });
 
+export const FeedbackContextSchema = z.object({
+  priorDecisionId: NonEmptyStringSchema,
+  priorProposalId: NonEmptyStringSchema,
+  priorDirection: NonEmptyStringSchema,
+  conversationSummary: NonEmptyStringSchema.optional(),
+  conversationRefs: z.array(NonEmptyStringSchema).default([]).optional(),
+  incorporatedAt: IsoDateTimeSchema,
+  incorporationNote: NonEmptyStringSchema.optional(),
+});
+
 export const EvolutionProposalSchema = z.object({
   id: NonEmptyStringSchema,
   title: NonEmptyStringSchema,
@@ -50,6 +60,7 @@ export const EvolutionProposalSchema = z.object({
   humanApprovalRefs: z.array(RefSchema).default([]),
   descriptionLint: DescriptionLintReportSchema.optional(),
   feedbackSemanticFingerprint: NonEmptyStringSchema.optional(),
+  feedbackContext: FeedbackContextSchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });
@@ -59,4 +70,5 @@ export type EvolutionLevel = z.infer<typeof EvolutionLevelSchema>;
 export type ChangeOperation = z.infer<typeof ChangeOperationSchema>;
 export type TestPlan = z.infer<typeof TestPlanSchema>;
 export type RollbackPlan = z.infer<typeof RollbackPlanSchema>;
+export type FeedbackContext = z.infer<typeof FeedbackContextSchema>;
 export type EvolutionProposal = z.infer<typeof EvolutionProposalSchema>;

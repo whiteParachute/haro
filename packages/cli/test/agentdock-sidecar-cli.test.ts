@@ -493,6 +493,22 @@ function markProposalStatus(root: string, proposalId: string, status: string): v
   writeFileSync(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`);
 }
 
+function writeFixtureValidation(root: string, proposalId: string): void {
+  const validationDir = join(root, 'evolution', 'validations');
+  mkdirSync(validationDir, { recursive: true });
+  writeFileSync(join(validationDir, `validation_${proposalId}.json`), `${JSON.stringify({
+    id: `validation_${proposalId}`,
+    proposalId,
+    riskVerdict: 'medium',
+    requiredTests: [],
+    rollbackReady: true,
+    applyEligible: true,
+    blockingReasons: [],
+    evidenceRefs: [{ id: proposalId, kind: 'evolution-proposal' }],
+    createdAt: '2026-05-08T12:02:00.000Z',
+  }, null, 2)}\n`);
+}
+
 function writeAutoApplyFixture(root: string, proposalId: string, overrides: {
   level?: string;
   targetKind?: string;
@@ -1302,6 +1318,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(propose.exitCode).toBe(0);
     expect(proposeErr.read()).toBe('');
     const proposePayload = (JSON.parse(proposeOut.read()) as { data: {
+      proposalsWithFeedbackContext: number;
       proposal: {
         id: string;
         status: string;
@@ -1311,6 +1328,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         changeSet: Array<{ contentRef: string; contentHash: string; summary: string; targetRef: { id: string; uri: string } }>;
       };
     } }).data;
+    expect(proposePayload.proposalsWithFeedbackContext).toBe(0);
+    expect(proposePayload.proposal).not.toHaveProperty('feedbackContext');
     expect(proposePayload.proposal).toMatchObject({
       status: 'proposed',
       level: 'L1',
@@ -1472,6 +1491,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       proposalCount: number;
       skippedProposalCount: number;
       skippedAwaitingFeedbackCount: number;
+      proposalsWithFeedbackContext: number;
       awaitingFeedbackBlocks: Array<{
         reason: string;
         priorDecisionId: string;
@@ -1484,6 +1504,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(secondPayload.proposalCount).toBe(0);
     expect(secondPayload.skippedProposalCount).toBe(1);
     expect(secondPayload.skippedAwaitingFeedbackCount).toBe(1);
+    expect(secondPayload.proposalsWithFeedbackContext).toBe(0);
     expect(secondPayload.wroteProposal).toBe(false);
     expect(secondPayload.awaitingFeedbackBlocks[0]).toMatchObject({
       reason: 'AWAITING_FEEDBACK_INCORPORATION',
@@ -1523,11 +1544,13 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     const secondPayload = (JSON.parse(secondOut.read()) as { data: {
       proposalCount: number;
       skippedAwaitingFeedbackCount: number;
+      proposalsWithFeedbackContext: number;
       awaitingFeedbackBlocks: Array<{ semanticFingerprint: string; contentHash: string }>;
       wroteProposal: boolean;
     } }).data;
     expect(secondPayload.proposalCount).toBe(0);
     expect(secondPayload.skippedAwaitingFeedbackCount).toBe(1);
+    expect(secondPayload.proposalsWithFeedbackContext).toBe(0);
     expect(secondPayload.wroteProposal).toBe(false);
     expect(secondPayload.awaitingFeedbackBlocks[0]?.semanticFingerprint).toBe(firstPayload.proposal.feedbackSemanticFingerprint);
     expect(secondPayload.awaitingFeedbackBlocks[0]?.contentHash).not.toBe(firstPayload.proposal.changeSet[0]?.contentHash);
@@ -1548,6 +1571,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       direction: '请换成真正解释新错误的提案。',
     });
     markProposalStatus(root, firstPayload.proposal.id, 'superseded');
+    writeFixtureValidation(root, firstPayload.proposal.id);
     writeRunnerErrorObservation(
       root,
       'obs-runner-error-new',
@@ -1564,13 +1588,146 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     const secondPayload = (JSON.parse(secondOut.read()) as { data: {
       proposalCount: number;
       skippedAwaitingFeedbackCount: number;
-      proposal: { id: string; changeSet: Array<{ summary: string }> };
+      proposalsWithFeedbackContext: number;
+      proposal: {
+        id: string;
+        changeSet: Array<{ summary: string }>;
+        feedbackContext: { priorDecisionId: string; priorProposalId: string; priorDirection: string };
+        testPlan: { manualChecks: string[] };
+      };
     } }).data;
     expect(secondPayload.proposalCount).toBe(1);
     expect(secondPayload.skippedAwaitingFeedbackCount).toBe(0);
+    expect(secondPayload.proposalsWithFeedbackContext).toBe(1);
     expect(secondPayload.proposal.id).not.toBe(firstPayload.proposal.id);
     expect(secondPayload.proposal.changeSet[0]?.summary).toContain('AGENTDOCK_TURN_FAILED_FETCH');
+    expect(secondPayload.proposal.feedbackContext).toMatchObject({
+      priorProposalId: firstPayload.proposal.id,
+      priorDirection: '请换成真正解释新错误的提案。',
+    });
+    expect(secondPayload.proposal.feedbackContext.priorDecisionId).toContain('request_changes');
+    expect(secondPayload.proposal.testPlan.manualChecks.at(-1)).toContain('请换成真正解释新错误的提案');
     expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, ['validate', '--pending', '--json']));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const validatePayload = (JSON.parse(validateOut.read()) as { data: {
+      validations: Array<{ proposalId: string; applyEligible: boolean; blockingReasons: string[] }>;
+    } }).data;
+    expect(validatePayload.validations[0]).toMatchObject({
+      proposalId: secondPayload.proposal.id,
+      applyEligible: true,
+      blockingReasons: [],
+    });
+
+    const approvalOut = captureStream();
+    const approvalErr = captureStream();
+    const approval = await runCli(commonOpts(root, approvalOut, approvalErr, ['approval-request', '--pending', '--json']));
+    expect(approval.exitCode).toBe(0);
+    expect(approvalErr.read()).toBe('');
+    const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
+      approvalRequests: ApprovalRequestRecord[];
+    } }).data;
+    expect(approvalPayload.approvalRequests[0]?.whyChange[0]).toBe('上一次审批意见：');
+    expect(approvalPayload.approvalRequests[0]?.whyChange.join('\n')).toContain('请换成真正解释新错误的提案');
+    assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
+  });
+
+  it('validate blocks same-target proposals when feedbackContext is missing', async () => {
+    const root = newHome('agentdock-validate-feedback-context-missing');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-old', 'AgentDock turn old ended with status timeout');
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, ['propose', '--auto-dry-run', '--json']));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const firstPayload = (JSON.parse(firstOut.read()) as { data: { proposal: { id: string } } }).data;
+    writeProposalDecisionRecord(root, firstPayload.proposal.id, 'request-changes', {
+      direction: '请解释新错误如何处理。',
+    });
+    markProposalStatus(root, firstPayload.proposal.id, 'superseded');
+    writeFixtureValidation(root, firstPayload.proposal.id);
+    writeRunnerErrorObservation(
+      root,
+      'obs-runner-error-new',
+      'AgentDock turn new ended with status failed-fetch',
+      'AGENTDOCK_TURN_FAILED_FETCH',
+    );
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, ['propose', '--auto-dry-run', '--json']));
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toBe('');
+    const secondPayload = (JSON.parse(secondOut.read()) as { data: { proposal: { id: string } } }).data;
+    const proposalPath = join(root, 'evolution', 'proposals', `${secondPayload.proposal.id}.json`);
+    const proposal = readJson<Record<string, unknown>>(proposalPath);
+    delete proposal.feedbackContext;
+    writeFileSync(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`);
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, ['validate', '--pending', '--json']));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const payload = (JSON.parse(validateOut.read()) as { data: {
+      validations: Array<{ proposalId: string; applyEligible: boolean; blockingReasons: string[] }>;
+    } }).data;
+    expect(payload.validations[0]).toMatchObject({
+      proposalId: secondPayload.proposal.id,
+      applyEligible: false,
+    });
+    expect(payload.validations[0]?.blockingReasons.join('\n')).toContain('MISSING_FEEDBACK_CONTEXT');
+  });
+
+  it('validate blocks same-target proposals when feedbackContext references stale feedback', async () => {
+    const root = newHome('agentdock-validate-feedback-context-stale');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-old', 'AgentDock turn old ended with status timeout');
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, ['propose', '--auto-dry-run', '--json']));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const firstPayload = (JSON.parse(firstOut.read()) as { data: { proposal: { id: string } } }).data;
+    writeProposalDecisionRecord(root, firstPayload.proposal.id, 'request-changes', {
+      direction: '请解释新错误如何处理。',
+    });
+    markProposalStatus(root, firstPayload.proposal.id, 'superseded');
+    writeFixtureValidation(root, firstPayload.proposal.id);
+    writeRunnerErrorObservation(
+      root,
+      'obs-runner-error-new',
+      'AgentDock turn new ended with status failed-fetch',
+      'AGENTDOCK_TURN_FAILED_FETCH',
+    );
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, ['propose', '--auto-dry-run', '--json']));
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toBe('');
+    const secondPayload = (JSON.parse(secondOut.read()) as { data: { proposal: { id: string } } }).data;
+    const proposalPath = join(root, 'evolution', 'proposals', `${secondPayload.proposal.id}.json`);
+    const proposal = readJson<Record<string, unknown> & { feedbackContext: Record<string, unknown> }>(proposalPath);
+    proposal.feedbackContext.priorDecisionId = 'approval_decision_stale';
+    writeFileSync(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`);
+
+    const validateOut = captureStream();
+    const validateErr = captureStream();
+    const validate = await runCli(commonOpts(root, validateOut, validateErr, ['validate', '--pending', '--json']));
+    expect(validate.exitCode).toBe(0);
+    expect(validateErr.read()).toBe('');
+    const payload = (JSON.parse(validateOut.read()) as { data: {
+      validations: Array<{ proposalId: string; applyEligible: boolean; blockingReasons: string[] }>;
+    } }).data;
+    expect(payload.validations[0]?.proposalId).toBe(secondPayload.proposal.id);
+    expect(payload.validations[0]?.applyEligible).toBe(false);
+    expect(payload.validations[0]?.blockingReasons.join('\n')).toContain('MISSING_FEEDBACK_CONTEXT');
   });
 
   it('propose --auto-dry-run does not block same-target iterations after approve feedback', async () => {
@@ -1596,11 +1753,34 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     const secondPayload = (JSON.parse(secondOut.read()) as { data: {
       proposalCount: number;
       skippedAwaitingFeedbackCount: number;
+      proposalsWithFeedbackContext: number;
       proposal: { id: string };
     } }).data;
     expect(secondPayload.proposalCount).toBe(1);
     expect(secondPayload.skippedAwaitingFeedbackCount).toBe(0);
+    expect(secondPayload.proposalsWithFeedbackContext).toBe(0);
     expect(secondPayload.proposal.id).not.toBe(firstPayload.proposal.id);
+    expect(secondPayload.proposal).not.toHaveProperty('feedbackContext');
+  });
+
+  it('propose --auto-dry-run leaves feedbackContext empty when no decision exists', async () => {
+    const root = newHome('agentdock-propose-feedback-no-decision');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-new', 'AgentDock turn new ended with status timeout');
+
+    const out = captureStream();
+    const err = captureStream();
+    const result = await runCli(commonOpts(root, out, err, ['propose', '--auto-dry-run', '--json']));
+    expect(result.exitCode).toBe(0);
+    expect(err.read()).toBe('');
+    const payload = (JSON.parse(out.read()) as { data: {
+      proposalCount: number;
+      proposalsWithFeedbackContext: number;
+      proposal: { id: string };
+    } }).data;
+    expect(payload.proposalCount).toBe(1);
+    expect(payload.proposalsWithFeedbackContext).toBe(0);
+    expect(payload.proposal).not.toHaveProperty('feedbackContext');
   });
 
   it('propose --auto-dry-run turns scheduled task errors into actionable schedule-config content', async () => {
@@ -2578,6 +2758,16 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
 
     writeExecutableMcpToolConfigProposal(root, 'proposal_duplicate_decided_new');
     rewriteExecutableProposalContent(root, 'proposal_duplicate_decided_new', 'new proposal after reject');
+    const newProposalPath = join(root, 'evolution', 'proposals', 'proposal_duplicate_decided_new.json');
+    const newProposal = readJson<Record<string, unknown> & { testPlan: { manualChecks: string[] } }>(newProposalPath);
+    newProposal.feedbackContext = {
+      priorDecisionId: 'approval_decision_duplicate_decided',
+      priorProposalId: existingRequest.proposalId,
+      priorDirection: '审批人退回旧提案，新提案已换成新的具体内容。',
+      incorporatedAt: '2026-05-08T12:04:00.000Z',
+    };
+    newProposal.testPlan.manualChecks.push('本次是否回应上次审批意见？ 意见：审批人退回旧提案。 未回应请 request-changes。');
+    writeFileSync(newProposalPath, `${JSON.stringify(newProposal, null, 2)}\n`);
     const secondValidateOut = captureStream();
     const secondValidateErr = captureStream();
     const secondValidate = await runCli(commonOpts(root, secondValidateOut, secondValidateErr, [
