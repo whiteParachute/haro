@@ -1,5 +1,11 @@
 # Haro Web Proposal Review Workbench
 
+> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
+> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
+> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
+> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
+
+
 > **2026-05-14 状态：Haro Web 已从历史 Dashboard 收缩为提案 Review 工作台。**
 >
 > Haro 的主定位是 AgentDock self-evolution sidecar。AgentDock 负责 runtime / workspace / IM / memory；Haro Web 只是部署在环境里的 proposal review 看板，不承载消息流、调度流或工作区执行。

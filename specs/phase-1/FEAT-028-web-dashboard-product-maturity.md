@@ -17,6 +17,12 @@ related:
   - ../../docs/modules/web-dashboard.md
 ---
 
+> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
+> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
+> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
+> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
+
+
 # Web Dashboard Product Maturity（多用户、分页与中文本地化）
 
 ## 1. Context / 背景

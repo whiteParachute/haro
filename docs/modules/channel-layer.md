@@ -1,5 +1,11 @@
 # Channel Layer（historical compatibility）
 
+> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
+> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
+> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
+> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
+
+
 > **2026-05-15 状态**：Haro 不再以自建 Channel Layer 作为主路径。AgentDock 负责日用 IM / workspace / workbench；Haro sidecar 通过已注册的 `haro mcp` 和 AgentDock skills/agent 编排接入。
 
 ## 当前保留范围

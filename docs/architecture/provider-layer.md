@@ -1,5 +1,11 @@
 # Provider Abstraction Layer (PAL) 设计
 
+> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
+> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
+> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
+> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
+
+
 ## 概述
 
 Provider Abstraction Layer (PAL) 是 Haro 对「**谁在回答**」的抽象，负责统一管理多个 AI Agent Provider 的接入，屏蔽底层差异。与之并列的 [Channel Abstraction Layer](../modules/channel-layer.md) 抽象「**从哪里来**」。

@@ -15,6 +15,12 @@ related:
   - ../../roadmap/phases.md#p0-5单-agent-执行循环
 ---
 
+> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
+> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
+> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
+> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
+
+
 # 单 Agent 执行循环
 
 ## 1. Context / 背景

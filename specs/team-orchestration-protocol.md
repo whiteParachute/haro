@@ -1,5 +1,11 @@
 # Team Orchestration 协议规范（Phase 1，draft）
 
+> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
+> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
+> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
+> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
+
+
 > **2026-05-08 状态：historical workbench protocol。**
 >
 > 本文描述 Haro 自建 Team Orchestrator 协议。新基线下 AgentDock 负责 session/runner 编排主链路，Haro 只保留其中可服务 proposal validation 的经验；本文仅作为历史参考。

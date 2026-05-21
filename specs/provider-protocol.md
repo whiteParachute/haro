@@ -1,5 +1,11 @@
 # Provider 接入协议规范
 
+> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
+> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
+> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
+> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
+
+
 > **2026-05-08 状态：historical workbench protocol。**
 >
 > 本文描述 Haro 自建 Provider Abstraction Layer。新基线下 Haro 不再继续扩展自建 provider 主路径；`packages/providers/` 占位包已删除，仅 `provider-codex` 作为历史 runtime 代码保留。后续 sidecar 实现不得依赖本协议新增 provider。

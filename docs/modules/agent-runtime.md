@@ -1,5 +1,11 @@
 # Agent Runtime 设计
 
+> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
+> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
+> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
+> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
+
+
 > **2026-05-08 状态：historical workbench baseline。**
 >
 > 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
