@@ -308,6 +308,28 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
+  it('rejects dry-run plus confirm and does not write files', async () => {
+    const root = tempRoot();
+    const { decisionId } = seedDecision(root, '请收窄范围。');
+    const before = evolutionFileCounts(root);
+    const { result, stderr } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--confirm', '--decision-id', decisionId, '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 2 });
+    expect(stderr.read()).toMatch(/confirm|not implemented|未实现/iu);
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('rejects decision-id and pending together and does not write files', async () => {
+    const root = tempRoot();
+    const { decisionId } = seedDecision(root, '请收窄范围。');
+    const before = evolutionFileCounts(root);
+    const { result, stderr } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', decisionId, '--pending', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 2 });
+    expect(stderr.read()).toMatch(/not both|互斥/iu);
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
   it('manual-checks when next revisionDepth exceeds the default limit', async () => {
     const root = tempRoot();
     const { decisionId } = seedDecision(root, '请收窄范围。', 'request-changes', { revisionMetadata: revisionMetadata(3) });
