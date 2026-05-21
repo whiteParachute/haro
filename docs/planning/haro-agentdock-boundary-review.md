@@ -140,3 +140,56 @@ pnpm -F @haro/web-api test
 ```
 
 如触及 AgentDock bridge，则还要在 AgentDock 侧至少跑对应 route/unit/build 验证，并确认不自动重启 `happyclaw.service`。
+
+## 7. Otherway 只读复核补充（2026-05-21）
+
+> 来源：`wdeleg_mpfh0744_p09n7q`，复核 `haro-side@823d3e7` / `haro@1ae31f9`。
+> 该回执未修改文件、未提交、未 push、未重启、未触碰真实 `~/.haro/evolution`。
+
+### 7.1 对本文结论的确认
+
+Otherway 的复核结论与本文一致：
+
+- Haro 旧 workbench/runtime 方向继续 freeze/deprecate；
+- proposal / validation / approval / snapshot / rollback / feedback / review board / sidecar MCP-CLI 主链路必须保留；
+- 物理删除要先解除 CLI、core barrel export、mcp legacy default registry、tests/docs 依赖。
+
+### 7.2 必须补入“必须保留”的能力
+
+Otherway 额外确认以下能力也是 keep 范围：
+
+| 能力 | 额外证据 | 保留原因 |
+| --- | --- | --- |
+| validation gate | `packages/agentdock-contract/src/validation.ts:5-48` | 没有 validation 就无法判断风险、requiredTests、rollbackReady、applyEligible、blockingReasons；不能安全 apply |
+| patch branch plan | `packages/agentdock-contract/src/patch-branch.ts:9-42`、`packages/cli/src/commands/agentdock-sidecar.ts:1119-1150` | L2/L3 代码级变更不能让 Haro 直接 apply，必须以 patch/execution plan 交给 AgentDock workspace |
+| asset event / registry artifact | `packages/agentdock-contract/src/asset-event.ts:4-57` | proposal/application/rollback 需要审计轨迹和 asset lifecycle |
+
+这些补充进一步说明：第 6.2 的 L2/L3 方向不是“删掉 Haro 执行能力”，而是让 Haro 只保留 plan/artifact contract，由 AgentDock 执行 workspace 侧实现。
+
+### 7.3 更细的 deletion blockers
+
+物理删除旧模块前，需额外检查下列 blocker：
+
+| blocker | 额外证据 | 要求 |
+| --- | --- | --- |
+| core barrel exports | `packages/core/src/index.ts:26-55` 仍导出 agent；`:56-81` 仍导出 MemoryFabric；`:141-180` 仍导出 scenario/team；`:211-219` 仍导出 runtime runner | 删除前先解除 `packages/core/src/index.ts` public export，并确认下游 import 清零 |
+| CLI bootstrap | `packages/cli/src/index.ts:1757-1808` 仍初始化 skills/agent/runtime；`:1980-2121` 仍有旧 run/chat execution path | 删除前先让 CLI run/chat 完全 legacy 化、隐藏或迁移 |
+| MCP legacy default registry | `packages/mcp-tools/src/index.ts:104-121` 仍注册 legacy `send_message`、`memory_*`、`schedule_task`；`packages/mcp-tools/src/bin/server-entry.ts:82-92` 仍使用 default registry | 必须区分 sidecar registry 与 legacy registry；确认 `haro mcp` 主链路只暴露 sidecar tools |
+| channel legacy tools | `packages/mcp-tools/src/tools/send-message.ts:41-79` 仍用 ChannelRegistry；`packages/mcp-tools/package.json:29-31` 仍依赖 `@haro/channel` | 移除 channel package 前先移除/隔离 legacy send-message tool |
+| provider-codex CLI 依赖 | `packages/cli/src/index.ts:2895-2898` 仍调用 `createCodexProvider` | 删除 provider-codex 前先迁移 provider bridge 或改为 legacy-only warning |
+| skills CLI 依赖 | `packages/cli/src/index.ts:1757-1762` 初始化 `SkillsManager`；`:1985-1987` 仍执行 `prepareTask` | 删除 skills 前先确认 sidecar 不依赖 old skills，保留 eat/shit 资产语义的迁移路径 |
+| scenario/team execution path | `packages/cli/src/index.ts:2006-2011` 仍 classify/route/createWorkflow；`:2087-2103` 仍有旧 team execution path | 删除 scenario/team 前先移除旧执行路径和 legacy tests |
+| permission-budget | `packages/core/src/index.ts:105-140` 导出；`packages/cli/src/index.ts:2018-2026` 仍创建 BudgetStore | 删除前确认 sidecar apply gate 不再借用旧 budget |
+| 真实数据目录 | `docs/planning/haro-legacy-remove-candidate-review.md:283-313` negative scope 已包括 `~/.haro/evolution/`、approval decisions、proposals、validations、snapshots、rollbacks | 删除任务不得触碰真实数据；smoke 必须使用临时 `HARO_HOME` |
+
+### 7.4 删除顺序补强
+
+结合 Otherway 回执，删除顺序调整为：
+
+1. archive 旧 docs/spec；
+2. 固化 CLI legacy warning；
+3. 切断 `packages/core/src/index.ts` barrel exports；
+4. 分离 `@haro/mcp-tools` legacy default registry 与 sidecar registry；
+5. 移除 CLI 对 provider/channel/agent/runtime/memory/skills/router/budget 的默认构造；
+6. 再评审单文件删除，优先 `team-orchestrator.ts`、`scenario-router.ts`；
+7. 最后才考虑 provider/channel/memory/runtime package 物理删除。
