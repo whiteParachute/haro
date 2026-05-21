@@ -210,7 +210,28 @@ describe('haro self-heal duplicates --dry-run', () => {
     const { result, stderr } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--human']);
 
     await expect(result).resolves.toMatchObject({ exitCode: 2 });
-    expect(stderr.read()).toContain('pass `--dry-run`');
+    expect(stderr.read()).toContain('exactly one of `--dry-run` or `--confirm`');
+    expect(existsSync(join(root, 'evolution', 'approval-decisions'))).toBe(false);
+    expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
+  });
+
+  it('rejects ambiguous dry-run plus confirm mode without writing', async () => {
+    const root = tempRoot();
+
+    const { result, stderr } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--dry-run', '--confirm', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 2 });
+    expect(stderr.read()).toContain('exactly one of `--dry-run` or `--confirm`');
+    expect(existsSync(join(root, 'evolution', 'approval-decisions'))).toBe(false);
+    expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
+  });
+
+  it('does not write when self-heal is invoked without a subcommand', async () => {
+    const root = tempRoot();
+
+    const { result } = runWithCapturedOutput(root, ['self-heal']);
+
+    await expect(result).resolves.toBeDefined();
     expect(existsSync(join(root, 'evolution', 'approval-decisions'))).toBe(false);
     expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
   });
@@ -272,6 +293,43 @@ describe('haro self-heal duplicates --dry-run', () => {
     expect(readJson(join(root, 'evolution', 'proposals', 'proposal_no_hash.json'))).toEqual(proposalBefore);
   });
 
+  it('routes partial contentHash coverage to manual check instead of matching filtered hashes', async () => {
+    const root = tempRoot();
+    writeArtifact(root, 'proposals', 'proposal_prior', proposal('proposal_prior', 'hash-1', {
+      changeSet: [{
+        op: 'update',
+        targetRef,
+        contentHash: 'hash-1',
+        summary: '新增一条 ModelHub timeout 处理规则',
+      }],
+    }));
+    writeArtifact(root, 'approval-requests', 'approval_prior', approvalRequest('approval_prior', 'proposal_prior'));
+    writeArtifact(root, 'approval-decisions', 'decision_prior', approvalDecision('decision_prior', 'approval_prior', 'proposal_prior', 'reject'));
+    writeArtifact(root, 'proposals', 'proposal_current', proposal('proposal_current', 'hash-1', {
+      changeSet: [
+        {
+          op: 'update',
+          targetRef,
+          contentHash: 'hash-1',
+          summary: '新增一条 ModelHub timeout 处理规则',
+        },
+        {
+          op: 'update',
+          targetRef: { ...targetRef, id: 'haro-sidecar:runner-profile:secondary' },
+          summary: '第二条改动缺少内容指纹',
+        },
+      ],
+    }));
+    writeArtifact(root, 'approval-requests', 'approval_current', approvalRequest('approval_current', 'proposal_current'));
+
+    const { result, stdout } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--dry-run', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    expect(stdout.read()).toContain('Candidates: 0');
+    expect(stdout.read()).toContain('current proposal has incomplete contentHash coverage');
+    expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
+  });
+
   it('exposes structured JSON dry-run results', async () => {
     const root = tempRoot();
     writeArtifact(root, 'proposals', 'proposal_prior', proposal('proposal_prior', 'hash-1'));
@@ -303,5 +361,79 @@ describe('haro self-heal duplicates --dry-run', () => {
       wouldSupersede: true,
       wouldWriteBlockedEvent: true,
     });
+  });
+
+  it('confirms an exact duplicate by writing one decision, one superseded proposal, and one blocked event', async () => {
+    const root = tempRoot();
+    writeArtifact(root, 'proposals', 'proposal_prior', proposal('proposal_prior', 'hash-1'));
+    writeArtifact(root, 'approval-requests', 'approval_prior', approvalRequest('approval_prior', 'proposal_prior'));
+    writeArtifact(root, 'approval-decisions', 'decision_prior', approvalDecision('decision_prior', 'approval_prior', 'proposal_prior', 'request-changes'));
+    writeArtifact(root, 'proposals', 'proposal_current', proposal('proposal_current', 'hash-1'));
+    writeArtifact(root, 'approval-requests', 'approval_current', approvalRequest('approval_current', 'proposal_current'));
+
+    const { result, stdout } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--confirm', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const output = stdout.read();
+    expect(output).toContain('Self-heal duplicate approval requests: confirmed');
+    expect(output).toContain('rejected: true');
+    expect(output).toContain('superseded: true');
+    expect(output).toContain('wroteBlockedEvent: true');
+    expect(output).not.toContain('dryRun=true');
+
+    const decisionFiles = readdirSync(join(root, 'evolution', 'approval-decisions')).sort();
+    expect(decisionFiles).toHaveLength(2);
+    const selfHealDecisionPath = decisionFiles
+      .map((name) => join(root, 'evolution', 'approval-decisions', name))
+      .find((path) => {
+        const value = readJson(path) as { reviewer?: { source?: string } };
+        return value.reviewer?.source === 'haro-self-heal';
+      });
+    expect(selfHealDecisionPath).toBeTruthy();
+    const selfHealDecision = readJson(selfHealDecisionPath!) as {
+      decision: string;
+      direction: string;
+      proposalId: string;
+      approvalRequestId: string;
+    };
+    expect(selfHealDecision).toMatchObject({
+      decision: 'reject',
+      proposalId: 'proposal_current',
+      approvalRequestId: 'approval_current',
+    });
+    expect(selfHealDecision.direction).toContain('priorDecision=decision_prior');
+    expect(selfHealDecision.direction).toContain('confirmedBySelfHeal=true');
+    expect(readJson(join(root, 'evolution', 'proposals', 'proposal_current.json'))).toMatchObject({
+      id: 'proposal_current',
+      status: 'superseded',
+    });
+    const blockedFiles = readdirSync(join(root, 'evolution', 'blocked-proposal-events'));
+    expect(blockedFiles).toHaveLength(1);
+    expect(readJson(join(root, 'evolution', 'blocked-proposal-events', blockedFiles[0]!))).toMatchObject({
+      status: 'blocked',
+      reason: 'AWAITING_FEEDBACK_INCORPORATION',
+      candidateProposalId: 'proposal_current',
+      priorDecisionId: 'decision_prior',
+      priorProposalId: 'proposal_prior',
+    });
+  });
+
+  it('keeps confirm idempotent after the request has a self-heal decision', async () => {
+    const root = tempRoot();
+    writeArtifact(root, 'proposals', 'proposal_prior', proposal('proposal_prior', 'hash-1'));
+    writeArtifact(root, 'approval-requests', 'approval_prior', approvalRequest('approval_prior', 'proposal_prior'));
+    writeArtifact(root, 'approval-decisions', 'decision_prior', approvalDecision('decision_prior', 'approval_prior', 'proposal_prior', 'reject'));
+    writeArtifact(root, 'proposals', 'proposal_current', proposal('proposal_current', 'hash-1'));
+    writeArtifact(root, 'approval-requests', 'approval_current', approvalRequest('approval_current', 'proposal_current'));
+
+    await runWithCapturedOutput(root, ['self-heal', 'duplicates', '--confirm', '--human']).result;
+    const decisionsAfterFirst = readdirSync(join(root, 'evolution', 'approval-decisions')).sort();
+    const blockedAfterFirst = readdirSync(join(root, 'evolution', 'blocked-proposal-events')).sort();
+    const { result, stdout } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--confirm', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    expect(stdout.read()).toContain('Candidates: 0');
+    expect(readdirSync(join(root, 'evolution', 'approval-decisions')).sort()).toEqual(decisionsAfterFirst);
+    expect(readdirSync(join(root, 'evolution', 'blocked-proposal-events')).sort()).toEqual(blockedAfterFirst);
   });
 });

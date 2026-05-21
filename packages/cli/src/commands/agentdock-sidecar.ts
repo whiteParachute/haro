@@ -560,6 +560,7 @@ interface CleanupRejectedResult {
 
 interface SelfHealDuplicatesOptions extends OutputFlags {
   dryRun?: boolean;
+  confirm?: boolean;
 }
 
 interface SelfHealDuplicateCandidate {
@@ -570,11 +571,19 @@ interface SelfHealDuplicateCandidate {
   matchType: 'contentHash' | 'semanticFingerprint';
   targetRef: Ref;
   contentHashes: string[];
-  dryRun: true;
-  plannedActions: {
+  dryRun: boolean;
+  plannedActions?: {
     wouldReject: true;
     wouldSupersede: true;
     wouldWriteBlockedEvent: true;
+  };
+  actualActions?: {
+    rejected: true;
+    superseded: true;
+    wroteBlockedEvent: true;
+    decisionId: string;
+    blockedEventId: string;
+    proposalStatus: 'superseded';
   };
   priorDirection?: string;
 }
@@ -588,9 +597,13 @@ interface SelfHealDuplicateNotice {
 interface SelfHealDuplicatesResult {
   command: 'self-heal';
   mode: 'duplicates';
-  dryRun: true;
+  dryRun: boolean;
+  confirmed: boolean;
   scannedApprovalRequestCount: number;
   candidateCount: number;
+  rejectedCount: number;
+  supersededCount: number;
+  blockedEventCount: number;
   skippedCount: number;
   manualCheckCount: number;
   candidates: SelfHealDuplicateCandidate[];
@@ -1256,8 +1269,9 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
 
   selfHeal
     .command('duplicates')
-    .description('Dry-run scan for residual duplicate pending approval requests')
-    .option('--dry-run', 'inspect only; required for this first safe slice')
+    .description('Inspect or confirm residual duplicate pending approval requests')
+    .option('--dry-run', 'inspect only')
+    .option('--confirm', 'write self-heal reject/supersede artifacts for exact candidates')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
     .action((options: SelfHealDuplicatesOptions) => {
@@ -1270,13 +1284,18 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
         }
         app.stdout.write(
           [
-            'Self-heal duplicate approval requests: dry-run',
-            'No approval-decision, proposal status, or blocked event will be written.',
+            `Self-heal duplicate approval requests: ${result.dryRun ? 'dry-run' : 'confirmed'}`,
+            result.dryRun
+              ? 'No approval-decision, proposal status, or blocked event will be written.'
+              : 'Confirmed candidates wrote reject decisions, superseded proposals, and blocked events.',
             `Scanned approval requests: ${result.scannedApprovalRequestCount}`,
             `Candidates: ${result.candidateCount}`,
+            `Rejected: ${result.rejectedCount}`,
+            `Superseded: ${result.supersededCount}`,
+            `Blocked events: ${result.blockedEventCount}`,
             `Skipped: ${result.skippedCount}`,
             `Manual check: ${result.manualCheckCount}`,
-            'Candidate actions:',
+            result.dryRun ? 'Candidate actions:' : 'Actual actions:',
             ...result.candidates.map((candidate) => [
               `- ${candidate.approvalRequestId}`,
               `  current proposal: ${candidate.currentProposalId}`,
@@ -1284,10 +1303,19 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `  prior decision: ${candidate.priorDecisionId}`,
               `  matchType: ${candidate.matchType}`,
               `  target: ${candidate.targetRef.kind}:${candidate.targetRef.id}`,
-              `  wouldReject: ${candidate.plannedActions.wouldReject}`,
-              `  wouldSupersede: ${candidate.plannedActions.wouldSupersede}`,
-              `  wouldWriteBlockedEvent: ${candidate.plannedActions.wouldWriteBlockedEvent}`,
-              `  dry-run: no writes`,
+              ...(candidate.plannedActions ? [
+                `  wouldReject: ${candidate.plannedActions.wouldReject}`,
+                `  wouldSupersede: ${candidate.plannedActions.wouldSupersede}`,
+                `  wouldWriteBlockedEvent: ${candidate.plannedActions.wouldWriteBlockedEvent}`,
+                `  dry-run: no writes`,
+              ] : []),
+              ...(candidate.actualActions ? [
+                `  rejected: ${candidate.actualActions.rejected}`,
+                `  superseded: ${candidate.actualActions.superseded}`,
+                `  wroteBlockedEvent: ${candidate.actualActions.wroteBlockedEvent}`,
+                `  decision: ${candidate.actualActions.decisionId}`,
+                `  blocked event: ${candidate.actualActions.blockedEventId}`,
+              ] : []),
             ].join('\n')),
             'Skipped:',
             ...result.skipped.map((item) => `- skipped ${item.approvalRequestId}: ${item.reason}`),
@@ -2776,8 +2804,10 @@ function cleanupAgentDock(app: AppContext, options: CleanupOptions): CleanupReje
 }
 
 function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDuplicatesOptions): SelfHealDuplicatesResult {
-  if (options.dryRun !== true) {
-    throw new CommanderExit(2, '`haro self-heal duplicates` is read-only in this slice; pass `--dry-run`.');
+  const dryRun = options.dryRun === true;
+  const confirm = options.confirm === true;
+  if (dryRun === confirm) {
+    throw new CommanderExit(2, '`haro self-heal duplicates` requires exactly one of `--dry-run` or `--confirm`.');
   }
   const dir = approvalRequestsDir(app.paths.root);
   const decisions = readAllApprovalDecisionRecords(app.paths.root);
@@ -2791,9 +2821,13 @@ function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDup
     return {
       command: 'self-heal',
       mode: 'duplicates',
-      dryRun: true,
+      dryRun,
+      confirmed: confirm,
       scannedApprovalRequestCount,
       candidateCount: 0,
+      rejectedCount: 0,
+      supersededCount: 0,
+      blockedEventCount: 0,
       skippedCount: 0,
       manualCheckCount: 0,
       candidates,
@@ -2838,8 +2872,8 @@ function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDup
       });
       continue;
     }
-    const currentHashes = proposalContentHashes(proposal);
-    if (currentHashes.length === 0) {
+    const currentHashCoverage = proposalContentHashCoverage(proposal);
+    if (currentHashCoverage.status === 'none') {
       manualChecks.push({
         approvalRequestId: request.id,
         proposalId: proposal.id,
@@ -2847,6 +2881,15 @@ function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDup
       });
       continue;
     }
+    if (currentHashCoverage.status === 'partial') {
+      manualChecks.push({
+        approvalRequestId: request.id,
+        proposalId: proposal.id,
+        reason: 'current proposal has incomplete contentHash coverage',
+      });
+      continue;
+    }
+    const currentHashes = currentHashCoverage.hashes;
 
     const prior = readLatestTargetDecisionForSelfHeal(app.paths.root, proposal);
     if (!prior) {
@@ -2874,7 +2917,24 @@ function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDup
       continue;
     }
 
-    const priorHashes = proposalContentHashes(prior.proposal);
+    const priorHashCoverage = proposalContentHashCoverage(prior.proposal);
+    if (priorHashCoverage.status === 'none') {
+      manualChecks.push({
+        approvalRequestId: request.id,
+        proposalId: proposal.id,
+        reason: 'prior proposal has no contentHash',
+      });
+      continue;
+    }
+    if (priorHashCoverage.status === 'partial') {
+      manualChecks.push({
+        approvalRequestId: request.id,
+        proposalId: proposal.id,
+        reason: 'prior proposal has incomplete contentHash coverage',
+      });
+      continue;
+    }
+    const priorHashes = priorHashCoverage.hashes;
     let matchType: SelfHealDuplicateCandidate['matchType'] | undefined;
     if (priorHashes.length > 0 && sameStringSet(currentHashes, priorHashes)) {
       matchType = 'contentHash';
@@ -2896,7 +2956,7 @@ function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDup
       continue;
     }
 
-    candidates.push({
+    const baseCandidate: SelfHealDuplicateCandidate = {
       approvalRequestId: request.id,
       currentProposalId: proposal.id,
       priorProposalId: prior.proposal.id,
@@ -2904,27 +2964,130 @@ function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDup
       matchType,
       targetRef: proposal.changeSet[0]!.targetRef,
       contentHashes: currentHashes,
-      dryRun: true,
-      plannedActions: {
-        wouldReject: true,
-        wouldSupersede: true,
-        wouldWriteBlockedEvent: true,
-      },
+      dryRun,
       ...(prior.decision.direction ? { priorDirection: prior.decision.direction } : {}),
-    });
+    };
+    candidates.push(dryRun
+      ? {
+          ...baseCandidate,
+          plannedActions: {
+            wouldReject: true,
+            wouldSupersede: true,
+            wouldWriteBlockedEvent: true,
+          },
+        }
+      : confirmSelfHealDuplicateCandidate(app, request, proposal, prior, baseCandidate));
   }
 
+  const rejectedCount = candidates.filter((candidate) => candidate.actualActions?.rejected).length;
+  const supersededCount = candidates.filter((candidate) => candidate.actualActions?.superseded).length;
+  const blockedEventCount = candidates.filter((candidate) => candidate.actualActions?.wroteBlockedEvent).length;
   return {
     command: 'self-heal',
     mode: 'duplicates',
-    dryRun: true,
+    dryRun,
+    confirmed: confirm,
     scannedApprovalRequestCount,
     candidateCount: candidates.length,
+    rejectedCount,
+    supersededCount,
+    blockedEventCount,
     skippedCount: skipped.length,
     manualCheckCount: manualChecks.length,
     candidates,
     skipped,
     manualChecks,
+  };
+}
+
+function confirmSelfHealDuplicateCandidate(
+  app: AppContext,
+  request: ApprovalRequestRecord,
+  proposal: EvolutionProposal,
+  prior: { decision: ApprovalDecisionRecord; proposal: EvolutionProposal },
+  candidate: SelfHealDuplicateCandidate,
+): SelfHealDuplicateCandidate {
+  const timestamp = app.now().toISOString();
+  const actionKey = {
+    command: 'self-heal-duplicates',
+    approvalRequestId: request.id,
+    currentProposalId: proposal.id,
+    priorProposalId: prior.proposal.id,
+    priorDecisionId: prior.decision.id,
+    matchType: candidate.matchType,
+  };
+  const decisionId = `approval_decision_${sha256(JSON.stringify({ ...actionKey, artifact: 'decision' })).slice(0, 24)}`;
+  const blockedEventId = `blocked_${sha256(JSON.stringify({ ...actionKey, artifact: 'blocked-event' })).slice(0, 24)}`;
+  const direction = [
+    'Haro self-heal 已确认这是残留重复提案。',
+    `currentProposal=${proposal.id}`,
+    `priorProposal=${prior.proposal.id}`,
+    `priorDecision=${prior.decision.id}`,
+    `matchType=${candidate.matchType}`,
+    'dryRun=false',
+    'confirmedBySelfHeal=true',
+  ].join('；');
+  const baseDecision = ApprovalDecisionRecordSchema.parse({
+    id: decisionId,
+    approvalRequestId: request.id,
+    proposalId: proposal.id,
+    validationId: request.validationId,
+    decision: 'reject',
+    direction,
+    reviewer: {
+      source: 'haro-self-heal',
+      role: 'self-heal',
+    },
+    sourceRef: {
+      id: request.id,
+      kind: 'approval-request',
+      uri: `haro-sidecar://approval-requests/${encodeURIComponent(request.id)}`,
+    },
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+  const decision = ApprovalDecisionRecordSchema.parse({
+    ...baseDecision,
+    descriptionLint: lintApprovalDecisionDescription(baseDecision),
+  });
+  const targetRefs = proposal.changeSet.map((change) => change.targetRef);
+  const semanticFingerprint = computePersistedProposalSemanticFingerprint(app.paths.root, proposal);
+  const blockedEvent = BlockedProposalEventSchema.parse({
+    id: blockedEventId,
+    status: 'blocked',
+    reason: 'AWAITING_FEEDBACK_INCORPORATION',
+    candidateProposalId: proposal.id,
+    priorDecisionId: prior.decision.id,
+    priorProposalId: prior.proposal.id,
+    ...(prior.decision.direction ? { priorDirection: prior.decision.direction } : {}),
+    targetRef: targetRefs[0]!,
+    targetRefs,
+    contentHash: proposalContentHashDigest(candidate.contentHashes),
+    contentHashes: candidate.contentHashes,
+    semanticFingerprint,
+    createdAt: timestamp,
+  });
+  const supersededProposal = EvolutionProposalSchema.parse({
+    ...proposal,
+    status: 'superseded',
+    updatedAt: timestamp,
+  });
+
+  writeJsonFile(blockedProposalEventFilePath(app.paths.root, blockedEvent), blockedEvent);
+  writeJsonFile(proposalFilePath(app.paths.root, supersededProposal), supersededProposal);
+  writeJsonFile(approvalDecisionFilePath(app.paths.root, decision), decision);
+
+  return {
+    ...candidate,
+    dryRun: false,
+    actualActions: {
+      rejected: true,
+      superseded: true,
+      wroteBlockedEvent: true,
+      decisionId,
+      blockedEventId,
+      proposalStatus: 'superseded',
+    },
   };
 }
 
@@ -3932,6 +4095,14 @@ function proposalTargetSummary(proposal: EvolutionProposal): string {
 
 function proposalContentHashes(proposal: EvolutionProposal): string[] {
   return uniqueSorted(proposal.changeSet.map((change) => change.contentHash ?? '').filter(Boolean));
+}
+
+function proposalContentHashCoverage(proposal: EvolutionProposal): { status: 'complete' | 'partial' | 'none'; hashes: string[] } {
+  const hashes = proposalContentHashes(proposal);
+  if (hashes.length === 0) return { status: 'none', hashes };
+  return proposal.changeSet.every((change) => Boolean(change.contentHash?.trim()))
+    ? { status: 'complete', hashes }
+    : { status: 'partial', hashes };
 }
 
 function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
