@@ -155,12 +155,14 @@ rewrite 可以产生三类结果。
 ```ts
 type ProposalRevisionMetadata = {
   revisionId: string;
+  rootProposalId: string;
   revisionOfProposalId: string;
+  revisionDepth: number;
   sourceApprovalRequestId: string;
   sourceDecisionId: string;
   sourceDecisionDirection: string;
   sourceConversationRefs: string[];
-  rewritePlanRef?: Ref;
+  rewritePlanRef?: Ref; // 指向 FeedbackRevisionRecord 或 rewrite plan artifact
   supersedesProposalIds: string[];
   supersedesBlockedEventIds: string[];
   resubmissionReason: string;
@@ -210,6 +212,7 @@ type RevisionNoOpCheck = {
   revisedProposalContentHashes: string[];
   priorSemanticFingerprint?: string;
   revisedSemanticFingerprint?: string;
+  revisionDepth: number;
   changedFields: Array<
     | 'changeSet'
     | 'contentRef'
@@ -290,13 +293,18 @@ haro revise feedback --dry-run --decision-id <approval_decision_id>
 2. 必须找到原 approval request、proposal、validation。
 3. 如果原 proposal 已有更新 revision 并且仍 pending，则跳过，避免重复修订。
 4. 如果原 decision 不是该 target 的最新 request-changes，则 manualCheck。
-5. 默认先 dry-run；真实写入必须显式 `--confirm` 或纳入后续 gated workflow。
+5. 如果 approval conversation 在 decision `createdAt` 之后仍有新条目，应先纳入补充语境；若新条目改变了用户意图或和 direction 冲突，则 manualCheck。
+6. 同一 `rootProposalId` 的 revision depth 超过上限后必须 manualCheck，默认建议上限为 3；FEAT-076A 可把上限做成配置，但不能无限自动重写。
+7. 默认先 dry-run；真实写入必须显式 `--confirm` 或纳入后续 gated workflow。
 
 ### 5.2 Direction parsing
 
 把 `approval-decision.direction` 和 conversation 解析成 requirements。
 
 分类规则：
+
+第一版必须覆盖最小安全子集：`scope-reduction`、`evidence-required`、`risk-rollback-change`、`needs-more-info`、`out-of-scope`、`policy-blocked`。
+`duplicate-merge`、`readability`、`implementation-detail` 可作为 FEAT-076B 后续增强；如果第一版无法稳定识别，就进入 manualCheck。
 
 | 类别 | 示例 | 期望动作 |
 | --- | --- | --- |
@@ -335,6 +343,16 @@ rewrite planner 根据 requirements 决定动作。
 5. `feedbackContext` 必须引用最新 request-changes decision。
 6. `revisionMetadata` 必须写明吸收/未吸收情况。
 7. description lint 继续执行；用户原文可以保留，不应被 machine-generated lint blocker 误伤。
+
+原 artifact lifecycle：
+
+| artifact | request-changes 后 | revised proposal 写入后 | 说明 |
+| --- | --- | --- | --- |
+| 原 proposal | 可由 decision sync 标记为 `superseded` | 保持 `superseded` | 不能重新 apply 原 proposal |
+| 原 approval-request | 保持历史 pending artifact，不覆盖 | 由新的 approval-request 替代人审入口 | 当前 schema 只有 `pending`，不要伪造 closed 状态 |
+| 原 approval-decision | 保持原始用户决策 | 被 revision metadata 引用 | 不改用户原文 |
+| 新 proposal | 新 id，进入 `proposed` 或 `dry-run` | 继续 validate | 必须带 `feedbackContext` 与 `revisionMetadata` |
+| 新 approval-request | 不在 proposal 写入时直接生成 | validate 通过后生成 | 避免未验证 proposal 进入人审 |
 
 ### 5.5 Validation
 
@@ -576,6 +594,7 @@ HARO_HOME=$(mktemp -d) pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test
 - 不改 aria-memory vault。
 - 不把 `request-changes` 当成失败终点；它应进入 revision flow。
 - 不让 metadata-only change 通过 no-op gate。
+- 不允许同一 root proposal 无限 revision；超过 revision-depth 上限后必须 manualCheck。
 
 ## 12. Open questions
 
