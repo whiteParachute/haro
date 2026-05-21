@@ -229,9 +229,12 @@ describe('haro self-heal duplicates --dry-run', () => {
   it('does not write when self-heal is invoked without a subcommand', async () => {
     const root = tempRoot();
 
-    const { result } = runWithCapturedOutput(root, ['self-heal']);
+    const { result, stdout, stderr } = runWithCapturedOutput(root, ['self-heal']);
 
-    await expect(result).resolves.toBeDefined();
+    await expect(result).resolves.toMatchObject({ exitCode: 2 });
+    expect(stdout.read()).toContain('Usage: haro self-heal');
+    expect(stdout.read()).toContain('duplicates');
+    expect(stderr.read()).toBe('');
     expect(existsSync(join(root, 'evolution', 'approval-decisions'))).toBe(false);
     expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
   });
@@ -263,7 +266,22 @@ describe('haro self-heal duplicates --dry-run', () => {
 
   it('does not process an already approved request', async () => {
     const root = tempRoot();
-    writeArtifact(root, 'proposals', 'proposal_current', proposal('proposal_current', 'hash-1'));
+    writeArtifact(root, 'proposals', 'proposal_current', proposal('proposal_current', 'hash-1', {
+      changeSet: [
+        {
+          op: 'update',
+          targetRef,
+          contentHash: 'hash-1',
+          summary: '新增一条 ModelHub timeout 处理规则',
+        },
+        {
+          op: 'update',
+          targetRef: { ...targetRef, id: 'haro-sidecar:runner-profile:prior-secondary' },
+          contentHash: 'hash-2',
+          summary: '第二条改动有内容指纹',
+        },
+      ],
+    }));
     writeArtifact(root, 'approval-requests', 'approval_current', approvalRequest('approval_current', 'proposal_current'));
     writeArtifact(root, 'approval-decisions', 'decision_approved', approvalDecision('decision_approved', 'approval_current', 'proposal_current', 'approve'));
 
@@ -328,6 +346,54 @@ describe('haro self-heal duplicates --dry-run', () => {
     expect(stdout.read()).toContain('Candidates: 0');
     expect(stdout.read()).toContain('current proposal has incomplete contentHash coverage');
     expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
+  });
+
+  it('routes prior partial contentHash coverage to manual check and confirm writes nothing', async () => {
+    const root = tempRoot();
+    writeArtifact(root, 'proposals', 'proposal_prior', proposal('proposal_prior', 'hash-1', {
+      changeSet: [
+        {
+          op: 'update',
+          targetRef,
+          contentHash: 'hash-1',
+          summary: '新增一条 ModelHub timeout 处理规则',
+        },
+        {
+          op: 'update',
+          targetRef: { ...targetRef, id: 'haro-sidecar:runner-profile:prior-secondary' },
+          summary: '旧提案第二条改动缺少内容指纹',
+        },
+      ],
+    }));
+    writeArtifact(root, 'approval-requests', 'approval_prior', approvalRequest('approval_prior', 'proposal_prior'));
+    writeArtifact(root, 'approval-decisions', 'decision_prior', approvalDecision('decision_prior', 'approval_prior', 'proposal_prior', 'reject'));
+    writeArtifact(root, 'proposals', 'proposal_current', proposal('proposal_current', 'hash-1', {
+      changeSet: [
+        {
+          op: 'update',
+          targetRef,
+          contentHash: 'hash-1',
+          summary: '新增一条 ModelHub timeout 处理规则',
+        },
+        {
+          op: 'update',
+          targetRef: { ...targetRef, id: 'haro-sidecar:runner-profile:prior-secondary' },
+          contentHash: 'hash-2',
+          summary: '第二条改动有内容指纹',
+        },
+      ],
+    }));
+    writeArtifact(root, 'approval-requests', 'approval_current', approvalRequest('approval_current', 'proposal_current'));
+    const currentBefore = readJson(join(root, 'evolution', 'proposals', 'proposal_current.json'));
+
+    const { result, stdout } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--confirm', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    expect(stdout.read()).toContain('Candidates: 0');
+    expect(stdout.read()).toContain('prior proposal has incomplete contentHash coverage');
+    expect(readdirSync(join(root, 'evolution', 'approval-decisions'))).toEqual(['decision_prior.json']);
+    expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
+    expect(readJson(join(root, 'evolution', 'proposals', 'proposal_current.json'))).toEqual(currentBefore);
   });
 
   it('exposes structured JSON dry-run results', async () => {
@@ -401,6 +467,7 @@ describe('haro self-heal duplicates --dry-run', () => {
       proposalId: 'proposal_current',
       approvalRequestId: 'approval_current',
     });
+    expect((selfHealDecision as { descriptionLint?: { blockerCount?: number } }).descriptionLint?.blockerCount).toBe(0);
     expect(selfHealDecision.direction).toContain('priorDecision=decision_prior');
     expect(selfHealDecision.direction).toContain('confirmedBySelfHeal=true');
     expect(readJson(join(root, 'evolution', 'proposals', 'proposal_current.json'))).toMatchObject({
@@ -415,6 +482,70 @@ describe('haro self-heal duplicates --dry-run', () => {
       candidateProposalId: 'proposal_current',
       priorDecisionId: 'decision_prior',
       priorProposalId: 'proposal_prior',
+    });
+  });
+
+  it('exposes structured JSON confirm results that match written artifacts', async () => {
+    const root = tempRoot();
+    writeArtifact(root, 'proposals', 'proposal_prior', proposal('proposal_prior', 'hash-1'));
+    writeArtifact(root, 'approval-requests', 'approval_prior', approvalRequest('approval_prior', 'proposal_prior'));
+    writeArtifact(root, 'approval-decisions', 'decision_prior', approvalDecision('decision_prior', 'approval_prior', 'proposal_prior', 'request-changes'));
+    writeArtifact(root, 'proposals', 'proposal_current', proposal('proposal_current', 'hash-1'));
+    writeArtifact(root, 'approval-requests', 'approval_current', approvalRequest('approval_current', 'proposal_current'));
+
+    const { result, stdout } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--confirm', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const parsed = JSON.parse(stdout.read()) as {
+      data: {
+        dryRun: boolean;
+        confirmed: boolean;
+        rejectedCount: number;
+        supersededCount: number;
+        blockedEventCount: number;
+        candidates: Array<{
+          dryRun: boolean;
+          plannedActions?: unknown;
+          actualActions?: {
+            rejected: boolean;
+            superseded: boolean;
+            wroteBlockedEvent: boolean;
+            decisionId: string;
+            blockedEventId: string;
+            proposalStatus: string;
+          };
+        }>;
+      };
+    };
+    expect(parsed.data.dryRun).toBe(false);
+    expect(parsed.data.confirmed).toBe(true);
+    expect(parsed.data.rejectedCount).toBe(1);
+    expect(parsed.data.supersededCount).toBe(1);
+    expect(parsed.data.blockedEventCount).toBe(1);
+    expect(parsed.data.candidates[0]?.dryRun).toBe(false);
+    expect(parsed.data.candidates[0]?.plannedActions).toBeUndefined();
+    const actualActions = parsed.data.candidates[0]?.actualActions;
+    expect(actualActions).toMatchObject({
+      rejected: true,
+      superseded: true,
+      wroteBlockedEvent: true,
+      proposalStatus: 'superseded',
+    });
+    expect(existsSync(join(root, 'evolution', 'approval-decisions', `${actualActions!.decisionId}.json`))).toBe(true);
+    expect(existsSync(join(root, 'evolution', 'blocked-proposal-events', `${actualActions.blockedEventId}.json`))).toBe(true);
+    expect(readJson(join(root, 'evolution', 'proposals', 'proposal_current.json'))).toMatchObject({
+      id: 'proposal_current',
+      status: 'superseded',
+    });
+    expect(readJson(join(root, 'evolution', 'approval-decisions', `${actualActions.decisionId}.json`))).toMatchObject({
+      id: actualActions.decisionId,
+      decision: 'reject',
+      proposalId: 'proposal_current',
+    });
+    expect(readJson(join(root, 'evolution', 'blocked-proposal-events', `${actualActions.blockedEventId}.json`))).toMatchObject({
+      id: actualActions.blockedEventId,
+      candidateProposalId: 'proposal_current',
+      priorDecisionId: 'decision_prior',
     });
   });
 

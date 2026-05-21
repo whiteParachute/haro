@@ -1265,7 +1265,11 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
 
   const selfHeal = program
     .command('self-heal')
-    .description('Inspect sidecar self-heal candidates without changing artifacts');
+    .description('Inspect sidecar self-heal candidates without changing artifacts')
+    .action(() => {
+      selfHeal.outputHelp();
+      throw new CommanderExit(2, '`haro self-heal` requires a subcommand.');
+    });
 
   selfHeal
     .command('duplicates')
