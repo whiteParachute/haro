@@ -516,6 +516,14 @@ L2/L3 不能由 Haro 直接改代码。
 - 能输出 can-rewrite/manual-check/blocked。
 - 默认只读。
 
+落地记录（2026-05-21）：
+
+- `haro revise feedback --dry-run --decision-id <id>` 已支持。
+- 第一版 parser 覆盖安全最小子集。
+- 输出 can-rewrite/manual-check/blocked/needs-more-info。
+- 不写 proposal、feedback-revision 或 approval-request。
+- FEAT-076C 负责 no-op gate 与 validation blockers。
+
 ### FEAT-076C：anti no-op rewrite gate
 
 改动范围：

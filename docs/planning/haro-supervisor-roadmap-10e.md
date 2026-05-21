@@ -208,10 +208,10 @@ FEAT-076A 的目标：
 - FEAT-076B 开工前建议跑 `pnpm test:sidecar`；
 - 不动真实 `~/.haro/evolution`。
 
-FEAT-076A 落地后，下一步应进入 FEAT-076B。
+FEAT-076A/076B 落地后，下一步应进入 FEAT-076C。
 不要跳到 Web 改造、auto-confirm 或物理删除。
 
-如果 owner 暂不启动 FEAT-076A/076B，则不应继续扩 self-heal 或删除旧模块。
+如果 owner 暂不启动 FEAT-076C，则不应继续扩 self-heal 或删除旧模块。
 
 ## 10. 10E 完成定义
 
