@@ -127,6 +127,8 @@ export {
   DescriptionLintIssueSchema,
   DescriptionLintReportSchema,
   DescriptionLintSeveritySchema,
+  DescriptionLintSourceSchema,
+  lintApprovalConversationDescription,
   lintApprovalDecisionDescription,
   lintApprovalRequestDescription,
   lintEvolutionProposalDescription,
@@ -138,6 +140,7 @@ export type {
   DescriptionLintIssue,
   DescriptionLintReport,
   DescriptionLintSeverity,
+  DescriptionLintSource,
 } from './description-lint.js';
 
 export {

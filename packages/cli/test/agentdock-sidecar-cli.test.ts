@@ -2256,6 +2256,24 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       createdAt: '2026-05-08T12:02:00.000Z',
       updatedAt: '2026-05-08T12:02:00.000Z',
     }, null, 2)}\n`);
+    const conversationDir = join(root, 'evolution', 'approval-conversations', 'approval_request_lint_scan');
+    mkdirSync(conversationDir, { recursive: true });
+    writeFileSync(join(conversationDir, 'approval_conversation_lint_scan.json'), `${JSON.stringify({
+      id: 'approval_conversation_lint_scan',
+      associatedApprovalRequestId: 'approval_request_lint_scan',
+      proposalId: 'proposal_lint_scan',
+      validationId: 'validation_lint_scan',
+      messages: [
+        {
+          id: 'approval_message_human_long',
+          role: 'user',
+          content: '新的提案我还是看不懂，什么是 Haro 运行出现错误且旧提案没有讲清楚要怎么处理，请先换成人话。',
+          createdAt: '2026-05-08T12:02:30.000Z',
+        },
+      ],
+      createdAt: '2026-05-08T12:02:30.000Z',
+      updatedAt: '2026-05-08T12:02:30.000Z',
+    }, null, 2)}\n`);
     const before = readFileSync(decisionPath, 'utf8');
 
     const stdout = captureStream();
@@ -2275,19 +2293,36 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       fixDryRun: boolean;
       scannedArtifactCount: number;
       violationArtifactCount: number;
+      infoCount: number;
+      warningCount: number;
+      blockerCount: number;
       ruleCounts: Record<string, number>;
-      artifacts: Array<{ kind: string; id: string; blockerCount: number; suggestions: string[] }>;
+      sourceCounts: Record<string, number>;
+      artifacts: Array<{ kind: string; id: string; status: string; infoCount: number; blockerCount: number; suggestions: string[] }>;
     } }).data;
     expect(payload.command).toBe('lint descriptions');
     expect(payload.fixDryRun).toBe(true);
     expect(payload.scannedArtifactCount).toBeGreaterThanOrEqual(2);
     expect(payload.violationArtifactCount).toBeGreaterThan(0);
+    expect(payload.infoCount).toBeGreaterThan(0);
+    expect(payload.blockerCount).toBe(0);
     expect(payload.ruleCounts['naked-term']).toBeGreaterThan(0);
+    expect(payload.sourceCounts.human).toBeGreaterThan(0);
     expect(payload.artifacts.some((artifact) =>
       artifact.kind === 'approval-decision' &&
       artifact.id === 'approval_decision_lint_scan' &&
-      artifact.blockerCount > 0 &&
-      artifact.suggestions.join('\n').includes('frontier signal')
+      artifact.status === 'pass' &&
+      artifact.infoCount > 0 &&
+      artifact.blockerCount === 0 &&
+      artifact.suggestions.length === 0
+    )).toBe(true);
+    expect(payload.artifacts.some((artifact) =>
+      artifact.kind === 'approval-conversation' &&
+      artifact.id === 'approval_conversation_lint_scan' &&
+      artifact.status === 'pass' &&
+      artifact.infoCount > 0 &&
+      artifact.blockerCount === 0 &&
+      artifact.suggestions.length === 0
     )).toBe(true);
     expect(readFileSync(decisionPath, 'utf8')).toBe(before);
   });

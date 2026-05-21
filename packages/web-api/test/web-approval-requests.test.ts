@@ -187,7 +187,10 @@ describe('approval request review API', () => {
     const body = await response.json();
     expect(body.data.decision.decision).toBe('request-changes');
     expect(body.data.decision.direction).toContain('approval review page');
-    expect(body.data.decision.descriptionLint.status).toBe('blocker');
+    expect(body.data.decision.descriptionLint.status).toBe('pass');
+    expect(body.data.decision.descriptionLint.infoCount).toBeGreaterThan(0);
+    expect(body.data.decision.descriptionLint.blockerCount).toBe(0);
+    expect(body.data.decision.descriptionLint.issues[0]?.source).toBe('human');
     expect(body.data.proposalUpdated).toBe(true);
 
     const proposal = JSON.parse(readFileSync(path.join(root, 'evolution/proposals/proposal_smoke.json'), 'utf8'));

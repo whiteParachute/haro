@@ -4,12 +4,14 @@ import type { ApprovalDecisionRecord, ApprovalRequestRecord } from './approval-r
 import type { EvolutionProposal } from './proposal.js';
 import type { ValidationReport } from './validation.js';
 
-export const DescriptionLintSeveritySchema = z.enum(['warning', 'blocker']);
+export const DescriptionLintSeveritySchema = z.enum(['info', 'warning', 'blocker']);
+export const DescriptionLintSourceSchema = z.enum(['machine', 'human', 'mixed-or-unknown']);
 
 export const DescriptionLintIssueSchema = z.object({
   severity: DescriptionLintSeveritySchema,
   ruleId: NonEmptyStringSchema,
   field: NonEmptyStringSchema,
+  source: DescriptionLintSourceSchema.default('mixed-or-unknown'),
   message: NonEmptyStringSchema,
   sample: NonEmptyStringSchema.optional(),
 });
@@ -17,21 +19,24 @@ export const DescriptionLintIssueSchema = z.object({
 export const DescriptionLintReportSchema = z.object({
   status: z.enum(['pass', 'warning', 'blocker']),
   issueCount: z.number().int().nonnegative(),
+  infoCount: z.number().int().nonnegative().default(0),
   warningCount: z.number().int().nonnegative(),
   blockerCount: z.number().int().nonnegative(),
   issues: z.array(DescriptionLintIssueSchema).default([]),
 });
 
 export type DescriptionLintSeverity = z.infer<typeof DescriptionLintSeveritySchema>;
+export type DescriptionLintSource = z.infer<typeof DescriptionLintSourceSchema>;
 export type DescriptionLintIssue = z.infer<typeof DescriptionLintIssueSchema>;
 export type DescriptionLintReport = z.infer<typeof DescriptionLintReportSchema>;
 
 export interface DescriptionLintTarget {
-  kind: 'proposal' | 'validation' | 'approval-request' | 'approval-decision';
+  kind: 'proposal' | 'validation' | 'approval-request' | 'approval-decision' | 'approval-conversation';
   id: string;
   fields: Array<{
     name: string;
     value: string;
+    source?: DescriptionLintSource;
     blockerSensitive?: boolean;
     blockerRules?: readonly string[];
   }>;
@@ -59,11 +64,11 @@ export function lintEvolutionProposalDescription(proposal: EvolutionProposal): D
     kind: 'proposal',
     id: proposal.id,
     fields: [
-      { name: 'title', value: proposal.title, blockerRules: ['naked-term'] },
-      ...proposal.changeSet.map((change, index) => ({ name: `changeSet[${index}].summary`, value: change.summary })),
-      ...proposal.testPlan.manualChecks.map((value, index) => ({ name: `manualChecks[${index}]`, value })),
-      ...proposal.testPlan.regressionRisks.map((value, index) => ({ name: `regressionRisks[${index}]`, value })),
-      { name: 'rollbackPlan.strategy', value: proposal.rollbackPlan.strategy },
+      { name: 'title', value: proposal.title, source: 'machine', blockerRules: ['naked-term'] },
+      ...proposal.changeSet.map((change, index) => ({ name: `changeSet[${index}].summary`, value: change.summary, source: 'machine' as const })),
+      ...proposal.testPlan.manualChecks.map((value, index) => ({ name: `manualChecks[${index}]`, value, source: 'machine' as const })),
+      ...proposal.testPlan.regressionRisks.map((value, index) => ({ name: `regressionRisks[${index}]`, value, source: 'machine' as const })),
+      { name: 'rollbackPlan.strategy', value: proposal.rollbackPlan.strategy, source: 'machine' },
     ],
   });
 }
@@ -73,8 +78,8 @@ export function lintValidationDescription(validation: ValidationReport): Descrip
     kind: 'validation',
     id: validation.id,
     fields: [
-      ...validation.blockingReasons.map((value, index) => ({ name: `blockingReasons[${index}]`, value })),
-      ...validation.requiredTests.map((value, index) => ({ name: `requiredTests[${index}]`, value })),
+      ...validation.blockingReasons.map((value, index) => ({ name: `blockingReasons[${index}]`, value, source: 'machine' as const })),
+      ...validation.requiredTests.map((value, index) => ({ name: `requiredTests[${index}]`, value, source: 'machine' as const })),
     ],
   });
 }
@@ -84,15 +89,15 @@ export function lintApprovalRequestDescription(request: ApprovalRequestRecord): 
     kind: 'approval-request',
     id: request.id,
     fields: [
-      { name: 'title', value: request.title, blockerSensitive: true },
-      ...request.whyChange.map((value, index) => ({ name: `whyChange[${index}]`, value, blockerSensitive: true })),
-      ...request.howChange.map((value, index) => ({ name: `howChange[${index}]`, value, blockerSensitive: true })),
-      ...request.expectedBenefits.map((value, index) => ({ name: `expectedBenefits[${index}]`, value, blockerSensitive: true })),
-      ...request.scope.map((value, index) => ({ name: `scope[${index}]`, value })),
-      ...request.manualChecks.map((value, index) => ({ name: `manualChecks[${index}]`, value })),
-      ...request.regressionRisks.map((value, index) => ({ name: `regressionRisks[${index}]`, value, blockerSensitive: true })),
-      { name: 'rollbackPlan.strategy', value: request.rollbackPlan.strategy, blockerSensitive: true },
-      { name: 'reviewerInstruction', value: request.reviewerInstruction, blockerSensitive: true },
+      { name: 'title', value: request.title, source: 'machine', blockerSensitive: true },
+      ...request.whyChange.map((value, index) => ({ name: `whyChange[${index}]`, value, source: 'machine' as const, blockerSensitive: true })),
+      ...request.howChange.map((value, index) => ({ name: `howChange[${index}]`, value, source: 'machine' as const, blockerSensitive: true })),
+      ...request.expectedBenefits.map((value, index) => ({ name: `expectedBenefits[${index}]`, value, source: 'machine' as const, blockerSensitive: true })),
+      ...request.scope.map((value, index) => ({ name: `scope[${index}]`, value, source: 'machine' as const })),
+      ...request.manualChecks.map((value, index) => ({ name: `manualChecks[${index}]`, value, source: 'machine' as const })),
+      ...request.regressionRisks.map((value, index) => ({ name: `regressionRisks[${index}]`, value, source: 'machine' as const, blockerSensitive: true })),
+      { name: 'rollbackPlan.strategy', value: request.rollbackPlan.strategy, source: 'machine', blockerSensitive: true },
+      { name: 'reviewerInstruction', value: request.reviewerInstruction, source: 'machine', blockerSensitive: true },
     ],
   });
 }
@@ -102,8 +107,32 @@ export function lintApprovalDecisionDescription(decision: ApprovalDecisionRecord
     kind: 'approval-decision',
     id: decision.id,
     fields: [
-      ...(decision.direction ? [{ name: 'direction', value: decision.direction, blockerSensitive: true }] : []),
+      ...(decision.direction ? [{ name: 'direction', value: decision.direction, source: 'human' as const, blockerSensitive: true }] : []),
     ],
+  });
+}
+
+export function lintApprovalConversationDescription(conversation: {
+  id: string;
+  messages?: Array<{
+    role?: string;
+    author?: { type?: string };
+    content?: string;
+    text?: string;
+  }>;
+}): DescriptionLintReport {
+  return lintDescriptionTarget({
+    kind: 'approval-conversation',
+    id: conversation.id,
+    fields: (conversation.messages ?? []).flatMap((message, index) => {
+      const value = message.content ?? message.text ?? '';
+      if (!value) return [];
+      return [{
+        name: `messages[${index}].text`,
+        value,
+        source: isHumanConversationMessage(message) ? 'human' as const : 'machine' as const,
+      }];
+    }),
   });
 }
 
@@ -123,6 +152,7 @@ function lintDescriptionTarget(target: DescriptionLintTarget): DescriptionLintRe
           severity: severityFor(field, 'naked-term'),
           ruleId: 'naked-term',
           field: `${target.kind}.${field.name}`,
+          source: sourceFor(field),
           message: term.message,
           sample: truncateSample(text),
         });
@@ -134,6 +164,7 @@ function lintDescriptionTarget(target: DescriptionLintTarget): DescriptionLintRe
           severity: severityFor(field, 'sentence-length'),
           ruleId: 'sentence-length',
           field: `${target.kind}.${field.name}`,
+          source: sourceFor(field),
           message: '句子超过 35 个汉字或等价长度，请拆短。',
           sample: truncateSample(sentence),
         });
@@ -145,6 +176,7 @@ function lintDescriptionTarget(target: DescriptionLintTarget): DescriptionLintRe
           severity: severityFor(field, 'section-contamination'),
           ruleId: 'section-contamination',
           field: `${target.kind}.${field.name}`,
+          source: sourceFor(field),
           message: rule.message,
           sample: truncateSample(text),
         });
@@ -158,19 +190,30 @@ function severityFor(
   field: DescriptionLintTarget['fields'][number],
   ruleId: string,
 ): DescriptionLintIssue['severity'] {
+  if (sourceFor(field) === 'human') return 'info';
   return field.blockerSensitive || field.blockerRules?.includes(ruleId) ? 'blocker' : 'warning';
 }
 
+function sourceFor(field: DescriptionLintTarget['fields'][number]): DescriptionLintSource {
+  return field.source ?? 'mixed-or-unknown';
+}
+
 function buildReport(issues: DescriptionLintIssue[]): DescriptionLintReport {
+  const infoCount = issues.filter((issue) => issue.severity === 'info').length;
   const warningCount = issues.filter((issue) => issue.severity === 'warning').length;
   const blockerCount = issues.filter((issue) => issue.severity === 'blocker').length;
   return {
     status: blockerCount > 0 ? 'blocker' : warningCount > 0 ? 'warning' : 'pass',
     issueCount: issues.length,
+    infoCount,
     warningCount,
     blockerCount,
     issues,
   };
+}
+
+function isHumanConversationMessage(message: { role?: string; author?: { type?: string } }): boolean {
+  return message.role === 'user' || message.author?.type === 'human';
 }
 
 function readableSentences(text: string): string[] {

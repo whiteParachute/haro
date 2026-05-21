@@ -1,4 +1,5 @@
 export {
+  lintApprovalConversationDescription,
   lintApprovalDecisionDescription,
   lintApprovalRequestDescription,
   lintEvolutionProposalDescription,

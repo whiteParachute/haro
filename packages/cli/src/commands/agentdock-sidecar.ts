@@ -47,6 +47,7 @@ import {
 } from '../frontier-sources/index.js';
 import {
   lintApprovalDecisionDescription,
+  lintApprovalConversationDescription,
   lintApprovalRequestDescription,
   lintEvolutionProposalDescription,
   lintValidationDescription,
@@ -466,10 +467,11 @@ interface IntakeFrontierResult {
 }
 
 interface DescriptionLintArtifactResult {
-  kind: 'proposal' | 'validation' | 'approval-request' | 'approval-decision';
+  kind: 'proposal' | 'validation' | 'approval-request' | 'approval-decision' | 'approval-conversation';
   id: string;
   path: string;
   status: DescriptionLintReport['status'];
+  infoCount: number;
   warningCount: number;
   blockerCount: number;
   issueCount: number;
@@ -482,10 +484,12 @@ interface DescriptionLintResult {
   scannedArtifactCount: number;
   corruptArtifactCount: number;
   violationArtifactCount: number;
+  infoCount: number;
   warningCount: number;
   blockerCount: number;
   issueCount: number;
   ruleCounts: Record<string, number>;
+  sourceCounts: Record<string, number>;
   artifacts: DescriptionLintArtifactResult[];
 }
 
@@ -1153,12 +1157,14 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
         }
         app.stdout.write(
           [
-            `Description lint: ${result.issueCount === 0 ? 'pass' : 'needs-attention'}`,
+            `Description lint: ${result.warningCount + result.blockerCount === 0 ? 'pass' : 'needs-attention'}`,
             `Scanned: ${result.scannedArtifactCount}`,
             `Corrupt: ${result.corruptArtifactCount}`,
             `Artifacts with issues: ${result.violationArtifactCount}`,
+            `Info: ${result.infoCount}`,
             `Warnings: ${result.warningCount}`,
             `Blockers: ${result.blockerCount}`,
+            `Sources: ${JSON.stringify(result.sourceCounts)}`,
             `Fix dry-run: ${result.fixDryRun ? 'yes' : 'no'}`,
             ...result.artifacts.slice(0, 20).map((artifact) => (
               `- ${artifact.kind}/${artifact.id}: ${artifact.issueCount} issue(s), ${artifact.suggestions[0] ?? 'review text'}`
@@ -2497,6 +2503,7 @@ function emitFrontierSourceWarnings(app: AppContext, summaries: readonly Frontie
 export function lintDescriptions(app: AppContext, options: LintDescriptionsOptions): DescriptionLintResult {
   const artifacts: DescriptionLintArtifactResult[] = [];
   const ruleCounts: Record<string, number> = {};
+  const sourceCounts: Record<string, number> = {};
   let scannedArtifactCount = 0;
   let corruptArtifactCount = 0;
   const push = (
@@ -2508,17 +2515,23 @@ export function lintDescriptions(app: AppContext, options: LintDescriptionsOptio
     scannedArtifactCount += 1;
     for (const issue of report.issues) {
       ruleCounts[issue.ruleId] = (ruleCounts[issue.ruleId] ?? 0) + 1;
+      sourceCounts[issue.source] = (sourceCounts[issue.source] ?? 0) + 1;
     }
     if (report.issueCount === 0) return;
+    const suggestions = report.issues
+      .filter((issue) => issue.source !== 'human' && issue.severity !== 'info')
+      .slice(0, 3)
+      .map((issue) => `${issue.field}: ${issue.message}`);
     artifacts.push({
       kind,
       id,
       path,
       status: report.status,
+      infoCount: report.infoCount,
       warningCount: report.warningCount,
       blockerCount: report.blockerCount,
       issueCount: report.issueCount,
-      suggestions: report.issues.slice(0, 3).map((issue) => `${issue.field}: ${issue.message}`),
+      suggestions,
     });
   };
   const scanDir = <T>(
@@ -2552,21 +2565,87 @@ export function lintDescriptions(app: AppContext, options: LintDescriptionsOptio
   scanDir(approvalDecisionsDir(app.paths.root), 'approval-decision', (value) => ApprovalDecisionRecordSchema.parse(value), (decision, path) => {
     push('approval-decision', decision.id, path, lintApprovalDecisionDescription(decision));
   });
+  const corruptConversationCount = scanApprovalConversations(app.paths.root, (conversation, path) => {
+    push('approval-conversation', conversation.id, path, lintApprovalConversationDescription(conversation));
+  });
+  if (corruptConversationCount > 0) {
+    corruptArtifactCount += corruptConversationCount;
+    ruleCounts['corrupt-approval-conversation'] = (ruleCounts['corrupt-approval-conversation'] ?? 0) + corruptConversationCount;
+  }
 
+  const infoCount = artifacts.reduce((sum, artifact) => sum + artifact.infoCount, 0);
   const warningCount = artifacts.reduce((sum, artifact) => sum + artifact.warningCount, 0);
   const blockerCount = artifacts.reduce((sum, artifact) => sum + artifact.blockerCount, 0);
+  const violationArtifactCount = artifacts.filter((artifact) => artifact.warningCount > 0 || artifact.blockerCount > 0).length;
   return {
     command: 'lint descriptions',
     fixDryRun: options.fixDryRun === true,
     scannedArtifactCount,
     corruptArtifactCount,
-    violationArtifactCount: artifacts.length,
+    violationArtifactCount,
+    infoCount,
     warningCount,
     blockerCount,
-    issueCount: warningCount + blockerCount,
+    issueCount: infoCount + warningCount + blockerCount,
     ruleCounts,
+    sourceCounts,
     artifacts,
   };
+}
+
+interface ApprovalConversationLintRecord {
+  id: string;
+  messages: Array<{
+    role?: string;
+    author?: { type?: string };
+    content?: string;
+    text?: string;
+  }>;
+}
+
+function scanApprovalConversations(
+  root: string,
+  visit: (record: ApprovalConversationLintRecord, path: string) => void,
+): number {
+  const baseDir = approvalConversationsDir(root);
+  if (!existsSync(baseDir)) return 0;
+  let corruptCount = 0;
+  for (const requestDirName of readdirSync(baseDir).sort()) {
+    const requestDir = join(baseDir, requestDirName);
+    if (!lstatSync(requestDir).isDirectory()) continue;
+    for (const name of readdirSync(requestDir).sort()) {
+      if (!name.endsWith('.json')) continue;
+      const path = join(requestDir, name);
+      try {
+        const parsed = parseApprovalConversationLintRecord(JSON.parse(readFileSync(path, 'utf8')));
+        visit(parsed, path);
+      } catch {
+        corruptCount += 1;
+      }
+    }
+  }
+  return corruptCount;
+}
+
+function parseApprovalConversationLintRecord(value: unknown): ApprovalConversationLintRecord {
+  if (!isRecord(value) || typeof value.id !== 'string') {
+    throw new Error('invalid approval conversation');
+  }
+  const messages = Array.isArray(value.messages)
+    ? value.messages.flatMap((message): ApprovalConversationLintRecord['messages'] => {
+        if (!isRecord(message)) return [];
+        const author = isRecord(message.author) && typeof message.author.type === 'string'
+          ? { type: message.author.type }
+          : undefined;
+        return [{
+          ...(typeof message.role === 'string' ? { role: message.role } : {}),
+          ...(author ? { author } : {}),
+          ...(typeof message.content === 'string' ? { content: message.content } : {}),
+          ...(typeof message.text === 'string' ? { text: message.text } : {}),
+        }];
+      })
+    : [];
+  return { id: value.id, messages };
 }
 
 
@@ -3143,6 +3222,10 @@ function approvalRequestsDir(root: string): string {
 
 function approvalDecisionsDir(root: string): string {
   return join(root, 'evolution', 'approval-decisions');
+}
+
+function approvalConversationsDir(root: string): string {
+  return join(root, 'evolution', 'approval-conversations');
 }
 
 function blockedProposalEventsDir(root: string): string {

@@ -12,6 +12,9 @@ import {
   RollbackRecordSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
+  lintApprovalConversationDescription,
+  lintApprovalDecisionDescription,
+  lintEvolutionProposalDescription,
 } from '../src/index.js';
 
 const now = '2026-05-08T04:00:00.000Z';
@@ -224,6 +227,59 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
       approvalRef: undefined,
     });
     expect(missingDirection.success).toBe(false);
+  });
+
+  it('downgrades human approval decision text to info without blocker status', () => {
+    const report = lintApprovalDecisionDescription(ApprovalDecisionRecordSchema.parse({
+      id: 'approval-decision-human-long',
+      approvalRequestId: 'approval-request-001',
+      proposalId: 'proposal-001',
+      validationId: 'validation-001',
+      decision: 'request-changes',
+      direction: '新的提案我还是看不懂，什么是 Haro 运行出现错误且旧提案没有讲清楚要怎么处理。',
+      reviewer: { source: 'haro-web', username: 'reviewer', role: 'owner' },
+      sourceRef: { id: 'approval-request-001', kind: 'approval-request' },
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    expect(report.status).toBe('pass');
+    expect(report.infoCount).toBeGreaterThan(0);
+    expect(report.blockerCount).toBe(0);
+    expect(report.issues[0]).toMatchObject({ severity: 'info', source: 'human' });
+  });
+
+  it('downgrades human approval conversation text to info', () => {
+    const report = lintApprovalConversationDescription({
+      id: 'approval-conversation-001',
+      messages: [
+        {
+          role: 'user',
+          content: '新的提案我还是看不懂，什么是 Haro 运行出现错误且旧提案没有讲清楚要怎么处理。',
+        },
+      ],
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.infoCount).toBeGreaterThan(0);
+    expect(report.blockerCount).toBe(0);
+    expect(report.issues[0]).toMatchObject({ severity: 'info', source: 'human' });
+  });
+
+  it('keeps machine proposal text at warning severity', () => {
+    const report = lintEvolutionProposalDescription(EvolutionProposalSchema.parse({
+      ...validProposal,
+      title: '这是一条机器生成的非常长非常长非常长非常长非常长非常长非常长非常长的提案标题',
+      testPlan: {
+        ...validProposal.testPlan,
+        manualChecks: ['本次是否回应上次审批意见？ 意见：这是一段机器自动追加的非常长非常长非常长检查项。'],
+      },
+    }));
+
+    expect(report.status).toBe('warning');
+    expect(report.warningCount).toBeGreaterThan(0);
+    expect(report.blockerCount).toBe(0);
+    expect(report.issues.every((issue) => issue.source === 'machine')).toBe(true);
   });
 
   it('requires applied application records to set applied=true', () => {
