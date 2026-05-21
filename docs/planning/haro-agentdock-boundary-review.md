@@ -18,7 +18,7 @@
 4. scheduler / task 执行与任务注入；
 5. memory 运行会话、memory runner 选择与 memory API；
 6. workspace delegation 与短窗口重复委托去重；
-7. Haro approval 的 AgentDock 侧桥接通知与 decision 写入入口。
+7. Haro approval 的 AgentDock 侧 IM 通知桥与 decision 转发入口；注意这只是桥接，不代表 AgentDock 拥有 Haro approval artifact。
 
 ### 0.2 Haro 必须继续保留的能力
 
@@ -28,8 +28,9 @@
 2. application / snapshot / rollback / blocked-proposal-event contract；
 3. feedback / revision metadata 与后续 feedback-driven rewrite；
 4. MCP sidecar tools 的 observe / propose / validate / asset query / daily workflow / lint；
-5. Haro Web review board 与 approval conversation；
-6. L0/L1 gated apply / rollback 的 artifact 记录与 gate 检查。
+5. observation batch / frontier source intake / proposal-content 等生成 proposal 所需的 evidence contract；
+6. Haro Web review board 与 approval conversation；
+7. L0/L1 gated apply / rollback 的 artifact 记录与 gate 检查。
 
 ### 0.3 可以冻结或 deprecated，但不能马上物理删除的 Haro 残留
 
@@ -89,6 +90,7 @@
 2. **provider/channel/memory package 的发布面**：删除 package 前还要查 `pnpm-workspace.yaml`、package exports、dist、发布脚本、外部部署是否引用。
 3. **feedback/revision contract 仍不完整**：当前 `FeedbackContextSchema` 是基础，但还不能完整表达“修订自哪个 proposal、吸收/未吸收哪些意见、替代哪些旧 proposal”。删除与 feedback 相关的旧能力前，必须先补第 3 阶段。
 4. **L2/L3 workspace dispatch contract 未定义**：AgentDock 能派 workspace，但 Haro 到 AgentDock 的 patch/execution plan contract 还未落正式 schema；因此不能把 team/scenario 物理删除当作已经完成 L2/L3。
+5. **Web review board endpoint allowlist 未固化**：后续删除 Web/API 旧 dashboard 前，应列出 approval-request / conversation / decision / auto-apply lifecycle 必需 endpoint，避免误删 review board。
 
 ## 5. 10B 对后续路线的约束
 
@@ -98,6 +100,7 @@
 2. legacy CLI warning/hidden：继续保持 JSON 不污染；
 3. public export unlink：先从 `scenario-router` / `team-orchestrator` 这类单文件模块做只读影响面；
 4. package dependency unlink：provider/channel/skills/memory package 删除前必须先清依赖。
+5. workspace/package publish surface：删除 package 前必须同步清 `pnpm-workspace.yaml`、package `main`/`exports`、dist 暴露面和发布脚本引用。
 
 ### 5.2 不能推进的减法
 
@@ -193,3 +196,21 @@ Otherway 额外确认以下能力也是 keep 范围：
 5. 移除 CLI 对 provider/channel/agent/runtime/memory/skills/router/budget 的默认构造；
 6. 再评审单文件删除，优先 `team-orchestrator.ts`、`scenario-router.ts`；
 7. 最后才考虑 provider/channel/memory/runtime package 物理删除。
+
+第 7.4 节是 6.4 删除候选评审的细化执行序；删除 PR 以 `docs/planning/haro-legacy-remove-candidate-review.md` 的候选边界为上游依据，以本文第 7.4 的 blocker 顺序为执行检查清单。
+
+
+### 7.5 Claudeway 异构复核补充（2026-05-21）
+
+> 来源：`wdeleg_mpfhkqav_ucaadd`，Claudeway/Opus 异构只读复核。
+> 结论：通过，可合，无需补改；未修改文件、未动真实 `~/.haro/`、未 approve/apply/rollback、未重启、未 push。
+
+Claudeway 逐条 spot-check 了约 20 个 AgentDock / Haro file:line 引用，确认本文三类划分与当前 HEAD 代码实情吻合，未发现虚构引用、缺证据或过度推断。
+
+复核补充的 P2 已吸收如下：
+
+1. 在 must-keep 中显式列入 observation batch / frontier source intake / proposal-content evidence contract；
+2. 在删除前置条件中补入 `pnpm-workspace.yaml`、package `main`/`exports`、dist 暴露面和发布脚本；
+3. 将 AgentDock approval bridge 表述明确为“IM 通知桥与 decision 转发入口”，不是 Haro artifact owner；
+4. 在 unknown 中补入 Web review board endpoint allowlist；
+5. 明确本文第 7.4 与 `haro-legacy-remove-candidate-review.md` 的关系。
