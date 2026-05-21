@@ -548,6 +548,58 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(reasons).toContain('UNRESOLVED_FEEDBACK');
   });
 
+  it('allows a substantive revised proposal without feedback revision blockers', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，并补充具体证据。');
+    const revised = seedPendingRevision(root, source, {
+      changeSet: [{
+        op: 'update',
+        targetRef,
+        contentHash: 'sha256:substantive-revision',
+        summary: '只新增 ModelHub timeout 的具体处理规则。',
+      }],
+      revisionMetadata: revisionMetadata(1, {
+        revisionId: 'revision_substantive_happy_path',
+        rootProposalId: source.proposalId,
+        revisionOfProposalId: source.proposalId,
+        sourceApprovalRequestId: source.approvalRequestId,
+        sourceDecisionId: source.decisionId,
+        sourceDecisionDirection: '请收窄范围，并补充具体证据。',
+        supersedesProposalIds: [source.proposalId],
+        incorporatedFeedback: [{
+          id: 'requirement_scope',
+          category: 'scope-reduction',
+          disposition: 'incorporated',
+          userText: '请收窄范围。',
+          normalizedRequirement: '只针对 ModelHub timeout。',
+          proposalChangeRefs: [{ kind: 'change-set', id: '0' }],
+          evidenceRefs: [],
+          explanation: '修订 changeSet 已收窄为一条具体规则。',
+        }],
+        unresolvedFeedback: [],
+        noOpCheck: {
+          verdict: 'substantive-change',
+          priorProposalContentHashes: [`sha256:${source.proposalId}`],
+          revisedProposalContentHashes: ['sha256:substantive-revision'],
+          priorSemanticFingerprint: 'prior-semantic',
+          revisedSemanticFingerprint: 'revised-semantic',
+          revisionDepth: 1,
+          changedFields: ['changeSet', 'testPlan', 'rollbackPlan'],
+          reason: '修订包含实质 changeSet 和测试计划变化。',
+        },
+      }),
+    });
+
+    const { result, stdout } = runWithCapturedOutput(root, ['validate', '--pending', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{ validations: Array<{ proposalId: string; blockingReasons: string[] }> }>(stdout);
+    const validationReport = payload.validations.find((item) => item.proposalId === revised.proposalId);
+    expect(validationReport).toBeDefined();
+    const reasons = validationReport?.blockingReasons.join('\n') ?? '';
+    expect(reasons).not.toMatch(/REVISION_|FEEDBACK_|UNRESOLVED_FEEDBACK|STALE_FEEDBACK_DECISION/);
+  });
+
   it('keeps JSON output shape stable for dry-run plans', async () => {
     const root = tempRoot();
     const { decisionId } = seedDecision(root, '请收窄范围。');

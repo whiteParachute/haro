@@ -25,10 +25,13 @@ import {
   type ApprovalDecisionRecord,
   type ApprovalDecisionOption,
   type ApprovalRequestRecord,
+  type FeedbackRequirementResolution,
   type ApplicationRecord,
   type AssetEvent,
   type AssetSnapshotRecord,
   type EvolutionProposal,
+  type ProposalRevisionMetadata,
+  type RevisionNoOpCheck,
   type RollbackRecord,
 } from '@haro/agentdock-contract';
 import { readWebAuth, requireWebPermission } from '../auth.js';
@@ -72,9 +75,54 @@ interface ApprovalRequestView {
   request: ApprovalRequestRecord;
   latestDecision?: ApprovalDecisionRecord;
   lifecycle: ApprovalRequestLifecycle;
+  revision: ApprovalRequestRevisionView;
 }
 
 type ApprovalLifecycleStatus = 'undecided' | 'approved' | 'rejected' | 'applied' | 'rolled-back';
+
+type ApprovalRequestRevisionLabel = 'original' | 'revision' | 'superseded-source';
+
+interface ApprovalRequestRevisionFeedbackItem {
+  id: string;
+  category: string;
+  disposition: string;
+  userText: string;
+  normalizedRequirement: string;
+  explanation: string;
+}
+
+interface ApprovalRequestRevisionView {
+  isRevision: boolean;
+  label: ApprovalRequestRevisionLabel;
+  rootProposalId?: string;
+  revisionOfProposalId?: string;
+  revisionDepth?: number;
+  sourceApprovalRequestId?: string;
+  sourceDecisionId?: string;
+  sourceDecisionDirection?: string;
+  sourceConversationRefs: string[];
+  resubmissionReason?: string;
+  incorporatedFeedback: ApprovalRequestRevisionFeedbackItem[];
+  unresolvedFeedback: ApprovalRequestRevisionFeedbackItem[];
+  supersedesProposalIds: string[];
+  supersedesBlockedEventIds: string[];
+  noOpCheck?: {
+    verdict: RevisionNoOpCheck['verdict'];
+    changedFields: string[];
+    reason: string;
+    priorProposalContentHashes: string[];
+    revisedProposalContentHashes: string[];
+    priorSemanticFingerprint?: string;
+    revisedSemanticFingerprint?: string;
+    revisionDepth: number;
+  };
+  supersededBy?: {
+    proposalId: string;
+    approvalRequestId?: string;
+    revisionDepth?: number;
+    sourceDecisionId?: string;
+  };
+}
 
 interface ApprovalRequestLifecycle {
   status: ApprovalLifecycleStatus;
@@ -616,10 +664,12 @@ function buildApprovalRequestView(
   request: ApprovalRequestRecord,
   latestDecision?: ApprovalDecisionRecord,
 ): ApprovalRequestView {
+  const proposal = readProposal(root, request.proposalId);
   return {
     request,
     ...(latestDecision ? { latestDecision } : {}),
     lifecycle: buildApprovalLifecycle(root, request, latestDecision),
+    revision: buildApprovalRevisionView(root, proposal),
   };
 }
 
@@ -713,6 +763,118 @@ function buildApprovalLifecycle(
     ...(proposal ? { proposalContent: summarizeProposalContent(proposal) } : {}),
   };
   return lifecycle;
+}
+
+function buildApprovalRevisionView(
+  root: string,
+  proposal: EvolutionProposal | null,
+): ApprovalRequestRevisionView {
+  const metadata = proposal?.revisionMetadata;
+  if (metadata) return summarizeRevisionMetadata(metadata);
+
+  const superseding = proposal ? findSupersedingRevision(root, proposal.id) : null;
+  if (superseding) {
+    return {
+      ...emptyRevisionView('superseded-source'),
+      supersededBy: {
+        proposalId: superseding.proposal.id,
+        ...(superseding.approvalRequest ? { approvalRequestId: superseding.approvalRequest.id } : {}),
+        ...(typeof superseding.proposal.revisionMetadata?.revisionDepth === 'number'
+          ? { revisionDepth: superseding.proposal.revisionMetadata.revisionDepth }
+          : {}),
+        ...(superseding.proposal.revisionMetadata?.sourceDecisionId
+          ? { sourceDecisionId: superseding.proposal.revisionMetadata.sourceDecisionId }
+          : {}),
+      },
+    };
+  }
+
+  return emptyRevisionView('original');
+}
+
+function emptyRevisionView(label: ApprovalRequestRevisionLabel): ApprovalRequestRevisionView {
+  return {
+    isRevision: false,
+    label,
+    sourceConversationRefs: [],
+    incorporatedFeedback: [],
+    unresolvedFeedback: [],
+    supersedesProposalIds: [],
+    supersedesBlockedEventIds: [],
+  };
+}
+
+function summarizeRevisionMetadata(metadata: ProposalRevisionMetadata): ApprovalRequestRevisionView {
+  return {
+    isRevision: true,
+    label: 'revision',
+    rootProposalId: metadata.rootProposalId,
+    revisionOfProposalId: metadata.revisionOfProposalId,
+    revisionDepth: metadata.revisionDepth,
+    sourceApprovalRequestId: metadata.sourceApprovalRequestId,
+    sourceDecisionId: metadata.sourceDecisionId,
+    sourceDecisionDirection: metadata.sourceDecisionDirection,
+    sourceConversationRefs: metadata.sourceConversationRefs,
+    resubmissionReason: metadata.resubmissionReason,
+    incorporatedFeedback: metadata.incorporatedFeedback.map(summarizeFeedbackRequirement),
+    unresolvedFeedback: metadata.unresolvedFeedback.map(summarizeFeedbackRequirement),
+    supersedesProposalIds: metadata.supersedesProposalIds,
+    supersedesBlockedEventIds: metadata.supersedesBlockedEventIds,
+    noOpCheck: {
+      verdict: metadata.noOpCheck.verdict,
+      changedFields: metadata.noOpCheck.changedFields,
+      reason: metadata.noOpCheck.reason,
+      priorProposalContentHashes: metadata.noOpCheck.priorProposalContentHashes,
+      revisedProposalContentHashes: metadata.noOpCheck.revisedProposalContentHashes,
+      ...(metadata.noOpCheck.priorSemanticFingerprint
+        ? { priorSemanticFingerprint: metadata.noOpCheck.priorSemanticFingerprint }
+        : {}),
+      ...(metadata.noOpCheck.revisedSemanticFingerprint
+        ? { revisedSemanticFingerprint: metadata.noOpCheck.revisedSemanticFingerprint }
+        : {}),
+      revisionDepth: metadata.noOpCheck.revisionDepth,
+    },
+  };
+}
+
+function summarizeFeedbackRequirement(requirement: FeedbackRequirementResolution): ApprovalRequestRevisionFeedbackItem {
+  return {
+    id: requirement.id,
+    category: requirement.category,
+    disposition: requirement.disposition,
+    userText: requirement.userText,
+    normalizedRequirement: requirement.normalizedRequirement,
+    explanation: requirement.explanation,
+  };
+}
+
+function findSupersedingRevision(
+  root: string,
+  proposalId: string,
+): { proposal: EvolutionProposal; approvalRequest?: ApprovalRequestRecord } | null {
+  const revisions = listJsonRecords<EvolutionProposal>(proposalsDir(root), EvolutionProposalSchema)
+    .filter((proposal) => {
+      const metadata = proposal.revisionMetadata;
+      if (!metadata) return false;
+      return metadata.revisionOfProposalId === proposalId || metadata.supersedesProposalIds.includes(proposalId);
+    })
+    .sort((a, b) => {
+      const leftDepth = a.revisionMetadata?.revisionDepth ?? 0;
+      const rightDepth = b.revisionMetadata?.revisionDepth ?? 0;
+      if (leftDepth !== rightDepth) return rightDepth - leftDepth;
+      return compareIsoDateTime(b.updatedAt, a.updatedAt) || b.id.localeCompare(a.id);
+    });
+  const proposal = revisions[0];
+  if (!proposal) return null;
+  const approvalRequest = latestApprovalRequestForProposal(root, proposal.id);
+  return { proposal, ...(approvalRequest ? { approvalRequest } : {}) };
+}
+
+function latestApprovalRequestForProposal(root: string, proposalId: string): ApprovalRequestRecord | null {
+  return latestByUpdatedAt(
+    listJsonRecords<ApprovalRequestRecord>(approvalRequestsDir(root), ApprovalRequestRecordSchema)
+      .filter((request) => request.proposalId === proposalId),
+  );
 }
 
 function deriveLifecycleStatus(

@@ -522,6 +522,8 @@ L2/L3 不能由 Haro 直接改代码。
 - 第一版 parser 覆盖安全最小子集。
 - 输出 can-rewrite/manual-check/blocked/needs-more-info。
 - 不写 proposal、feedback-revision 或 approval-request。
+- Path A dry-run 里的 prior/revised hashes 只是规划占位。
+- 它们不代表已经生成 revised proposal。
 - FEAT-076C 负责 no-op gate 与 validation blockers。
 
 ### FEAT-076C：anti no-op rewrite gate
@@ -559,6 +561,14 @@ L2/L3 不能由 Haro 直接改代码。
 - 用户能看到“上次意见 / 本次修改 / 未解决项”。
 - 新 approval-request 不会和旧 request 混淆。
 - 用户仍只能 approve / reject / request-changes，不自动 approve。
+
+落地记录（2026-05-21）：
+
+- Web API 返回只读 `revision` 视图。
+- revision 视图包含 root、parent、source decision。
+- review board 展示上次意见、本次修改、未解决项。
+- 被修订替代的旧请求会显示替代标签。
+- 本阶段不生成 revised proposal。
 
 ## 10. 测试计划
 

@@ -326,6 +326,7 @@ function ApprovalRequestCard({
                 {riskLevelLabel[request.riskLevel] ?? request.riskLevel}
               </span>
               <LifecycleBadge status={status} />
+              <RevisionBadge view={view} />
             </div>
             <h3 className="max-w-5xl break-words text-2xl font-black leading-tight tracking-[-0.045em] text-slate-950 [overflow-wrap:anywhere] dark:text-white">
               {request.title}
@@ -376,6 +377,8 @@ function ApprovalRequestCard({
               <InfoBlock label="回滚方案" text={`${request.rollbackPlan.strategy}。需要快照：${request.rollbackPlan.snapshotRequired ? '是' : '否'}。`} />
               {view.latestDecision?.direction ? <InfoBlock label="修改方向" text={view.latestDecision.direction} /> : null}
             </div>
+
+            <RevisionPanel view={view} />
 
             <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
               <ReferencePanel view={view} />
@@ -652,6 +655,99 @@ function ConversationBubble({ message }: { message: ApprovalConversationMessage 
           {message.content || '…'}
         </div>
       </article>
+    </div>
+  );
+}
+
+function RevisionBadge({ view }: { view: ApprovalRequestView }) {
+  const revision = view.revision;
+  if (revision.isRevision) return <Badge>{`修订 #${revision.revisionDepth ?? 0}`}</Badge>;
+  if (revision.label === 'superseded-source') return <Badge>已被修订替代</Badge>;
+  return null;
+}
+
+function RevisionPanel({ view }: { view: ApprovalRequestView }) {
+  const revision = view.revision;
+  if (!revision.isRevision && revision.label !== 'superseded-source') return null;
+
+  if (revision.label === 'superseded-source') {
+    return (
+      <section className="min-w-0 rounded-[1.35rem] border border-amber-300/40 bg-amber-50/70 p-4 text-sm dark:border-amber-300/20 dark:bg-amber-400/10">
+        <p className="text-xs font-bold uppercase tracking-[0.24em] text-amber-700 dark:text-amber-200">Revision chain</p>
+        <h4 className="mt-1 text-lg font-black tracking-[-0.03em]">这条旧提案已被修订替代</h4>
+        <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+          {revision.supersededBy?.proposalId ? <CodePill label="新提案" value={revision.supersededBy.proposalId} /> : null}
+          {revision.supersededBy?.approvalRequestId ? <CodePill label="新审批" value={revision.supersededBy.approvalRequestId} /> : null}
+          {revision.supersededBy?.sourceDecisionId ? <CodePill label="来源意见" value={revision.supersededBy.sourceDecisionId} /> : null}
+        </div>
+        <p className="mt-3 break-words leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+          请优先审阅新的修订提案。旧提案只保留审计链路，避免和新请求混淆。
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="min-w-0 rounded-[1.35rem] border border-cyan-300/40 bg-cyan-50/70 p-4 text-sm dark:border-cyan-300/20 dark:bg-cyan-400/10">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-cyan-700 dark:text-cyan-200">Feedback revision</p>
+          <h4 className="mt-1 text-lg font-black tracking-[-0.03em]">根据上次意见提交的修订</h4>
+        </div>
+        <div className="flex min-w-0 flex-wrap gap-2">
+          {revision.rootProposalId ? <CodePill label="根提案" value={revision.rootProposalId} /> : null}
+          {revision.revisionOfProposalId ? <CodePill label="父提案" value={revision.revisionOfProposalId} /> : null}
+          {typeof revision.revisionDepth === 'number' ? <CodePill label="深度" value={String(revision.revisionDepth)} /> : null}
+        </div>
+      </div>
+      <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-2">
+        {revision.sourceDecisionDirection ? <InfoBlock label="上次审批意见" text={revision.sourceDecisionDirection} /> : null}
+        {revision.resubmissionReason ? <InfoBlock label="本次修改说明" text={revision.resubmissionReason} /> : null}
+        {revision.sourceDecisionId ? <InfoBlock label="来源决策" text={revision.sourceDecisionId} /> : null}
+        {revision.noOpCheck ? <InfoBlock label="no-op 检查" text={`${revision.noOpCheck.verdict}：${revision.noOpCheck.reason}`} /> : null}
+      </div>
+      <RevisionFeedbackList title="已吸收的意见" items={revision.incorporatedFeedback} empty="没有记录已吸收项" />
+      <RevisionFeedbackList title="未解决的意见" items={revision.unresolvedFeedback} empty="没有未解决项" />
+      {revision.sourceConversationRefs.length ? (
+        <div className="mt-4 min-w-0">
+          <p className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">对话引用</p>
+          <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+            {revision.sourceConversationRefs.map((ref) => <CodePill key={ref} label="conversation" value={ref} />)}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RevisionFeedbackList({
+  title,
+  items,
+  empty,
+}: {
+  title: string;
+  items: ApprovalRequestView['revision']['incorporatedFeedback'];
+  empty: string;
+}) {
+  return (
+    <div className="mt-4 min-w-0">
+      <p className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">{title}</p>
+      {items.length ? (
+        <ul className="mt-2 space-y-2 text-sm leading-6 text-muted-foreground">
+          {items.map((item) => (
+            <li key={item.id} className="min-w-0 rounded-2xl border border-slate-950/10 bg-white/65 p-3 dark:border-white/10 dark:bg-slate-950/45">
+              <div className="flex flex-wrap gap-2">
+                <Badge>{item.category}</Badge>
+                <Badge>{item.disposition}</Badge>
+              </div>
+              <p className="mt-2 break-words font-medium text-foreground [overflow-wrap:anywhere]">{item.normalizedRequirement}</p>
+              <p className="mt-1 break-words [overflow-wrap:anywhere]">{item.explanation}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-muted-foreground">{empty}</p>
+      )}
     </div>
   );
 }

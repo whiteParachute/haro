@@ -144,10 +144,57 @@ export interface ApprovalRequestLifecycle {
   };
 }
 
+
+
+export type ApprovalRequestRevisionLabel = 'original' | 'revision' | 'superseded-source';
+
+export interface ApprovalRequestRevisionFeedbackItem {
+  id: string;
+  category: string;
+  disposition: string;
+  userText: string;
+  normalizedRequirement: string;
+  explanation: string;
+}
+
+export interface ApprovalRequestRevisionView {
+  isRevision: boolean;
+  label: ApprovalRequestRevisionLabel;
+  rootProposalId?: string;
+  revisionOfProposalId?: string;
+  revisionDepth?: number;
+  sourceApprovalRequestId?: string;
+  sourceDecisionId?: string;
+  sourceDecisionDirection?: string;
+  sourceConversationRefs: string[];
+  resubmissionReason?: string;
+  incorporatedFeedback: ApprovalRequestRevisionFeedbackItem[];
+  unresolvedFeedback: ApprovalRequestRevisionFeedbackItem[];
+  supersedesProposalIds: string[];
+  supersedesBlockedEventIds: string[];
+  noOpCheck?: {
+    verdict: string;
+    changedFields: string[];
+    reason: string;
+    priorProposalContentHashes: string[];
+    revisedProposalContentHashes: string[];
+    priorSemanticFingerprint?: string;
+    revisedSemanticFingerprint?: string;
+    revisionDepth: number;
+  };
+  supersededBy?: {
+    proposalId: string;
+    approvalRequestId?: string;
+    revisionDepth?: number;
+    sourceDecisionId?: string;
+  };
+}
+
 export interface ApprovalRequestView {
   request: ApprovalRequestRecord;
   latestDecision?: ApprovalDecisionRecord;
   lifecycle: ApprovalRequestLifecycle;
+  revision: ApprovalRequestRevisionView;
 }
 
 export interface ApprovalConversationMessage {

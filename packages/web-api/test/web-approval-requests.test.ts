@@ -44,6 +44,52 @@ describe('approval request review API', () => {
     expect(detailBody.data.request.title).toBe('Review proposal smoke');
   });
 
+  it('exposes feedback revision context and labels superseded source requests', async () => {
+    writeRevisionFixture(root);
+    const app = createWebApp({ logger, runtime: { root } });
+
+    const revision = await app.request('/api/v1/approval-requests/approval_request_revision');
+    expect(revision.status).toBe(200);
+    const revisionBody = await revision.json();
+    expect(revisionBody.data.revision).toMatchObject({
+      isRevision: true,
+      label: 'revision',
+      rootProposalId: 'proposal_source_revision',
+      revisionOfProposalId: 'proposal_source_revision',
+      revisionDepth: 1,
+      sourceApprovalRequestId: 'approval_request_source_revision',
+      sourceDecisionId: 'approval_decision_source_revision',
+      sourceDecisionDirection: '请补充具体错误证据，并收窄范围。',
+      resubmissionReason: '根据上次意见，只补一条具体错误处理规则。',
+    });
+    expect(revisionBody.data.revision.incorporatedFeedback[0]).toMatchObject({
+      category: 'evidence-required',
+      disposition: 'incorporated',
+      normalizedRequirement: '补充具体错误样本。',
+    });
+    expect(revisionBody.data.revision.unresolvedFeedback[0]).toMatchObject({
+      category: 'risk-rollback-change',
+      disposition: 'needs-human',
+    });
+    expect(revisionBody.data.revision.sourceConversationRefs).toEqual([
+      'haro-sidecar://approval-conversations/approval_request_source_revision/conversation_1',
+    ]);
+
+    const source = await app.request('/api/v1/approval-requests/approval_request_source_revision');
+    expect(source.status).toBe(200);
+    const sourceBody = await source.json();
+    expect(sourceBody.data.revision).toMatchObject({
+      isRevision: false,
+      label: 'superseded-source',
+      supersededBy: {
+        proposalId: 'proposal_revised_revision',
+        approvalRequestId: 'approval_request_revision',
+        revisionDepth: 1,
+        sourceDecisionId: 'approval_decision_source_revision',
+      },
+    });
+  });
+
   it('records an approval once and appends the human approval ref to the proposal', async () => {
     const app = createWebApp({ logger, runtime: { root } });
 
@@ -305,6 +351,194 @@ function writeFixture(haroHome: string): void {
       evidenceRefs: [],
       createdAt: '2026-05-13T00:00:00.000Z',
       updatedAt: '2026-05-13T00:00:00.000Z',
+    }, null, 2)}\n`,
+    'utf8',
+  );
+}
+
+function writeRevisionFixture(haroHome: string): void {
+  const proposalDir = path.join(haroHome, 'evolution/proposals');
+  const requestDir = path.join(haroHome, 'evolution/approval-requests');
+  const decisionDir = path.join(haroHome, 'evolution/approval-decisions');
+  mkdirSync(proposalDir, { recursive: true });
+  mkdirSync(requestDir, { recursive: true });
+  mkdirSync(decisionDir, { recursive: true });
+
+  const baseProposal = {
+    title: '修订运行错误处理提案',
+    level: 'L1',
+    targetKind: 'runner-profile',
+    riskLevel: 'medium',
+    sourceObservationRefs: [{ id: 'obs_revision', kind: 'observation-batch' }],
+    changeSet: [
+      {
+        op: 'update',
+        targetRef: { id: 'haro-sidecar:runner-profile:error-recovery-policy', kind: 'runner-profile' },
+        contentHash: 'sha256:source-revision',
+        summary: '补充 ModelHub timeout 处理规则。',
+      },
+    ],
+    testPlan: {
+      requiredCommands: ['pnpm test'],
+      manualChecks: ['核对修订链路。'],
+      regressionRisks: ['修订信息可能展示不清。'],
+    },
+    rollbackPlan: {
+      strategy: '删除新增规则即可回滚。',
+      snapshotRequired: false,
+      rollbackRefs: [],
+    },
+    humanReviewRequired: true,
+    humanApprovalRefs: [],
+    createdAt: '2026-05-21T10:00:00.000Z',
+    updatedAt: '2026-05-21T10:00:00.000Z',
+  };
+
+  writeFileSync(
+    path.join(proposalDir, 'proposal_source_revision.json'),
+    `${JSON.stringify({
+      ...baseProposal,
+      id: 'proposal_source_revision',
+      status: 'superseded',
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(requestDir, 'approval_request_source_revision.json'),
+    `${JSON.stringify({
+      id: 'approval_request_source_revision',
+      proposalId: 'proposal_source_revision',
+      validationId: 'validation_source_revision',
+      status: 'pending',
+      title: '修订运行错误处理提案',
+      level: 'L1',
+      targetKind: 'runner-profile',
+      riskLevel: 'medium',
+      sourceRef: { id: 'proposal_source_revision', kind: 'evolution-proposal' },
+      validationRef: { id: 'validation_source_revision', kind: 'validation-report' },
+      whyChange: ['旧提案缺少具体错误证据。'],
+      howChange: ['要求 Haro 收窄为一条具体规则。'],
+      expectedBenefits: ['减少重复而空泛的审批请求。'],
+      requiredTests: ['pnpm test'],
+      manualChecks: ['核对旧请求被新修订替代。'],
+      regressionRisks: ['旧请求和新请求可能混淆。'],
+      rollbackPlan: { strategy: '不应用即可回退。', snapshotRequired: false, rollbackRefs: [] },
+      decisionOptions: ['approve', 'reject', 'request-changes'],
+      reviewerInstruction: '请等待修订提案。',
+      humanReviewRequired: true,
+      evidenceRefs: [],
+      createdAt: '2026-05-21T10:01:00.000Z',
+      updatedAt: '2026-05-21T10:01:00.000Z',
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(decisionDir, 'approval_decision_source_revision.json'),
+    `${JSON.stringify({
+      id: 'approval_decision_source_revision',
+      approvalRequestId: 'approval_request_source_revision',
+      proposalId: 'proposal_source_revision',
+      validationId: 'validation_source_revision',
+      decision: 'request-changes',
+      direction: '请补充具体错误证据，并收窄范围。',
+      reviewer: { source: 'test', role: 'owner' },
+      sourceRef: { id: 'approval_request_source_revision', kind: 'approval-request' },
+      createdAt: '2026-05-21T10:02:00.000Z',
+      updatedAt: '2026-05-21T10:02:00.000Z',
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(proposalDir, 'proposal_revised_revision.json'),
+    `${JSON.stringify({
+      ...baseProposal,
+      id: 'proposal_revised_revision',
+      status: 'validated',
+      changeSet: [
+        {
+          op: 'update',
+          targetRef: { id: 'haro-sidecar:runner-profile:error-recovery-policy', kind: 'runner-profile' },
+          contentHash: 'sha256:revised-revision',
+          summary: '只补 ModelHub timeout 的证据规则。',
+        },
+      ],
+      revisionMetadata: {
+        revisionId: 'revision_api_smoke',
+        rootProposalId: 'proposal_source_revision',
+        revisionOfProposalId: 'proposal_source_revision',
+        revisionDepth: 1,
+        sourceApprovalRequestId: 'approval_request_source_revision',
+        sourceDecisionId: 'approval_decision_source_revision',
+        sourceDecisionDirection: '请补充具体错误证据，并收窄范围。',
+        sourceConversationRefs: ['haro-sidecar://approval-conversations/approval_request_source_revision/conversation_1'],
+        supersedesProposalIds: ['proposal_source_revision'],
+        supersedesBlockedEventIds: [],
+        resubmissionReason: '根据上次意见，只补一条具体错误处理规则。',
+        incorporatedFeedback: [
+          {
+            id: 'req_evidence',
+            category: 'evidence-required',
+            disposition: 'incorporated',
+            userText: '请补充具体错误证据。',
+            normalizedRequirement: '补充具体错误样本。',
+            proposalChangeRefs: [],
+            evidenceRefs: [],
+            explanation: '修订说明会展示错误样本来源。',
+          },
+        ],
+        unresolvedFeedback: [
+          {
+            id: 'req_risk',
+            category: 'risk-rollback-change',
+            disposition: 'needs-human',
+            userText: '风险还要人工判断。',
+            normalizedRequirement: '人工确认风险可接受。',
+            proposalChangeRefs: [],
+            evidenceRefs: [],
+            explanation: '本轮只做展示，不替用户确认风险。',
+          },
+        ],
+        noOpCheck: {
+          verdict: 'substantive-change',
+          priorProposalContentHashes: ['sha256:source-revision'],
+          revisedProposalContentHashes: ['sha256:revised-revision'],
+          revisionDepth: 1,
+          changedFields: ['changeSet'],
+          reason: '内容指纹变化，且收窄为具体规则。',
+        },
+        createdAt: '2026-05-21T10:03:00.000Z',
+        updatedAt: '2026-05-21T10:03:00.000Z',
+      },
+      updatedAt: '2026-05-21T10:03:00.000Z',
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(requestDir, 'approval_request_revision.json'),
+    `${JSON.stringify({
+      id: 'approval_request_revision',
+      proposalId: 'proposal_revised_revision',
+      validationId: 'validation_revised_revision',
+      status: 'pending',
+      title: '修订运行错误处理提案',
+      level: 'L1',
+      targetKind: 'runner-profile',
+      riskLevel: 'medium',
+      sourceRef: { id: 'proposal_revised_revision', kind: 'evolution-proposal' },
+      validationRef: { id: 'validation_revised_revision', kind: 'validation-report' },
+      whyChange: ['这是按上次意见提交的修订。'],
+      howChange: ['展示已吸收和未解决的反馈。'],
+      expectedBenefits: ['审批人能看清修订链路。'],
+      requiredTests: ['pnpm test'],
+      manualChecks: ['核对 revision metadata。'],
+      regressionRisks: ['修订链路展示可能不完整。'],
+      rollbackPlan: { strategy: '不应用即可回退。', snapshotRequired: false, rollbackRefs: [] },
+      decisionOptions: ['approve', 'reject', 'request-changes'],
+      reviewerInstruction: '先核对上次意见是否被回应。',
+      humanReviewRequired: true,
+      evidenceRefs: [],
+      createdAt: '2026-05-21T10:04:00.000Z',
+      updatedAt: '2026-05-21T10:04:00.000Z',
     }, null, 2)}\n`,
     'utf8',
   );
