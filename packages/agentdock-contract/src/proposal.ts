@@ -49,6 +49,7 @@ export const EvolutionProposalSchema = z.object({
   humanReviewRequired: z.boolean().default(true),
   humanApprovalRefs: z.array(RefSchema).default([]),
   descriptionLint: DescriptionLintReportSchema.optional(),
+  feedbackSemanticFingerprint: NonEmptyStringSchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });

@@ -418,7 +418,13 @@ function rewriteExecutableProposalContent(root: string, proposalId: string, mark
   writeFileSync(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`);
 }
 
-function writeRunnerErrorObservation(root: string, batchId: string, message: string): void {
+function writeRunnerErrorObservation(
+  root: string,
+  batchId: string,
+  message: string,
+  code = 'AGENTDOCK_TURN_TIMEOUT',
+  detailsRef = 'agentdock://sessions/session-runner-error/turns/turn-123',
+): void {
   const observationDir = join(root, 'evolution', 'observations');
   mkdirSync(observationDir, { recursive: true });
   writeFileSync(join(observationDir, `${batchId}.json`), `${JSON.stringify({
@@ -437,17 +443,54 @@ function writeRunnerErrorObservation(root: string, batchId: string, message: str
         id: `${batchId}-runner-error`,
         sessionId: `${batchId}-session`,
         runnerId: 'codex',
-        code: 'AGENTDOCK_TURN_TIMEOUT',
+        code,
         message,
         recoverable: true,
         occurredAt: '2026-05-08T11:58:20.000Z',
-        detailsRef: `agentdock://sessions/${batchId}/turns/turn-123`,
+        detailsRef,
       },
     ],
     usageRecords: [],
     rawRefs: ['http://agentdock.local/api/status'],
     metadata: {},
   }, null, 2)}\n`);
+}
+
+function writeProposalDecisionRecord(
+  root: string,
+  proposalId: string,
+  decision: ApprovalDecisionRecord['decision'],
+  options: { direction?: string; createdAt?: string } = {},
+): void {
+  writeApprovalDecisionRecord(root, {
+    id: `approval_decision_${proposalId}_${decision.replace('-', '_')}`,
+    approvalRequestId: `approval_request_${proposalId}`,
+    proposalId,
+    validationId: `validation_${proposalId}`,
+    decision,
+    ...(options.direction ? { direction: options.direction } : {}),
+    reviewer: { source: 'haro-web', username: 'fixture', role: 'owner' },
+    sourceRef: { id: `approval_request_${proposalId}`, kind: 'approval-request' },
+    ...(decision === 'approve'
+      ? {
+          approvalRef: {
+            id: `approval_decision_${proposalId}_${decision.replace('-', '_')}`,
+            kind: 'human-approval',
+            uri: `haro-sidecar://approval-decisions/approval_decision_${proposalId}_${decision.replace('-', '_')}`,
+          },
+        }
+      : {}),
+    createdAt: options.createdAt ?? '2026-05-08T12:03:00.000Z',
+    updatedAt: options.createdAt ?? '2026-05-08T12:03:00.000Z',
+  });
+}
+
+function markProposalStatus(root: string, proposalId: string, status: string): void {
+  const proposalPath = join(root, 'evolution', 'proposals', `${proposalId}.json`);
+  const proposal = readJson<Record<string, unknown>>(proposalPath);
+  proposal.status = status;
+  proposal.updatedAt = '2026-05-08T12:03:00.000Z';
+  writeFileSync(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`);
 }
 
 function writeAutoApplyFixture(root: string, proposalId: string, overrides: {
@@ -1398,6 +1441,166 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       wroteProposal: false,
     });
     expect(readdirSync(join(root, 'evolution', 'proposals')).filter((name) => name.endsWith('.json'))).toHaveLength(1);
+  });
+
+  it('propose --auto-dry-run blocks equivalent same-target content after request-changes feedback', async () => {
+    const root = newHome('agentdock-propose-feedback-contenthash');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-old', 'AgentDock turn old ended with status timeout');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, ['propose', '--auto-dry-run', '--json']));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const firstPayload = (JSON.parse(firstOut.read()) as { data: {
+      proposal: { id: string; changeSet: Array<{ contentHash: string }> };
+    } }).data;
+    writeProposalDecisionRecord(root, firstPayload.proposal.id, 'request-changes', {
+      direction: '这条提案仍然看不懂，请先解释错误是什么。',
+    });
+    markProposalStatus(root, firstPayload.proposal.id, 'superseded');
+    writeRunnerErrorObservation(root, 'obs-runner-error-new', 'AgentDock turn old ended with status timeout');
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, ['propose', '--auto-dry-run', '--json']));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toContain('awaits feedback incorporation');
+    const secondPayload = (JSON.parse(secondOut.read()) as { data: {
+      proposalCount: number;
+      skippedProposalCount: number;
+      skippedAwaitingFeedbackCount: number;
+      awaitingFeedbackBlocks: Array<{
+        reason: string;
+        priorDecisionId: string;
+        priorProposalId: string;
+        priorDirection: string;
+        contentHash: string;
+      }>;
+      wroteProposal: boolean;
+    } }).data;
+    expect(secondPayload.proposalCount).toBe(0);
+    expect(secondPayload.skippedProposalCount).toBe(1);
+    expect(secondPayload.skippedAwaitingFeedbackCount).toBe(1);
+    expect(secondPayload.wroteProposal).toBe(false);
+    expect(secondPayload.awaitingFeedbackBlocks[0]).toMatchObject({
+      reason: 'AWAITING_FEEDBACK_INCORPORATION',
+      priorProposalId: firstPayload.proposal.id,
+      priorDirection: '这条提案仍然看不懂，请先解释错误是什么。',
+      contentHash: firstPayload.proposal.changeSet[0]?.contentHash,
+    });
+    expect(readdirSync(join(root, 'evolution', 'blocked-proposal-events')).filter((name) => name.endsWith('.json'))).toHaveLength(1);
+    expect(readdirSync(join(root, 'evolution', 'proposals')).filter((name) => name.endsWith('.json'))).toHaveLength(1);
+  });
+
+  it('propose --auto-dry-run blocks semantic duplicates when contentHash changes after reject feedback', async () => {
+    const root = newHome('agentdock-propose-feedback-semantic');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-old', 'AgentDock turn old ended with status timeout');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, ['propose', '--auto-dry-run', '--json']));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const firstPayload = (JSON.parse(firstOut.read()) as { data: {
+      proposal: { id: string; feedbackSemanticFingerprint: string; changeSet: Array<{ contentHash: string }> };
+    } }).data;
+    writeProposalDecisionRecord(root, firstPayload.proposal.id, 'reject', {
+      direction: '同一个目标重复，且没有吸收修改意见。',
+    });
+    markProposalStatus(root, firstPayload.proposal.id, 'rejected');
+    writeRunnerErrorObservation(root, 'obs-runner-error-new', 'AgentDock turn new ended with status timeout');
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, ['propose', '--auto-dry-run', '--json']));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toContain('awaits feedback incorporation');
+    const secondPayload = (JSON.parse(secondOut.read()) as { data: {
+      proposalCount: number;
+      skippedAwaitingFeedbackCount: number;
+      awaitingFeedbackBlocks: Array<{ semanticFingerprint: string; contentHash: string }>;
+      wroteProposal: boolean;
+    } }).data;
+    expect(secondPayload.proposalCount).toBe(0);
+    expect(secondPayload.skippedAwaitingFeedbackCount).toBe(1);
+    expect(secondPayload.wroteProposal).toBe(false);
+    expect(secondPayload.awaitingFeedbackBlocks[0]?.semanticFingerprint).toBe(firstPayload.proposal.feedbackSemanticFingerprint);
+    expect(secondPayload.awaitingFeedbackBlocks[0]?.contentHash).not.toBe(firstPayload.proposal.changeSet[0]?.contentHash);
+  });
+
+  it('propose --auto-dry-run allows a same-target candidate when feedback content is genuinely different', async () => {
+    const root = newHome('agentdock-propose-feedback-different');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-old', 'AgentDock turn old ended with status timeout');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, ['propose', '--auto-dry-run', '--json']));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const firstPayload = (JSON.parse(firstOut.read()) as { data: { proposal: { id: string } } }).data;
+    writeProposalDecisionRecord(root, firstPayload.proposal.id, 'request-changes', {
+      direction: '请换成真正解释新错误的提案。',
+    });
+    markProposalStatus(root, firstPayload.proposal.id, 'superseded');
+    writeRunnerErrorObservation(
+      root,
+      'obs-runner-error-new',
+      'AgentDock turn new ended with status failed-fetch',
+      'AGENTDOCK_TURN_FAILED_FETCH',
+    );
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, ['propose', '--auto-dry-run', '--json']));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toBe('');
+    const secondPayload = (JSON.parse(secondOut.read()) as { data: {
+      proposalCount: number;
+      skippedAwaitingFeedbackCount: number;
+      proposal: { id: string; changeSet: Array<{ summary: string }> };
+    } }).data;
+    expect(secondPayload.proposalCount).toBe(1);
+    expect(secondPayload.skippedAwaitingFeedbackCount).toBe(0);
+    expect(secondPayload.proposal.id).not.toBe(firstPayload.proposal.id);
+    expect(secondPayload.proposal.changeSet[0]?.summary).toContain('AGENTDOCK_TURN_FAILED_FETCH');
+    expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
+  });
+
+  it('propose --auto-dry-run does not block same-target iterations after approve feedback', async () => {
+    const root = newHome('agentdock-propose-feedback-approved');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-old', 'AgentDock turn old ended with status timeout');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, ['propose', '--auto-dry-run', '--json']));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const firstPayload = (JSON.parse(firstOut.read()) as { data: { proposal: { id: string } } }).data;
+    writeProposalDecisionRecord(root, firstPayload.proposal.id, 'approve');
+    writeRunnerErrorObservation(root, 'obs-runner-error-new', 'AgentDock turn old ended with status timeout');
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, ['propose', '--auto-dry-run', '--json']));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toBe('');
+    const secondPayload = (JSON.parse(secondOut.read()) as { data: {
+      proposalCount: number;
+      skippedAwaitingFeedbackCount: number;
+      proposal: { id: string };
+    } }).data;
+    expect(secondPayload.proposalCount).toBe(1);
+    expect(secondPayload.skippedAwaitingFeedbackCount).toBe(0);
+    expect(secondPayload.proposal.id).not.toBe(firstPayload.proposal.id);
   });
 
   it('propose --auto-dry-run turns scheduled task errors into actionable schedule-config content', async () => {

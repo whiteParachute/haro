@@ -9,6 +9,7 @@ import {
   ApprovalRequestRecordSchema,
   AssetSnapshotRecordSchema,
   AssetKindSchema,
+  BlockedProposalEventSchema,
   AssetEventSchema,
   EvolutionProposalSchema,
   FrontierSignalSchema,
@@ -25,6 +26,7 @@ import {
   type AssetSnapshotRecord,
   type AssetEvent,
   type AssetKind,
+  type BlockedProposalEvent,
   type ChangeOperation,
   type DescriptionLintReport,
   type EvolutionProposal,
@@ -164,6 +166,10 @@ interface ProposeResult {
   skippedCorruptObservationCount: number;
   skippedCorruptProposalCount: number;
   skippedCorruptFrontierSignalCount: number;
+  skippedAwaitingFeedbackCount: number;
+  awaitingFeedbackEvents: string[];
+  awaitingFeedbackEventPaths: string[];
+  awaitingFeedbackBlocks: BlockedProposalEvent[];
   wroteProposal: boolean;
   assetEventCount: number;
   assetEventIds: string[];
@@ -500,6 +506,7 @@ export interface AgentDockDailyWorkflowResult {
   summary: {
     observationCount: number;
     proposalCount: number;
+    skippedAwaitingFeedbackCount: number;
     validationCount: number;
     approvalRequestCount: number;
     approvalRequestIds: string[];
@@ -781,6 +788,10 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             skippedCorruptObservationCount: result.skippedCorruptObservationCount,
             skippedCorruptProposalCount: result.skippedCorruptProposalCount,
             skippedCorruptFrontierSignalCount: result.skippedCorruptFrontierSignalCount,
+            skippedAwaitingFeedbackCount: result.skippedAwaitingFeedbackCount,
+            awaitingFeedbackEvents: result.awaitingFeedbackEvents,
+            awaitingFeedbackEventPaths: result.awaitingFeedbackEventPaths,
+            awaitingFeedbackBlocks: result.awaitingFeedbackBlocks,
             wroteProposal: result.wroteProposal,
             assetEventCount: result.assetEventCount,
             assetEventIds: result.assetEventIds,
@@ -801,6 +812,16 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `Asset events: ${result.assetEventCount}`,
               `Pending observations after run: ${result.pendingObservationCount}`,
               `Wrote: ${result.proposalPath}`,
+            ].join('\n') + '\n',
+          );
+          return;
+        }
+        if (result.skippedAwaitingFeedbackCount > 0) {
+          app.stdout.write(
+            [
+              'Skipped proposal awaiting feedback incorporation.',
+              `Blocked events: ${result.awaitingFeedbackEvents.join(', ')}`,
+              `Pending observations after run: ${result.pendingObservationCount}`,
             ].join('\n') + '\n',
           );
           return;
@@ -1292,6 +1313,10 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptObservationCount: pendingResult.corruptCount,
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
+        skippedAwaitingFeedbackCount: 0,
+        awaitingFeedbackEvents: [],
+        awaitingFeedbackEventPaths: [],
+        awaitingFeedbackBlocks: [],
         wroteProposal: false,
         assetEventCount: 0,
         assetEventIds: [],
@@ -1318,6 +1343,10 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptObservationCount: pendingResult.corruptCount,
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
+        skippedAwaitingFeedbackCount: 0,
+        awaitingFeedbackEvents: [],
+        awaitingFeedbackEventPaths: [],
+        awaitingFeedbackBlocks: [],
         wroteProposal: false,
         assetEventCount: 0,
         assetEventIds: [],
@@ -1339,6 +1368,39 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptObservationCount: pendingResult.corruptCount,
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
+        skippedAwaitingFeedbackCount: 0,
+        awaitingFeedbackEvents: [],
+        awaitingFeedbackEventPaths: [],
+        awaitingFeedbackBlocks: [],
+        wroteProposal: false,
+        assetEventCount: 0,
+        assetEventIds: [],
+        ...(policyAudit ? { policyAudit } : {}),
+      };
+    }
+    const awaitingFeedbackBlock = maybeBlockProposalAwaitingFeedback(app.paths.root, generated, app.now());
+    if (awaitingFeedbackBlock) {
+      writeJsonFile(awaitingFeedbackBlock.path, awaitingFeedbackBlock.event);
+      app.stderr.write(
+        `haro propose: skipped candidate because target ${proposalTargetSummary(generated.proposal)} awaits feedback incorporation (last direction: ${truncateForLog(awaitingFeedbackBlock.event.priorDirection ?? '无', 120)})\n`,
+      );
+      return {
+        command: 'propose',
+        mode: 'dry-run',
+        includeFrontier: options.includeFrontier === true,
+        proposalCount: 0,
+        skippedProposalCount: 1,
+        consumedObservationCount: 0,
+        pendingObservationCount: pending.length,
+        includedFrontierSignalCount: frontierResult.signals.length,
+        availableFrontierSignalCount: frontierResult.signals.length,
+        skippedCorruptObservationCount: pendingResult.corruptCount,
+        skippedCorruptProposalCount: consumedResult.corruptCount,
+        skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
+        skippedAwaitingFeedbackCount: 1,
+        awaitingFeedbackEvents: [awaitingFeedbackBlock.event.id],
+        awaitingFeedbackEventPaths: [awaitingFeedbackBlock.path],
+        awaitingFeedbackBlocks: [awaitingFeedbackBlock.event],
         wroteProposal: false,
         assetEventCount: 0,
         assetEventIds: [],
@@ -1365,6 +1427,10 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       skippedCorruptObservationCount: pendingResult.corruptCount,
       skippedCorruptProposalCount: consumedResult.corruptCount,
       skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
+      skippedAwaitingFeedbackCount: 0,
+      awaitingFeedbackEvents: [],
+      awaitingFeedbackEventPaths: [],
+      awaitingFeedbackBlocks: [],
       wroteProposal: true,
       assetEventCount: assetEventIds.length,
       assetEventIds,
@@ -1693,6 +1759,7 @@ export async function runAgentDockDailyWorkflow(
     summary: {
       observationCount: observe.observationCount,
       proposalCount: propose.proposalCount,
+      skippedAwaitingFeedbackCount: propose.skippedAwaitingFeedbackCount,
       validationCount: validate.validationCount,
       approvalRequestCount: approvalRequest.approvalRequestCount,
       approvalRequestIds,
@@ -3009,6 +3076,10 @@ function approvalRequestFilePath(root: string, record: ApprovalRequestRecord): s
   return join(approvalRequestsDir(root), `${safePathSegment(record.id)}.json`);
 }
 
+function blockedProposalEventFilePath(root: string, record: BlockedProposalEvent): string {
+  return join(blockedProposalEventsDir(root), `${safePathSegment(record.id)}.json`);
+}
+
 function applicationFilePath(root: string, record: ApplicationRecord): string {
   return join(applicationsDir(root), `${safePathSegment(record.id)}.json`);
 }
@@ -3059,6 +3130,10 @@ function approvalRequestsDir(root: string): string {
 
 function approvalDecisionsDir(root: string): string {
   return join(root, 'evolution', 'approval-decisions');
+}
+
+function blockedProposalEventsDir(root: string): string {
+  return join(root, 'evolution', 'blocked-proposal-events');
 }
 
 function applicationsDir(root: string): string {
@@ -3272,6 +3347,11 @@ function safePathSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, '-');
 }
 
+function truncateForLog(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, Math.max(0, maxLength - 1))}…` : normalized;
+}
+
 function writeJsonFile(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -3480,6 +3560,140 @@ function proposalTargetSummary(proposal: EvolutionProposal): string {
   return `${proposal.level}/${proposal.targetKind}/${targets}`;
 }
 
+function proposalContentHashes(proposal: EvolutionProposal): string[] {
+  return uniqueSorted(proposal.changeSet.map((change) => change.contentHash ?? '').filter(Boolean));
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function proposalContentHashDigest(hashes: readonly string[]): string {
+  if (hashes.length === 1) return hashes[0]!;
+  return sha256(JSON.stringify(hashes));
+}
+
+function proposalDefaultHandlingFromContentFiles(files: readonly GeneratedProposalContentFile[]): string[] {
+  const items: string[] = [];
+  for (const file of files) {
+    try {
+      const parsed = JSON.parse(file.content.toString('utf8')) as unknown;
+      if (isRecord(parsed) && isRecord(parsed.policy)) {
+        items.push(...stringArrayField(parsed.policy.defaultHandling));
+      }
+    } catch {
+      // Proposal content is validated elsewhere. If this cannot be parsed, the
+      // feedback-aware guard falls back to the stricter contentHash set.
+    }
+  }
+  return uniqueSorted(items);
+}
+
+function proposalDefaultHandlingFromDisk(root: string, proposalId: string): string[] {
+  const dir = proposalContentDir(root, proposalId);
+  if (!existsSync(dir)) return [];
+  const items: string[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(join(dir, name), 'utf8')) as unknown;
+      if (isRecord(parsed) && isRecord(parsed.policy)) {
+        items.push(...stringArrayField(parsed.policy.defaultHandling));
+      }
+    } catch {
+      // Corrupt proposal-content must not crash propose.
+    }
+  }
+  return uniqueSorted(items);
+}
+
+function proposalSemanticFingerprintInput(
+  proposal: EvolutionProposal,
+  defaultHandling: readonly string[],
+): string {
+  return [
+    proposal.title,
+    proposal.changeSet[0]?.summary ?? '',
+    JSON.stringify([...defaultHandling].sort()),
+  ].join('||');
+}
+
+function computeGeneratedProposalSemanticFingerprint(generated: GeneratedProposal): string {
+  return sha256(proposalSemanticFingerprintInput(
+    generated.proposal,
+    proposalDefaultHandlingFromContentFiles(generated.contentFiles),
+  ));
+}
+
+function computePersistedProposalSemanticFingerprint(root: string, proposal: EvolutionProposal): string {
+  return sha256(proposalSemanticFingerprintInput(
+    proposal,
+    proposalDefaultHandlingFromDisk(root, proposal.id),
+  ));
+}
+
+function ensurePersistedProposalSemanticFingerprint(root: string, proposal: EvolutionProposal): EvolutionProposal {
+  if (proposal.feedbackSemanticFingerprint) return proposal;
+  const next = EvolutionProposalSchema.parse({
+    ...proposal,
+    feedbackSemanticFingerprint: computePersistedProposalSemanticFingerprint(root, proposal),
+  });
+  writeJsonFile(proposalFilePath(root, next), next);
+  return next;
+}
+
+function maybeBlockProposalAwaitingFeedback(
+  root: string,
+  generated: GeneratedProposal,
+  now: Date,
+): { event: BlockedProposalEvent; path: string } | undefined {
+  const latest = readLatestApprovalDecisionForProposalTarget(root, generated.proposal);
+  if (!latest || (latest.decision.decision !== 'request-changes' && latest.decision.decision !== 'reject')) {
+    return undefined;
+  }
+
+  const priorProposal = ensurePersistedProposalSemanticFingerprint(root, latest.proposal);
+  const candidateContentHashes = proposalContentHashes(generated.proposal);
+  const priorContentHashes = proposalContentHashes(priorProposal);
+  const contentHashEquivalent =
+    candidateContentHashes.length > 0 &&
+    sameStringSet(candidateContentHashes, priorContentHashes);
+  const semanticFingerprint = generated.proposal.feedbackSemanticFingerprint ??
+    computeGeneratedProposalSemanticFingerprint(generated);
+  const semanticEquivalent = Boolean(
+    semanticFingerprint &&
+    priorProposal.feedbackSemanticFingerprint &&
+    semanticFingerprint === priorProposal.feedbackSemanticFingerprint,
+  );
+
+  if (!contentHashEquivalent && !semanticEquivalent) return undefined;
+
+  const targetRefs = generated.proposal.changeSet.map((change) => change.targetRef);
+  const event = BlockedProposalEventSchema.parse({
+    id: `blocked_${sha256(JSON.stringify({
+      candidateProposalId: generated.proposal.id,
+      priorDecisionId: latest.decision.id,
+      targetKey: proposalTargetDedupeKey(generated.proposal),
+      contentHashes: candidateContentHashes,
+      semanticFingerprint,
+    })).slice(0, 24)}`,
+    status: 'blocked',
+    reason: 'AWAITING_FEEDBACK_INCORPORATION',
+    candidateProposalId: generated.proposal.id,
+    priorDecisionId: latest.decision.id,
+    priorProposalId: priorProposal.id,
+    ...(latest.decision.direction ? { priorDirection: latest.decision.direction } : {}),
+    targetRef: targetRefs[0]!,
+    targetRefs,
+    contentHash: proposalContentHashDigest(candidateContentHashes),
+    contentHashes: candidateContentHashes,
+    semanticFingerprint,
+    createdAt: now.toISOString(),
+  });
+  return { event, path: blockedProposalEventFilePath(root, event) };
+}
+
 function readActiveProposalTargetDedupeKeys(root: string): Set<string> {
   const dir = proposalsDir(root);
   const keys = new Set<string>();
@@ -3539,6 +3753,25 @@ function readLatestApprovalDecisionForProposal(
     }
   }
   return { ...(decision ? { decision } : {}), corruptCount };
+}
+
+function readLatestApprovalDecisionForProposalTarget(
+  root: string,
+  candidate: EvolutionProposal,
+): { decision: ApprovalDecisionRecord; proposal: EvolutionProposal } | undefined {
+  const targetKey = proposalTargetDedupeKey(candidate);
+  const matches: Array<{ decision: ApprovalDecisionRecord; proposal: EvolutionProposal }> = [];
+  for (const decision of readAllApprovalDecisionRecords(root)) {
+    const proposal = readProposalById(root, decision.proposalId);
+    if (!proposal) continue;
+    if (proposalTargetDedupeKey(proposal) !== targetKey) continue;
+    matches.push({ decision, proposal });
+  }
+  matches.sort((a, b) => {
+    const time = b.decision.createdAt.localeCompare(a.decision.createdAt);
+    return time === 0 ? b.decision.id.localeCompare(a.decision.id) : time;
+  });
+  return matches[0];
 }
 
 function readValidatedProposalsNeedingApprovalRequest(
@@ -5475,22 +5708,23 @@ function createAutoProposal(
   frontierSignals: readonly FrontierSignal[] = [],
 ): GeneratedProposal {
   const actionableRunnerProfileProposal = createActionableRunnerProfileProposal(root, batches, now);
-  if (actionableRunnerProfileProposal) return attachProposalDescriptionLint(actionableRunnerProfileProposal);
+  if (actionableRunnerProfileProposal) return attachGeneratedProposalMetadata(actionableRunnerProfileProposal);
   const actionableScheduleConfigProposal = createActionableScheduleConfigProposal(root, batches, now);
-  if (actionableScheduleConfigProposal) return attachProposalDescriptionLint(actionableScheduleConfigProposal);
+  if (actionableScheduleConfigProposal) return attachGeneratedProposalMetadata(actionableScheduleConfigProposal);
   const actionableMcpProposal = createActionableMcpToolConfigProposal(root, batches, now, frontierSignals);
-  if (actionableMcpProposal) return attachProposalDescriptionLint(actionableMcpProposal);
-  return attachProposalDescriptionLint({
+  if (actionableMcpProposal) return attachGeneratedProposalMetadata(actionableMcpProposal);
+  return attachGeneratedProposalMetadata({
     proposal: createDryRunProposal(batches, now, frontierSignals),
     contentFiles: [],
   });
 }
 
-function attachProposalDescriptionLint(generated: GeneratedProposal): GeneratedProposal {
+function attachGeneratedProposalMetadata(generated: GeneratedProposal): GeneratedProposal {
   const report = lintEvolutionProposalDescription(generated.proposal);
   generated.proposal = EvolutionProposalSchema.parse({
     ...generated.proposal,
     descriptionLint: report,
+    feedbackSemanticFingerprint: computeGeneratedProposalSemanticFingerprint(generated),
   });
   return generated;
 }

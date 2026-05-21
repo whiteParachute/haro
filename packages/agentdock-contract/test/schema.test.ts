@@ -5,6 +5,7 @@ import {
   ApprovalRequestRecordSchema,
   AssetSnapshotRecordSchema,
   AssetEventSchema,
+  BlockedProposalEventSchema,
   EvolutionProposalSchema,
   FrontierSignalSchema,
   PatchBranchPlanRecordSchema,
@@ -116,6 +117,26 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
     expect(proposal.id).toBe('proposal-001');
     expect(proposal.humanReviewRequired).toBe(true);
     expect(proposal.humanApprovalRefs).toEqual([]);
+  });
+
+  it('accepts a blocked proposal event for feedback-aware dedupe', () => {
+    const event = BlockedProposalEventSchema.parse({
+      id: 'blocked-001',
+      status: 'blocked',
+      reason: 'AWAITING_FEEDBACK_INCORPORATION',
+      candidateProposalId: 'proposal-new',
+      priorDecisionId: 'approval-decision-old',
+      priorProposalId: 'proposal-old',
+      priorDirection: '先把用户修改意见吸收进提案。',
+      targetRef: { id: 'runner-profile:error-recovery', kind: 'runner-profile' },
+      targetRefs: [{ id: 'runner-profile:error-recovery', kind: 'runner-profile' }],
+      contentHash: 'sha256:content',
+      contentHashes: ['sha256:content'],
+      semanticFingerprint: 'sha256:semantic',
+      createdAt: now,
+    });
+
+    expect(event.reason).toBe('AWAITING_FEEDBACK_INCORPORATION');
   });
 
   it('accepts a ready L0/L1 application gate record without applying content', () => {

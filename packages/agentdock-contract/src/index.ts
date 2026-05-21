@@ -65,6 +65,15 @@ export { ValidationPolicyAuditSchema, ValidationReportSchema } from './validatio
 export type { ValidationPolicyAudit, ValidationReport } from './validation.js';
 
 export {
+  BlockedProposalEventSchema,
+  BlockedProposalReasonSchema,
+} from './blocked-proposal-event.js';
+export type {
+  BlockedProposalEvent,
+  BlockedProposalReason,
+} from './blocked-proposal-event.js';
+
+export {
   ApprovalDecisionRecordSchema,
   ApprovalDecisionOptionSchema,
   ApprovalDecisionReviewerSchema,
