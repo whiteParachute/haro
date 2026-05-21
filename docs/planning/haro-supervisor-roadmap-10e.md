@@ -206,7 +206,10 @@ FEAT-076A 的目标：
 - 不实现 rewrite planner；
 - 不动真实 `~/.haro/evolution`。
 
-如果 owner 暂不启动 FEAT-076A，则不应继续扩 self-heal 或删除旧模块。
+FEAT-076A 落地后，下一步应进入 FEAT-076B。
+不要跳到 Web 改造、auto-confirm 或物理删除。
+
+如果 owner 暂不启动 FEAT-076A/076B，则不应继续扩 self-heal 或删除旧模块。
 
 ## 10. 10E 完成定义
 

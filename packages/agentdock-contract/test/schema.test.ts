@@ -6,9 +6,12 @@ import {
   AssetSnapshotRecordSchema,
   AssetEventSchema,
   BlockedProposalEventSchema,
+  DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
   EvolutionProposalSchema,
+  FeedbackRevisionRecordSchema,
   FrontierSignalSchema,
   PatchBranchPlanRecordSchema,
+  ProposalRevisionMetadataSchema,
   RollbackRecordSchema,
   ValidationReportSchema,
   createFakeAgentDockSource,
@@ -20,6 +23,49 @@ import {
 const now = '2026-05-08T04:00:00.000Z';
 
 const validRef = { id: 'ref-001', kind: 'observation', uri: 'fake://ref/001' };
+
+
+const feedbackRequirement = {
+  id: 'requirement-001',
+  category: 'evidence-required',
+  disposition: 'incorporated',
+  userText: '请说明这次到底是哪一类错误。',
+  normalizedRequirement: '补充具体错误类别和样本证据。',
+  proposalChangeRefs: [{ id: 'proposal-revision:change:0', kind: 'proposal-change' }],
+  evidenceRefs: [{ id: 'runner-error-timeout', kind: 'runner-error' }],
+  explanation: '新版提案收窄到 ModelHub 600 秒超时。',
+};
+
+const revisionNoOpCheck = {
+  verdict: 'substantive-change',
+  priorProposalContentHashes: ['sha256:prior-content'],
+  revisedProposalContentHashes: ['sha256:revised-content'],
+  priorSemanticFingerprint: 'sha256:prior-semantic',
+  revisedSemanticFingerprint: 'sha256:revised-semantic',
+  revisionDepth: 1,
+  changedFields: ['changeSet', 'testPlan'],
+  reason: '新版提案改变了目标字段和测试计划。',
+};
+
+const revisionMetadata = {
+  revisionId: 'revision-001',
+  rootProposalId: 'proposal-001',
+  revisionOfProposalId: 'proposal-001',
+  revisionDepth: 1,
+  sourceApprovalRequestId: 'approval-request-001',
+  sourceDecisionId: 'approval-decision-001',
+  sourceDecisionDirection: '新的提案像元策略，请改成具体 patch。',
+  sourceConversationRefs: ['file://approval-conversations/approval-request-001/revision-001.json'],
+  rewritePlanRef: { id: 'feedback-revision-001', kind: 'feedback-revision' },
+  supersedesProposalIds: ['proposal-001'],
+  supersedesBlockedEventIds: ['blocked-001'],
+  resubmissionReason: '根据 request-changes 收窄为具体 runner-profile 字段。',
+  incorporatedFeedback: [feedbackRequirement],
+  unresolvedFeedback: [],
+  noOpCheck: revisionNoOpCheck,
+  createdAt: now,
+  updatedAt: now,
+};
 
 const validProposal = {
   id: 'proposal-001',
@@ -120,6 +166,117 @@ describe('AgentDock sidecar contract schemas [FEAT-043]', () => {
     expect(proposal.id).toBe('proposal-001');
     expect(proposal.humanReviewRequired).toBe(true);
     expect(proposal.humanApprovalRefs).toEqual([]);
+  });
+
+
+  it('accepts legacy proposals without revision metadata', () => {
+    const proposal = EvolutionProposalSchema.parse(validProposal);
+
+    expect(proposal.revisionMetadata).toBeUndefined();
+  });
+
+  it('accepts proposals with FEAT-076A revision metadata', () => {
+    const proposal = EvolutionProposalSchema.parse({
+      ...validProposal,
+      id: 'proposal-revision-001',
+      revisionMetadata,
+    });
+
+    expect(proposal.revisionMetadata?.revisionDepth).toBe(1);
+    expect(proposal.revisionMetadata?.incorporatedFeedback[0]?.category).toBe('evidence-required');
+    expect(proposal.revisionMetadata?.noOpCheck.verdict).toBe('substantive-change');
+  });
+
+  it('rejects empty critical revision metadata fields', () => {
+    const result = ProposalRevisionMetadataSchema.safeParse({
+      ...revisionMetadata,
+      sourceDecisionId: '',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === 'sourceDecisionId')).toBe(true);
+    }
+  });
+
+  it('accepts feedback revision records for revised, manual-check, and blocked outcomes', () => {
+    const baseRecord = {
+      id: 'feedback-revision-001',
+      rootProposalId: 'proposal-001',
+      sourceProposalId: 'proposal-001',
+      sourceApprovalRequestId: 'approval-request-001',
+      sourceDecisionId: 'approval-decision-001',
+      sourceDecisionDirection: '请把元策略改成具体 change。',
+      parsedRequirements: [feedbackRequirement],
+      rewriteActions: [
+        {
+          action: 'narrow-scope',
+          summary: '只处理 ModelHub 600 秒超时。',
+          targetRefs: [{ id: 'runner-profile:error-recovery', kind: 'runner-profile' }],
+        },
+      ],
+      noOpCheck: revisionNoOpCheck,
+      blockingReasons: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const revised = FeedbackRevisionRecordSchema.parse({
+      ...baseRecord,
+      status: 'revised',
+      revisedProposalId: 'proposal-revision-001',
+      revisedValidationId: 'validation-revision-001',
+      revisedApprovalRequestId: 'approval-request-revision-001',
+    });
+    expect(revised.status).toBe('revised');
+
+    const manualCheck = FeedbackRevisionRecordSchema.parse({
+      ...baseRecord,
+      id: 'feedback-revision-manual-check',
+      status: 'manual-check',
+      noOpCheck: {
+        ...revisionNoOpCheck,
+        verdict: 'manual-check',
+        revisionDepth: DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT + 1,
+        changedFields: [],
+        reason: 'revisionDepth 超过默认上限，需要人工判断是否继续重写。',
+      },
+      blockingReasons: ['revision depth exceeds default limit'],
+    });
+    expect(manualCheck.noOpCheck.revisionDepth).toBeGreaterThan(DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT);
+
+    const blocked = FeedbackRevisionRecordSchema.parse({
+      ...baseRecord,
+      id: 'feedback-revision-blocked',
+      status: 'blocked',
+      noOpCheck: {
+        ...revisionNoOpCheck,
+        verdict: 'no-op',
+        revisedProposalContentHashes: revisionNoOpCheck.priorProposalContentHashes,
+        revisedSemanticFingerprint: revisionNoOpCheck.priorSemanticFingerprint,
+        changedFields: [],
+        reason: '新版只改 metadata，没有实际变更。',
+      },
+      blockingReasons: ['metadata-only revision'],
+    });
+    expect(blocked.status).toBe('blocked');
+  });
+
+  it('fails closed for incomplete feedback revision records', () => {
+    const result = FeedbackRevisionRecordSchema.safeParse({
+      id: 'feedback-revision-invalid',
+      status: 'revised',
+      rootProposalId: 'proposal-001',
+      sourceProposalId: 'proposal-001',
+      sourceApprovalRequestId: 'approval-request-001',
+      sourceDecisionId: '',
+      sourceDecisionDirection: '请重写。',
+      noOpCheck: revisionNoOpCheck,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it('accepts a blocked proposal event for feedback-aware dedupe', () => {

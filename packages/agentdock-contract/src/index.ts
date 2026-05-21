@@ -63,6 +63,32 @@ export type {
   TestPlan,
 } from './proposal.js';
 
+export {
+  DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
+  FeedbackRequirementCategorySchema,
+  FeedbackRequirementDispositionSchema,
+  FeedbackRequirementResolutionSchema,
+  FeedbackRevisionRecordSchema,
+  FeedbackRevisionStatusSchema,
+  FeedbackRewriteActionSchema,
+  ProposalRevisionMetadataSchema,
+  RevisionChangedFieldSchema,
+  RevisionNoOpCheckSchema,
+  RevisionNoOpVerdictSchema,
+} from './feedback-revision.js';
+export type {
+  FeedbackRequirementCategory,
+  FeedbackRequirementDisposition,
+  FeedbackRequirementResolution,
+  FeedbackRevisionRecord,
+  FeedbackRevisionStatus,
+  FeedbackRewriteAction,
+  ProposalRevisionMetadata,
+  RevisionChangedField,
+  RevisionNoOpCheck,
+  RevisionNoOpVerdict,
+} from './feedback-revision.js';
+
 export { ValidationPolicyAuditSchema, ValidationReportSchema } from './validation.js';
 export type { ValidationPolicyAudit, ValidationReport } from './validation.js';
 

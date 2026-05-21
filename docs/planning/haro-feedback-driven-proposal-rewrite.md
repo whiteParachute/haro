@@ -482,6 +482,13 @@ L2/L3 不能由 Haro 直接改代码。
 - 新 proposal 可携带 `revisionMetadata`。
 - `FeedbackRevisionRecordSchema` 能表达 revised/manualCheck/blocked。
 
+落地记录（2026-05-21）：
+
+- `EvolutionProposalSchema.revisionMetadata?` 已加入 contract。
+- `feedback-revision.ts` 已导出 revision metadata、no-op check 和 feedback revision record。
+- 默认 revision depth 上限常量为 3。
+- 本阶段只落 schema 和测试，不实现 rewrite planner。
+
 ### FEAT-076B：feedback rewrite planner
 
 改动范围：

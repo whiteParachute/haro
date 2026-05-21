@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { IsoDateTimeSchema, NonEmptyStringSchema, RefSchema } from './primitives.js';
 import { DescriptionLintReportSchema } from './description-lint.js';
+import { ProposalRevisionMetadataSchema } from './feedback-revision.js';
 
 export const ProposalTargetKindSchema = z.enum([
   'prompt',
@@ -61,6 +62,7 @@ export const EvolutionProposalSchema = z.object({
   descriptionLint: DescriptionLintReportSchema.optional(),
   feedbackSemanticFingerprint: NonEmptyStringSchema.optional(),
   feedbackContext: FeedbackContextSchema.optional(),
+  revisionMetadata: ProposalRevisionMetadataSchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });
