@@ -17,7 +17,7 @@ import type { Command } from 'commander';
 import { services } from '@haro/core';
 import { renderError } from '../output/index.js';
 import { buildServiceContext } from './service-context.js';
-import { CommanderExit, type AppContext, type ExecuteCliTaskFn, type RunCliReplFn } from '../index.js';
+import { CommanderExit, writeLegacySurfaceWarning, type AppContext, type ExecuteCliTaskFn, type RunCliReplFn } from '../index.js';
 
 export interface ChatCommandHooks {
   /** Bound to executeTask in index.ts so chat doesn't need its private symbols. */
@@ -43,6 +43,7 @@ export function registerChatCommand(program: Command, app: AppContext, hooks: Ch
     .option('--history', 'pick a recent session interactively, then chat')
     .action(async (opts: ChatOptions) => {
       try {
+        writeLegacySurfaceWarning(app);
         const agentId = opts.agent ?? app.cliState.defaultAgentId ?? app.loaded.config.defaultAgent ?? 'haro-assistant';
 
         if (opts.send !== undefined) {

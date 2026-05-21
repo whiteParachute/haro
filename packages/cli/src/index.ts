@@ -304,6 +304,19 @@ export class CommanderExit extends Error {
   }
 }
 
+export const LEGACY_SURFACE_WARNING =
+  '[legacy] 该入口属于历史 Haro-owned workbench/runtime 方向，已停止发展。当前主线是 AgentDock self-evolution sidecar；相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。';
+
+export function writeLegacySurfaceWarning(app: Pick<AppContext, 'stdout'>): void {
+  app.stdout.write(`${LEGACY_SURFACE_WARNING}\n`);
+}
+
+function writeLegacySurfaceWarningForMode(app: Pick<AppContext, 'stdout'>, mode: 'json' | 'human'): void {
+  if (mode === 'human') {
+    writeLegacySurfaceWarning(app);
+  }
+}
+
 export function registerCommand(
   name: string,
   configure: (cmd: Command) => void,
@@ -409,6 +422,7 @@ function buildProgram(app: AppContext): Command {
               legacyMemory?: boolean;
             },
           ) => {
+            writeLegacySurfaceWarning(app);
             const agentId =
               options.agent ??
               app.cliState.defaultAgentId ??
@@ -641,6 +655,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
             renderListJson({ items: app.providerCatalog, total: app.providerCatalog.length }, { stdout: app.stdout });
             return;
           }
+          writeLegacySurfaceWarningForMode(app, mode);
           app.stdout.write(formatProviderList(app.providerCatalog));
         });
 
@@ -671,6 +686,9 @@ function registerProviderCommands(program: Command, app: AppContext): void {
               json?: boolean;
             },
           ) => {
+            if (options.json !== true) {
+              writeLegacySurfaceWarning(app);
+            }
             const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
             const scope = parseProviderScope(options.scope);
             if (options.model) {
@@ -801,6 +819,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
               remediation: `Run \`haro provider setup ${id}\` and rerun \`haro provider doctor ${id}\`.`,
             });
           } else {
+            writeLegacySurfaceWarningForMode(app, mode);
             app.stdout.write(formatProviderDoctorHuman(report));
           }
           if (!report.ok) {
@@ -821,6 +840,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
             if (mode === 'json') {
               renderListJson({ items: models, total: models.length }, { stdout: app.stdout });
             } else {
+              writeLegacySurfaceWarningForMode(app, mode);
               app.stdout.write(formatProviderModels(id, models));
             }
           } catch (error) {
@@ -843,6 +863,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
         .argument('<model>', 'live model id')
         .option('--scope <scope>', 'config scope: global or project', 'global')
         .action(async (id: string, model: string, options: { scope: string }) => {
+          writeLegacySurfaceWarning(app);
           const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
           const scope = parseProviderScope(options.scope);
           await assertProviderModelExists(app.providerRegistry, id, model);
@@ -878,6 +899,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
           if (mode === 'json') {
             renderJson(report, { stdout: app.stdout });
           } else {
+            writeLegacySurfaceWarningForMode(app, mode);
             app.stdout.write(formatProviderEnvHuman(report));
           }
         });
@@ -953,6 +975,7 @@ function registerChannelCommands(program: Command, app: AppContext): void {
             renderListJson({ items: entries, total: entries.length }, { stdout: app.stdout });
             return;
           }
+          writeLegacySurfaceWarningForMode(app, mode);
           const lines = entries.map((entry) =>
             [
               entry.id,
@@ -969,6 +992,7 @@ function registerChannelCommands(program: Command, app: AppContext): void {
         .command('enable')
         .argument('<id>', 'channel id')
         .action(async (id: string) => {
+          writeLegacySurfaceWarning(app);
           const entry = app.channelRegistry.enable(id);
           updateChannelConfig(app, id, { enabled: true });
           app.stdout.write(`Channel '${entry.id}' enabled\n`);
@@ -978,6 +1002,7 @@ function registerChannelCommands(program: Command, app: AppContext): void {
         .command('disable')
         .argument('<id>', 'channel id')
         .action(async (id: string) => {
+          writeLegacySurfaceWarning(app);
           const entry = app.channelRegistry.disable(id);
           await entry.channel.stop();
           updateChannelConfig(app, id, { enabled: false });
@@ -988,6 +1013,7 @@ function registerChannelCommands(program: Command, app: AppContext): void {
         .command('remove')
         .argument('<id>', 'channel id')
         .action(async (id: string) => {
+          writeLegacySurfaceWarning(app);
           const entry = app.channelRegistry.getEntry(id);
           await entry.channel.stop();
           app.channelRegistry.remove(id);
@@ -1016,6 +1042,7 @@ function registerChannelCommands(program: Command, app: AppContext): void {
               remediation: `Run \`haro channel setup ${id}\` then rerun \`haro channel doctor ${id}\`.`,
             });
           } else {
+            writeLegacySurfaceWarningForMode(app, mode);
             app.stdout.write(`${report.ok ? 'OK' : 'FAIL'}: ${report.message}\n`);
           }
           if (!report.ok) {
@@ -1027,6 +1054,7 @@ function registerChannelCommands(program: Command, app: AppContext): void {
         .command('setup')
         .argument('<id>', 'channel id')
         .action(async (id: string) => {
+          writeLegacySurfaceWarning(app);
           const entry = app.channelRegistry.getEntry(id);
           if (typeof entry.channel.setup !== 'function') {
             throw new CommanderExit(1, `Channel '${id}' does not provide setup()`);
@@ -1311,6 +1339,7 @@ function registerGatewayCommands(program: Command, app: AppContext): void {
         .command('start')
         .option('-d, --daemon', 'run in background')
         .action(async (options: { daemon?: boolean }) => {
+          writeLegacySurfaceWarning(app);
           const { gatewayStart } = await import('./gateway.js');
           const result = await gatewayStart(app, { daemon: options.daemon });
           app.stdout.write(result.output);
@@ -1322,6 +1351,7 @@ function registerGatewayCommands(program: Command, app: AppContext): void {
       cmd
         .command('stop')
         .action(async () => {
+          writeLegacySurfaceWarning(app);
           const { gatewayStop } = await import('./gateway.js');
           const result = gatewayStop({ root: app.paths.root });
           app.stdout.write(result.output);
@@ -1341,6 +1371,7 @@ function registerGatewayCommands(program: Command, app: AppContext): void {
           if (mode === 'json') {
             renderJson(result.report, { stdout: app.stdout });
           } else {
+            writeLegacySurfaceWarningForMode(app, mode);
             app.stdout.write(result.output);
           }
         });
@@ -1360,6 +1391,7 @@ function registerGatewayCommands(program: Command, app: AppContext): void {
               remediation: 'Inspect the unhealthy channels listed in the report and run `haro channel doctor <id>` for each.',
             });
           } else {
+            writeLegacySurfaceWarningForMode(app, mode);
             app.stdout.write(result.output);
           }
           if (result.exitCode !== 0) {

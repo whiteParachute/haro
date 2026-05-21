@@ -22,7 +22,7 @@ import {
   resolveOutputMode,
 } from '../output/index.js';
 import { buildServiceContext } from './service-context.js';
-import { CommanderExit, type AppContext } from '../index.js';
+import { CommanderExit, writeLegacySurfaceWarning, type AppContext } from '../index.js';
 
 interface OutputFlags { json?: boolean; human?: boolean }
 
@@ -55,6 +55,7 @@ export function registerMemoryCommands(program: Command, app: AppContext): void 
           renderListJson(result, { stdout: app.stdout });
           return;
         }
+        writeLegacySurfaceWarning(app);
         renderHumanTable(
           result.items.map((item) => ({
             score: item.score.toFixed(2),
@@ -92,6 +93,7 @@ export function registerMemoryCommands(program: Command, app: AppContext): void 
     .option('--layer <layer>', 'session | persistent | skill', 'persistent')
     .action(async (text: string, opts: Record<string, string | string[] | undefined>) => {
       try {
+        writeLegacySurfaceWarning(app);
         const scope = opts.scope as 'shared' | 'agent';
         const currentAgentId = app.cliState.defaultAgentId ?? app.loaded.config.defaultAgent ?? DEFAULT_AGENT_ID;
         const agentId = (opts.agent as string | undefined) ?? (scope === 'agent' ? currentAgentId : undefined);
@@ -136,6 +138,7 @@ export function registerMemoryCommands(program: Command, app: AppContext): void 
           renderListJson(result, { stdout: app.stdout });
           return;
         }
+        writeLegacySurfaceWarning(app);
         renderHumanTable(
           result.items.map((item) => ({
             id: item.entry.id,
@@ -179,6 +182,7 @@ export function registerMemoryCommands(program: Command, app: AppContext): void 
           renderJson(hit.entry, { stdout: app.stdout });
           return;
         }
+        writeLegacySurfaceWarning(app);
         renderHumanRecord(hit.entry as unknown as Record<string, unknown>, { stdout: app.stdout });
       } catch (error) {
         if (error instanceof CommanderExit) throw error;
@@ -196,6 +200,7 @@ export function registerMemoryCommands(program: Command, app: AppContext): void 
     .option('--quiet', 'skip preview banner')
     .action(async (opts: { db?: string; from?: string; yes?: boolean; quiet?: boolean }) => {
       try {
+        writeLegacySurfaceWarning(app);
         const target = opts.db ?? app.paths.dbFile;
         const previewLines = [
           `Will COPY a v1 SQLite snapshot to ${target}.recovered.<timestamp>.`,
@@ -245,6 +250,7 @@ export function registerMemoryCommands(program: Command, app: AppContext): void 
     .requiredOption('-o, --output <file>', 'output JSON file path')
     .action(async (opts: { scope: string; agent?: string; output: string }) => {
       try {
+        writeLegacySurfaceWarning(app);
         const result = services.memory.queryMemory(buildServiceContext(app), {
           scope: opts.scope as 'platform' | 'shared' | 'agent',
           ...(opts.agent ? { agentId: opts.agent } : {}),
