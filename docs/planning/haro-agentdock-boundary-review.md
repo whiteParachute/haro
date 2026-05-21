@@ -214,3 +214,31 @@ Claudeway 逐条 spot-check 了约 20 个 AgentDock / Haro file:line 引用，�
 3. 将 AgentDock approval bridge 表述明确为“IM 通知桥与 decision 转发入口”，不是 Haro artifact owner；
 4. 在 unknown 中补入 Web review board endpoint allowlist；
 5. 明确本文第 7.4 与 `haro-legacy-remove-candidate-review.md` 的关系。
+
+### 7.6 Selfway AgentDock 侧复核补充（2026-05-21）
+
+> 来源：`wdeleg_mpfhj4g3_bvxvi5`，Selfway 对 AgentDock 当前实现的只读复核重发版。
+> 结论：AgentDock 已承接平台控制面；Haro 仍应保留 evolution 领域内核和 sidecar 边界。
+
+Selfway 从 AgentDock 侧补充了更细的平台控制面证据：
+
+| AgentDock 能力 | 补充证据 | 对 Haro 边界的含义 |
+| --- | --- | --- |
+| session/workspace/runner 数据模型 | `src/db.ts:871-930` 定义 sessions / session_bindings / session_state / worker_sessions / runner_profiles；`src/types.ts:237-249` 定义 `SessionKind = main/workspace/worker/memory` 与 runner/model/thinking_effort 字段 | Haro 不应再拥有通用 session/workspace/runner 控制面 |
+| session/workspace API | `src/routes/sessions.ts:1030-1258` 创建 session/workspace；`:1261-1308` 列举 session；`:1874-1905` 读取 session messages | Haro 旧 workbench/session UI 只能 legacy/freeze |
+| runtime 启动 | `src/runtime-runner.ts:861-943` 注入 workspace/memory/IPC/skills/MCP/runner config；`:1042-1178` spawn agent-runner 并处理 stdout/stderr/timeout/close | Haro 不自建 runner；L2/L3 由 AgentDock workspace 执行 |
+| worker / conversation agent | `src/routes/agents.ts:161-223` 创建 conversation agent；`src/db.ts:4342-4410` 同步为 `sessions(kind='worker')` + `worker_sessions` | Haro team/scenario 只能保留 plan/artifact，不能继续扩执行器 |
+| SDK task / subagent 生命周期 | `src/index.ts:2560-2670` 处理 `task_start`、`tool_use_end`、`task_notification` | AgentDock 是多 agent 生命周期 host |
+| one-shot invoke_agent | `container/agent-runner/src/plugins/invoke-agent-plugin.ts:1-8`、`:90-149` 定义跨 provider one-shot agent 调用；`:4-7`、`:57-64` 说明 one-shot 子 agent 没有 AgentDock MCP 工具 | 可用于 bounded review/research，但不是 Haro evolution 内核替代 |
+| workspace delegation 回传 | `container/agent-runner/node_modules/agentdock-agent-runner-core/src/plugins/messaging.ts:66-130` 写 `workspace_message` IPC；`src/index.ts:3907-4022` host 处理目标解析、权限、去重、写入目标 chat、enqueue；`src/index.ts:3711-3767` 回写 delegation result；`src/workspace-delegation-return-tracker.ts:14-107` 维护 pending meta | 跨 workspace dispatch/回传归 AgentDock；Haro 只记录 execution/application artifact |
+| IM 显式发送模型 | `container/agent-runner/node_modules/agentdock-agent-runner-core/src/plugins/messaging.ts:23-63` 明确 stdout 不会发 IM，必须显式 `send_message` | supervisor 回执必须用 AgentDock send_message，不把 IM 当 RPC |
+| memory 平台控制面 | `src/memory-storage.ts:37-60` 定义 memory content/state 目录；`src/memory-agent.ts:201-330` 初始化 memory dirs；`src/routes/memory-agent.ts:50-195` 提供 query/remember/session-wrapup；`src/routes/memory.ts:681-1044` 提供 Web memory API；`src/index.ts:6230-6242` 初始化 MemoryOrchestrator | Haro MemoryFabric 只能 compatibility；Haro 不拥有 memory |
+| Web/API 挂载 | `src/web.ts:196-214` 挂载 sessions/memory/config/tasks/skills/mcp-servers/runners/haro/internal APIs | AgentDock 是平台 API host；Haro Web 保持 review board |
+| Haro approval bridge | `src/haro-approval.ts:122-138` 使用 `HARO_HOME` 或 `~/.haro/evolution` 中 approval/proposal 目录；`:220-363` 只读 request / 写 decision / patch proposal；`src/routes/haro-approvals.ts:39-173` 提供 Web API；`src/index.ts:1127-1195` 提供 `/haro` IM command | AgentDock 只提供人机审批桥接，不生成 proposal/validation/approval-request，也不拥有 Haro evolution lifecycle |
+
+Selfway 额外强调的删除约束：
+
+1. 不能因为 AgentDock 有通用 scheduler/runner/workspace，就删除 Haro 的 proposal / validation / approval-request 生成逻辑；
+2. 不能因为 AgentDock 有 `/api/haro` 与 `/haro` 命令，就删除 Haro Web review board 或 `.haro/evolution` schema；
+3. 不能因为 AgentDock 能加载外部 MCP，就删除 Haro sidecar MCP/CLI 工具本体；
+4. 不能因为 AgentDock 有通用执行框架，就删除 Haro apply/rollback 的领域执行与 artifact 记录。
