@@ -155,8 +155,8 @@ rewrite 可以产生三类结果。
 ```ts
 type ProposalRevisionMetadata = {
   revisionId: string;
-  rootProposalId: string;
-  revisionOfProposalId: string;
+  rootProposalId: string; // revision 链最初的 proposal id
+  revisionOfProposalId: string; // 当前 revision 的直接 parent proposal id
   revisionDepth: number;
   sourceApprovalRequestId: string;
   sourceDecisionId: string;
@@ -203,6 +203,10 @@ type FeedbackRequirementResolution = {
 };
 ```
 
+`rootProposalId` 指 revision 链的最初 proposal。
+`revisionOfProposalId` 指当前 revision 的直接 parent。
+两者不同，用来区分整条链和相邻版本。
+
 `RevisionNoOpCheck`：
 
 ```ts
@@ -214,6 +218,8 @@ type RevisionNoOpCheck = {
   revisedSemanticFingerprint?: string;
   revisionDepth: number;
   changedFields: Array<
+    | 'title'
+    | 'description'
     | 'changeSet'
     | 'contentRef'
     | 'contentHash'
@@ -227,6 +233,10 @@ type RevisionNoOpCheck = {
   reason: string;
 };
 ```
+
+`title` 和 `description` 表示 readability / 文案类修改。
+它们不是实质执行变更。
+如果只改这两项，FEAT-076C 仍要做 no-op 检查。
 
 ### 4.3 `feedback-revision` artifact
 
@@ -294,7 +304,7 @@ haro revise feedback --dry-run --decision-id <approval_decision_id>
 3. 如果原 proposal 已有更新 revision 并且仍 pending，则跳过，避免重复修订。
 4. 如果原 decision 不是该 target 的最新 request-changes，则 manualCheck。
 5. 如果 approval conversation 在 decision `createdAt` 之后仍有新条目，应先纳入补充语境；若新条目改变了用户意图或和 direction 冲突，则 manualCheck。
-6. 同一 `rootProposalId` 的 revision depth 超过上限后必须 manualCheck，默认建议上限为 3；FEAT-076A 可把上限做成配置，但不能无限自动重写。
+6. 同一 `rootProposalId` 的 revision depth 超过上限后必须 manualCheck，默认建议上限为 3。FEAT-076A 只表达字段和默认阈值常量，不在 schema 层硬拒绝超限记录。planner/runtime 在 FEAT-076B/C 执行该阈值。
 7. 默认先 dry-run；真实写入必须显式 `--confirm` 或纳入后续 gated workflow。
 
 ### 5.2 Direction parsing
@@ -487,7 +497,9 @@ L2/L3 不能由 Haro 直接改代码。
 - `EvolutionProposalSchema.revisionMetadata?` 已加入 contract。
 - `feedback-revision.ts` 已导出 revision metadata、no-op check 和 feedback revision record。
 - 默认 revision depth 上限常量为 3。
+- 该常量是 planner/runtime 默认阈值，不是 schema-level 硬约束。
 - 本阶段只落 schema 和测试，不实现 rewrite planner。
+- FEAT-076B 开工前建议跑 `pnpm test:sidecar`。
 
 ### FEAT-076B：feedback rewrite planner
 

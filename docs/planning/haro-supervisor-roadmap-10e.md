@@ -86,7 +86,7 @@
 
 | 切片 | 目标 | 主要文件/范围 | 验收 |
 | --- | --- | --- | --- |
-| FEAT-076A | revision metadata / feedback-revision contract | `packages/agentdock-contract/src/proposal.ts`、新增 `feedback-revision.ts`、contract tests | 旧 proposal 兼容；新 proposal 带 `revisionMetadata`；revision depth cap 可表达；feedback revision record 可 parse |
+| FEAT-076A | revision metadata / feedback-revision contract | `packages/agentdock-contract/src/proposal.ts`、新增 `feedback-revision.ts`、contract tests | 旧 proposal 兼容；新 proposal 带 `revisionMetadata`；revision depth 字段和默认阈值可表达；feedback revision record 可 parse |
 | FEAT-076B | feedback rewrite dry-run planner | CLI `haro revise feedback --dry-run`、direction parser、rewrite planner | 默认只读；可分类 request-changes；可输出 can-rewrite/manual-check/blocked；不写真实数据 |
 | FEAT-076C | anti no-op gate + validation blockers | no-op detector、validation blocking reasons、CLI tests | metadata-only revision 被阻止；contentHash/fingerprint 等价被阻止；partial hash manualCheck；stale feedback 阻断 |
 | FEAT-076D | review board revision flow | Web API / Web review board / approval conversation | 用户能看到上次意见、本次修改、未解决项；新旧 approval request 不混淆 |
@@ -119,7 +119,7 @@ FEAT-075 on-demand 已经可用。
 
 | 风险 | 触发点 | 影响 | 缓解 |
 | --- | --- | --- | --- |
-| request-changes 无限修订 | 用户反复要求改，Haro 反复生成 revision | revision 链失控，review board 噪音增加 | FEAT-076A 必须实现 `revisionDepth` 上限；默认超过 3 进入 manualCheck |
+| request-changes 无限修订 | 用户反复要求改，Haro 反复生成 revision | revision 链失控，review board 噪音增加 | FEAT-076A 表达 `revisionDepth` 和默认阈值；FEAT-076B/C 在 planner/runtime 中执行，默认超过 3 进入 manualCheck |
 | 换汤不换药 | 新 proposal 只改 metadata 或文案 | 用户看到重复审批，闭环无效 | FEAT-076C no-op gate；metadata-only 拦截；partial hash manualCheck |
 | 误删旧模块 | 只看 AgentDock 已承接，就删除 Haro legacy package | CLI/MCP/tests 或真实用户脚本断裂 | 删除前按 10A/10B blocker 表逐项解绑、测试、明确批准 |
 | self-heal 自动写真实数据 | daily 误接 confirm | 真实 pending proposal 被误 reject/supersede | 只允许 daily dry-run summary；confirm 保持显式手动命令 |
@@ -201,9 +201,11 @@ FEAT-076A 的目标：
 - 补 `ProposalRevisionMetadata`；
 - 新增 `FeedbackRevisionRecord`；
 - 保持旧 proposal 兼容；
-- 加 revision depth cap；
+- 表达 `revisionDepth` 和默认阈值常量；
 - 加 contract tests；
 - 不实现 rewrite planner；
+- 默认阈值不是 schema-level 硬约束；
+- FEAT-076B 开工前建议跑 `pnpm test:sidecar`；
 - 不动真实 `~/.haro/evolution`。
 
 FEAT-076A 落地后，下一步应进入 FEAT-076B。
