@@ -558,6 +558,40 @@ interface CleanupRejectedResult {
   skipped: CleanupRejectedSkipped[];
 }
 
+interface SelfHealDuplicatesOptions extends OutputFlags {
+  dryRun?: boolean;
+}
+
+interface SelfHealDuplicateCandidate {
+  approvalRequestId: string;
+  currentProposalId: string;
+  priorProposalId: string;
+  priorDecisionId: string;
+  matchType: 'contentHash' | 'semanticFingerprint';
+  targetRef: Ref;
+  contentHashes: string[];
+  priorDirection?: string;
+}
+
+interface SelfHealDuplicateNotice {
+  approvalRequestId: string;
+  proposalId?: string;
+  reason: string;
+}
+
+interface SelfHealDuplicatesResult {
+  command: 'self-heal';
+  mode: 'duplicates';
+  dryRun: true;
+  scannedApprovalRequestCount: number;
+  candidateCount: number;
+  skippedCount: number;
+  manualCheckCount: number;
+  candidates: SelfHealDuplicateCandidate[];
+  skipped: SelfHealDuplicateNotice[];
+  manualChecks: SelfHealDuplicateNotice[];
+}
+
 interface SidecarStatusResult {
   command: 'status';
   root: string;
@@ -1201,6 +1235,52 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             `Skipped: ${result.skippedCount}`,
             `Archive root: ${result.archiveRoot}`,
             ...result.candidates.map((candidate) => `- ${candidate.approvalRequestId} -> ${candidate.proposalId}`),
+          ].join('\n') + '\n',
+        );
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+  const selfHeal = program
+    .command('self-heal')
+    .description('Inspect sidecar self-heal candidates without changing artifacts');
+
+  selfHeal
+    .command('duplicates')
+    .description('Dry-run scan for residual duplicate pending approval requests')
+    .option('--dry-run', 'inspect only; required for this first safe slice')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: SelfHealDuplicatesOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        const result = selfHealDuplicateApprovalRequests(app, options);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(
+          [
+            'Self-heal duplicate approval requests: dry-run',
+            'No approval-decision, proposal status, or blocked event will be written.',
+            `Scanned approval requests: ${result.scannedApprovalRequestCount}`,
+            `Candidates: ${result.candidateCount}`,
+            `Skipped: ${result.skippedCount}`,
+            `Manual check: ${result.manualCheckCount}`,
+            ...result.candidates.map((candidate) => [
+              `- ${candidate.approvalRequestId}`,
+              `  current proposal: ${candidate.currentProposalId}`,
+              `  prior proposal: ${candidate.priorProposalId}`,
+              `  prior decision: ${candidate.priorDecisionId}`,
+              `  matchType: ${candidate.matchType}`,
+              `  target: ${candidate.targetRef.kind}:${candidate.targetRef.id}`,
+              `  dry-run: no writes`,
+            ].join('\n')),
+            ...result.skipped.map((item) => `- skipped ${item.approvalRequestId}: ${item.reason}`),
+            ...result.manualChecks.map((item) => `- manualCheck ${item.approvalRequestId}: ${item.reason}`),
           ].join('\n') + '\n',
         );
       } catch (error) {
@@ -2681,6 +2761,182 @@ function cleanupAgentDock(app: AppContext, options: CleanupOptions): CleanupReje
   } finally {
     releaseConnectionLock(lockDir);
   }
+}
+
+function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDuplicatesOptions): SelfHealDuplicatesResult {
+  if (options.dryRun !== true) {
+    throw new CommanderExit(2, '`haro self-heal duplicates` is read-only in this slice; pass `--dry-run`.');
+  }
+  const dir = approvalRequestsDir(app.paths.root);
+  const decisions = readAllApprovalDecisionRecords(app.paths.root);
+  const decisionsByRequest = groupApprovalDecisionsByRequest(decisions);
+  const candidates: SelfHealDuplicateCandidate[] = [];
+  const skipped: SelfHealDuplicateNotice[] = [];
+  const manualChecks: SelfHealDuplicateNotice[] = [];
+  let scannedApprovalRequestCount = 0;
+
+  if (!existsSync(dir)) {
+    return {
+      command: 'self-heal',
+      mode: 'duplicates',
+      dryRun: true,
+      scannedApprovalRequestCount,
+      candidateCount: 0,
+      skippedCount: 0,
+      manualCheckCount: 0,
+      candidates,
+      skipped,
+      manualChecks,
+    };
+  }
+
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    let request: ApprovalRequestRecord;
+    try {
+      request = ApprovalRequestRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+    } catch {
+      continue;
+    }
+    scannedApprovalRequestCount += 1;
+    const currentDecision = latestApprovalDecision(decisionsByRequest.get(request.id) ?? []);
+    if (currentDecision) {
+      skipped.push({
+        approvalRequestId: request.id,
+        proposalId: request.proposalId,
+        reason: `already decided: ${currentDecision.decision}`,
+      });
+      continue;
+    }
+
+    const proposal = readProposalById(app.paths.root, request.proposalId);
+    if (!proposal) {
+      manualChecks.push({
+        approvalRequestId: request.id,
+        proposalId: request.proposalId,
+        reason: 'current proposal artifact missing',
+      });
+      continue;
+    }
+    if (proposal.changeSet.length === 0) {
+      manualChecks.push({
+        approvalRequestId: request.id,
+        proposalId: request.proposalId,
+        reason: 'current proposal has no target',
+      });
+      continue;
+    }
+    const currentHashes = proposalContentHashes(proposal);
+    if (currentHashes.length === 0) {
+      manualChecks.push({
+        approvalRequestId: request.id,
+        proposalId: proposal.id,
+        reason: 'current proposal has no contentHash',
+      });
+      continue;
+    }
+
+    const prior = readLatestTargetDecisionForSelfHeal(app.paths.root, proposal);
+    if (!prior) {
+      skipped.push({
+        approvalRequestId: request.id,
+        proposalId: proposal.id,
+        reason: 'no prior decision for same target',
+      });
+      continue;
+    }
+    if (prior.decision.decision !== 'request-changes' && prior.decision.decision !== 'reject') {
+      skipped.push({
+        approvalRequestId: request.id,
+        proposalId: proposal.id,
+        reason: `latest same-target decision is ${prior.decision.decision}`,
+      });
+      continue;
+    }
+    if (hasValidFeedbackContextForDecision(proposal, prior.decision, prior.proposal)) {
+      skipped.push({
+        approvalRequestId: request.id,
+        proposalId: proposal.id,
+        reason: 'proposal already carries valid feedbackContext',
+      });
+      continue;
+    }
+
+    const priorHashes = proposalContentHashes(prior.proposal);
+    let matchType: SelfHealDuplicateCandidate['matchType'] | undefined;
+    if (priorHashes.length > 0 && sameStringSet(currentHashes, priorHashes)) {
+      matchType = 'contentHash';
+    } else {
+      const currentFingerprint = computePersistedProposalSemanticFingerprint(app.paths.root, proposal);
+      const priorFingerprint = prior.proposal.feedbackSemanticFingerprint ??
+        computePersistedProposalSemanticFingerprint(app.paths.root, prior.proposal);
+      if (currentFingerprint === priorFingerprint) {
+        matchType = 'semanticFingerprint';
+      }
+    }
+
+    if (!matchType) {
+      skipped.push({
+        approvalRequestId: request.id,
+        proposalId: proposal.id,
+        reason: 'same target but contentHash and semantic fingerprint differ',
+      });
+      continue;
+    }
+
+    candidates.push({
+      approvalRequestId: request.id,
+      currentProposalId: proposal.id,
+      priorProposalId: prior.proposal.id,
+      priorDecisionId: prior.decision.id,
+      matchType,
+      targetRef: proposal.changeSet[0]!.targetRef,
+      contentHashes: currentHashes,
+      ...(prior.decision.direction ? { priorDirection: prior.decision.direction } : {}),
+    });
+  }
+
+  return {
+    command: 'self-heal',
+    mode: 'duplicates',
+    dryRun: true,
+    scannedApprovalRequestCount,
+    candidateCount: candidates.length,
+    skippedCount: skipped.length,
+    manualCheckCount: manualChecks.length,
+    candidates,
+    skipped,
+    manualChecks,
+  };
+}
+
+function readLatestTargetDecisionForSelfHeal(
+  root: string,
+  candidate: EvolutionProposal,
+): { decision: ApprovalDecisionRecord; proposal: EvolutionProposal } | undefined {
+  const targetKey = proposalTargetDedupeKey(candidate);
+  const matches: Array<{ decision: ApprovalDecisionRecord; proposal: EvolutionProposal }> = [];
+  for (const decision of readAllApprovalDecisionRecords(root)) {
+    if (decision.proposalId === candidate.id) continue;
+    const proposal = readProposalById(root, decision.proposalId);
+    if (!proposal) continue;
+    if (proposalTargetDedupeKey(proposal) !== targetKey) continue;
+    matches.push({ decision, proposal });
+  }
+  matches.sort((a, b) => {
+    const time = b.decision.createdAt.localeCompare(a.decision.createdAt);
+    return time === 0 ? b.decision.id.localeCompare(a.decision.id) : time;
+  });
+  return matches[0];
+}
+
+function hasValidFeedbackContextForDecision(
+  proposal: EvolutionProposal,
+  decision: ApprovalDecisionRecord,
+  priorProposal: EvolutionProposal,
+): boolean {
+  return proposal.feedbackContext?.priorDecisionId === decision.id &&
+    proposal.feedbackContext?.priorProposalId === priorProposal.id;
 }
 
 function collectRejectedApprovalCleanupCandidates(
