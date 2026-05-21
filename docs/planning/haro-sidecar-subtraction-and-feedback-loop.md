@@ -322,18 +322,36 @@ CLI 和 Web 增加 legacy 提示。
 ### 6.3 拆分 legacy test suite
 
 不要求旧测试随主链路阻塞。
+主链路 CI 应优先运行 `pnpm test:sidecar`。
+legacy 兼容检查手动运行 `pnpm test:legacy`。
+根命令 `pnpm test` 暂时保留全量测试。
+这样不改变既有 CI 语义。
+后续 CI 切换时只改调用命令。
 
 对象：
 
-- provider live tests。
-- memory-fabric tests。
-- team-orchestrator tests。
-- channel integration tests。
+- `test:sidecar` 覆盖 AgentDock contract。
+- `test:sidecar` 覆盖 Haro MCP tools。
+- `test:sidecar` 覆盖 sidecar CLI。
+- `test:sidecar` 覆盖 approval Web API。
+- `test:sidecar` 覆盖 core 配置、路径、asset registry。
+- `test:legacy` 覆盖 provider / channel。
+- `test:legacy` 覆盖 MemoryFabric。
+- `test:legacy` 覆盖 runner/runtime。
+- `test:legacy` 覆盖 team-orchestrator。
+- `test:legacy` 覆盖 scenario-router。
+- `test:legacy` 覆盖旧 chat/run/workflow/gateway。
+- provider live 测试仍单独运行。
+- 命令是 `pnpm -F @haro/provider-codex test:live`。
+- 它依赖真实凭据，不进入默认 legacy suite。
 
 验收：
 
 - sidecar 主链路 CI 独立。
 - legacy suite 可手动运行。
+- legacy 测试不删除、不跳过。
+- 如果 legacy 失败，应单独修复。
+- 不应阻塞 sidecar 主链路提案闭环。
 
 ### 6.4 删除候选评审
 

@@ -79,7 +79,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:sidecar": "vitest run test/config-schema.test.ts test/ensure-dirs.test.ts test/evolution-asset-registry.test.ts test/init-db.test.ts test/logger.test.ts test/workspace-tsconfig-references.test.ts",
+    "test:legacy": "vitest run test/ac3-subprocess.test.ts test/agent-config-schema.test.ts test/agent-id-hardcode-guard.test.ts test/agent-provider-resolver.test.ts test/agent-registry.test.ts test/agent-runner.test.ts test/bootstrap-default-agent.test.ts test/cron-manager.test.ts test/cron-parser.test.ts test/cron-runner.test.ts test/cron-storage-lease.test.ts test/cron-tick.test.ts test/load-agents-from-dir.test.ts test/mcp-session.test.ts test/memory-boundary.test.ts test/memory-fabric-v1.test.ts test/memory-fabric-v2.test.ts test/memory-fabric.test.ts test/permission-budget.test.ts test/provider-id-hardcode-guard.test.ts test/r7-lint.test.ts test/runner.test.ts test/runtime-runner.test.ts test/runtime-selection.test.ts test/scenario-router.test.ts test/selection-engine.test.ts test/services-cron.test.ts test/services-sessions.test.ts test/stream-events.test.ts test/team-orchestrator.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
