@@ -190,6 +190,7 @@ describe('haro self-heal duplicates --dry-run', () => {
 
     await expect(result).resolves.toMatchObject({ exitCode: 0 });
     expect(stdout.read()).toContain('Self-heal duplicate approval requests: dry-run');
+    expect(stdout.read()).toContain('Candidate actions:');
     expect(stdout.read()).toContain('approval_current');
     expect(stdout.read()).toContain('proposal_prior');
     expect(stdout.read()).toContain('decision_prior');
@@ -201,6 +202,17 @@ describe('haro self-heal duplicates --dry-run', () => {
     expect(readdirSync(join(root, 'evolution', 'approval-decisions'))).toEqual(['decision_prior.json']);
     expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
     expect(readJson(join(root, 'evolution', 'proposals', 'proposal_current.json'))).toEqual(before);
+  });
+
+  it('rejects execution without the explicit dry-run guard', async () => {
+    const root = tempRoot();
+
+    const { result, stderr } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 2 });
+    expect(stderr.read()).toContain('pass `--dry-run`');
+    expect(existsSync(join(root, 'evolution', 'approval-decisions'))).toBe(false);
+    expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
   });
 
   it('does not report a candidate when the current proposal is not equivalent', async () => {
@@ -252,6 +264,7 @@ describe('haro self-heal duplicates --dry-run', () => {
 
     await expect(result).resolves.toMatchObject({ exitCode: 0 });
     expect(stdout.read()).toContain('Manual check: 2');
+    expect(stdout.read()).toContain('Manual checks:');
     expect(stdout.read()).toContain('current proposal artifact missing');
     expect(stdout.read()).toContain('current proposal has no contentHash');
     expect(existsSync(join(root, 'evolution', 'approval-decisions'))).toBe(false);

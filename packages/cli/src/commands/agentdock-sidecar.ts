@@ -1276,6 +1276,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             `Candidates: ${result.candidateCount}`,
             `Skipped: ${result.skippedCount}`,
             `Manual check: ${result.manualCheckCount}`,
+            'Candidate actions:',
             ...result.candidates.map((candidate) => [
               `- ${candidate.approvalRequestId}`,
               `  current proposal: ${candidate.currentProposalId}`,
@@ -1288,7 +1289,9 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `  wouldWriteBlockedEvent: ${candidate.plannedActions.wouldWriteBlockedEvent}`,
               `  dry-run: no writes`,
             ].join('\n')),
+            'Skipped:',
             ...result.skipped.map((item) => `- skipped ${item.approvalRequestId}: ${item.reason}`),
+            'Manual checks:',
             ...result.manualChecks.map((item) => `- manualCheck ${item.approvalRequestId}: ${item.reason}`),
           ].join('\n') + '\n',
         );
