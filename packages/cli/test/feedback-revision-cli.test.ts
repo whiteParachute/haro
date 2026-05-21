@@ -164,7 +164,7 @@ function approvalDecision(
   };
 }
 
-function revisionMetadata(revisionDepth: number) {
+function revisionMetadata(revisionDepth: number, overrides: Record<string, unknown> = {}) {
   return {
     revisionId: 'revision_prior',
     rootProposalId: 'proposal_root',
@@ -189,6 +189,7 @@ function revisionMetadata(revisionDepth: number) {
     },
     createdAt: '2026-05-21T12:00:00.000Z',
     updatedAt: '2026-05-21T12:00:00.000Z',
+    ...overrides,
   };
 }
 
@@ -201,6 +202,53 @@ function seedDecision(root: string, direction: string, decision: 'approve' | 're
   writeArtifact(root, 'approval-requests', approvalRequestId, approvalRequest(approvalRequestId, proposalId));
   writeArtifact(root, 'approval-decisions', decisionId, approvalDecision(decisionId, approvalRequestId, proposalId, decision, direction));
   return { proposalId, approvalRequestId, decisionId };
+}
+
+function feedbackContext(priorDecisionId: string, priorProposalId: string) {
+  return {
+    priorDecisionId,
+    priorProposalId,
+    priorDirection: '请收窄范围，只针对具体错误。',
+    incorporatedAt: '2026-05-21T13:30:00.000Z',
+    incorporationNote: '测试修订提案引用上一次意见。',
+  };
+}
+
+function seedPendingRevision(
+  root: string,
+  source: { proposalId: string; approvalRequestId: string; decisionId: string },
+  proposalOverrides: Record<string, unknown> = {},
+) {
+  const proposalId = `proposal_revision_${Math.random().toString(16).slice(2)}`;
+  const approvalRequestId = `approval_${proposalId}`;
+  const base = proposal(source.proposalId);
+  const revision = proposal(proposalId, {
+    title: base.title,
+    changeSet: base.changeSet,
+    feedbackSemanticFingerprint: 'same-semantic-fingerprint',
+    feedbackContext: feedbackContext(source.decisionId, source.proposalId),
+    revisionMetadata: revisionMetadata(1, {
+      revisionId: `revision_${proposalId}`,
+      rootProposalId: source.proposalId,
+      revisionOfProposalId: source.proposalId,
+      sourceApprovalRequestId: source.approvalRequestId,
+      sourceDecisionId: source.decisionId,
+      sourceDecisionDirection: '请收窄范围，只针对具体错误。',
+      supersedesProposalIds: [source.proposalId],
+      noOpCheck: {
+        verdict: 'substantive-change',
+        priorProposalContentHashes: [`sha256:${source.proposalId}`],
+        revisedProposalContentHashes: [`sha256:${proposalId}`],
+        revisionDepth: 1,
+        changedFields: ['changeSet'],
+        reason: 'fixture default substantive revision.',
+      },
+    }),
+    ...proposalOverrides,
+  });
+  writeArtifact(root, 'proposals', proposalId, revision);
+  writeArtifact(root, 'approval-requests', approvalRequestId, approvalRequest(approvalRequestId, proposalId));
+  return { proposalId, approvalRequestId };
 }
 
 
@@ -341,6 +389,165 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(payload.manualCheckReasons.join('\n')).toContain('exceeds default limit');
   });
 
+  it('reports REVISION_NO_OP for a metadata-only pending revision', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对具体错误。');
+    seedPendingRevision(root, source, {
+      feedbackSemanticFingerprint: 'same-semantic-fingerprint',
+      revisionMetadata: revisionMetadata(1, {
+        revisionId: 'revision_metadata_only',
+        rootProposalId: source.proposalId,
+        revisionOfProposalId: source.proposalId,
+        sourceApprovalRequestId: source.approvalRequestId,
+        sourceDecisionId: source.decisionId,
+        supersedesProposalIds: [source.proposalId],
+        noOpCheck: {
+          verdict: 'no-op',
+          priorProposalContentHashes: [`sha256:${source.proposalId}`],
+          revisedProposalContentHashes: [`sha256:${source.proposalId}`],
+          revisionDepth: 1,
+          changedFields: [],
+          reason: 'metadata-only fixture.',
+        },
+      }),
+    });
+
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', source.decisionId, '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{ noOpCheck: { verdict: string }; validationBlockingReasons: string[]; blockedReasons: string[] }>(stdout);
+    expect(payload.noOpCheck.verdict).toBe('no-op');
+    expect(payload.validationBlockingReasons.join('\n')).toContain('REVISION_NO_OP');
+    expect(payload.blockedReasons.join('\n')).toContain('REVISION_NO_OP');
+  });
+
+  it('manual-checks partial contentHash coverage instead of comparing a filtered subset', async () => {
+    const root = tempRoot();
+    const partialChangeSet = [
+      {
+        op: 'update',
+        targetRef,
+        contentHash: 'sha256:partial-a',
+        summary: '第一条带 hash。',
+      },
+      {
+        op: 'update',
+        targetRef: { ...targetRef, id: 'haro-sidecar:runner-profile:secondary' },
+        summary: '第二条缺 hash。',
+      },
+    ];
+    const source = seedDecision(root, '请补充证据。', 'request-changes', { changeSet: partialChangeSet });
+    seedPendingRevision(root, source, { changeSet: partialChangeSet });
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', source.decisionId, '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{ noOpCheck: { verdict: string; reason: string }; validationBlockingReasons: string[] }>(stdout);
+    expect(payload.noOpCheck.verdict).toBe('manual-check');
+    expect(payload.noOpCheck.reason).toContain('partial contentHash');
+    expect(payload.validationBlockingReasons.join('\n')).toContain('FEEDBACK_REWRITE_MANUAL_CHECK_REQUIRED');
+  });
+
+  it('keeps readability-only feedback as a controlled manual-check exception', async () => {
+    const root = tempRoot();
+    const { decisionId } = seedDecision(root, '请把文案说人话，提升可读性。');
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', decisionId, '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      plannerVerdict: string;
+      parsedRequirements: Array<{ category: string }>;
+      noOpCheck: { verdict: string; changedFields: string[] };
+      validationBlockingReasons: string[];
+    }>(stdout);
+    expect(payload.parsedRequirements.map((item) => item.category)).toContain('readability');
+    expect(payload.plannerVerdict).toBe('manual-check');
+    expect(payload.noOpCheck).toMatchObject({ verdict: 'manual-check' });
+    expect(payload.noOpCheck.changedFields).toEqual(expect.arrayContaining(['title', 'description']));
+    expect(payload.validationBlockingReasons.join('\n')).toContain('FEEDBACK_REWRITE_MANUAL_CHECK_REQUIRED');
+  });
+
+  it('manual-checks stale decisions, newer pending revisions, and missing artifacts conservatively', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围。');
+    writeArtifact(root, 'approval-decisions', 'decision_later_same_target', {
+      ...approvalDecision('decision_later_same_target', source.approvalRequestId, source.proposalId, 'request-changes', '后续意见。'),
+      createdAt: '2026-05-21T13:20:00.000Z',
+      updatedAt: '2026-05-21T13:20:00.000Z',
+    });
+    seedPendingRevision(root, source, {
+      changeSet: [{
+        op: 'update',
+        targetRef,
+        contentHash: 'sha256:real-revision',
+        summary: '真的改变处理规则。',
+      }],
+    });
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', source.decisionId, '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{ plannerVerdict: string; manualCheckReasons: string[]; validationBlockingReasons: string[] }>(stdout);
+    expect(payload.plannerVerdict).toBe('manual-check');
+    expect(payload.manualCheckReasons.join('\n')).toContain('stale decision');
+    expect(payload.manualCheckReasons.join('\n')).toContain('newer revision');
+    expect(payload.validationBlockingReasons.join('\n')).toContain('STALE_FEEDBACK_DECISION');
+
+    const missingRoot = tempRoot();
+    writeArtifact(missingRoot, 'approval-decisions', 'decision_missing_artifacts', approvalDecision(
+      'decision_missing_artifacts',
+      'approval_missing',
+      'proposal_missing',
+      'request-changes',
+      '请补充证据。',
+    ));
+    const missing = runWithCapturedOutput(missingRoot, ['revise', 'feedback', '--dry-run', '--decision-id', 'decision_missing_artifacts', '--json']);
+    await expect(missing.result).resolves.toMatchObject({ exitCode: 0 });
+    const missingPayload = parseJsonData<{ plannerVerdict: string; manualCheckReasons: string[] }>(missing.stdout);
+    expect(missingPayload.plannerVerdict).toBe('manual-check');
+    expect(missingPayload.manualCheckReasons.join('\n')).toContain('source proposal artifact missing');
+  });
+
+  it('validation blocks revised proposals with feedback revision blockers', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围。');
+    const revised = seedPendingRevision(root, source, {
+      revisionMetadata: revisionMetadata(1, {
+        revisionId: 'revision_blocked',
+        rootProposalId: source.proposalId,
+        revisionOfProposalId: source.proposalId,
+        sourceApprovalRequestId: source.approvalRequestId,
+        sourceDecisionId: source.decisionId,
+        supersedesProposalIds: [source.proposalId],
+        unresolvedFeedback: [{
+          id: 'requirement_unresolved',
+          category: 'evidence-required',
+          disposition: 'needs-human',
+          userText: '请补证据。',
+          normalizedRequirement: '补充证据。',
+          proposalChangeRefs: [],
+          evidenceRefs: [],
+          explanation: 'fixture unresolved feedback.',
+        }],
+        noOpCheck: {
+          verdict: 'no-op',
+          priorProposalContentHashes: [`sha256:${source.proposalId}`],
+          revisedProposalContentHashes: [`sha256:${source.proposalId}`],
+          revisionDepth: 1,
+          changedFields: [],
+          reason: 'metadata-only fixture.',
+        },
+      }),
+    });
+    const { result, stdout } = runWithCapturedOutput(root, ['validate', '--pending', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{ validations: Array<{ proposalId: string; applyEligible: boolean; blockingReasons: string[] }> }>(stdout);
+    const validationReport = payload.validations.find((item) => item.proposalId === revised.proposalId);
+    expect(validationReport?.applyEligible).toBe(false);
+    const reasons = validationReport?.blockingReasons.join('\n') ?? '';
+    expect(reasons).toContain('REVISION_NO_OP');
+    expect(reasons).toContain('UNRESOLVED_FEEDBACK');
+  });
+
   it('keeps JSON output shape stable for dry-run plans', async () => {
     const root = tempRoot();
     const { decisionId } = seedDecision(root, '请收窄范围。');
@@ -359,6 +566,8 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       'approvalRequestId',
       'proposalId',
       'parsedRequirements',
+      'noOpCheck',
+      'validationBlockingReasons',
       'plannerVerdict',
       'revisionDepth',
       'revisionDepthLimit',

@@ -1619,21 +1619,9 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     } }).data;
     expect(validatePayload.validations[0]).toMatchObject({
       proposalId: secondPayload.proposal.id,
-      applyEligible: true,
-      blockingReasons: [],
+      applyEligible: false,
     });
-
-    const approvalOut = captureStream();
-    const approvalErr = captureStream();
-    const approval = await runCli(commonOpts(root, approvalOut, approvalErr, ['approval-request', '--pending', '--json']));
-    expect(approval.exitCode).toBe(0);
-    expect(approvalErr.read()).toBe('');
-    const approvalPayload = (JSON.parse(approvalOut.read()) as { data: {
-      approvalRequests: ApprovalRequestRecord[];
-    } }).data;
-    expect(approvalPayload.approvalRequests[0]?.whyChange[0]).toBe('上一次审批意见：');
-    expect(approvalPayload.approvalRequests[0]?.whyChange.join('\n')).toContain('请换成真正解释新错误的提案');
-    assertReadableApprovalRequest(approvalPayload.approvalRequests[0]!);
+    expect(validatePayload.validations[0]?.blockingReasons.join('\n')).toContain('REVISION_METADATA_REQUIRED');
   });
 
   it('validate blocks same-target proposals when feedbackContext is missing', async () => {

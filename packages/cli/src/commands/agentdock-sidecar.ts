@@ -12,6 +12,7 @@ import {
   BlockedProposalEventSchema,
   DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
   FeedbackRequirementResolutionSchema,
+  RevisionNoOpCheckSchema,
   AssetEventSchema,
   EvolutionProposalSchema,
   FrontierSignalSchema,
@@ -33,6 +34,8 @@ import {
   type DescriptionLintReport,
   type FeedbackRequirementCategory,
   type FeedbackRequirementResolution,
+  type RevisionChangedField,
+  type RevisionNoOpCheck,
   type EvolutionProposal,
   type FrontierSignal,
   type ObservationBatch,
@@ -630,6 +633,8 @@ interface ReviseFeedbackPlan {
   proposalId?: string;
   validationId?: string;
   parsedRequirements: FeedbackRequirementResolution[];
+  noOpCheck: RevisionNoOpCheck;
+  validationBlockingReasons: string[];
   plannerVerdict: FeedbackRewritePlannerVerdict;
   dryRun: true;
   wouldWrite: false;
@@ -660,6 +665,8 @@ interface ReviseFeedbackResult {
   proposalId?: string;
   validationId?: string;
   parsedRequirements?: FeedbackRequirementResolution[];
+  noOpCheck?: RevisionNoOpCheck;
+  validationBlockingReasons?: string[];
   plannerVerdict?: FeedbackRewritePlannerVerdict;
   reasons?: string[];
   manualCheckReasons?: string[];
@@ -1359,10 +1366,13 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `  verdict: ${plan.plannerVerdict}`,
               `  requirements: ${plan.parsedRequirements.map((item) => item.category).join(', ') || '(none)'}`,
               `  revisionDepth: ${plan.revisionDepth}/${plan.revisionDepthLimit}`,
+              `  noOpCheck: ${plan.noOpCheck.verdict} (${plan.noOpCheck.reason})`,
+              `  validationBlockers: ${plan.validationBlockingReasons.length}`,
               `  wouldWrite: ${plan.wouldWrite}`,
               ...plan.reasons.map((reason) => `  reason: ${reason}`),
               ...plan.manualCheckReasons.map((reason) => `  manualCheck: ${reason}`),
               ...plan.blockedReasons.map((reason) => `  blocked: ${reason}`),
+              ...plan.validationBlockingReasons.map((reason) => `  validationBlocker: ${reason}`),
               ...plan.skippedReasons.map((reason) => `  skipped: ${reason}`),
             ].join('\n')),
           ].join('\n') + '\n',
@@ -2923,6 +2933,8 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
       proposalId: first.proposalId,
       validationId: first.validationId,
       parsedRequirements: first.parsedRequirements,
+      noOpCheck: first.noOpCheck,
+      validationBlockingReasons: first.validationBlockingReasons,
       plannerVerdict: first.plannerVerdict,
       reasons: first.reasons,
       manualCheckReasons: first.manualCheckReasons,
@@ -2939,12 +2951,21 @@ function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisio
   const manualCheckReasons: string[] = [];
   const blockedReasons: string[] = [];
   const skippedReasons: string[] = [];
+  const validationBlockingReasons: string[] = [];
   const parsedRequirements = parseFeedbackDirectionRequirements(decision.direction ?? '');
   const request = readApprovalRequestById(root, decision.approvalRequestId);
   const proposal = readProposalById(root, decision.proposalId);
   const validation = readValidationById(root, decision.validationId) ?? readLatestValidationForProposal(root, decision.proposalId);
   let revisionDepth = 0;
   let exceedsRevisionDepthLimit = false;
+  let noOpCheck: RevisionNoOpCheck = RevisionNoOpCheckSchema.parse({
+    verdict: 'manual-check',
+    priorProposalContentHashes: [],
+    revisedProposalContentHashes: [],
+    revisionDepth: 0,
+    changedFields: [],
+    reason: 'source proposal artifact is unavailable; no-op gate cannot run.',
+  });
 
   if (decision.decision !== 'request-changes') {
     skippedReasons.push(`decision is ${decision.decision}; only request-changes can be revised`);
@@ -2962,29 +2983,44 @@ function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisio
     exceedsRevisionDepthLimit = revisionDepth > DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT;
     if (exceedsRevisionDepthLimit) {
       manualCheckReasons.push(`revisionDepth ${revisionDepth} exceeds default limit ${DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT}`);
+      validationBlockingReasons.push(`FEEDBACK_REWRITE_MANUAL_CHECK_REQUIRED：revisionDepth ${revisionDepth} exceeds default limit ${DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT}`);
     }
 
     const latestTargetDecision = readLatestApprovalDecisionForProposalTarget(root, proposal);
     if (latestTargetDecision && latestTargetDecision.decision.id !== decision.id) {
       manualCheckReasons.push(`stale decision; latest same-target decision is ${latestTargetDecision.decision.id}`);
+      validationBlockingReasons.push(`STALE_FEEDBACK_DECISION：latest same-target request-changes decision is ${latestTargetDecision.decision.id}`);
     }
 
     const newerPendingRevision = readPendingRevisionForRoot(root, proposal);
     if (newerPendingRevision) {
       manualCheckReasons.push(`newer revision ${newerPendingRevision.proposal.id} already has pending approval request ${newerPendingRevision.approvalRequest.id}`);
+      noOpCheck = evaluateRevisionNoOpGate(root, proposal, newerPendingRevision.proposal);
+      validationBlockingReasons.push(...feedbackRevisionValidationBlockingReasons(root, newerPendingRevision.proposal));
+    } else {
+      noOpCheck = planRevisionNoOpCheckFromRequirements(root, proposal, parsedRequirements, revisionDepth);
     }
   }
 
   const categories = new Set(parsedRequirements.map((requirement) => requirement.category));
   if (categories.has('out-of-scope')) blockedReasons.push('direction says the proposal is out of scope');
   if (categories.has('policy-blocked')) blockedReasons.push('direction says the proposal is blocked by policy or safety boundary');
+  const needsMoreInfoOnly = parsedRequirements.length > 0 &&
+    parsedRequirements.every((item) => item.category === 'needs-more-info');
+  if (noOpCheck.verdict === 'no-op') {
+    blockedReasons.push(`REVISION_NO_OP：${noOpCheck.reason}`);
+    validationBlockingReasons.push(`REVISION_NO_OP：${noOpCheck.reason}`);
+  } else if (noOpCheck.verdict === 'manual-check' && parsedRequirements.length > 0 && !needsMoreInfoOnly) {
+    manualCheckReasons.push(`FEEDBACK_REWRITE_MANUAL_CHECK_REQUIRED：${noOpCheck.reason}`);
+    validationBlockingReasons.push(`FEEDBACK_REWRITE_MANUAL_CHECK_REQUIRED：${noOpCheck.reason}`);
+  }
 
   let plannerVerdict: FeedbackRewritePlannerVerdict = 'manual-check';
   if (skippedReasons.length > 0 || manualCheckReasons.length > 0) {
     plannerVerdict = 'manual-check';
   } else if (blockedReasons.length > 0) {
     plannerVerdict = 'blocked';
-  } else if (parsedRequirements.length > 0 && parsedRequirements.every((item) => item.category === 'needs-more-info')) {
+  } else if (needsMoreInfoOnly) {
     plannerVerdict = 'needs-more-info';
   } else if (parsedRequirements.length > 0) {
     plannerVerdict = 'can-rewrite';
@@ -2997,6 +3033,8 @@ function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisio
     proposalId: decision.proposalId,
     validationId: decision.validationId,
     parsedRequirements,
+    noOpCheck,
+    validationBlockingReasons: uniqueSorted(validationBlockingReasons),
     plannerVerdict,
     dryRun: true,
     wouldWrite: false,
@@ -3048,6 +3086,13 @@ function parseFeedbackDirectionRequirements(direction: string): FeedbackRequirem
       explanation: 'planner 可以要求重写 risk、rollback 和 benefit 段。',
     },
     {
+      category: 'readability',
+      disposition: 'incorporated',
+      pattern: /说人话|可读性|文案|措辞|标题|描述|读起来/iu,
+      normalizedRequirement: '把提案文案改到审批人能读懂。',
+      explanation: 'planner 只能把可读性修改标成受控例外，不能把纯文案当成可应用改动。',
+    },
+    {
       category: 'needs-more-info',
       disposition: 'needs-human',
       pattern: /看不懂|不清楚|说明|解释|为什么|什么是|没讲清|讲清楚/iu,
@@ -3085,6 +3130,186 @@ function parseFeedbackDirectionRequirements(direction: string): FeedbackRequirem
     }));
   }
   return requirements;
+}
+
+function planRevisionNoOpCheckFromRequirements(
+  root: string,
+  proposal: EvolutionProposal,
+  requirements: readonly FeedbackRequirementResolution[],
+  revisionDepth: number,
+): RevisionNoOpCheck {
+  const hashes = proposalContentHashes(proposal);
+  const categories = new Set(requirements.map((requirement) => requirement.category));
+  const changedFields: RevisionChangedField[] = [];
+  if (categories.has('scope-reduction')) changedFields.push('scope', 'changeSet', 'contentHash');
+  if (categories.has('evidence-required')) changedFields.push('sourceObservationRefs', 'evidenceRefs');
+  if (categories.has('risk-rollback-change')) changedFields.push('testPlan', 'rollbackPlan', 'riskLevel');
+  if (categories.has('readability')) changedFields.push('title', 'description');
+
+  const semanticFingerprint = proposal.feedbackSemanticFingerprint ?? computePersistedProposalSemanticFingerprint(root, proposal);
+  if (changedFields.length === 0) {
+    return RevisionNoOpCheckSchema.parse({
+      verdict: 'manual-check',
+      priorProposalContentHashes: hashes,
+      revisedProposalContentHashes: hashes,
+      priorSemanticFingerprint: semanticFingerprint,
+      revisedSemanticFingerprint: semanticFingerprint,
+      revisionDepth,
+      changedFields: [],
+      reason: requirements.length === 0
+        ? 'direction did not produce a concrete rewrite delta.'
+        : 'direction requires human clarification before a revised proposal can be checked.',
+    });
+  }
+
+  const uniqueChangedFields = uniqueSorted(changedFields) as RevisionChangedField[];
+  if (uniqueChangedFields.every((field) => isReadabilityRevisionChangedField(field))) {
+    return RevisionNoOpCheckSchema.parse({
+      verdict: 'manual-check',
+      priorProposalContentHashes: hashes,
+      revisedProposalContentHashes: hashes,
+      priorSemanticFingerprint: semanticFingerprint,
+      revisedSemanticFingerprint: semanticFingerprint,
+      revisionDepth,
+      changedFields: uniqueChangedFields,
+      reason: 'readability-only rewrite must stay manual-check until a revised proposal proves the wording change.',
+    });
+  }
+
+  return RevisionNoOpCheckSchema.parse({
+    verdict: 'substantive-change',
+    priorProposalContentHashes: hashes,
+    revisedProposalContentHashes: hashes,
+    priorSemanticFingerprint: semanticFingerprint,
+    revisedSemanticFingerprint: semanticFingerprint,
+    revisionDepth,
+    changedFields: uniqueChangedFields,
+    reason: 'dry-run planner mapped feedback to substantive fields; confirm path must rerun no-op gate on the revised proposal.',
+  });
+}
+
+function evaluateRevisionNoOpGate(
+  root: string,
+  prior: EvolutionProposal,
+  revised: EvolutionProposal,
+): RevisionNoOpCheck {
+  const revisionDepth = revised.revisionMetadata?.revisionDepth ?? ((prior.revisionMetadata?.revisionDepth ?? 0) + 1);
+  const priorHashes = proposalContentHashes(prior);
+  const revisedHashes = proposalContentHashes(revised);
+  const priorSemanticFingerprint = prior.feedbackSemanticFingerprint ?? computePersistedProposalSemanticFingerprint(root, prior);
+  const revisedSemanticFingerprint = revised.feedbackSemanticFingerprint ?? computePersistedProposalSemanticFingerprint(root, revised);
+  const changedFields = revisionChangedFields(prior, revised);
+  const missingContentHash = prior.changeSet.some((change) => !change.contentHash?.trim()) ||
+    revised.changeSet.some((change) => !change.contentHash?.trim());
+  if (missingContentHash) {
+    return RevisionNoOpCheckSchema.parse({
+      verdict: 'manual-check',
+      priorProposalContentHashes: priorHashes,
+      revisedProposalContentHashes: revisedHashes,
+      priorSemanticFingerprint,
+      revisedSemanticFingerprint,
+      revisionDepth,
+      changedFields,
+      reason: 'partial contentHash coverage; no-op gate must not compare a filtered hash subset.',
+    });
+  }
+
+  const substantiveChangedFields = changedFields.filter((field) => isSubstantiveRevisionChangedField(field));
+  if (substantiveChangedFields.length > 0) {
+    return RevisionNoOpCheckSchema.parse({
+      verdict: 'substantive-change',
+      priorProposalContentHashes: priorHashes,
+      revisedProposalContentHashes: revisedHashes,
+      priorSemanticFingerprint,
+      revisedSemanticFingerprint,
+      revisionDepth,
+      changedFields,
+      reason: `substantive fields changed: ${substantiveChangedFields.join(', ')}`,
+    });
+  }
+
+  if (changedFields.length > 0 && changedFields.every((field) => isReadabilityRevisionChangedField(field))) {
+    return RevisionNoOpCheckSchema.parse({
+      verdict: 'manual-check',
+      priorProposalContentHashes: priorHashes,
+      revisedProposalContentHashes: revisedHashes,
+      priorSemanticFingerprint,
+      revisedSemanticFingerprint,
+      revisionDepth,
+      changedFields,
+      reason: 'readability-only revision needs human review and must not masquerade as an applyable code/config change.',
+    });
+  }
+
+  const contentHashEquivalent = priorHashes.length > 0 &&
+    revisedHashes.length > 0 &&
+    sameStringSet(priorHashes, revisedHashes);
+  const semanticEquivalent = Boolean(priorSemanticFingerprint && revisedSemanticFingerprint && priorSemanticFingerprint === revisedSemanticFingerprint);
+  if (contentHashEquivalent || semanticEquivalent || changedFields.length === 0) {
+    return RevisionNoOpCheckSchema.parse({
+      verdict: 'no-op',
+      priorProposalContentHashes: priorHashes,
+      revisedProposalContentHashes: revisedHashes,
+      priorSemanticFingerprint,
+      revisedSemanticFingerprint,
+      revisionDepth,
+      changedFields,
+      reason: 'revised proposal changes only metadata or keeps equivalent content and semantic fingerprint.',
+    });
+  }
+
+  return RevisionNoOpCheckSchema.parse({
+    verdict: 'manual-check',
+    priorProposalContentHashes: priorHashes,
+    revisedProposalContentHashes: revisedHashes,
+    priorSemanticFingerprint,
+    revisedSemanticFingerprint,
+    revisionDepth,
+    changedFields,
+    reason: 'no-op gate could not prove whether the revision is substantive.',
+  });
+}
+
+function revisionChangedFields(prior: EvolutionProposal, revised: EvolutionProposal): RevisionChangedField[] {
+  const fields: RevisionChangedField[] = [];
+  if (prior.title !== revised.title) fields.push('title');
+  if (prior.level !== revised.level || prior.targetKind !== revised.targetKind || proposalTargetDedupeKey(prior) !== proposalTargetDedupeKey(revised)) {
+    fields.push('scope');
+  }
+  if (!sameJson(prior.sourceObservationRefs, revised.sourceObservationRefs)) fields.push('sourceObservationRefs', 'evidenceRefs');
+  if (!sameJson(prior.testPlan, revised.testPlan)) fields.push('testPlan');
+  if (!sameJson(prior.rollbackPlan, revised.rollbackPlan)) fields.push('rollbackPlan');
+  if (prior.riskLevel !== revised.riskLevel) fields.push('riskLevel');
+  if (!sameStringSet(proposalContentHashes(prior), proposalContentHashes(revised))) fields.push('contentHash');
+  if (!sameJson(prior.changeSet.map((change) => change.contentRef ?? ''), revised.changeSet.map((change) => change.contentRef ?? ''))) fields.push('contentRef');
+  const priorChangeShape = prior.changeSet.map((change) => ({
+    op: change.op,
+    targetRef: change.targetRef,
+    summary: change.summary,
+    contentRef: change.contentRef ?? '',
+    contentHash: change.contentHash ?? '',
+  }));
+  const revisedChangeShape = revised.changeSet.map((change) => ({
+    op: change.op,
+    targetRef: change.targetRef,
+    summary: change.summary,
+    contentRef: change.contentRef ?? '',
+    contentHash: change.contentHash ?? '',
+  }));
+  if (!sameJson(priorChangeShape, revisedChangeShape)) fields.push('changeSet');
+  return uniqueSorted(fields) as RevisionChangedField[];
+}
+
+function isSubstantiveRevisionChangedField(field: RevisionChangedField): boolean {
+  return field !== 'title' && field !== 'description';
+}
+
+function isReadabilityRevisionChangedField(field: RevisionChangedField): boolean {
+  return field === 'title' || field === 'description';
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function readApprovalDecisionById(root: string, decisionId: string): ApprovalDecisionRecord | undefined {
@@ -7786,6 +8011,7 @@ function stringToRef(value: string, kind: string): Ref {
 function validationBlockingReasons(root: string, proposal: EvolutionProposal, rollbackReady: boolean): string[] {
   const reasons = proposalExecutionReadinessBlockingReasons(root, proposal);
   reasons.push(...feedbackContextValidationBlockingReasons(root, proposal));
+  reasons.push(...feedbackRevisionValidationBlockingReasons(root, proposal));
   if (!rollbackReady) {
     reasons.push('回滚方案需要快照（snapshot）或回滚引用（rollback refs）后，才允许进入应用判断。');
   }
@@ -7802,6 +8028,32 @@ function feedbackContextValidationBlockingReasons(root: string, proposal: Evolut
   return [
     `MISSING_FEEDBACK_CONTEXT：同目标最近有退回意见 ${latest!.decision.id}，当前提案必须引用该意见后才能应用。`,
   ];
+}
+
+function feedbackRevisionValidationBlockingReasons(root: string, proposal: EvolutionProposal): string[] {
+  const latest = readLatestApprovalDecisionForProposalTarget(root, proposal);
+  if (latest?.decision.decision !== 'request-changes') return [];
+  const metadata = proposal.revisionMetadata;
+  if (!metadata) {
+    return [
+      `REVISION_METADATA_REQUIRED：同目标最近有 request-changes ${latest.decision.id}，修订提案必须带 revisionMetadata。`,
+    ];
+  }
+
+  const reasons: string[] = [];
+  if (metadata.sourceDecisionId !== latest.decision.id) {
+    reasons.push(`STALE_FEEDBACK_DECISION：revisionMetadata.sourceDecisionId=${metadata.sourceDecisionId} 不是最新 request-changes ${latest.decision.id}。`);
+  }
+  if (metadata.noOpCheck.verdict === 'no-op') {
+    reasons.push(`REVISION_NO_OP：${metadata.noOpCheck.reason}`);
+  }
+  if (metadata.noOpCheck.verdict === 'manual-check') {
+    reasons.push(`FEEDBACK_REWRITE_MANUAL_CHECK_REQUIRED：${metadata.noOpCheck.reason}`);
+  }
+  if (metadata.unresolvedFeedback.length > 0) {
+    reasons.push(`UNRESOLVED_FEEDBACK：仍有 ${metadata.unresolvedFeedback.length} 条反馈未解决。`);
+  }
+  return reasons;
 }
 
 function proposalExecutionReadinessBlockingReasons(root: string, proposal: EvolutionProposal): string[] {

@@ -532,6 +532,13 @@ L2/L3 不能由 Haro 直接改代码。
 - validation blocking reasons
 - proposal generation gate
 
+落地记录（2026-05-21）：
+
+- dry-run planner 已输出 `noOpCheck`。
+- validation 已写入 revision blockers。
+- 覆盖 metadata-only、partial hash、readability-only。
+- 本阶段仍不写 revised proposal。
+
 验收：
 
 - 只改 metadata 的 revision 被阻止。
