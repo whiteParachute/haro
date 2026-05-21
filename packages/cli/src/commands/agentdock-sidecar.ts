@@ -570,6 +570,12 @@ interface SelfHealDuplicateCandidate {
   matchType: 'contentHash' | 'semanticFingerprint';
   targetRef: Ref;
   contentHashes: string[];
+  dryRun: true;
+  plannedActions: {
+    wouldReject: true;
+    wouldSupersede: true;
+    wouldWriteBlockedEvent: true;
+  };
   priorDirection?: string;
 }
 
@@ -1277,6 +1283,9 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `  prior decision: ${candidate.priorDecisionId}`,
               `  matchType: ${candidate.matchType}`,
               `  target: ${candidate.targetRef.kind}:${candidate.targetRef.id}`,
+              `  wouldReject: ${candidate.plannedActions.wouldReject}`,
+              `  wouldSupersede: ${candidate.plannedActions.wouldSupersede}`,
+              `  wouldWriteBlockedEvent: ${candidate.plannedActions.wouldWriteBlockedEvent}`,
               `  dry-run: no writes`,
             ].join('\n')),
             ...result.skipped.map((item) => `- skipped ${item.approvalRequestId}: ${item.reason}`),
@@ -2892,6 +2901,12 @@ function selfHealDuplicateApprovalRequests(app: AppContext, options: SelfHealDup
       matchType,
       targetRef: proposal.changeSet[0]!.targetRef,
       contentHashes: currentHashes,
+      dryRun: true,
+      plannedActions: {
+        wouldReject: true,
+        wouldSupersede: true,
+        wouldWriteBlockedEvent: true,
+      },
       ...(prior.decision.direction ? { priorDirection: prior.decision.direction } : {}),
     });
   }

@@ -194,10 +194,38 @@ describe('haro self-heal duplicates --dry-run', () => {
     expect(stdout.read()).toContain('proposal_prior');
     expect(stdout.read()).toContain('decision_prior');
     expect(stdout.read()).toContain('matchType: contentHash');
+    expect(stdout.read()).toContain('wouldReject: true');
+    expect(stdout.read()).toContain('wouldSupersede: true');
+    expect(stdout.read()).toContain('wouldWriteBlockedEvent: true');
     expect(stdout.read()).toContain('dry-run: no writes');
     expect(readdirSync(join(root, 'evolution', 'approval-decisions'))).toEqual(['decision_prior.json']);
     expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
     expect(readJson(join(root, 'evolution', 'proposals', 'proposal_current.json'))).toEqual(before);
+  });
+
+  it('does not report a candidate when the current proposal is not equivalent', async () => {
+    const root = tempRoot();
+    writeArtifact(root, 'proposals', 'proposal_prior', proposal('proposal_prior', 'hash-1'));
+    writeArtifact(root, 'approval-requests', 'approval_prior', approvalRequest('approval_prior', 'proposal_prior'));
+    writeArtifact(root, 'approval-decisions', 'decision_prior', approvalDecision('decision_prior', 'approval_prior', 'proposal_prior', 'request-changes'));
+    writeArtifact(root, 'proposals', 'proposal_current', proposal('proposal_current', 'hash-2', {
+      title: '给 Haro 写入错误加处理规则',
+      changeSet: [{
+        op: 'update',
+        targetRef,
+        contentHash: 'hash-2',
+        summary: '新增一条写入失败处理规则',
+      }],
+    }));
+    writeArtifact(root, 'approval-requests', 'approval_current', approvalRequest('approval_current', 'proposal_current'));
+
+    const { result, stdout } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--dry-run', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    expect(stdout.read()).toContain('Candidates: 0');
+    expect(stdout.read()).toContain('same target but contentHash and semantic fingerprint differ');
+    expect(existsSync(join(root, 'evolution', 'approval-decisions', 'decision_prior.json'))).toBe(true);
+    expect(existsSync(join(root, 'evolution', 'blocked-proposal-events'))).toBe(false);
   });
 
   it('does not process an already approved request', async () => {
@@ -242,9 +270,25 @@ describe('haro self-heal duplicates --dry-run', () => {
     const { result, stdout } = runWithCapturedOutput(root, ['self-heal', 'duplicates', '--dry-run', '--json']);
 
     await expect(result).resolves.toMatchObject({ exitCode: 0 });
-    const parsed = JSON.parse(stdout.read()) as { data: { dryRun: boolean; candidateCount: number; candidates: Array<{ matchType: string }> } };
+    const parsed = JSON.parse(stdout.read()) as {
+      data: {
+        dryRun: boolean;
+        candidateCount: number;
+        candidates: Array<{
+          matchType: string;
+          dryRun: boolean;
+          plannedActions: { wouldReject: boolean; wouldSupersede: boolean; wouldWriteBlockedEvent: boolean };
+        }>;
+      };
+    };
     expect(parsed.data.dryRun).toBe(true);
     expect(parsed.data.candidateCount).toBe(1);
     expect(parsed.data.candidates[0]?.matchType).toBe('contentHash');
+    expect(parsed.data.candidates[0]?.dryRun).toBe(true);
+    expect(parsed.data.candidates[0]?.plannedActions).toEqual({
+      wouldReject: true,
+      wouldSupersede: true,
+      wouldWriteBlockedEvent: true,
+    });
   });
 });
