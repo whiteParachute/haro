@@ -141,6 +141,25 @@ Haro 不改 aria-memory-vault。
 1. sidecar 主链路测试通过。
 2. 没有 AgentDock 接入依赖。
 
+
+Otherway 边界复核后补充 5 条安全规则。
+
+1. 删除不是第一步。
+2. 必须先列 `still_imported_by`。
+3. 必须先把 sidecar 引用切到 AgentDock 等价能力，或显式下线入口。
+4. 必须跑 build / test / smoke 后，才允许从 freeze 进入 remove-candidate。
+5. `freeze` 不是 `delete`。freeze 表示停止扩展并移出主路径；delete 必须另有删除批准和回滚方案。
+
+inventory 建议额外记录以下字段。
+
+| 字段 | 说明 |
+| --- | --- |
+| still_imported_by | 真实 grep 结果，含文件和行号 |
+| blocking_dependencies | 删除前必须先完成的解绑或替换动作 |
+| replacement | AgentDock 等价能力或 Haro sidecar 新入口 |
+| delete_method | legacy 标记、移入 archive、保留只读、或删除 |
+| related_spec | 关联 FEAT / roadmap / archive 文档 |
+
 sidecar 主链路指：
 
 ```text
@@ -243,6 +262,22 @@ observe -> propose -> validate -> review -> rewrite -> approve -> apply -> feedb
 | skills marketplace tests | deprecate | 通用 marketplace 停止发展 | eat/shit 历史行为 | 保留 asset 迁移测试 |
 | live provider tests | remove-candidate | 不稳定且非 sidecar 主链路 | CI 噪音 | 先禁用或移入 manual |
 
+
+### 5.6 删除前阻断项（Otherway 边界复核补充）
+
+以下不是本轮要立即处理的代码任务。
+它们是后续真正物理减法前必须写进 inventory 的 blocker。
+
+| 对象 | 现状证据 | 阻断原因 | 删除前动作 | verification |
+| --- | --- | --- | --- | --- |
+| Haro MemoryFabric | `packages/mcp-tools/src/types.ts` 仍引用 `MemoryFabric`；`memory-query` / `memory-remember` 仍有历史 MemoryFabric 分支 | 直接删 `packages/core/src/memory/*` 会让 sidecar MCP 编译失败 | 先把 memory tools 改为 AgentDock memory MCP / aria-memory bridge，或从 tool registry 摘掉 | `pnpm -F @haro/mcp-tools test` + typecheck |
+| `provider-codex` / cron | `services/cron.ts`、`cli/commands/cron.ts` 可能仍是 dry-run / diagnostics fallback | 无法确认 daily / propose dry-run 是否还依赖旧 provider | 先确认 AgentDock daily intake 已完全承接，再把 cron/provider 入口标 legacy | CLI cron/propose smoke |
+| channel packages | CLI 仍可能注册 channel 解析逻辑 | 直接删会导致 `feishu:` / `cli:` 旧入口解析失败 | 先把 CLI channel 解析降级为纯字符串，dispatch 交给 AgentDock | CLI smoke + channel legacy tests |
+| permission budget | `cli/commands/budget.ts` 仍 import `permission-budget.ts` | 直接删会破坏 CLI build | 先下线 budget CLI，或改成指向 MCP audit / permission | CLI build / targeted test |
+| Web / Web API | `haro-web.service` 是 approval review board 唯一 UI | 包级删除会让用户无法审批 | 只按路由/页面粒度 deprecate 通用 dashboard，保留 approval review board | web build + `/api/health` + approval API smoke |
+| core barrel export | `packages/core/src/index.ts` 仍可能 re-export `scenario-router` / `team-orchestrator` / `permission-budget` / services | 文件删除后下游 import 会失败 | 先清理 re-export，再删实现 | workspace typecheck |
+| legacy specs / tests | phase-1 / phase-1.5 仍引用旧 runtime/agent/channel/provider | 删除代码前测试和文档会误导或失败 | 先加 deprecated banner，拆分 legacy suite | markdown link check + targeted tests |
+
 ## 6. 第一阶段减法执行顺序
 
 本轮只盘点。
@@ -312,6 +347,31 @@ CLI 和 Web 增加 legacy 提示。
 - sidecar 主链路验证。
 - 用户或 supervisor 明确批准。
 
+
+### 6.5 负范围：减法过程明确不要动
+
+以下内容不属于 Haro subtraction 的修改范围。
+即使做物理减法，也不能顺手清理。
+
+- `~/.aria-memory/` 和 aria-memory vault 全部内容。
+- `~/.haro/evolution/` 真实数据，包括 applications、approval decisions、approval requests、blocked proposal events、frontier signals、proposals、proposal content、rollbacks、snapshots、validations、observations、cursors、locks、archived。
+- `~/.haro/` 其它运行数据，包括 agents、archive、channels、config.yaml、data、haro.db*、memory、skills、agentdock-connections.json。
+- 当前 pending approval request、blocked-proposal-events 和 approval conversations。
+- AgentDock `src/*` 内部模块。Haro 不能 import AgentDock 内部实现，减法 inventory 也不修改 AgentDock 代码。
+- `haro-web.service` 与 `HARO_HOME=/home/heyucong.bebop/.haro` 绑定。
+- ModelHub runner env、AgentDock service env、`~/.codex/`、`~/.claude/` provider 缓存。
+
+### 6.6 AgentDock 侧待补 contract（不在 Haro 仓库内实现）
+
+Otherway 复核认为有 3 个 AgentDock 侧承接点需要单独排期。
+这些是后续加法候选，不是本轮 Haro 文档任务要实现的代码。
+
+| contract / bridge | 目的 | 备注 |
+| --- | --- | --- |
+| sidecar memory tool ↔ AgentDock memory MCP bridge | 让 Haro `memory-query` / `memory-remember` 不再依赖旧 MemoryFabric | 由 AgentDock/Selfway 承接，Haro 只调整 tool 边界 |
+| approval lifecycle event 广播 | supervisor workspace 被动收到 pending / approved / rejected / applied / rolled-back 事件 | 可暂缓，不阻塞减法 |
+| frontier source 查询边界 | 长期让 Haro frontier intake 从 AgentDock 外部信号 MCP 读取 | 不是当前减法 blocker |
+
 ## 7. 下一阶段加法
 
 本轮不实现以下能力。
@@ -325,7 +385,7 @@ CLI 和 Web 增加 legacy 提示。
 | feedbackIncorporation | 明确哪些意见已处理 | rewrite 设计 |
 | unresolvedFeedback | 标记未处理意见 | review board |
 | self-heal residual duplicates | 清理 FEAT-069 前残留重复项 | FEAT-075 |
-| L2/L3 workspace execution contract | 定义由哪个 workspace 执行代码改动 | FEAT-056/057 |
+| L2/L3 workspace execution contract | 定义由哪个 workspace 执行代码改动 | FEAT-049 现有 patch-branch 骨架；FEAT-056/057 承接 workspace assignment / executor |
 | execution feedback 状态机 | apply 后自动反馈成功、失败和阻断 | FEAT-058/070 |
 
 ## 8. 本轮验证方式
