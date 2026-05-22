@@ -717,7 +717,7 @@ interface ReviseFeedbackResult {
   operatorPreflight: ReviseFeedbackOperatorPreflight;
 }
 
-interface ReviseFeedbackOperatorPreflight {
+export interface ReviseFeedbackOperatorPreflight {
   scope: 'operator-preflight';
   appliesTo: 'operator-preflight';
   currentRunMode: 'dry-run' | 'confirm';
@@ -741,7 +741,7 @@ interface ReviseFeedbackOperatorPreflight {
   batchConfirmCommand?: string;
 }
 
-interface OperatorCommandRecord {
+export interface OperatorCommandRecord {
   source: 'self-heal-duplicates' | 'feedback-rewrite' | 'feedback-rewrite-batch';
   command: string;
   decisionId?: string;
@@ -749,7 +749,7 @@ interface OperatorCommandRecord {
   note?: string;
 }
 
-interface AgentDockReadonlyOperatorSummaryResult {
+export interface AgentDockReadonlyOperatorSummaryResult {
   command: 'agentdock-operator-preflight';
   mode: 'dry-run';
   dryRun: true;
@@ -2399,6 +2399,11 @@ function emptyAgentDockReadonlyOperatorSummary(app: AppContext, errors: string[]
     dryRunCommandRecords: [selfHealDryRunRecord],
     recommendedActions: ['operator preflight 失败；请先查看 errors，再决定是否单独运行 dry-run 命令。'],
   };
+}
+
+
+export function runAgentDockOperatorPreflight(app: AppContext): AgentDockReadonlyOperatorSummaryResult {
+  return tryBuildAgentDockReadonlyOperatorSummary(app);
 }
 
 function readonlyOperatorRecommendedActions(result: AgentDockReadonlyOperatorSummaryResult): string[] {

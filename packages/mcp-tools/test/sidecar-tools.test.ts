@@ -14,6 +14,7 @@ import {
   createSidecarRegistry,
   type SidecarGatedWriteHandlers,
   type SidecarLintHandlers,
+  type SidecarOperatorPreflightHandlers,
   type SidecarWorkflowHandlers,
 } from '../src/index.js';
 import { McpServer } from '../src/server.js';
@@ -53,7 +54,7 @@ afterEach(() => {
 async function runSidecarWith(
   e: TestEnv,
   requests: JsonRpcMessage[],
-  options: { gatedWrite?: SidecarGatedWriteHandlers; workflow?: SidecarWorkflowHandlers; lint?: SidecarLintHandlers } = {},
+  options: { gatedWrite?: SidecarGatedWriteHandlers; workflow?: SidecarWorkflowHandlers; lint?: SidecarLintHandlers; operatorPreflight?: SidecarOperatorPreflightHandlers } = {},
 ): Promise<JsonRpcMessage[]> {
   const transport = new InMemoryTransport();
   for (const req of requests) transport.push(req);
@@ -67,6 +68,7 @@ async function runSidecarWith(
     now: () => new Date('2026-05-08T06:00:00.000Z'),
     ...(options.workflow ? { workflow: options.workflow } : {}),
     ...(options.lint ? { lint: options.lint } : {}),
+    ...(options.operatorPreflight ? { operatorPreflight: options.operatorPreflight } : {}),
     ...(options.gatedWrite ? { gatedWrite: options.gatedWrite } : {}),
   });
   const server = new McpServer({
@@ -240,6 +242,70 @@ describe('AgentDock read-only sidecar MCP tools [FEAT-044]', () => {
       summary: {
         approvalRequestIds: ['approval-request-001'],
       },
+    });
+  });
+
+  it('lists and invokes the operator preflight tool only when a handler is provided', async () => {
+    const e = (env = setupEnv());
+    const responses = await runSidecarWith(
+      e,
+      [
+        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: {
+            name: 'haro_operator_preflight',
+            arguments: { dryRun: true },
+          },
+        },
+      ],
+      {
+        operatorPreflight: {
+          summarize: (input) => ({
+            command: 'agentdock-operator-preflight',
+            dryRun: true,
+            wouldWrite: false,
+            requiresExplicitConfirm: true,
+            scope: 'operator-preflight',
+            appliesTo: 'operator-preflight',
+            currentRunMode: 'dry-run',
+            duplicateSelfHeal: { candidateCount: 0 },
+            feedbackRewrite: { safeToConfirmCount: 0, unsafeDecisionIds: { needsMoreInfo: [] } },
+            confirmCommandRecords: [],
+            dryRunCommandRecords: [],
+            input,
+          }),
+        },
+      },
+    );
+
+    const listed = responses[0]! as { result: { tools: Array<{ name: string; description: string }> } };
+    expect(listed.result.tools.map((tool) => tool.name).sort()).toEqual([
+      'haro_asset_query',
+      'haro_observe',
+      'haro_operator_preflight',
+      'haro_propose',
+      'haro_validate',
+    ]);
+    expect(listed.result.tools.find((tool) => tool.name === 'haro_operator_preflight')?.description).toContain('Read-only dry-run');
+    expect(callResult<{
+      dryRun: boolean;
+      wouldWrite: boolean;
+      requiresExplicitConfirm: boolean;
+      scope: string;
+      currentRunMode: string;
+      input: { dryRun: true };
+      feedbackRewrite: { unsafeDecisionIds: { needsMoreInfo: string[] } };
+    }>(responses[1]!)).toMatchObject({
+      dryRun: true,
+      wouldWrite: false,
+      requiresExplicitConfirm: true,
+      scope: 'operator-preflight',
+      currentRunMode: 'dry-run',
+      input: { dryRun: true },
+      feedbackRewrite: { unsafeDecisionIds: { needsMoreInfo: [] } },
     });
   });
 

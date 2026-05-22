@@ -110,6 +110,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
         'haro_asset_query',
         'haro_lint_descriptions',
         'haro_observe',
+        'haro_operator_preflight',
         'haro_propose',
         'haro_run_daily_workflow',
         'haro_validate',
@@ -158,6 +159,73 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       );
       expect(payload.result.structuredContent.connectionId).toBe('fake-agentdock-test');
       expect(payload.result.structuredContent.sessions).toHaveLength(1);
+      expect(existsSync(join(home, 'memory'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('shipped binary mcp exposes operator preflight as a read-only contract', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-mcp-operator-preflight-'));
+    try {
+      const res = spawnSync(process.execPath, [bin, 'mcp'], {
+        env: { ...process.env, HARO_HOME: home },
+        input: [
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: {
+              name: 'haro_operator_preflight',
+              arguments: { dryRun: true },
+            },
+          }),
+          '',
+        ].join('\n'),
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      expect(res.stderr).toBe('');
+      const payload = JSON.parse(res.stdout) as {
+        result: {
+          isError: boolean;
+          structuredContent: {
+            command: string;
+            dryRun: boolean;
+            wouldWrite: boolean;
+            requiresExplicitConfirm: boolean;
+            scope: string;
+            currentRunMode: string;
+            duplicateSelfHeal: { candidateCount: number; dryRunCommandRecords: Array<{ source: string; command: string }> };
+            feedbackRewrite: { safeToConfirmCount: number; unsafeDecisionIds: { needsMoreInfo: string[] } };
+            confirmCommandRecords: Array<{ source: string; command: string }>;
+            dryRunCommandRecords: Array<{ source: string; command: string }>;
+          };
+        };
+      };
+      expect(payload.result.isError).toBe(false);
+      expect(payload.result.structuredContent).toMatchObject({
+        command: 'agentdock-operator-preflight',
+        dryRun: true,
+        wouldWrite: false,
+        requiresExplicitConfirm: true,
+        scope: 'operator-preflight',
+        currentRunMode: 'dry-run',
+        duplicateSelfHeal: { candidateCount: 0 },
+        feedbackRewrite: { safeToConfirmCount: 0, unsafeDecisionIds: { needsMoreInfo: [] } },
+        confirmCommandRecords: [],
+      });
+      expect(payload.result.structuredContent.dryRunCommandRecords).toEqual([
+        {
+          source: 'self-heal-duplicates',
+          command: 'haro self-heal duplicates --dry-run',
+          approvalRequestIds: [],
+          note: 'read-only mirror command',
+        },
+      ]);
+      expect(existsSync(join(home, 'evolution', 'approval-decisions'))).toBe(false);
+      expect(existsSync(join(home, 'evolution', 'approval-requests'))).toBe(false);
+      expect(existsSync(join(home, 'evolution', 'feedback-revisions'))).toBe(false);
       expect(existsSync(join(home, 'memory'))).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -270,6 +338,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
         'haro_asset_query',
         'haro_lint_descriptions',
         'haro_observe',
+        'haro_operator_preflight',
         'haro_propose',
         'haro_rollback',
         'haro_run_daily_workflow',

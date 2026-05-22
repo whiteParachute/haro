@@ -40,6 +40,7 @@ const SIDECAR_TOOL_NAMES = [
   'haro_asset_query',
   'haro_run_daily_workflow',
   'haro_lint_descriptions',
+  'haro_operator_preflight',
 ] as const;
 
 const SIDECAR_TOOL_NAME_SET = new Set<string>(SIDECAR_TOOL_NAMES);
@@ -59,9 +60,14 @@ export interface SidecarLintHandlers {
   descriptions(input: HaroLintDescriptionsInput): Promise<unknown> | unknown;
 }
 
+export interface SidecarOperatorPreflightHandlers {
+  summarize(input: HaroOperatorPreflightInput): Promise<unknown> | unknown;
+}
+
 export interface SidecarRegistryOptions extends RegistryOptions {
   workflow?: SidecarWorkflowHandlers;
   lint?: SidecarLintHandlers;
+  operatorPreflight?: SidecarOperatorPreflightHandlers;
   gatedWrite?: SidecarGatedWriteHandlers;
 }
 
@@ -363,6 +369,12 @@ export const HaroLintDescriptionsInputSchema = z.object({
 
 export type HaroLintDescriptionsInput = z.infer<typeof HaroLintDescriptionsInputSchema>;
 
+export const HaroOperatorPreflightInputSchema = z.object({
+  dryRun: z.literal(true).optional(),
+});
+
+export type HaroOperatorPreflightInput = z.infer<typeof HaroOperatorPreflightInputSchema>;
+
 export function createHaroRunDailyWorkflowTool(
   handler: SidecarWorkflowHandlers['runDaily'],
 ): ToolDefinition<typeof HaroRunDailyWorkflowInputSchema, unknown> {
@@ -389,6 +401,21 @@ export function createHaroLintDescriptionsTool(
     timeoutMs: 10_000,
     async execute(params): Promise<unknown> {
       return handler(params);
+    },
+  };
+}
+
+export function createHaroOperatorPreflightTool(
+  handler: SidecarOperatorPreflightHandlers['summarize'],
+): ToolDefinition<typeof HaroOperatorPreflightInputSchema, unknown> {
+  return {
+    name: 'haro_operator_preflight',
+    description:
+      'Return the Haro operator preflight summary for self-heal duplicates and feedback rewrite. Read-only dry-run; never confirms, applies, rolls back, or executes recommended commands.',
+    inputSchema: HaroOperatorPreflightInputSchema,
+    timeoutMs: 10_000,
+    async execute(params): Promise<unknown> {
+      return handler({ ...params, dryRun: true });
     },
   };
 }
@@ -475,6 +502,9 @@ export function createSidecarRegistry(options: SidecarRegistryOptions): ToolRegi
   }
   if (options.lint) {
     registry.register(createHaroLintDescriptionsTool(options.lint.descriptions));
+  }
+  if (options.operatorPreflight) {
+    registry.register(createHaroOperatorPreflightTool(options.operatorPreflight.summarize));
   }
   if (options.gatedWrite) {
     registry.register(createHaroApplyTool(options.gatedWrite.apply));

@@ -718,6 +718,39 @@ haro operator-preflight --dry-run --human
 
 不要把 `operatorConfirmCommands` 自动 eval/exec。
 
+### 10.8 FEAT-078C MCP operator preflight
+
+MCP 新增只读工具。
+
+工具名：`haro_operator_preflight`。
+
+它返回同一份 operator preflight contract。
+
+输出保留这些字段：
+
+- `status`。
+- `dryRun=true`。
+- `wouldWrite=false`。
+- `requiresExplicitConfirm=true`。
+- `scope=operator-preflight`。
+- `currentRunMode=dry-run`。
+- `duplicateSelfHeal`。
+- `feedbackRewrite`。
+- `confirmCommandRecords`。
+- `dryRunCommandRecords`。
+
+该 MCP 工具只读。
+
+它不执行 confirm 命令。
+
+它不 approve、apply 或 rollback。
+
+它不应被上层自动 eval/exec。
+
+上层调用方只能展示命令。
+
+执行前仍需人工重新 dry-run。
+
 ## 11. Negative scope
 
 10C 和后续 FEAT-076 系列不得做这些事：

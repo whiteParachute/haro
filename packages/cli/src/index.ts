@@ -91,6 +91,7 @@ import {
   lintDescriptions,
   readAgentDockSidecarStatus,
   registerAgentDockSidecarCommands,
+  runAgentDockOperatorPreflight,
   rollbackAgentDock,
   runAgentDockDailyWorkflow,
 } from './commands/agentdock-sidecar.js';
@@ -1455,6 +1456,9 @@ function registerMcpCommand(program: Command, app: AppContext): void {
               descriptions: (input) => lintDescriptions(app, {
                 ...(input.fixDryRun !== undefined ? { fixDryRun: input.fixDryRun } : {}),
               }),
+            },
+            operatorPreflight: {
+              summarize: () => runAgentDockOperatorPreflight(app),
             },
             ...(options.enableGatedWrite ? {
               gatedWrite: {
