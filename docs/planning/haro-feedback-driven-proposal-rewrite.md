@@ -624,6 +624,38 @@ HARO_HOME=$(mktemp -d) pnpm -F @haro/cli test -- test/agentdock-sidecar-cli.test
 
 不得在测试中读写真实 `~/.haro/evolution`。
 
+### 10.6 FEAT-077D operator preflight
+
+生产执行前必须先跑 dry-run。
+
+推荐命令：
+
+```bash
+haro revise feedback --dry-run --pending --json
+```
+
+dry-run 输出 `operatorPreflight`。
+
+它列出：
+
+- `safeToConfirmCount`：可确认数量。
+- `unsafeCount`：不可确认数量。
+- `safeDecisionIds`：可确认决策。
+- `unsafeDecisionIds`：需人工处理的决策。
+- `confirmCommands`：可复制的单条命令。
+- `batchConfirmSafe`：是否适合批量确认。
+- `batchConfirmCommand`：仅全安全时出现。
+
+mixed batch 时不要直接批量确认。
+
+应先处理 unsafe reason。
+
+或只复制 per-decision command。
+
+真实写入仍需显式授权。
+
+本阶段禁止自动对真实 `~/.haro/evolution` confirm。
+
 ## 11. Negative scope
 
 10C 和后续 FEAT-076 系列不得做这些事：

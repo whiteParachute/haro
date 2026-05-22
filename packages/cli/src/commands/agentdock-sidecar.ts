@@ -705,6 +705,24 @@ interface ReviseFeedbackResult {
   revisionDepth?: number;
   revisionDepthLimit: number;
   exceedsRevisionDepthLimit?: boolean;
+  operatorPreflight: ReviseFeedbackOperatorPreflight;
+}
+
+interface ReviseFeedbackOperatorPreflight {
+  requiresExplicitConfirm: boolean;
+  safeToConfirmCount: number;
+  unsafeCount: number;
+  safeDecisionIds: string[];
+  unsafeDecisionIds: {
+    manualCheck: string[];
+    blocked: string[];
+    skipped: string[];
+    other: string[];
+  };
+  unsafeReasonsByDecisionId: Record<string, string[]>;
+  confirmCommands: string[];
+  batchConfirmSafe: boolean;
+  batchConfirmCommand?: string;
 }
 
 interface SidecarStatusResult {
@@ -1393,6 +1411,19 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               : 'No proposal, feedback-revision, approval-request, or blocked event will be written.',
             `Plans: ${result.planCount}`,
             `Summary: processed=${result.processedCount} written=${result.writtenCount} skipped=${result.skippedCount} manualCheck=${result.manualCheckCount} blocked=${result.blockedCount} idempotent=${result.idempotentCount} didWrite=${result.didWrite}`,
+            'Operator preflight:',
+            `  requiresExplicitConfirm: ${result.operatorPreflight.requiresExplicitConfirm}`,
+            `  safeToConfirm: ${result.operatorPreflight.safeToConfirmCount}`,
+            `  unsafe: ${result.operatorPreflight.unsafeCount}`,
+            `  batchConfirmSafe: ${result.operatorPreflight.batchConfirmSafe}`,
+            ...(result.operatorPreflight.batchConfirmCommand
+              ? [`  batchConfirmCommand: ${result.operatorPreflight.batchConfirmCommand}`]
+              : result.mode === 'dry-run' && result.operatorPreflight.safeToConfirmCount > 0
+                ? ['  batchConfirmCommand: (not recommended for mixed/unsafe preflight)']
+                : []),
+            ...result.operatorPreflight.confirmCommands.map((command) => `  confirmCommand: ${command}`),
+            ...Object.entries(result.operatorPreflight.unsafeReasonsByDecisionId).map(([decisionId, reasons]) =>
+              `  unsafeDecision: ${decisionId} :: ${reasons.join(' | ')}`),
             ...result.plans.map((plan) => [
               `- decision: ${plan.decisionId}`,
               `  request: ${plan.approvalRequestId ?? '(missing)'}`,
@@ -2959,6 +2990,10 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
     ? plans.map((plan) => confirmFeedbackRevisionForPlan(app, plan))
     : plans;
   const summary = summarizeReviseFeedbackPlans(finalPlans);
+  const operatorPreflight = buildReviseFeedbackOperatorPreflight(finalPlans, {
+    mode: confirm ? 'confirm' : 'dry-run',
+    pending: options.pending === true,
+  });
   const first = finalPlans[0];
   return {
     command: 'revise feedback',
@@ -2974,6 +3009,7 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
     ...summary,
     plans: finalPlans,
     revisionDepthLimit: DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
+    operatorPreflight,
     ...(first ? {
       decisionId: first.decisionId,
       approvalRequestId: first.approvalRequestId,
@@ -3021,6 +3057,72 @@ function summarizeReviseFeedbackPlans(plans: readonly ReviseFeedbackPlan[]): {
     idempotentCount: plans.filter((plan) => plan.actualActions?.idempotent === true).length,
   };
 }
+
+function buildReviseFeedbackOperatorPreflight(
+  plans: readonly ReviseFeedbackPlan[],
+  options: { mode: 'dry-run' | 'confirm'; pending: boolean },
+): ReviseFeedbackOperatorPreflight {
+  const safePlans = plans.filter((plan) => isReviseFeedbackPlanSafeToConfirm(plan));
+  const unsafePlans = plans.filter((plan) => !isReviseFeedbackPlanSafeToConfirm(plan));
+  const unsafeDecisionIds: ReviseFeedbackOperatorPreflight['unsafeDecisionIds'] = {
+    manualCheck: [],
+    blocked: [],
+    skipped: [],
+    other: [],
+  };
+  const unsafeReasonsByDecisionId: Record<string, string[]> = {};
+  for (const plan of unsafePlans) {
+    unsafeDecisionIds[classifyUnsafeReviseFeedbackPlan(plan)].push(plan.decisionId);
+    unsafeReasonsByDecisionId[plan.decisionId] = unsafeReasonsForReviseFeedbackPlan(plan);
+  }
+  const batchConfirmSafe = options.pending && plans.length > 0 && unsafePlans.length === 0;
+  return {
+    requiresExplicitConfirm: options.mode === 'dry-run',
+    safeToConfirmCount: safePlans.length,
+    unsafeCount: unsafePlans.length,
+    safeDecisionIds: safePlans.map((plan) => plan.decisionId),
+    unsafeDecisionIds,
+    unsafeReasonsByDecisionId,
+    confirmCommands: safePlans.map((plan) => `haro revise feedback --confirm --decision-id ${plan.decisionId}`),
+    batchConfirmSafe,
+    ...(batchConfirmSafe ? { batchConfirmCommand: 'haro revise feedback --confirm --pending' } : {}),
+  };
+}
+
+function isReviseFeedbackPlanSafeToConfirm(plan: ReviseFeedbackPlan): boolean {
+  return plan.plannerVerdict === 'can-rewrite' &&
+    plan.noOpCheck.verdict === 'substantive-change' &&
+    plan.manualCheckReasons.length === 0 &&
+    plan.blockedReasons.length === 0 &&
+    plan.skippedReasons.length === 0 &&
+    plan.validationBlockingReasons.length === 0 &&
+    !plan.exceedsRevisionDepthLimit &&
+    plan.artifacts.approvalRequestFound &&
+    plan.artifacts.proposalFound &&
+    plan.parsedRequirements.length > 0 &&
+    plan.parsedRequirements.every((requirement) => requirement.disposition === 'incorporated');
+}
+
+function classifyUnsafeReviseFeedbackPlan(plan: ReviseFeedbackPlan): keyof ReviseFeedbackOperatorPreflight['unsafeDecisionIds'] {
+  if (plan.skippedReasons.length > 0) return 'skipped';
+  if (plan.blockedReasons.length > 0 || plan.validationBlockingReasons.some((reason) => reason.startsWith('REVISION_NO_OP'))) {
+    return 'blocked';
+  }
+  if (plan.manualCheckReasons.length > 0 || plan.validationBlockingReasons.length > 0) return 'manualCheck';
+  return 'other';
+}
+
+function unsafeReasonsForReviseFeedbackPlan(plan: ReviseFeedbackPlan): string[] {
+  const reasons = uniqueSorted([
+    ...plan.skippedReasons,
+    ...plan.blockedReasons,
+    ...plan.manualCheckReasons,
+    ...plan.validationBlockingReasons,
+  ]);
+  if (reasons.length > 0) return reasons;
+  return [`planner verdict ${plan.plannerVerdict} is not safe to confirm`];
+}
+
 function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisionRecord): ReviseFeedbackPlan {
   const reasons: string[] = [];
   const manualCheckReasons: string[] = [];

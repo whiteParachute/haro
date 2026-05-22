@@ -317,9 +317,23 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       proposalId: string;
       plannerVerdict: string;
       parsedRequirements: Array<{ category: string }>;
+      operatorPreflight: {
+        requiresExplicitConfirm: boolean;
+        safeToConfirmCount: number;
+        unsafeCount: number;
+        safeDecisionIds: string[];
+        confirmCommands: string[];
+      };
     }>(stdout);
     expect(payload).toMatchObject({ dryRun: true, wouldWrite: false, decisionId, approvalRequestId, proposalId, plannerVerdict: 'can-rewrite' });
     expect(payload.parsedRequirements.map((item) => item.category)).toContain('scope-reduction');
+    expect(payload.operatorPreflight).toMatchObject({
+      requiresExplicitConfirm: true,
+      safeToConfirmCount: 1,
+      unsafeCount: 0,
+      safeDecisionIds: [decisionId],
+      confirmCommands: [`haro revise feedback --confirm --decision-id ${decisionId}`],
+    });
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
@@ -713,15 +727,90 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
 
   it('keeps dry-run pending read-only while exposing the same batch counts', async () => {
     const root = tempRoot();
-    seedDecisionForTarget(root, 'dry-a', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
-    seedDecisionForTarget(root, 'dry-b', '我看不懂，什么是 Haro 运行出现错误？请说明。');
+    const safe = seedDecisionForTarget(root, 'dry-a', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const unsafe = seedDecisionForTarget(root, 'dry-b', '我看不懂，什么是 Haro 运行出现错误？请说明。');
     const before = evolutionFileCounts(root);
     const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--pending', '--json']);
 
     await expect(result).resolves.toMatchObject({ exitCode: 0 });
-    const payload = parseJsonData<{ dryRun: boolean; didWrite: boolean; processedCount: number; writtenCount: number; plans: unknown[] }>(stdout);
+    const payload = parseJsonData<{
+      dryRun: boolean;
+      didWrite: boolean;
+      processedCount: number;
+      writtenCount: number;
+      plans: unknown[];
+      operatorPreflight: {
+        requiresExplicitConfirm: boolean;
+        safeToConfirmCount: number;
+        unsafeCount: number;
+        safeDecisionIds: string[];
+        unsafeDecisionIds: { other: string[] };
+        confirmCommands: string[];
+        batchConfirmSafe: boolean;
+        batchConfirmCommand?: string;
+      };
+    }>(stdout);
     expect(payload).toMatchObject({ dryRun: true, didWrite: false, processedCount: 2, writtenCount: 0 });
     expect(payload.plans).toHaveLength(2);
+    expect(payload.operatorPreflight).toMatchObject({
+      requiresExplicitConfirm: true,
+      safeToConfirmCount: 1,
+      unsafeCount: 1,
+      safeDecisionIds: [safe.decisionId],
+      batchConfirmSafe: false,
+      confirmCommands: [`haro revise feedback --confirm --decision-id ${safe.decisionId}`],
+    });
+    expect(payload.operatorPreflight.unsafeDecisionIds.other).toEqual([unsafe.decisionId]);
+    expect(payload.operatorPreflight.batchConfirmCommand).toBeUndefined();
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('marks all-safe pending dry-run as batch confirmable and lists per-decision commands', async () => {
+    const root = tempRoot();
+    const first = seedDecisionForTarget(root, 'dry-safe-a', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const second = seedDecisionForTarget(root, 'dry-safe-b', '请补充证据，增加风险和回滚字段。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--pending', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      operatorPreflight: {
+        safeToConfirmCount: number;
+        unsafeCount: number;
+        safeDecisionIds: string[];
+        confirmCommands: string[];
+        batchConfirmSafe: boolean;
+        batchConfirmCommand?: string;
+      };
+    }>(stdout);
+    expect(payload.operatorPreflight).toMatchObject({
+      safeToConfirmCount: 2,
+      unsafeCount: 0,
+      safeDecisionIds: [first.decisionId, second.decisionId],
+      confirmCommands: [
+        `haro revise feedback --confirm --decision-id ${first.decisionId}`,
+        `haro revise feedback --confirm --decision-id ${second.decisionId}`,
+      ],
+      batchConfirmSafe: true,
+      batchConfirmCommand: 'haro revise feedback --confirm --pending',
+    });
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('renders operator preflight in human dry-run output', async () => {
+    const root = tempRoot();
+    const safe = seedDecisionForTarget(root, 'human-safe', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const unsafe = seedDecisionForTarget(root, 'human-unsafe', '我看不懂，什么是 Haro 运行出现错误？请说明。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--pending', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const text = stdout.read();
+    expect(text).toContain('Operator preflight:');
+    expect(text).toContain('safeToConfirm: 1');
+    expect(text).toContain('batchConfirmCommand: (not recommended for mixed/unsafe preflight)');
+    expect(text).toContain(`confirmCommand: haro revise feedback --confirm --decision-id ${safe.decisionId}`);
+    expect(text).toContain(`unsafeDecision: ${unsafe.decisionId}`);
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
@@ -1031,6 +1120,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       'blockedCount',
       'idempotentCount',
       'plans',
+      'operatorPreflight',
       'decisionId',
       'approvalRequestId',
       'proposalId',
