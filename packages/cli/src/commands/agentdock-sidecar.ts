@@ -12,6 +12,7 @@ import {
   BlockedProposalEventSchema,
   DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
   FeedbackRequirementResolutionSchema,
+  FeedbackRevisionRecordSchema,
   RevisionNoOpCheckSchema,
   AssetEventSchema,
   EvolutionProposalSchema,
@@ -34,6 +35,8 @@ import {
   type DescriptionLintReport,
   type FeedbackRequirementCategory,
   type FeedbackRequirementResolution,
+  type FeedbackRevisionRecord,
+  type FeedbackRewriteAction,
   type RevisionChangedField,
   type RevisionNoOpCheck,
   type EvolutionProposal,
@@ -627,21 +630,35 @@ interface SelfHealDuplicatesResult {
 
 type FeedbackRewritePlannerVerdict = 'can-rewrite' | 'manual-check' | 'blocked' | 'needs-more-info';
 
+interface ReviseFeedbackActualActions {
+  wroteRevisedProposal: boolean;
+  wroteValidation: boolean;
+  wroteFeedbackRevision: boolean;
+  wroteApprovalRequest: boolean;
+  idempotent: boolean;
+}
+
 interface ReviseFeedbackPlan {
   decisionId: string;
   approvalRequestId?: string;
   proposalId?: string;
   validationId?: string;
+  revisedProposalId?: string;
+  revisedValidationId?: string;
+  revisedApprovalRequestId?: string;
+  feedbackRevisionId?: string;
   parsedRequirements: FeedbackRequirementResolution[];
   noOpCheck: RevisionNoOpCheck;
   validationBlockingReasons: string[];
   plannerVerdict: FeedbackRewritePlannerVerdict;
-  dryRun: true;
-  wouldWrite: false;
+  dryRun: boolean;
+  wouldWrite: boolean;
+  confirmed?: boolean;
   reasons: string[];
   manualCheckReasons: string[];
   blockedReasons: string[];
   skippedReasons: string[];
+  actualActions?: ReviseFeedbackActualActions;
   revisionDepth: number;
   revisionDepthLimit: number;
   exceedsRevisionDepthLimit: boolean;
@@ -655,15 +672,20 @@ interface ReviseFeedbackPlan {
 
 interface ReviseFeedbackResult {
   command: 'revise feedback';
-  mode: 'dry-run';
-  dryRun: true;
-  wouldWrite: false;
+  mode: 'dry-run' | 'confirm';
+  dryRun: boolean;
+  wouldWrite: boolean;
+  confirmed?: boolean;
   planCount: number;
   plans: ReviseFeedbackPlan[];
   decisionId?: string;
   approvalRequestId?: string;
   proposalId?: string;
   validationId?: string;
+  revisedProposalId?: string;
+  revisedValidationId?: string;
+  revisedApprovalRequestId?: string;
+  feedbackRevisionId?: string;
   parsedRequirements?: FeedbackRequirementResolution[];
   noOpCheck?: RevisionNoOpCheck;
   validationBlockingReasons?: string[];
@@ -672,6 +694,7 @@ interface ReviseFeedbackResult {
   manualCheckReasons?: string[];
   blockedReasons?: string[];
   skippedReasons?: string[];
+  actualActions?: ReviseFeedbackActualActions;
   revisionDepth?: number;
   revisionDepthLimit: number;
   exceedsRevisionDepthLimit?: boolean;
@@ -1339,9 +1362,9 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
 
   revise
     .command('feedback')
-    .description('Plan a feedback-driven proposal rewrite in dry-run mode')
-    .option('--dry-run', 'inspect and plan only; required for this slice')
-    .option('--confirm', 'reserved for future write mode; rejected in FEAT-076B')
+    .description('Plan or confirm a feedback-driven proposal rewrite')
+    .option('--dry-run', 'inspect and plan only')
+    .option('--confirm', 'write one revised proposal, feedback-revision, and approval request')
     .option('--decision-id <id>', 'approval-decision id to plan from')
     .option('--pending', 'plan from all pending request-changes decisions')
     .option('--json', 'force JSON output')
@@ -1354,10 +1377,13 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
           renderJson(result, { stdout: app.stdout });
           return;
         }
+        const isConfirm = result.mode === 'confirm';
         app.stdout.write(
           [
-            'Feedback rewrite planner: dry-run',
-            'No proposal, feedback-revision, approval-request, or blocked event will be written.',
+            isConfirm ? 'Feedback rewrite: confirm' : 'Feedback rewrite planner: dry-run',
+            isConfirm
+              ? 'Writes are limited to revised proposal, validation, feedback-revision, and a new approval request.'
+              : 'No proposal, feedback-revision, approval-request, or blocked event will be written.',
             `Plans: ${result.planCount}`,
             ...result.plans.map((plan) => [
               `- decision: ${plan.decisionId}`,
@@ -1369,6 +1395,10 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               `  noOpCheck: ${plan.noOpCheck.verdict} (${plan.noOpCheck.reason})`,
               `  validationBlockers: ${plan.validationBlockingReasons.length}`,
               `  wouldWrite: ${plan.wouldWrite}`,
+              ...(plan.revisedProposalId ? [`  revisedProposal: ${plan.revisedProposalId}`] : []),
+              ...(plan.feedbackRevisionId ? [`  feedbackRevision: ${plan.feedbackRevisionId}`] : []),
+              ...(plan.revisedApprovalRequestId ? [`  approvalRequest: ${plan.revisedApprovalRequestId}`] : []),
+              ...(plan.actualActions ? [`  actualActions: ${JSON.stringify(plan.actualActions)}`] : []),
               ...plan.reasons.map((reason) => `  reason: ${reason}`),
               ...plan.manualCheckReasons.map((reason) => `  manualCheck: ${reason}`),
               ...plan.blockedReasons.map((reason) => `  blocked: ${reason}`),
@@ -2897,14 +2927,17 @@ function parseApprovalConversationLintRecord(value: unknown): ApprovalConversati
 function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): ReviseFeedbackResult {
   const dryRun = options.dryRun === true;
   const confirm = options.confirm === true;
-  if (!dryRun || confirm) {
-    throw new CommanderExit(2, '`haro revise feedback` only supports --dry-run in FEAT-076B; --confirm is not implemented.');
+  if (dryRun === confirm) {
+    throw new CommanderExit(2, '`haro revise feedback` requires exactly one of --dry-run or --confirm.');
   }
   if (options.decisionId && options.pending) {
     throw new CommanderExit(2, '`haro revise feedback` requires either --decision-id or --pending, not both.');
   }
   if (!options.decisionId && !options.pending) {
-    throw new CommanderExit(2, '`haro revise feedback --dry-run` requires --decision-id or --pending.');
+    throw new CommanderExit(2, '`haro revise feedback` requires --decision-id or --pending.');
+  }
+  if (confirm && options.pending) {
+    throw new CommanderExit(2, '`haro revise feedback --confirm --pending` is not implemented; pass --decision-id.');
   }
 
   const decisions = options.decisionId
@@ -2918,20 +2951,33 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
     throw new CommanderExit(1, `No approval-decision artifact found for ${options.decisionId}.`);
   }
 
-  const first = plans[0];
+  const finalPlans = confirm
+    ? plans.map((plan) => confirmFeedbackRevisionForPlan(app, plan))
+    : plans;
+  const first = finalPlans[0];
   return {
     command: 'revise feedback',
-    mode: 'dry-run',
-    dryRun: true,
-    wouldWrite: false,
-    planCount: plans.length,
-    plans,
+    mode: confirm ? 'confirm' : 'dry-run',
+    dryRun,
+    wouldWrite: confirm && finalPlans.some((plan) => plan.actualActions && !plan.actualActions.idempotent && (
+      plan.actualActions.wroteRevisedProposal ||
+      plan.actualActions.wroteValidation ||
+      plan.actualActions.wroteFeedbackRevision ||
+      plan.actualActions.wroteApprovalRequest
+    )),
+    ...(confirm ? { confirmed: finalPlans.some((plan) => plan.confirmed === true) } : {}),
+    planCount: finalPlans.length,
+    plans: finalPlans,
     revisionDepthLimit: DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
     ...(first ? {
       decisionId: first.decisionId,
       approvalRequestId: first.approvalRequestId,
       proposalId: first.proposalId,
       validationId: first.validationId,
+      revisedProposalId: first.revisedProposalId,
+      revisedValidationId: first.revisedValidationId,
+      revisedApprovalRequestId: first.revisedApprovalRequestId,
+      feedbackRevisionId: first.feedbackRevisionId,
       parsedRequirements: first.parsedRequirements,
       noOpCheck: first.noOpCheck,
       validationBlockingReasons: first.validationBlockingReasons,
@@ -2940,6 +2986,7 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
       manualCheckReasons: first.manualCheckReasons,
       blockedReasons: first.blockedReasons,
       skippedReasons: first.skippedReasons,
+      actualActions: first.actualActions,
       revisionDepth: first.revisionDepth,
       exceedsRevisionDepthLimit: first.exceedsRevisionDepthLimit,
     } : {}),
@@ -3053,6 +3100,308 @@ function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisio
     },
   };
 }
+
+function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPlan): ReviseFeedbackPlan {
+  const existing = readFeedbackRevisionBySourceDecisionId(app.paths.root, plan.decisionId);
+  if (existing?.revisedProposalId && existing.revisedApprovalRequestId) {
+    return {
+      ...plan,
+      dryRun: false,
+      wouldWrite: false,
+      confirmed: true,
+      revisedProposalId: existing.revisedProposalId,
+      revisedValidationId: existing.revisedValidationId,
+      revisedApprovalRequestId: existing.revisedApprovalRequestId,
+      feedbackRevisionId: existing.id,
+      reasons: uniqueSorted([...plan.reasons, 'feedback revision already exists; confirm is idempotent']),
+      actualActions: {
+        wroteRevisedProposal: false,
+        wroteValidation: false,
+        wroteFeedbackRevision: false,
+        wroteApprovalRequest: false,
+        idempotent: true,
+      },
+    };
+  }
+
+  const decision = readApprovalDecisionById(app.paths.root, plan.decisionId);
+  const sourceProposal = plan.proposalId ? readProposalById(app.paths.root, plan.proposalId) : undefined;
+  const sourceRequest = plan.approvalRequestId ? readApprovalRequestById(app.paths.root, plan.approvalRequestId) : undefined;
+  const safeToWrite = decision && sourceProposal && sourceRequest &&
+    plan.plannerVerdict === 'can-rewrite' &&
+    plan.noOpCheck.verdict === 'substantive-change' &&
+    plan.manualCheckReasons.length === 0 &&
+    plan.blockedReasons.length === 0 &&
+    plan.skippedReasons.length === 0 &&
+    plan.validationBlockingReasons.length === 0 &&
+    !plan.exceedsRevisionDepthLimit &&
+    plan.parsedRequirements.length > 0 &&
+    plan.parsedRequirements.every((requirement) => requirement.disposition === 'incorporated');
+
+  if (!safeToWrite) {
+    return {
+      ...plan,
+      dryRun: false,
+      wouldWrite: false,
+      confirmed: false,
+      manualCheckReasons: uniqueSorted([
+        ...plan.manualCheckReasons,
+        ...(!decision ? ['source approval decision artifact missing'] : []),
+        ...(!sourceProposal ? ['source proposal artifact missing'] : []),
+        ...(!sourceRequest ? ['source approval request artifact missing'] : []),
+        ...(plan.parsedRequirements.some((requirement) => requirement.disposition !== 'incorporated')
+          ? ['confirm only writes when all parsed requirements are incorporated']
+          : []),
+        ...(plan.noOpCheck.verdict !== 'substantive-change'
+          ? [`confirm requires substantive-change noOpCheck, got ${plan.noOpCheck.verdict}`]
+          : []),
+      ]),
+      actualActions: {
+        wroteRevisedProposal: false,
+        wroteValidation: false,
+        wroteFeedbackRevision: false,
+        wroteApprovalRequest: false,
+        idempotent: false,
+      },
+    };
+  }
+
+  const timestamp = app.now().toISOString();
+  const ids = feedbackRevisionIdsForDecision(decision.id);
+  const draft = buildConfirmedRevisionProposal({
+    sourceProposal,
+    sourceRequest,
+    decision,
+    plan,
+    ids,
+    timestamp,
+  });
+  const noOpCheck = evaluateRevisionNoOpGate(app.paths.root, sourceProposal, draft);
+  if (noOpCheck.verdict !== 'substantive-change') {
+    return {
+      ...plan,
+      dryRun: false,
+      wouldWrite: false,
+      confirmed: false,
+      noOpCheck,
+      blockedReasons: uniqueSorted([...plan.blockedReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+      validationBlockingReasons: uniqueSorted([...plan.validationBlockingReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+      actualActions: {
+        wroteRevisedProposal: false,
+        wroteValidation: false,
+        wroteFeedbackRevision: false,
+        wroteApprovalRequest: false,
+        idempotent: false,
+      },
+    };
+  }
+
+  const revisedProposal = EvolutionProposalSchema.parse({
+    ...draft,
+    revisionMetadata: {
+      ...draft.revisionMetadata!,
+      noOpCheck,
+    },
+  });
+  const validation = createValidationReport(app.paths.root, revisedProposal, app.now, undefined);
+  const validatedProposal = EvolutionProposalSchema.parse({
+    ...revisedProposal,
+    status: 'validated',
+    updatedAt: timestamp,
+  });
+  const approvalRequest = createApprovalRequestRecord(app, validatedProposal, validation);
+  const feedbackRevision = FeedbackRevisionRecordSchema.parse({
+    id: ids.feedbackRevisionId,
+    status: 'revised',
+    rootProposalId: validatedProposal.revisionMetadata!.rootProposalId,
+    sourceProposalId: sourceProposal.id,
+    sourceApprovalRequestId: sourceRequest.id,
+    sourceDecisionId: decision.id,
+    sourceDecisionDirection: decision.direction ?? '',
+    revisedProposalId: validatedProposal.id,
+    revisedValidationId: validation.id,
+    revisedApprovalRequestId: approvalRequest.id,
+    parsedRequirements: plan.parsedRequirements,
+    rewriteActions: rewriteActionsForRequirements(plan.parsedRequirements, validatedProposal),
+    noOpCheck,
+    blockingReasons: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  writeJsonFile(proposalFilePath(app.paths.root, validatedProposal), validatedProposal);
+  writeJsonFile(validationFilePath(app.paths.root, validation), validation);
+  writeJsonFile(feedbackRevisionFilePath(app.paths.root, feedbackRevision), feedbackRevision);
+  writeJsonFile(approvalRequestFilePath(app.paths.root, approvalRequest), approvalRequest);
+
+  return {
+    ...plan,
+    dryRun: false,
+    wouldWrite: true,
+    confirmed: true,
+    revisedProposalId: validatedProposal.id,
+    revisedValidationId: validation.id,
+    revisedApprovalRequestId: approvalRequest.id,
+    feedbackRevisionId: feedbackRevision.id,
+    noOpCheck,
+    validationBlockingReasons: uniqueSorted(feedbackRevisionValidationBlockingReasons(app.paths.root, validatedProposal)),
+    reasons: uniqueSorted([...plan.reasons, 'wrote revised proposal, feedback-revision, validation, and approval request']),
+    actualActions: {
+      wroteRevisedProposal: true,
+      wroteValidation: true,
+      wroteFeedbackRevision: true,
+      wroteApprovalRequest: true,
+      idempotent: false,
+    },
+  };
+}
+
+function feedbackRevisionIdsForDecision(decisionId: string): {
+  revisionId: string;
+  revisedProposalId: string;
+  feedbackRevisionId: string;
+} {
+  const suffix = sha256(`feedback-revision:${decisionId}`).slice(0, 24);
+  return {
+    revisionId: `revision_${suffix}`,
+    revisedProposalId: `proposal_revision_${suffix}`,
+    feedbackRevisionId: `feedback_revision_${suffix}`,
+  };
+}
+
+function buildConfirmedRevisionProposal(input: {
+  sourceProposal: EvolutionProposal;
+  sourceRequest: ApprovalRequestRecord;
+  decision: ApprovalDecisionRecord;
+  plan: ReviseFeedbackPlan;
+  ids: { revisionId: string; revisedProposalId: string; feedbackRevisionId: string };
+  timestamp: string;
+}): EvolutionProposal {
+  const rootProposalId = input.sourceProposal.revisionMetadata?.rootProposalId ?? input.sourceProposal.id;
+  const revisionDepth = (input.sourceProposal.revisionMetadata?.revisionDepth ?? 0) + 1;
+  const revisedChangeSet = input.sourceProposal.changeSet.map((change, index) => ({
+    ...change,
+    summary: rewriteChangeSummary(change.summary, input.plan.parsedRequirements),
+    contentHash: `sha256:${sha256(JSON.stringify({
+      decisionId: input.decision.id,
+      sourceProposalId: input.sourceProposal.id,
+      index,
+      previousContentHash: change.contentHash ?? '',
+      requirements: input.plan.parsedRequirements.map((requirement) => requirement.category),
+    })).slice(0, 48)}`,
+  }));
+  return EvolutionProposalSchema.parse({
+    ...input.sourceProposal,
+    id: input.ids.revisedProposalId,
+    status: 'proposed',
+    changeSet: revisedChangeSet,
+    testPlan: {
+      requiredCommands: uniqueSorted(input.sourceProposal.testPlan.requiredCommands),
+      manualChecks: uniqueSorted([
+        ...input.sourceProposal.testPlan.manualChecks,
+        `核对本次修订是否回应上次审批意见：${truncateForLog(input.decision.direction ?? '', 80)}`,
+      ]),
+      regressionRisks: uniqueSorted(input.sourceProposal.testPlan.regressionRisks),
+    },
+    rollbackPlan: {
+      ...input.sourceProposal.rollbackPlan,
+      strategy: `修订自 ${input.sourceProposal.id}。${input.sourceProposal.rollbackPlan.strategy}`,
+    },
+    humanApprovalRefs: [],
+    feedbackSemanticFingerprint: sha256(JSON.stringify({
+      sourceProposalId: input.sourceProposal.id,
+      decisionId: input.decision.id,
+      changeSet: revisedChangeSet.map((change) => ({ targetRef: change.targetRef, summary: change.summary, contentHash: change.contentHash })),
+    })),
+    feedbackContext: {
+      priorDecisionId: input.decision.id,
+      priorProposalId: input.sourceProposal.id,
+      priorDirection: input.decision.direction ?? '',
+      incorporatedAt: input.timestamp,
+      incorporationNote: 'FEAT-077A confirm 已生成可重新审阅的修订提案。',
+    },
+    revisionMetadata: {
+      revisionId: input.ids.revisionId,
+      rootProposalId,
+      revisionOfProposalId: input.sourceProposal.id,
+      revisionDepth,
+      sourceApprovalRequestId: input.sourceRequest.id,
+      sourceDecisionId: input.decision.id,
+      sourceDecisionDirection: input.decision.direction ?? '',
+      sourceConversationRefs: input.sourceProposal.feedbackContext?.conversationRefs ?? [],
+      supersedesProposalIds: [input.sourceProposal.id],
+      supersedesBlockedEventIds: [],
+      resubmissionReason: resubmissionReasonForRequirements(input.plan.parsedRequirements),
+      incorporatedFeedback: input.plan.parsedRequirements,
+      unresolvedFeedback: [],
+      noOpCheck: input.plan.noOpCheck,
+      createdAt: input.timestamp,
+      updatedAt: input.timestamp,
+    },
+    createdAt: input.timestamp,
+    updatedAt: input.timestamp,
+  });
+}
+
+function rewriteChangeSummary(summary: string, requirements: readonly FeedbackRequirementResolution[]): string {
+  const categories = requirements.map((requirement) => requirement.category).join('、') || 'feedback';
+  return `根据上次意见修订（${categories}）：${summary}`;
+}
+
+function resubmissionReasonForRequirements(requirements: readonly FeedbackRequirementResolution[]): string {
+  const categories = requirements.map((requirement) => requirement.category).join('、') || 'feedback';
+  return `根据上次 request-changes 重新提交；已处理 ${categories}。`;
+}
+
+function rewriteActionsForRequirements(
+  requirements: readonly FeedbackRequirementResolution[],
+  proposal: EvolutionProposal,
+): FeedbackRewriteAction[] {
+  const refs = proposal.changeSet.map((_change, index) => proposalChangeRef(proposal, index));
+  return requirements.map((requirement): FeedbackRewriteAction => ({
+    action: rewriteActionForRequirement(requirement.category),
+    summary: requirement.normalizedRequirement,
+    targetRefs: refs,
+  }));
+}
+
+function rewriteActionForRequirement(category: FeedbackRequirementCategory): FeedbackRewriteAction['action'] {
+  switch (category) {
+    case 'scope-reduction':
+      return 'narrow-scope';
+    case 'evidence-required':
+      return 'add-evidence';
+    case 'risk-rollback-change':
+      return 'change-risk-or-rollback';
+    case 'duplicate-merge':
+      return 'merge-duplicate';
+    case 'readability':
+    case 'implementation-detail':
+      return 'rewrite-description';
+    case 'needs-more-info':
+      return 'ask-for-more-info';
+    case 'out-of-scope':
+    case 'policy-blocked':
+      return 'block';
+  }
+}
+
+function readFeedbackRevisionBySourceDecisionId(root: string, decisionId: string): FeedbackRevisionRecord | undefined {
+  const dir = feedbackRevisionsDir(root);
+  if (!existsSync(dir)) return undefined;
+  const records: FeedbackRevisionRecord[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const record = FeedbackRevisionRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
+      if (record.sourceDecisionId === decisionId) records.push(record);
+    } catch {
+      // Corrupt feedback revision artifacts are surfaced by doctor/status.
+    }
+  }
+  return records.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))[0];
+}
+
 
 function parseFeedbackDirectionRequirements(direction: string): FeedbackRequirementResolution[] {
   const text = direction.trim();
@@ -4215,6 +4564,10 @@ function blockedProposalEventFilePath(root: string, record: BlockedProposalEvent
   return join(blockedProposalEventsDir(root), `${safePathSegment(record.id)}.json`);
 }
 
+function feedbackRevisionFilePath(root: string, record: FeedbackRevisionRecord): string {
+  return join(feedbackRevisionsDir(root), `${safePathSegment(record.id)}.json`);
+}
+
 function applicationFilePath(root: string, record: ApplicationRecord): string {
   return join(applicationsDir(root), `${safePathSegment(record.id)}.json`);
 }
@@ -4273,6 +4626,10 @@ function approvalConversationsDir(root: string): string {
 
 function blockedProposalEventsDir(root: string): string {
   return join(root, 'evolution', 'blocked-proposal-events');
+}
+
+function feedbackRevisionsDir(root: string): string {
+  return join(root, 'evolution', 'feedback-revisions');
 }
 
 function applicationsDir(root: string): string {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -352,7 +352,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     const { result, stderr } = runWithCapturedOutput(root, ['revise', 'feedback', '--decision-id', decisionId, '--human']);
 
     await expect(result).resolves.toMatchObject({ exitCode: 2 });
-    expect(stderr.read()).toContain('only supports --dry-run');
+    expect(stderr.read()).toContain('requires exactly one of --dry-run or --confirm');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
@@ -363,7 +363,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     const { result, stderr } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--confirm', '--decision-id', decisionId, '--human']);
 
     await expect(result).resolves.toMatchObject({ exitCode: 2 });
-    expect(stderr.read()).toMatch(/confirm|not implemented|未实现/iu);
+    expect(stderr.read()).toMatch(/exactly one|--dry-run|--confirm/iu);
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
@@ -376,6 +376,159 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     await expect(result).resolves.toMatchObject({ exitCode: 2 });
     expect(stderr.read()).toMatch(/not both|互斥/iu);
     expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('confirms a request-changes rewrite by writing revised artifacts and a new approval request', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change，并补充证据和回滚。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', source.decisionId, '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      mode: string;
+      dryRun: boolean;
+      wouldWrite: boolean;
+      confirmed: boolean;
+      revisedProposalId: string;
+      revisedValidationId: string;
+      revisedApprovalRequestId: string;
+      feedbackRevisionId: string;
+      actualActions: {
+        wroteRevisedProposal: boolean;
+        wroteValidation: boolean;
+        wroteFeedbackRevision: boolean;
+        wroteApprovalRequest: boolean;
+        idempotent: boolean;
+      };
+    }>(stdout);
+    expect(payload).toMatchObject({
+      mode: 'confirm',
+      dryRun: false,
+      wouldWrite: true,
+      confirmed: true,
+      actualActions: {
+        wroteRevisedProposal: true,
+        wroteValidation: true,
+        wroteFeedbackRevision: true,
+        wroteApprovalRequest: true,
+        idempotent: false,
+      },
+    });
+
+    const after = evolutionFileCounts(root);
+    expect(after.proposals).toHaveLength(before.proposals.length + 1);
+    expect(after.validations).toHaveLength(before.validations.length + 1);
+    expect(after['approval-requests']).toHaveLength(before['approval-requests'].length + 1);
+    expect(after['feedback-revisions']).toHaveLength(before['feedback-revisions'].length + 1);
+    expect(after['approval-decisions']).toEqual(before['approval-decisions']);
+    expect(after['blocked-proposal-events']).toEqual(before['blocked-proposal-events']);
+
+    const revisedProposal = JSON.parse(readFileSync(join(root, 'evolution', 'proposals', `${payload.revisedProposalId}.json`), 'utf8')) as {
+      id: string;
+      status: string;
+      revisionMetadata: { sourceDecisionId: string; noOpCheck: { verdict: string }; supersedesProposalIds: string[] };
+    };
+    expect(revisedProposal).toMatchObject({ id: payload.revisedProposalId, status: 'validated' });
+    expect(revisedProposal.revisionMetadata).toMatchObject({
+      sourceDecisionId: source.decisionId,
+      noOpCheck: { verdict: 'substantive-change' },
+      supersedesProposalIds: [source.proposalId],
+    });
+
+    const feedbackRevision = JSON.parse(readFileSync(join(root, 'evolution', 'feedback-revisions', `${payload.feedbackRevisionId}.json`), 'utf8')) as {
+      status: string;
+      revisedProposalId: string;
+      revisedValidationId: string;
+      revisedApprovalRequestId: string;
+      sourceDecisionId: string;
+    };
+    expect(feedbackRevision).toMatchObject({
+      status: 'revised',
+      revisedProposalId: payload.revisedProposalId,
+      revisedValidationId: payload.revisedValidationId,
+      revisedApprovalRequestId: payload.revisedApprovalRequestId,
+      sourceDecisionId: source.decisionId,
+    });
+
+    const approval = JSON.parse(readFileSync(join(root, 'evolution', 'approval-requests', `${payload.revisedApprovalRequestId}.json`), 'utf8')) as {
+      proposalId: string;
+      validationId: string;
+      whyChange: string[];
+    };
+    expect(approval).toMatchObject({ proposalId: payload.revisedProposalId, validationId: payload.revisedValidationId });
+    expect(approval.whyChange.join('\n')).toContain('上一次审批意见');
+  });
+
+  it('is idempotent when confirming the same decision twice', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const first = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', source.decisionId, '--json']);
+    await expect(first.result).resolves.toMatchObject({ exitCode: 0 });
+    const firstPayload = parseJsonData<{ revisedProposalId: string; feedbackRevisionId: string }>(first.stdout);
+    const afterFirst = evolutionFileCounts(root);
+
+    const second = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', source.decisionId, '--json']);
+    await expect(second.result).resolves.toMatchObject({ exitCode: 0 });
+    const secondPayload = parseJsonData<{ revisedProposalId: string; feedbackRevisionId: string; actualActions: { idempotent: boolean; wroteRevisedProposal: boolean } }>(second.stdout);
+    expect(secondPayload).toMatchObject({
+      revisedProposalId: firstPayload.revisedProposalId,
+      feedbackRevisionId: firstPayload.feedbackRevisionId,
+      actualActions: { idempotent: true, wroteRevisedProposal: false },
+    });
+    expect(evolutionFileCounts(root)).toEqual(afterFirst);
+  });
+
+  it('does not write on stale decisions, no-op/manual-check plans, or confirm pending', async () => {
+    const staleRoot = tempRoot();
+    const staleSource = seedDecision(staleRoot, '请收窄范围。');
+    writeArtifact(staleRoot, 'approval-decisions', 'decision_later_same_target', {
+      ...approvalDecision('decision_later_same_target', staleSource.approvalRequestId, staleSource.proposalId, 'request-changes', '后续意见。'),
+      createdAt: '2026-05-21T13:20:00.000Z',
+      updatedAt: '2026-05-21T13:20:00.000Z',
+    });
+    const staleBefore = evolutionFileCounts(staleRoot);
+    const stale = runWithCapturedOutput(staleRoot, ['revise', 'feedback', '--confirm', '--decision-id', staleSource.decisionId, '--json']);
+    await expect(stale.result).resolves.toMatchObject({ exitCode: 0 });
+    const stalePayload = parseJsonData<{ confirmed: boolean; actualActions: { wroteRevisedProposal: boolean } }>(stale.stdout);
+    expect(stalePayload.confirmed).toBe(false);
+    expect(stalePayload.actualActions.wroteRevisedProposal).toBe(false);
+    expect(evolutionFileCounts(staleRoot)).toEqual(staleBefore);
+
+    const noOpRoot = tempRoot();
+    const noOpSource = seedDecision(noOpRoot, '请收窄范围。');
+    seedPendingRevision(noOpRoot, noOpSource, {
+      revisionMetadata: revisionMetadata(1, {
+        rootProposalId: noOpSource.proposalId,
+        revisionOfProposalId: noOpSource.proposalId,
+        sourceApprovalRequestId: noOpSource.approvalRequestId,
+        sourceDecisionId: noOpSource.decisionId,
+        supersedesProposalIds: [noOpSource.proposalId],
+        noOpCheck: {
+          verdict: 'no-op',
+          priorProposalContentHashes: [`sha256:${noOpSource.proposalId}`],
+          revisedProposalContentHashes: [`sha256:${noOpSource.proposalId}`],
+          revisionDepth: 1,
+          changedFields: [],
+          reason: 'metadata-only fixture.',
+        },
+      }),
+    });
+    const noOpBefore = evolutionFileCounts(noOpRoot);
+    const noOp = runWithCapturedOutput(noOpRoot, ['revise', 'feedback', '--confirm', '--decision-id', noOpSource.decisionId, '--json']);
+    await expect(noOp.result).resolves.toMatchObject({ exitCode: 0 });
+    const noOpPayload = parseJsonData<{ confirmed: boolean; actualActions: { wroteFeedbackRevision: boolean } }>(noOp.stdout);
+    expect(noOpPayload.confirmed).toBe(false);
+    expect(noOpPayload.actualActions.wroteFeedbackRevision).toBe(false);
+    expect(evolutionFileCounts(noOpRoot)).toEqual(noOpBefore);
+
+    const pendingRoot = tempRoot();
+    seedDecision(pendingRoot, '请收窄范围。');
+    const pendingBefore = evolutionFileCounts(pendingRoot);
+    const pending = runWithCapturedOutput(pendingRoot, ['revise', 'feedback', '--confirm', '--pending', '--human']);
+    await expect(pending.result).resolves.toMatchObject({ exitCode: 2 });
+    expect(pending.stderr.read()).toMatch(/confirm --pending|not implemented/iu);
+    expect(evolutionFileCounts(pendingRoot)).toEqual(pendingBefore);
   });
 
   it('manual-checks when next revisionDepth exceeds the default limit', async () => {
