@@ -204,6 +204,29 @@ function seedDecision(root: string, direction: string, decision: 'approve' | 're
   return { proposalId, approvalRequestId, decisionId };
 }
 
+function seedDecisionForTarget(root: string, targetId: string, direction: string, decision: 'approve' | 'reject' | 'request-changes' = 'request-changes') {
+  const proposalId = `proposal_${targetId}_${Math.random().toString(16).slice(2)}`;
+  const approvalRequestId = `approval_${proposalId}`;
+  const decisionId = `decision_${proposalId}`;
+  const scopedTargetRef = {
+    ...targetRef,
+    id: `haro-sidecar:runner-profile:${targetId}`,
+    uri: `haro://assets/runner-profile/${targetId}`,
+  };
+  writeArtifact(root, 'proposals', proposalId, proposal(proposalId, {
+    changeSet: [{
+      op: 'update',
+      targetRef: scopedTargetRef,
+      contentHash: `sha256:${proposalId}`,
+      summary: `新增 ${targetId} 的具体处理规则`,
+    }],
+  }));
+  writeArtifact(root, 'validations', `validation_${proposalId}`, validation(proposalId));
+  writeArtifact(root, 'approval-requests', approvalRequestId, approvalRequest(approvalRequestId, proposalId));
+  writeArtifact(root, 'approval-decisions', decisionId, approvalDecision(decisionId, approvalRequestId, proposalId, decision, direction));
+  return { proposalId, approvalRequestId, decisionId };
+}
+
 function feedbackContext(priorDecisionId: string, priorProposalId: string) {
   return {
     priorDecisionId,
@@ -479,7 +502,148 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(evolutionFileCounts(root)).toEqual(afterFirst);
   });
 
-  it('does not write on stale decisions, no-op/manual-check plans, or confirm pending', async () => {
+
+  it('confirms all safe pending request-changes decisions in batch', async () => {
+    const root = tempRoot();
+    seedDecisionForTarget(root, 'timeout-a', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    seedDecisionForTarget(root, 'timeout-b', '请补充证据，增加风险和回滚字段。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--pending', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      mode: string;
+      dryRun: boolean;
+      confirmed: boolean;
+      processedCount: number;
+      writtenCount: number;
+      skippedCount: number;
+      manualCheckCount: number;
+      blockedCount: number;
+      idempotentCount: number;
+      plans: Array<{ revisedProposalId: string; revisedApprovalRequestId: string; feedbackRevisionId: string; actualActions: { wroteRevisedProposal: boolean; idempotent: boolean } }>;
+    }>(stdout);
+    expect(payload).toMatchObject({
+      mode: 'confirm',
+      dryRun: false,
+      confirmed: true,
+      processedCount: 2,
+      writtenCount: 2,
+      skippedCount: 0,
+      manualCheckCount: 0,
+      blockedCount: 0,
+      idempotentCount: 0,
+    });
+    expect(payload.plans).toHaveLength(2);
+    for (const plan of payload.plans) {
+      expect(plan.actualActions).toMatchObject({ wroteRevisedProposal: true, idempotent: false });
+      expect(existsSync(join(root, 'evolution', 'proposals', `${plan.revisedProposalId}.json`))).toBe(true);
+      expect(existsSync(join(root, 'evolution', 'approval-requests', `${plan.revisedApprovalRequestId}.json`))).toBe(true);
+      expect(existsSync(join(root, 'evolution', 'feedback-revisions', `${plan.feedbackRevisionId}.json`))).toBe(true);
+    }
+    const after = evolutionFileCounts(root);
+    expect(after.proposals).toHaveLength(before.proposals.length + 2);
+    expect(after.validations).toHaveLength(before.validations.length + 2);
+    expect(after['approval-requests']).toHaveLength(before['approval-requests'].length + 2);
+    expect(after['feedback-revisions']).toHaveLength(before['feedback-revisions'].length + 2);
+  });
+
+  it('confirms only safe candidates in a mixed pending batch and reports counts', async () => {
+    const root = tempRoot();
+    seedDecisionForTarget(root, 'safe-batch', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    seedDecisionForTarget(root, 'needs-info-batch', '我看不懂，什么是 Haro 运行出现错误？请说明。');
+    const noOpSource = seedDecision(root, '请收窄范围。');
+    seedPendingRevision(root, noOpSource, {
+      revisionMetadata: revisionMetadata(1, {
+        rootProposalId: noOpSource.proposalId,
+        revisionOfProposalId: noOpSource.proposalId,
+        sourceApprovalRequestId: noOpSource.approvalRequestId,
+        sourceDecisionId: noOpSource.decisionId,
+        supersedesProposalIds: [noOpSource.proposalId],
+        noOpCheck: {
+          verdict: 'no-op',
+          priorProposalContentHashes: [`sha256:${noOpSource.proposalId}`],
+          revisedProposalContentHashes: [`sha256:${noOpSource.proposalId}`],
+          revisionDepth: 1,
+          changedFields: [],
+          reason: 'metadata-only fixture.',
+        },
+      }),
+    });
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--pending', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      processedCount: number;
+      writtenCount: number;
+      manualCheckCount: number;
+      blockedCount: number;
+      idempotentCount: number;
+      plans: Array<{ decisionId: string; confirmed: boolean; actualActions?: { wroteRevisedProposal: boolean; idempotent: boolean }; manualCheckReasons: string[]; blockedReasons: string[] }>;
+    }>(stdout);
+    expect(payload.processedCount).toBe(3);
+    expect(payload.writtenCount).toBe(1);
+    expect(payload.manualCheckCount).toBeGreaterThanOrEqual(2);
+    expect(payload.blockedCount).toBeGreaterThanOrEqual(1);
+    expect(payload.idempotentCount).toBe(0);
+    expect(payload.plans.filter((plan) => plan.actualActions?.wroteRevisedProposal === true)).toHaveLength(1);
+    expect(payload.plans.filter((plan) => plan.confirmed === false)).toHaveLength(2);
+    const after = evolutionFileCounts(root);
+    expect(after.proposals).toHaveLength(before.proposals.length + 1);
+    expect(after.validations).toHaveLength(before.validations.length + 1);
+    expect(after['approval-requests']).toHaveLength(before['approval-requests'].length + 1);
+    expect(after['feedback-revisions']).toHaveLength(before['feedback-revisions'].length + 1);
+  });
+
+  it('keeps batch confirm idempotent and recovers by writing only unfinished candidates', async () => {
+    const root = tempRoot();
+    const alreadyDone = seedDecisionForTarget(root, 'already-done', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    seedDecisionForTarget(root, 'remaining-work', '请补充证据，增加风险和回滚字段。');
+    const first = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', alreadyDone.decisionId, '--json']);
+    await expect(first.result).resolves.toMatchObject({ exitCode: 0 });
+    const afterPartial = evolutionFileCounts(root);
+
+    const retry = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--pending', '--json']);
+    await expect(retry.result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      processedCount: number;
+      writtenCount: number;
+      idempotentCount: number;
+      plans: Array<{ actualActions?: { idempotent: boolean; wroteFeedbackRevision: boolean } }>;
+    }>(retry.stdout);
+    expect(payload.processedCount).toBe(2);
+    expect(payload.writtenCount).toBe(1);
+    expect(payload.idempotentCount).toBe(1);
+    expect(payload.plans.some((plan) => plan.actualActions?.idempotent === true)).toBe(true);
+    expect(payload.plans.some((plan) => plan.actualActions?.wroteFeedbackRevision === true)).toBe(true);
+    const afterRetry = evolutionFileCounts(root);
+    expect(afterRetry.proposals).toHaveLength(afterPartial.proposals.length + 1);
+    expect(afterRetry['feedback-revisions']).toHaveLength(afterPartial['feedback-revisions'].length + 1);
+
+    const secondRetry = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--pending', '--json']);
+    await expect(secondRetry.result).resolves.toMatchObject({ exitCode: 0 });
+    const secondPayload = parseJsonData<{ writtenCount: number; idempotentCount: number }>(secondRetry.stdout);
+    expect(secondPayload.writtenCount).toBe(0);
+    expect(secondPayload.idempotentCount).toBe(2);
+    expect(evolutionFileCounts(root)).toEqual(afterRetry);
+  });
+
+  it('keeps dry-run pending read-only while exposing the same batch counts', async () => {
+    const root = tempRoot();
+    seedDecisionForTarget(root, 'dry-a', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    seedDecisionForTarget(root, 'dry-b', '我看不懂，什么是 Haro 运行出现错误？请说明。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--pending', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{ dryRun: boolean; processedCount: number; writtenCount: number; plans: unknown[] }>(stdout);
+    expect(payload).toMatchObject({ dryRun: true, processedCount: 2, writtenCount: 0 });
+    expect(payload.plans).toHaveLength(2);
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('does not write on stale decisions, no-op, or unresolved manual-check plans', async () => {
     const staleRoot = tempRoot();
     const staleSource = seedDecision(staleRoot, '请收窄范围。');
     writeArtifact(staleRoot, 'approval-decisions', 'decision_later_same_target', {
@@ -522,13 +686,16 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(noOpPayload.actualActions.wroteFeedbackRevision).toBe(false);
     expect(evolutionFileCounts(noOpRoot)).toEqual(noOpBefore);
 
-    const pendingRoot = tempRoot();
-    seedDecision(pendingRoot, '请收窄范围。');
-    const pendingBefore = evolutionFileCounts(pendingRoot);
-    const pending = runWithCapturedOutput(pendingRoot, ['revise', 'feedback', '--confirm', '--pending', '--human']);
-    await expect(pending.result).resolves.toMatchObject({ exitCode: 2 });
-    expect(pending.stderr.read()).toMatch(/confirm --pending|not implemented/iu);
-    expect(evolutionFileCounts(pendingRoot)).toEqual(pendingBefore);
+    const needsHumanRoot = tempRoot();
+    const needsHuman = seedDecision(needsHumanRoot, '请收窄范围，但我还看不懂，需要更多信息。');
+    const needsHumanBefore = evolutionFileCounts(needsHumanRoot);
+    const unresolved = runWithCapturedOutput(needsHumanRoot, ['revise', 'feedback', '--confirm', '--decision-id', needsHuman.decisionId, '--json']);
+    await expect(unresolved.result).resolves.toMatchObject({ exitCode: 0 });
+    const unresolvedPayload = parseJsonData<{ confirmed: boolean; manualCheckReasons: string[]; actualActions: { wroteRevisedProposal: boolean } }>(unresolved.stdout);
+    expect(unresolvedPayload.confirmed).toBe(false);
+    expect(unresolvedPayload.manualCheckReasons.join('\n')).toContain('all parsed requirements are incorporated');
+    expect(unresolvedPayload.actualActions.wroteRevisedProposal).toBe(false);
+    expect(evolutionFileCounts(needsHumanRoot)).toEqual(needsHumanBefore);
   });
 
   it('manual-checks when next revisionDepth exceeds the default limit', async () => {
@@ -591,6 +758,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     ];
     const source = seedDecision(root, '请补充证据。', 'request-changes', { changeSet: partialChangeSet });
     seedPendingRevision(root, source, { changeSet: partialChangeSet });
+    const before = evolutionFileCounts(root);
     const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', source.decisionId, '--json']);
 
     await expect(result).resolves.toMatchObject({ exitCode: 0 });
@@ -598,6 +766,13 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(payload.noOpCheck.verdict).toBe('manual-check');
     expect(payload.noOpCheck.reason).toContain('partial contentHash');
     expect(payload.validationBlockingReasons.join('\n')).toContain('FEEDBACK_REWRITE_MANUAL_CHECK_REQUIRED');
+
+    const confirm = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', source.decisionId, '--json']);
+    await expect(confirm.result).resolves.toMatchObject({ exitCode: 0 });
+    const confirmPayload = parseJsonData<{ confirmed: boolean; actualActions: { wroteRevisedProposal: boolean } }>(confirm.stdout);
+    expect(confirmPayload.confirmed).toBe(false);
+    expect(confirmPayload.actualActions.wroteRevisedProposal).toBe(false);
+    expect(evolutionFileCounts(root)).toEqual(before);
   });
 
   it('keeps readability-only feedback as a controlled manual-check exception', async () => {
@@ -766,6 +941,12 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       'dryRun',
       'wouldWrite',
       'planCount',
+      'processedCount',
+      'writtenCount',
+      'skippedCount',
+      'manualCheckCount',
+      'blockedCount',
+      'idempotentCount',
       'plans',
       'decisionId',
       'approvalRequestId',

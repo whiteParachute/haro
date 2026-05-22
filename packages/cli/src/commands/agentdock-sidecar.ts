@@ -677,6 +677,12 @@ interface ReviseFeedbackResult {
   wouldWrite: boolean;
   confirmed?: boolean;
   planCount: number;
+  processedCount: number;
+  writtenCount: number;
+  skippedCount: number;
+  manualCheckCount: number;
+  blockedCount: number;
+  idempotentCount: number;
   plans: ReviseFeedbackPlan[];
   decisionId?: string;
   approvalRequestId?: string;
@@ -1354,7 +1360,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
 
   const revise = program
     .command('revise')
-    .description('Plan feedback-driven proposal revisions without writing artifacts')
+    .description('Plan or confirm feedback-driven proposal revisions')
     .action(() => {
       revise.outputHelp();
       throw new CommanderExit(2, '`haro revise` requires a subcommand.');
@@ -1366,7 +1372,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
     .option('--dry-run', 'inspect and plan only')
     .option('--confirm', 'write one revised proposal, feedback-revision, and approval request')
     .option('--decision-id <id>', 'approval-decision id to plan from')
-    .option('--pending', 'plan from all pending request-changes decisions')
+    .option('--pending', 'plan or confirm all pending request-changes decisions')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
     .action((options: ReviseFeedbackOptions) => {
@@ -1385,6 +1391,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               ? 'Writes are limited to revised proposal, validation, feedback-revision, and a new approval request.'
               : 'No proposal, feedback-revision, approval-request, or blocked event will be written.',
             `Plans: ${result.planCount}`,
+            `Summary: processed=${result.processedCount} written=${result.writtenCount} skipped=${result.skippedCount} manualCheck=${result.manualCheckCount} blocked=${result.blockedCount} idempotent=${result.idempotentCount}`,
             ...result.plans.map((plan) => [
               `- decision: ${plan.decisionId}`,
               `  request: ${plan.approvalRequestId ?? '(missing)'}`,
@@ -2936,10 +2943,6 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
   if (!options.decisionId && !options.pending) {
     throw new CommanderExit(2, '`haro revise feedback` requires --decision-id or --pending.');
   }
-  if (confirm && options.pending) {
-    throw new CommanderExit(2, '`haro revise feedback --confirm --pending` is not implemented; pass --decision-id.');
-  }
-
   const decisions = options.decisionId
     ? [readApprovalDecisionById(app.paths.root, options.decisionId)]
     : readPendingFeedbackRevisionDecisionCandidates(app.paths.root);
@@ -2954,19 +2957,16 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
   const finalPlans = confirm
     ? plans.map((plan) => confirmFeedbackRevisionForPlan(app, plan))
     : plans;
+  const summary = summarizeReviseFeedbackPlans(finalPlans);
   const first = finalPlans[0];
   return {
     command: 'revise feedback',
     mode: confirm ? 'confirm' : 'dry-run',
     dryRun,
-    wouldWrite: confirm && finalPlans.some((plan) => plan.actualActions && !plan.actualActions.idempotent && (
-      plan.actualActions.wroteRevisedProposal ||
-      plan.actualActions.wroteValidation ||
-      plan.actualActions.wroteFeedbackRevision ||
-      plan.actualActions.wroteApprovalRequest
-    )),
+    wouldWrite: summary.writtenCount > 0,
     ...(confirm ? { confirmed: finalPlans.some((plan) => plan.confirmed === true) } : {}),
     planCount: finalPlans.length,
+    ...summary,
     plans: finalPlans,
     revisionDepthLimit: DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
     ...(first ? {
@@ -2993,6 +2993,29 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
   };
 }
 
+
+function summarizeReviseFeedbackPlans(plans: readonly ReviseFeedbackPlan[]): {
+  processedCount: number;
+  writtenCount: number;
+  skippedCount: number;
+  manualCheckCount: number;
+  blockedCount: number;
+  idempotentCount: number;
+} {
+  return {
+    processedCount: plans.length,
+    writtenCount: plans.filter((plan) => plan.actualActions && !plan.actualActions.idempotent && (
+      plan.actualActions.wroteRevisedProposal ||
+      plan.actualActions.wroteValidation ||
+      plan.actualActions.wroteFeedbackRevision ||
+      plan.actualActions.wroteApprovalRequest
+    )).length,
+    skippedCount: plans.filter((plan) => plan.skippedReasons.length > 0).length,
+    manualCheckCount: plans.filter((plan) => plan.manualCheckReasons.length > 0).length,
+    blockedCount: plans.filter((plan) => plan.blockedReasons.length > 0).length,
+    idempotentCount: plans.filter((plan) => plan.actualActions?.idempotent === true).length,
+  };
+}
 function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisionRecord): ReviseFeedbackPlan {
   const reasons: string[] = [];
   const manualCheckReasons: string[] = [];
@@ -3125,35 +3148,40 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
   }
 
   const decision = readApprovalDecisionById(app.paths.root, plan.decisionId);
-  const sourceProposal = plan.proposalId ? readProposalById(app.paths.root, plan.proposalId) : undefined;
-  const sourceRequest = plan.approvalRequestId ? readApprovalRequestById(app.paths.root, plan.approvalRequestId) : undefined;
+  const currentPlan = decision ? planFeedbackRevisionForDecision(app.paths.root, decision) : plan;
+  const sourceProposal = currentPlan.proposalId ? readProposalById(app.paths.root, currentPlan.proposalId) : undefined;
+  const sourceRequest = currentPlan.approvalRequestId ? readApprovalRequestById(app.paths.root, currentPlan.approvalRequestId) : undefined;
+  // FEAT-077B fail-closed invariant: confirm may only write when every parsed
+  // feedback requirement is fully incorporated. `partially-incorporated`,
+  // `needs-human`, `blocked`, or deferred requirements stay manual-check so
+  // batch confirm cannot silently convert unresolved feedback into a proposal.
   const safeToWrite = decision && sourceProposal && sourceRequest &&
-    plan.plannerVerdict === 'can-rewrite' &&
-    plan.noOpCheck.verdict === 'substantive-change' &&
-    plan.manualCheckReasons.length === 0 &&
-    plan.blockedReasons.length === 0 &&
-    plan.skippedReasons.length === 0 &&
-    plan.validationBlockingReasons.length === 0 &&
-    !plan.exceedsRevisionDepthLimit &&
-    plan.parsedRequirements.length > 0 &&
-    plan.parsedRequirements.every((requirement) => requirement.disposition === 'incorporated');
+    currentPlan.plannerVerdict === 'can-rewrite' &&
+    currentPlan.noOpCheck.verdict === 'substantive-change' &&
+    currentPlan.manualCheckReasons.length === 0 &&
+    currentPlan.blockedReasons.length === 0 &&
+    currentPlan.skippedReasons.length === 0 &&
+    currentPlan.validationBlockingReasons.length === 0 &&
+    !currentPlan.exceedsRevisionDepthLimit &&
+    currentPlan.parsedRequirements.length > 0 &&
+    currentPlan.parsedRequirements.every((requirement) => requirement.disposition === 'incorporated');
 
   if (!safeToWrite) {
     return {
-      ...plan,
+      ...currentPlan,
       dryRun: false,
       wouldWrite: false,
       confirmed: false,
       manualCheckReasons: uniqueSorted([
-        ...plan.manualCheckReasons,
+        ...currentPlan.manualCheckReasons,
         ...(!decision ? ['source approval decision artifact missing'] : []),
         ...(!sourceProposal ? ['source proposal artifact missing'] : []),
         ...(!sourceRequest ? ['source approval request artifact missing'] : []),
-        ...(plan.parsedRequirements.some((requirement) => requirement.disposition !== 'incorporated')
+        ...(currentPlan.parsedRequirements.some((requirement) => requirement.disposition !== 'incorporated')
           ? ['confirm only writes when all parsed requirements are incorporated']
           : []),
-        ...(plan.noOpCheck.verdict !== 'substantive-change'
-          ? [`confirm requires substantive-change noOpCheck, got ${plan.noOpCheck.verdict}`]
+        ...(currentPlan.noOpCheck.verdict !== 'substantive-change'
+          ? [`confirm requires substantive-change noOpCheck, got ${currentPlan.noOpCheck.verdict}`]
           : []),
       ]),
       actualActions: {
@@ -3172,20 +3200,20 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
     sourceProposal,
     sourceRequest,
     decision,
-    plan,
+    plan: currentPlan,
     ids,
     timestamp,
   });
   const noOpCheck = evaluateRevisionNoOpGate(app.paths.root, sourceProposal, draft);
   if (noOpCheck.verdict !== 'substantive-change') {
     return {
-      ...plan,
+      ...currentPlan,
       dryRun: false,
       wouldWrite: false,
       confirmed: false,
       noOpCheck,
-      blockedReasons: uniqueSorted([...plan.blockedReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
-      validationBlockingReasons: uniqueSorted([...plan.validationBlockingReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+      blockedReasons: uniqueSorted([...currentPlan.blockedReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+      validationBlockingReasons: uniqueSorted([...currentPlan.validationBlockingReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
       actualActions: {
         wroteRevisedProposal: false,
         wroteValidation: false,
@@ -3221,8 +3249,8 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
     revisedProposalId: validatedProposal.id,
     revisedValidationId: validation.id,
     revisedApprovalRequestId: approvalRequest.id,
-    parsedRequirements: plan.parsedRequirements,
-    rewriteActions: rewriteActionsForRequirements(plan.parsedRequirements, validatedProposal),
+    parsedRequirements: currentPlan.parsedRequirements,
+    rewriteActions: rewriteActionsForRequirements(currentPlan.parsedRequirements, validatedProposal),
     noOpCheck,
     blockingReasons: [],
     createdAt: timestamp,
@@ -3235,7 +3263,7 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
   writeJsonFile(approvalRequestFilePath(app.paths.root, approvalRequest), approvalRequest);
 
   return {
-    ...plan,
+    ...currentPlan,
     dryRun: false,
     wouldWrite: true,
     confirmed: true,
@@ -3245,7 +3273,7 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
     feedbackRevisionId: feedbackRevision.id,
     noOpCheck,
     validationBlockingReasons: uniqueSorted(feedbackRevisionValidationBlockingReasons(app.paths.root, validatedProposal)),
-    reasons: uniqueSorted([...plan.reasons, 'wrote revised proposal, feedback-revision, validation, and approval request']),
+    reasons: uniqueSorted([...currentPlan.reasons, 'wrote revised proposal, feedback-revision, validation, and approval request']),
     actualActions: {
       wroteRevisedProposal: true,
       wroteValidation: true,
