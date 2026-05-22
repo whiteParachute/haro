@@ -412,6 +412,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       mode: string;
       dryRun: boolean;
       wouldWrite: boolean;
+      didWrite: boolean;
       confirmed: boolean;
       revisedProposalId: string;
       revisedValidationId: string;
@@ -429,6 +430,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       mode: 'confirm',
       dryRun: false,
       wouldWrite: true,
+      didWrite: true,
       confirmed: true,
       actualActions: {
         wroteRevisedProposal: true,
@@ -503,6 +505,84 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
   });
 
 
+
+  it('recovers an existing feedback-revision whose approval request is missing', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const first = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', source.decisionId, '--json']);
+    await expect(first.result).resolves.toMatchObject({ exitCode: 0 });
+    const firstPayload = parseJsonData<{ revisedApprovalRequestId: string; feedbackRevisionId: string }>(first.stdout);
+    rmSync(join(root, 'evolution', 'approval-requests', `${firstPayload.revisedApprovalRequestId}.json`), { force: true });
+    const afterCrash = evolutionFileCounts(root);
+
+    const recovered = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', source.decisionId, '--json']);
+    await expect(recovered.result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      confirmed: boolean;
+      didWrite: boolean;
+      writtenCount: number;
+      feedbackRevisionId: string;
+      revisedApprovalRequestId: string;
+      actualActions: { wroteApprovalRequest: boolean; wroteFeedbackRevision: boolean; idempotent: boolean };
+    }>(recovered.stdout);
+    expect(payload).toMatchObject({
+      confirmed: true,
+      didWrite: true,
+      writtenCount: 1,
+      feedbackRevisionId: firstPayload.feedbackRevisionId,
+      revisedApprovalRequestId: firstPayload.revisedApprovalRequestId,
+      actualActions: { wroteApprovalRequest: true, wroteFeedbackRevision: false, idempotent: false },
+    });
+    const afterRecovery = evolutionFileCounts(root);
+    expect(afterRecovery['approval-requests']).toHaveLength(afterCrash['approval-requests'].length + 1);
+    expect(afterRecovery['feedback-revisions']).toEqual(afterCrash['feedback-revisions']);
+    expect(existsSync(join(root, 'evolution', 'approval-requests', `${firstPayload.revisedApprovalRequestId}.json`))).toBe(true);
+  });
+
+  it('recovers partial proposal and validation artifacts without duplicating them when feedback-revision is missing', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请补充证据，增加风险和回滚字段。');
+    const first = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', source.decisionId, '--json']);
+    await expect(first.result).resolves.toMatchObject({ exitCode: 0 });
+    const firstPayload = parseJsonData<{ feedbackRevisionId: string; revisedProposalId: string; revisedValidationId: string; revisedApprovalRequestId: string }>(first.stdout);
+    rmSync(join(root, 'evolution', 'feedback-revisions', `${firstPayload.feedbackRevisionId}.json`), { force: true });
+    const afterCrash = evolutionFileCounts(root);
+
+    const recovered = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', source.decisionId, '--json']);
+    await expect(recovered.result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      confirmed: boolean;
+      didWrite: boolean;
+      writtenCount: number;
+      revisedProposalId: string;
+      revisedValidationId: string;
+      revisedApprovalRequestId: string;
+      feedbackRevisionId: string;
+      actualActions: { wroteRevisedProposal: boolean; wroteValidation: boolean; wroteApprovalRequest: boolean; wroteFeedbackRevision: boolean; idempotent: boolean };
+    }>(recovered.stdout);
+    expect(payload).toMatchObject({
+      confirmed: true,
+      didWrite: true,
+      writtenCount: 1,
+      revisedProposalId: firstPayload.revisedProposalId,
+      revisedValidationId: firstPayload.revisedValidationId,
+      revisedApprovalRequestId: firstPayload.revisedApprovalRequestId,
+      feedbackRevisionId: firstPayload.feedbackRevisionId,
+      actualActions: {
+        wroteRevisedProposal: false,
+        wroteValidation: false,
+        wroteApprovalRequest: false,
+        wroteFeedbackRevision: true,
+        idempotent: false,
+      },
+    });
+    const afterRecovery = evolutionFileCounts(root);
+    expect(afterRecovery.proposals).toEqual(afterCrash.proposals);
+    expect(afterRecovery.validations).toEqual(afterCrash.validations);
+    expect(afterRecovery['approval-requests']).toEqual(afterCrash['approval-requests']);
+    expect(afterRecovery['feedback-revisions']).toHaveLength(afterCrash['feedback-revisions'].length + 1);
+  });
+
   it('confirms all safe pending request-changes decisions in batch', async () => {
     const root = tempRoot();
     seedDecisionForTarget(root, 'timeout-a', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
@@ -515,6 +595,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       mode: string;
       dryRun: boolean;
       confirmed: boolean;
+      didWrite: boolean;
       processedCount: number;
       writtenCount: number;
       skippedCount: number;
@@ -527,6 +608,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       mode: 'confirm',
       dryRun: false,
       confirmed: true,
+      didWrite: true,
       processedCount: 2,
       writtenCount: 2,
       skippedCount: 0,
@@ -584,8 +666,8 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     }>(stdout);
     expect(payload.processedCount).toBe(3);
     expect(payload.writtenCount).toBe(1);
-    expect(payload.manualCheckCount).toBeGreaterThanOrEqual(2);
-    expect(payload.blockedCount).toBeGreaterThanOrEqual(1);
+    expect(payload.manualCheckCount).toBe(2);
+    expect(payload.blockedCount).toBe(1);
     expect(payload.idempotentCount).toBe(0);
     expect(payload.plans.filter((plan) => plan.actualActions?.wroteRevisedProposal === true)).toHaveLength(1);
     expect(payload.plans.filter((plan) => plan.confirmed === false)).toHaveLength(2);
@@ -637,8 +719,8 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--pending', '--json']);
 
     await expect(result).resolves.toMatchObject({ exitCode: 0 });
-    const payload = parseJsonData<{ dryRun: boolean; processedCount: number; writtenCount: number; plans: unknown[] }>(stdout);
-    expect(payload).toMatchObject({ dryRun: true, processedCount: 2, writtenCount: 0 });
+    const payload = parseJsonData<{ dryRun: boolean; didWrite: boolean; processedCount: number; writtenCount: number; plans: unknown[] }>(stdout);
+    expect(payload).toMatchObject({ dryRun: true, didWrite: false, processedCount: 2, writtenCount: 0 });
     expect(payload.plans).toHaveLength(2);
     expect(evolutionFileCounts(root)).toEqual(before);
   });
@@ -940,6 +1022,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       'mode',
       'dryRun',
       'wouldWrite',
+      'didWrite',
       'planCount',
       'processedCount',
       'writtenCount',

@@ -675,6 +675,7 @@ interface ReviseFeedbackResult {
   mode: 'dry-run' | 'confirm';
   dryRun: boolean;
   wouldWrite: boolean;
+  didWrite: boolean;
   confirmed?: boolean;
   planCount: number;
   processedCount: number;
@@ -1391,7 +1392,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               ? 'Writes are limited to revised proposal, validation, feedback-revision, and a new approval request.'
               : 'No proposal, feedback-revision, approval-request, or blocked event will be written.',
             `Plans: ${result.planCount}`,
-            `Summary: processed=${result.processedCount} written=${result.writtenCount} skipped=${result.skippedCount} manualCheck=${result.manualCheckCount} blocked=${result.blockedCount} idempotent=${result.idempotentCount}`,
+            `Summary: processed=${result.processedCount} written=${result.writtenCount} skipped=${result.skippedCount} manualCheck=${result.manualCheckCount} blocked=${result.blockedCount} idempotent=${result.idempotentCount} didWrite=${result.didWrite}`,
             ...result.plans.map((plan) => [
               `- decision: ${plan.decisionId}`,
               `  request: ${plan.approvalRequestId ?? '(missing)'}`,
@@ -2963,7 +2964,11 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
     command: 'revise feedback',
     mode: confirm ? 'confirm' : 'dry-run',
     dryRun,
+    // `wouldWrite` is kept for JSON compatibility. In confirm mode it means the
+    // command did write at least one artifact in this run; `didWrite` is the
+    // clearer alias introduced by FEAT-077C.
     wouldWrite: summary.writtenCount > 0,
+    didWrite: summary.writtenCount > 0,
     ...(confirm ? { confirmed: finalPlans.some((plan) => plan.confirmed === true) } : {}),
     planCount: finalPlans.length,
     ...summary,
@@ -3127,22 +3132,93 @@ function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisio
 function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPlan): ReviseFeedbackPlan {
   const existing = readFeedbackRevisionBySourceDecisionId(app.paths.root, plan.decisionId);
   if (existing?.revisedProposalId && existing.revisedApprovalRequestId) {
+    const existingArtifacts = readFeedbackRevisionArtifacts(app.paths.root, existing);
+    if (existingArtifacts.proposal && existingArtifacts.validation && existingArtifacts.approvalRequest) {
+      return {
+        ...plan,
+        dryRun: false,
+        wouldWrite: false,
+        confirmed: true,
+        revisedProposalId: existing.revisedProposalId,
+        revisedValidationId: existing.revisedValidationId,
+        revisedApprovalRequestId: existing.revisedApprovalRequestId,
+        feedbackRevisionId: existing.id,
+        reasons: uniqueSorted([...plan.reasons, 'feedback revision already exists with complete artifacts; confirm is idempotent']),
+        actualActions: {
+          wroteRevisedProposal: false,
+          wroteValidation: false,
+          wroteFeedbackRevision: false,
+          wroteApprovalRequest: false,
+          idempotent: true,
+        },
+      };
+    }
+
+    if (existingArtifacts.proposal && existingArtifacts.validation && !existingArtifacts.approvalRequest) {
+      const restoredApprovalRequest = createApprovalRequestRecord(app, existingArtifacts.proposal, existingArtifacts.validation);
+      if (restoredApprovalRequest.id !== existing.revisedApprovalRequestId) {
+        return {
+          ...plan,
+          dryRun: false,
+          wouldWrite: false,
+          confirmed: false,
+          revisedProposalId: existing.revisedProposalId,
+          revisedValidationId: existing.revisedValidationId,
+          revisedApprovalRequestId: existing.revisedApprovalRequestId,
+          feedbackRevisionId: existing.id,
+          manualCheckReasons: uniqueSorted([
+            ...plan.manualCheckReasons,
+            `existing feedback revision ${existing.id} is missing approval request ${existing.revisedApprovalRequestId}, but regenerated id would be ${restoredApprovalRequest.id}`,
+          ]),
+          actualActions: {
+            wroteRevisedProposal: false,
+            wroteValidation: false,
+            wroteFeedbackRevision: false,
+            wroteApprovalRequest: false,
+            idempotent: false,
+          },
+        };
+      }
+      writeJsonFile(approvalRequestFilePath(app.paths.root, restoredApprovalRequest), restoredApprovalRequest);
+      return {
+        ...plan,
+        dryRun: false,
+        wouldWrite: true,
+        confirmed: true,
+        revisedProposalId: existing.revisedProposalId,
+        revisedValidationId: existing.revisedValidationId,
+        revisedApprovalRequestId: existing.revisedApprovalRequestId,
+        feedbackRevisionId: existing.id,
+        reasons: uniqueSorted([...plan.reasons, 'recovered missing approval request for existing feedback revision']),
+        actualActions: {
+          wroteRevisedProposal: false,
+          wroteValidation: false,
+          wroteFeedbackRevision: false,
+          wroteApprovalRequest: true,
+          idempotent: false,
+        },
+      };
+    }
+
     return {
       ...plan,
       dryRun: false,
       wouldWrite: false,
-      confirmed: true,
+      confirmed: false,
       revisedProposalId: existing.revisedProposalId,
       revisedValidationId: existing.revisedValidationId,
       revisedApprovalRequestId: existing.revisedApprovalRequestId,
       feedbackRevisionId: existing.id,
-      reasons: uniqueSorted([...plan.reasons, 'feedback revision already exists; confirm is idempotent']),
+      manualCheckReasons: uniqueSorted([
+        ...plan.manualCheckReasons,
+        `existing feedback revision ${existing.id} points to missing revised proposal or validation; manual repair required`,
+      ]),
       actualActions: {
         wroteRevisedProposal: false,
         wroteValidation: false,
         wroteFeedbackRevision: false,
         wroteApprovalRequest: false,
-        idempotent: true,
+        idempotent: false,
       },
     };
   }
@@ -3151,6 +3227,17 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
   const currentPlan = decision ? planFeedbackRevisionForDecision(app.paths.root, decision) : plan;
   const sourceProposal = currentPlan.proposalId ? readProposalById(app.paths.root, currentPlan.proposalId) : undefined;
   const sourceRequest = currentPlan.approvalRequestId ? readApprovalRequestById(app.paths.root, currentPlan.approvalRequestId) : undefined;
+  const ids = decision ? feedbackRevisionIdsForDecision(decision.id) : undefined;
+  const partialProposal = ids ? readProposalById(app.paths.root, ids.revisedProposalId) : undefined;
+  if (decision && sourceProposal && sourceRequest && ids && partialProposal?.revisionMetadata?.sourceDecisionId === decision.id) {
+    return recoverPartialFeedbackRevisionArtifacts(app, currentPlan, {
+      decision,
+      sourceProposal,
+      sourceRequest,
+      partialProposal,
+      ids,
+    });
+  }
   // FEAT-077B fail-closed invariant: confirm may only write when every parsed
   // feedback requirement is fully incorporated. `partially-incorporated`,
   // `needs-human`, `blocked`, or deferred requirements stay manual-check so
@@ -3195,25 +3282,33 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
   }
 
   const timestamp = app.now().toISOString();
-  const ids = feedbackRevisionIdsForDecision(decision.id);
-  const draft = buildConfirmedRevisionProposal({
-    sourceProposal,
-    sourceRequest,
-    decision,
-    plan: currentPlan,
-    ids,
-    timestamp,
-  });
-  const noOpCheck = evaluateRevisionNoOpGate(app.paths.root, sourceProposal, draft);
-  if (noOpCheck.verdict !== 'substantive-change') {
+  if (!ids) {
     return {
       ...currentPlan,
       dryRun: false,
       wouldWrite: false,
       confirmed: false,
-      noOpCheck,
-      blockedReasons: uniqueSorted([...currentPlan.blockedReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
-      validationBlockingReasons: uniqueSorted([...currentPlan.validationBlockingReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+      manualCheckReasons: uniqueSorted([...currentPlan.manualCheckReasons, 'source approval decision artifact missing']),
+      actualActions: {
+        wroteRevisedProposal: false,
+        wroteValidation: false,
+        wroteFeedbackRevision: false,
+        wroteApprovalRequest: false,
+        idempotent: false,
+      },
+    };
+  }
+  if (partialProposal?.revisionMetadata && partialProposal.revisionMetadata.sourceDecisionId !== decision.id) {
+    return {
+      ...currentPlan,
+      dryRun: false,
+      wouldWrite: false,
+      confirmed: false,
+      revisedProposalId: ids.revisedProposalId,
+      manualCheckReasons: uniqueSorted([
+        ...currentPlan.manualCheckReasons,
+        `existing revised proposal ${ids.revisedProposalId} belongs to decision ${partialProposal.revisionMetadata.sourceDecisionId}, not ${decision.id}`,
+      ]),
       actualActions: {
         wroteRevisedProposal: false,
         wroteValidation: false,
@@ -3224,20 +3319,87 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
     };
   }
 
-  const revisedProposal = EvolutionProposalSchema.parse({
-    ...draft,
-    revisionMetadata: {
-      ...draft.revisionMetadata!,
-      noOpCheck,
-    },
-  });
-  const validation = createValidationReport(app.paths.root, revisedProposal, app.now, undefined);
-  const validatedProposal = EvolutionProposalSchema.parse({
-    ...revisedProposal,
-    status: 'validated',
-    updatedAt: timestamp,
-  });
-  const approvalRequest = createApprovalRequestRecord(app, validatedProposal, validation);
+  let noOpCheck = currentPlan.noOpCheck;
+  let validatedProposal: EvolutionProposal;
+  let wroteRevisedProposal = false;
+  if (partialProposal) {
+    noOpCheck = partialProposal.revisionMetadata?.noOpCheck ?? evaluateRevisionNoOpGate(app.paths.root, sourceProposal, partialProposal);
+    if (noOpCheck.verdict !== 'substantive-change') {
+      return {
+        ...currentPlan,
+        dryRun: false,
+        wouldWrite: false,
+        confirmed: false,
+        revisedProposalId: partialProposal.id,
+        noOpCheck,
+        blockedReasons: uniqueSorted([...currentPlan.blockedReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+        validationBlockingReasons: uniqueSorted([...currentPlan.validationBlockingReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+        actualActions: {
+          wroteRevisedProposal: false,
+          wroteValidation: false,
+          wroteFeedbackRevision: false,
+          wroteApprovalRequest: false,
+          idempotent: false,
+        },
+      };
+    }
+    validatedProposal = EvolutionProposalSchema.parse({
+      ...partialProposal,
+      status: 'validated',
+      revisionMetadata: {
+        ...partialProposal.revisionMetadata!,
+        noOpCheck,
+      },
+    });
+    wroteRevisedProposal = partialProposal.status !== validatedProposal.status ||
+      partialProposal.revisionMetadata?.noOpCheck.verdict !== noOpCheck.verdict;
+  } else {
+    const draft = buildConfirmedRevisionProposal({
+      sourceProposal,
+      sourceRequest,
+      decision,
+      plan: currentPlan,
+      ids,
+      timestamp,
+    });
+    noOpCheck = evaluateRevisionNoOpGate(app.paths.root, sourceProposal, draft);
+    if (noOpCheck.verdict !== 'substantive-change') {
+      return {
+        ...currentPlan,
+        dryRun: false,
+        wouldWrite: false,
+        confirmed: false,
+        noOpCheck,
+        blockedReasons: uniqueSorted([...currentPlan.blockedReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+        validationBlockingReasons: uniqueSorted([...currentPlan.validationBlockingReasons, `REVISION_NO_OP：${noOpCheck.reason}`]),
+        actualActions: {
+          wroteRevisedProposal: false,
+          wroteValidation: false,
+          wroteFeedbackRevision: false,
+          wroteApprovalRequest: false,
+          idempotent: false,
+        },
+      };
+    }
+    const revisedProposal = EvolutionProposalSchema.parse({
+      ...draft,
+      revisionMetadata: {
+        ...draft.revisionMetadata!,
+        noOpCheck,
+      },
+    });
+    validatedProposal = EvolutionProposalSchema.parse({
+      ...revisedProposal,
+      status: 'validated',
+      updatedAt: timestamp,
+    });
+    wroteRevisedProposal = true;
+  }
+
+  const existingValidation = readLatestValidationForProposal(app.paths.root, validatedProposal.id);
+  const validation = existingValidation ?? createValidationReport(app.paths.root, validatedProposal, app.now, undefined);
+  const existingApprovalRequest = readApprovalRequestForProposal(app.paths.root, validatedProposal.id);
+  const approvalRequest = existingApprovalRequest ?? createApprovalRequestRecord(app, validatedProposal, validation);
   const feedbackRevision = FeedbackRevisionRecordSchema.parse({
     id: ids.feedbackRevisionId,
     status: 'revised',
@@ -3257,10 +3419,12 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
     updatedAt: timestamp,
   });
 
-  writeJsonFile(proposalFilePath(app.paths.root, validatedProposal), validatedProposal);
-  writeJsonFile(validationFilePath(app.paths.root, validation), validation);
+  // Write feedback-revision last. A retry can then trust a complete revision
+  // record only after the proposal, validation, and approval request exist.
+  if (wroteRevisedProposal) writeJsonFile(proposalFilePath(app.paths.root, validatedProposal), validatedProposal);
+  if (!existingValidation) writeJsonFile(validationFilePath(app.paths.root, validation), validation);
+  if (!existingApprovalRequest) writeJsonFile(approvalRequestFilePath(app.paths.root, approvalRequest), approvalRequest);
   writeJsonFile(feedbackRevisionFilePath(app.paths.root, feedbackRevision), feedbackRevision);
-  writeJsonFile(approvalRequestFilePath(app.paths.root, approvalRequest), approvalRequest);
 
   return {
     ...currentPlan,
@@ -3273,14 +3437,126 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
     feedbackRevisionId: feedbackRevision.id,
     noOpCheck,
     validationBlockingReasons: uniqueSorted(feedbackRevisionValidationBlockingReasons(app.paths.root, validatedProposal)),
-    reasons: uniqueSorted([...currentPlan.reasons, 'wrote revised proposal, feedback-revision, validation, and approval request']),
+    reasons: uniqueSorted([...currentPlan.reasons, 'wrote or recovered revised proposal, feedback-revision, validation, and approval request']),
     actualActions: {
-      wroteRevisedProposal: true,
-      wroteValidation: true,
+      wroteRevisedProposal,
+      wroteValidation: !existingValidation,
       wroteFeedbackRevision: true,
-      wroteApprovalRequest: true,
+      wroteApprovalRequest: !existingApprovalRequest,
       idempotent: false,
     },
+  };
+}
+
+
+
+function recoverPartialFeedbackRevisionArtifacts(
+  app: AppContext,
+  plan: ReviseFeedbackPlan,
+  input: {
+    decision: ApprovalDecisionRecord;
+    sourceProposal: EvolutionProposal;
+    sourceRequest: ApprovalRequestRecord;
+    partialProposal: EvolutionProposal;
+    ids: { revisionId: string; revisedProposalId: string; feedbackRevisionId: string };
+  },
+): ReviseFeedbackPlan {
+  const noOpCheck = input.partialProposal.revisionMetadata?.noOpCheck;
+  if (!noOpCheck || noOpCheck.verdict !== 'substantive-change') {
+    return {
+      ...plan,
+      dryRun: false,
+      wouldWrite: false,
+      confirmed: false,
+      revisedProposalId: input.partialProposal.id,
+      noOpCheck: noOpCheck ?? plan.noOpCheck,
+      blockedReasons: uniqueSorted([...plan.blockedReasons, `REVISION_NO_OP：${noOpCheck?.reason ?? 'partial revised proposal lacks no-op evidence'}`]),
+      actualActions: {
+        wroteRevisedProposal: false,
+        wroteValidation: false,
+        wroteFeedbackRevision: false,
+        wroteApprovalRequest: false,
+        idempotent: false,
+      },
+    };
+  }
+
+  const timestamp = app.now().toISOString();
+  const validatedProposal = EvolutionProposalSchema.parse({
+    ...input.partialProposal,
+    status: 'validated',
+    revisionMetadata: {
+      ...input.partialProposal.revisionMetadata!,
+      noOpCheck,
+    },
+  });
+  const wroteRevisedProposal = input.partialProposal.status !== validatedProposal.status;
+  const existingValidation = readLatestValidationForProposal(app.paths.root, validatedProposal.id);
+  const validation = existingValidation ?? createValidationReport(app.paths.root, validatedProposal, app.now, undefined);
+  const existingApprovalRequest = readApprovalRequestForProposal(app.paths.root, validatedProposal.id);
+  const approvalRequest = existingApprovalRequest ?? createApprovalRequestRecord(app, validatedProposal, validation);
+  const parsedRequirements = validatedProposal.revisionMetadata?.incorporatedFeedback.length
+    ? validatedProposal.revisionMetadata.incorporatedFeedback
+    : plan.parsedRequirements;
+  const feedbackRevision = FeedbackRevisionRecordSchema.parse({
+    id: input.ids.feedbackRevisionId,
+    status: 'revised',
+    rootProposalId: validatedProposal.revisionMetadata!.rootProposalId,
+    sourceProposalId: input.sourceProposal.id,
+    sourceApprovalRequestId: input.sourceRequest.id,
+    sourceDecisionId: input.decision.id,
+    sourceDecisionDirection: input.decision.direction ?? '',
+    revisedProposalId: validatedProposal.id,
+    revisedValidationId: validation.id,
+    revisedApprovalRequestId: approvalRequest.id,
+    parsedRequirements,
+    rewriteActions: rewriteActionsForRequirements(parsedRequirements, validatedProposal),
+    noOpCheck,
+    blockingReasons: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  if (wroteRevisedProposal) writeJsonFile(proposalFilePath(app.paths.root, validatedProposal), validatedProposal);
+  if (!existingValidation) writeJsonFile(validationFilePath(app.paths.root, validation), validation);
+  if (!existingApprovalRequest) writeJsonFile(approvalRequestFilePath(app.paths.root, approvalRequest), approvalRequest);
+  writeJsonFile(feedbackRevisionFilePath(app.paths.root, feedbackRevision), feedbackRevision);
+
+  return {
+    ...plan,
+    dryRun: false,
+    wouldWrite: true,
+    confirmed: true,
+    plannerVerdict: 'can-rewrite',
+    manualCheckReasons: [],
+    blockedReasons: [],
+    skippedReasons: [],
+    revisedProposalId: validatedProposal.id,
+    revisedValidationId: validation.id,
+    revisedApprovalRequestId: approvalRequest.id,
+    feedbackRevisionId: feedbackRevision.id,
+    noOpCheck,
+    validationBlockingReasons: uniqueSorted(feedbackRevisionValidationBlockingReasons(app.paths.root, validatedProposal)),
+    reasons: uniqueSorted([...plan.reasons, 'recovered partial revised proposal artifacts and wrote feedback revision']),
+    actualActions: {
+      wroteRevisedProposal,
+      wroteValidation: !existingValidation,
+      wroteFeedbackRevision: true,
+      wroteApprovalRequest: !existingApprovalRequest,
+      idempotent: false,
+    },
+  };
+}
+
+function readFeedbackRevisionArtifacts(root: string, record: FeedbackRevisionRecord): {
+  proposal?: EvolutionProposal;
+  validation?: ValidationReport;
+  approvalRequest?: ApprovalRequestRecord;
+} {
+  return {
+    proposal: record.revisedProposalId ? readProposalById(root, record.revisedProposalId) : undefined,
+    validation: record.revisedValidationId ? readValidationById(root, record.revisedValidationId) : undefined,
+    approvalRequest: record.revisedApprovalRequestId ? readApprovalRequestById(root, record.revisedApprovalRequestId) : undefined,
   };
 }
 
@@ -3695,6 +3971,12 @@ function readApprovalDecisionById(root: string, decisionId: string): ApprovalDec
 
 function readApprovalRequestById(root: string, approvalRequestId: string): ApprovalRequestRecord | undefined {
   return readAllApprovalRequestRecords(root).find((request) => request.id === approvalRequestId);
+}
+
+function readApprovalRequestForProposal(root: string, proposalId: string): ApprovalRequestRecord | undefined {
+  return readAllApprovalRequestRecords(root)
+    .filter((request) => request.proposalId === proposalId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))[0];
 }
 
 function readAllApprovalRequestRecords(root: string): ApprovalRequestRecord[] {
