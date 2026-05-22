@@ -120,6 +120,12 @@ function readJson<T = unknown>(path: string): T {
   return JSON.parse(readFileSync(path, 'utf8')) as T;
 }
 
+function readEvolutionFileNames(root: string, dirName: string): string[] {
+  const dir = join(root, 'evolution', dirName);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((name) => name.endsWith('.json')).sort();
+}
+
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -5435,6 +5441,165 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(signal.title).toBe('OpenAI tool calling changelog');
     expect(signal.sourceRef).toMatchObject({ uri: 'https://example.com/openai/tool-calling' });
     expect(existsSync(join(root, 'memory'))).toBe(false);
+  });
+
+  it('daily workflow includes read-only operator preflight summary for self-heal and feedback rewrite', async () => {
+    const root = newHome('daily-operator-preflight');
+    const writeProposal = (proposalId: string, targetId: string, contentHash: string) => {
+      const proposalDir = join(root, 'evolution', 'proposals');
+      mkdirSync(proposalDir, { recursive: true });
+      writeFileSync(join(proposalDir, `${proposalId}.json`), `${JSON.stringify({
+        id: proposalId,
+        title: `修订 ${targetId}`,
+        status: 'proposed',
+        level: 'L1',
+        targetKind: 'runner-profile',
+        riskLevel: 'medium',
+        sourceObservationRefs: [{ id: `obs_${proposalId}`, kind: 'observation-batch' }],
+        changeSet: [{
+          op: 'update',
+          targetRef: { id: `haro-sidecar:runner-profile:${targetId}`, kind: 'runner-profile' },
+          contentHash,
+          summary: `新增 ${targetId} 的具体处理规则`,
+        }],
+        testPlan: {
+          requiredCommands: ['git diff --check'],
+          manualChecks: ['核对 operator preflight。'],
+          regressionRisks: ['误确认会生成无效修订。'],
+        },
+        rollbackPlan: { strategy: '删除新增配置。', snapshotRequired: false, rollbackRefs: [] },
+        humanReviewRequired: true,
+        humanApprovalRefs: [],
+        createdAt: '2026-05-08T11:00:00.000Z',
+        updatedAt: '2026-05-08T11:00:00.000Z',
+      }, null, 2)}\n`);
+    };
+    const writeRequest = (requestId: string, proposalId: string) => {
+      const requestDir = join(root, 'evolution', 'approval-requests');
+      mkdirSync(requestDir, { recursive: true });
+      writeFileSync(join(requestDir, `${requestId}.json`), `${JSON.stringify(ApprovalRequestRecordSchema.parse({
+        id: requestId,
+        proposalId,
+        validationId: `validation_${proposalId}`,
+        status: 'pending',
+        title: `审批 ${proposalId}`,
+        level: 'L1',
+        targetKind: 'runner-profile',
+        riskLevel: 'medium',
+        sourceRef: { id: proposalId, kind: 'evolution-proposal' },
+        validationRef: { id: `validation_${proposalId}`, kind: 'validation-report' },
+        whyChange: ['需要根据审批意见修订。'],
+        howChange: ['改动对象是 Haro 审批页摘要。'],
+        expectedBenefits: ['减少重复提案。'],
+        requiredTests: ['git diff --check'],
+        manualChecks: ['人工复核命令。'],
+        regressionRisks: ['命令误用会写入修订。'],
+        rollbackPlan: { strategy: '删除测试 fixture。', snapshotRequired: false, rollbackRefs: [] },
+        decisionOptions: ['approve', 'reject', 'request-changes'],
+        reviewerInstruction: '请人工复核。',
+        humanReviewRequired: true,
+        evidenceRefs: [],
+        createdAt: '2026-05-08T11:02:00.000Z',
+        updatedAt: '2026-05-08T11:02:00.000Z',
+      }), null, 2)}\n`);
+    };
+    const writeValidation = (proposalId: string) => {
+      const validationDir = join(root, 'evolution', 'validations');
+      mkdirSync(validationDir, { recursive: true });
+      writeFileSync(join(validationDir, `validation_${proposalId}.json`), `${JSON.stringify({
+        id: `validation_${proposalId}`,
+        proposalId,
+        riskVerdict: 'medium',
+        requiredTests: ['git diff --check'],
+        rollbackReady: true,
+        applyEligible: true,
+        blockingReasons: [],
+        evidenceRefs: [],
+        createdAt: '2026-05-08T11:01:00.000Z',
+      }, null, 2)}\n`);
+    };
+    const writeDecision = (
+      decisionId: string,
+      requestId: string,
+      proposalId: string,
+      decision: 'reject' | 'request-changes',
+      direction: string,
+      createdAt: string,
+    ) => writeApprovalDecisionRecord(root, {
+      id: decisionId,
+      approvalRequestId: requestId,
+      proposalId,
+      validationId: `validation_${proposalId}`,
+      decision,
+      direction,
+      reviewer: { source: 'test', role: 'owner' },
+      sourceRef: { id: requestId, kind: 'approval-request' },
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    writeProposal('proposal_prior_duplicate', 'duplicate-target', 'sha256:duplicate');
+    writeValidation('proposal_prior_duplicate');
+    writeRequest('approval_prior_duplicate', 'proposal_prior_duplicate');
+    writeDecision('approval_decision_prior_duplicate', 'approval_prior_duplicate', 'proposal_prior_duplicate', 'reject', '旧重复提案。', '2026-05-08T11:03:00.000Z');
+    writeProposal('proposal_current_duplicate', 'duplicate-target', 'sha256:duplicate');
+    writeValidation('proposal_current_duplicate');
+    writeRequest('approval_current_duplicate', 'proposal_current_duplicate');
+
+    writeProposal('proposal_feedback_safe', 'feedback-safe', 'sha256:feedback-safe');
+    writeValidation('proposal_feedback_safe');
+    writeRequest('approval_feedback_safe', 'proposal_feedback_safe');
+    writeDecision(
+      'approval_decision_feedback_safe',
+      'approval_feedback_safe',
+      'proposal_feedback_safe',
+      'request-changes',
+      '请收窄范围，只针对 ModelHub timeout 做一个具体 change。',
+      '2026-05-08T11:04:00.000Z',
+    );
+
+    const beforeDecisions = readEvolutionFileNames(root, 'approval-decisions');
+    const beforeFeedbackRevisions = readEvolutionFileNames(root, 'feedback-revisions');
+    const beforeBlockedEvents = readEvolutionFileNames(root, 'blocked-proposal-events');
+    const app = autoApplyApp(root);
+    const result = await runAgentDockDailyWorkflow(app, {
+      source: 'fake',
+      since: 'last',
+      includeFrontier: false,
+      observeLimit: 20,
+      proposalLimit: 20,
+      validationLimit: 20,
+      approvalRequestLimit: 20,
+    });
+
+    expect(result.steps.operatorPreflight).toMatchObject({
+      dryRun: true,
+      wouldWrite: false,
+      requiresExplicitConfirm: true,
+      duplicateSelfHeal: {
+        candidateCount: 1,
+        candidateApprovalRequestIds: ['approval_current_duplicate'],
+        confirmCommands: ['haro self-heal duplicates --confirm'],
+      },
+      feedbackRewrite: {
+        safeToConfirmCount: 1,
+        safeDecisionIds: ['approval_decision_feedback_safe'],
+        confirmCommands: ['haro revise feedback --confirm --decision-id approval_decision_feedback_safe'],
+      },
+    });
+    expect(result.summary).toMatchObject({
+      duplicateSelfHealCandidateCount: 1,
+      duplicateSelfHealManualCheckCount: 0,
+      feedbackRewriteSafeToConfirmCount: 1,
+    });
+    expect(result.summary.operatorConfirmCommands).toEqual(expect.arrayContaining([
+      'haro self-heal duplicates --confirm',
+      'haro revise feedback --confirm --decision-id approval_decision_feedback_safe',
+    ]));
+    expect(result.nextActions.join('\n')).toContain('只读 operator preflight');
+    expect(readEvolutionFileNames(root, 'approval-decisions')).toEqual(beforeDecisions);
+    expect(readEvolutionFileNames(root, 'feedback-revisions')).toEqual(beforeFeedbackRevisions);
+    expect(readEvolutionFileNames(root, 'blocked-proposal-events')).toEqual(beforeBlockedEvents);
   });
 
   it('status summarizes an empty sidecar store without creating memory', async () => {

@@ -227,6 +227,26 @@ function seedDecisionForTarget(root: string, targetId: string, direction: string
   return { proposalId, approvalRequestId, decisionId };
 }
 
+function seedDuplicatePendingForPrior(root: string, prior: { proposalId: string }) {
+  const priorProposal = JSON.parse(readFileSync(join(root, 'evolution', 'proposals', `${prior.proposalId}.json`), 'utf8')) as {
+    changeSet: Array<{ targetRef: unknown; contentHash?: string; summary: string }>;
+    targetKind: string;
+    level: string;
+    riskLevel: string;
+  };
+  const proposalId = `proposal_duplicate_${Math.random().toString(16).slice(2)}`;
+  const approvalRequestId = `approval_${proposalId}`;
+  writeArtifact(root, 'proposals', proposalId, proposal(proposalId, {
+    level: priorProposal.level,
+    targetKind: priorProposal.targetKind,
+    riskLevel: priorProposal.riskLevel,
+    changeSet: priorProposal.changeSet.map((change) => ({ ...change })),
+  }));
+  writeArtifact(root, 'validations', `validation_${proposalId}`, validation(proposalId));
+  writeArtifact(root, 'approval-requests', approvalRequestId, approvalRequest(approvalRequestId, proposalId));
+  return { proposalId, approvalRequestId };
+}
+
 function feedbackContext(priorDecisionId: string, priorProposalId: string) {
   return {
     priorDecisionId,
@@ -811,6 +831,94 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(text).toContain('batchConfirmCommand: (not recommended for mixed/unsafe preflight)');
     expect(text).toContain(`confirmCommand: haro revise feedback --confirm --decision-id ${safe.decisionId}`);
     expect(text).toContain(`unsafeDecision: ${unsafe.decisionId}`);
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('operator-preflight aggregates self-heal dry-run and feedback rewrite commands as read-only JSON', async () => {
+    const root = tempRoot();
+    const priorDuplicate = seedDecisionForTarget(root, 'duplicate-target', '这是旧重复提案。', 'reject');
+    const duplicate = seedDuplicatePendingForPrior(root, priorDuplicate);
+    const safeRewrite = seedDecisionForTarget(root, 'rewrite-safe', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const unsafeRewrite = seedDecisionForTarget(root, 'rewrite-unsafe', '我看不懂，什么是 Haro 运行出现错误？请说明。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['operator-preflight', '--dry-run', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      dryRun: boolean;
+      wouldWrite: boolean;
+      requiresExplicitConfirm: boolean;
+      duplicateSelfHeal: {
+        candidateCount: number;
+        candidateApprovalRequestIds: string[];
+        confirmCommands: string[];
+      };
+      feedbackRewrite: {
+        safeToConfirmCount: number;
+        unsafeCount: number;
+        safeDecisionIds: string[];
+        unsafeDecisionIds: { other: string[] };
+        confirmCommands: string[];
+        batchConfirmSafe: boolean;
+      };
+      confirmCommands: string[];
+      recommendedActions: string[];
+    }>(stdout);
+    expect(payload).toMatchObject({
+      dryRun: true,
+      wouldWrite: false,
+      requiresExplicitConfirm: true,
+      duplicateSelfHeal: {
+        candidateCount: 1,
+        candidateApprovalRequestIds: [duplicate.approvalRequestId],
+        confirmCommands: ['haro self-heal duplicates --confirm'],
+      },
+      feedbackRewrite: {
+        safeToConfirmCount: 1,
+        unsafeCount: 1,
+        safeDecisionIds: [safeRewrite.decisionId],
+        confirmCommands: [`haro revise feedback --confirm --decision-id ${safeRewrite.decisionId}`],
+        batchConfirmSafe: false,
+      },
+    });
+    expect(payload.feedbackRewrite.unsafeDecisionIds.other).toEqual([unsafeRewrite.decisionId]);
+    expect(payload.confirmCommands).toEqual([
+      'haro self-heal duplicates --confirm',
+      `haro revise feedback --confirm --decision-id ${safeRewrite.decisionId}`,
+    ]);
+    expect(payload.recommendedActions.join('\n')).toContain('显式授权');
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('operator-preflight human output contains Chinese summary and copyable commands without writing', async () => {
+    const root = tempRoot();
+    const safeRewrite = seedDecisionForTarget(root, 'operator-human-safe', '请补充证据，增加风险和回滚字段。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['operator-preflight', '--dry-run', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const text = stdout.read();
+    expect(text).toContain('Haro operator preflight: dry-run');
+    expect(text).toContain('只读摘要');
+    expect(text).toContain('feedback rewrite: 可确认=1');
+    expect(text).toContain(`haro revise feedback --confirm --decision-id ${safeRewrite.decisionId}`);
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('operator-preflight reports zero candidates without failing', async () => {
+    const root = tempRoot();
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['operator-preflight', '--dry-run', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      duplicateSelfHeal: { candidateCount: number; manualCheckCount: number };
+      feedbackRewrite: { safeToConfirmCount: number; unsafeCount: number };
+      confirmCommands: string[];
+    }>(stdout);
+    expect(payload.duplicateSelfHeal).toMatchObject({ candidateCount: 0, manualCheckCount: 0 });
+    expect(payload.feedbackRewrite).toMatchObject({ safeToConfirmCount: 0, unsafeCount: 0 });
+    expect(payload.confirmCommands).toEqual([]);
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

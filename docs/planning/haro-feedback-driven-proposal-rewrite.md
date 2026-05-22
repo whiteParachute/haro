@@ -656,6 +656,42 @@ mixed batch 时不要直接批量确认。
 
 本阶段禁止自动对真实 `~/.haro/evolution` confirm。
 
+### 10.7 FEAT-078A daily/on-demand summary
+
+daily workflow 追加只读预检摘要。
+
+它聚合两类信息：
+
+- self-heal duplicates dry-run。
+- feedback rewrite operator preflight。
+
+on-demand 可运行：
+
+```bash
+haro operator-preflight --dry-run --json
+```
+
+human 输出使用：
+
+```bash
+haro operator-preflight --dry-run --human
+```
+
+输出必须包含：
+
+- 可确认数量。
+- 需人工数量。
+- blocked / skipped 数量。
+- 可复制 confirm 命令。
+- `requiresExplicitConfirm=true`。
+- `wouldWrite=false`。
+
+该命令只读。
+
+它不写真实 `~/.haro/evolution`。
+
+它不 approve、apply 或 rollback。
+
 ## 11. Negative scope
 
 10C 和后续 FEAT-076 系列不得做这些事：

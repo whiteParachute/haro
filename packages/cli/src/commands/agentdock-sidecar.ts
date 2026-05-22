@@ -524,6 +524,7 @@ export interface AgentDockDailyWorkflowResult {
       approvalRequestIds: string[];
       approvalRequests: ApprovalRequestRecord[];
     };
+    operatorPreflight: AgentDockReadonlyOperatorSummaryResult;
   };
   summary: {
     observationCount: number;
@@ -533,6 +534,11 @@ export interface AgentDockDailyWorkflowResult {
     validationCount: number;
     approvalRequestCount: number;
     approvalRequestIds: string[];
+    duplicateSelfHealCandidateCount: number;
+    duplicateSelfHealManualCheckCount: number;
+    feedbackRewriteSafeToConfirmCount: number;
+    feedbackRewriteUnsafeCount: number;
+    operatorConfirmCommands: string[];
     wroteSidecarArtifacts: boolean;
   };
   nextActions: string[];
@@ -723,6 +729,43 @@ interface ReviseFeedbackOperatorPreflight {
   confirmCommands: string[];
   batchConfirmSafe: boolean;
   batchConfirmCommand?: string;
+}
+
+interface AgentDockReadonlyOperatorSummaryResult {
+  command: 'agentdock-operator-preflight';
+  mode: 'dry-run';
+  dryRun: true;
+  wouldWrite: false;
+  requiresExplicitConfirm: true;
+  generatedAt: string;
+  duplicateSelfHeal: {
+    dryRun: true;
+    candidateCount: number;
+    manualCheckCount: number;
+    skippedCount: number;
+    blockedCount: 0;
+    candidateApprovalRequestIds: string[];
+    manualCheckApprovalRequestIds: string[];
+    skippedApprovalRequestIds: string[];
+    confirmCommands: string[];
+  };
+  feedbackRewrite: {
+    dryRun: true;
+    safeToConfirmCount: number;
+    unsafeCount: number;
+    safeDecisionIds: string[];
+    unsafeDecisionIds: ReviseFeedbackOperatorPreflight['unsafeDecisionIds'];
+    unsafeReasonsByDecisionId: Record<string, string[]>;
+    confirmCommands: string[];
+    batchConfirmSafe: boolean;
+    batchConfirmCommand?: string;
+  };
+  confirmCommands: string[];
+  recommendedActions: string[];
+}
+
+interface OperatorPreflightOptions extends OutputFlags {
+  dryRun?: boolean;
 }
 
 interface SidecarStatusResult {
@@ -1524,6 +1567,31 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
       }
     });
 
+  program
+    .command('operator-preflight')
+    .description('Summarize read-only operator actions before explicit sidecar confirm commands')
+    .option('--dry-run', 'inspect only; required')
+    .option('--json', 'force JSON output')
+    .option('--human', 'force human output')
+    .action((options: OperatorPreflightOptions) => {
+      const mode = resolveOutputMode(options, app.stdout);
+      try {
+        if (options.dryRun !== true) {
+          throw new CommanderExit(2, '`haro operator-preflight` requires --dry-run.');
+        }
+        const result = buildAgentDockReadonlyOperatorSummary(app);
+        if (mode === 'json') {
+          renderJson(result, { stdout: app.stdout });
+          return;
+        }
+        app.stdout.write(renderAgentDockReadonlyOperatorSummary(result));
+      } catch (error) {
+        renderError(error, { stderr: app.stderr }, { mode });
+        const exitCode = error instanceof CommanderExit ? error.code : 1;
+        throw new CommanderExit(exitCode, error instanceof Error ? error.message : String(error));
+      }
+    });
+
 }
 
 async function observeAgentDock(app: AppContext, options: ObserveOptions): Promise<ObserveResult> {
@@ -2065,6 +2133,7 @@ export async function runAgentDockDailyWorkflow(
     pending: true,
     ...(options.approvalRequestLimit ? { limit: String(options.approvalRequestLimit) } : {}),
   });
+  const operatorPreflight = buildAgentDockReadonlyOperatorSummary(app);
   const approvalRequestIds = approvalRequest.approvalRequests.map((request) => request.id);
   const wroteSidecarArtifacts =
     observe.wroteObservation ||
@@ -2087,6 +2156,7 @@ export async function runAgentDockDailyWorkflow(
         ...approvalRequest,
         approvalRequestIds,
       },
+      operatorPreflight,
     },
     summary: {
       observationCount: observe.observationCount,
@@ -2096,9 +2166,14 @@ export async function runAgentDockDailyWorkflow(
       validationCount: validate.validationCount,
       approvalRequestCount: approvalRequest.approvalRequestCount,
       approvalRequestIds,
+      duplicateSelfHealCandidateCount: operatorPreflight.duplicateSelfHeal.candidateCount,
+      duplicateSelfHealManualCheckCount: operatorPreflight.duplicateSelfHeal.manualCheckCount,
+      feedbackRewriteSafeToConfirmCount: operatorPreflight.feedbackRewrite.safeToConfirmCount,
+      feedbackRewriteUnsafeCount: operatorPreflight.feedbackRewrite.unsafeCount,
+      operatorConfirmCommands: operatorPreflight.confirmCommands,
       wroteSidecarArtifacts,
     },
-    nextActions: dailyWorkflowNextActions(approvalRequestIds, wroteSidecarArtifacts),
+    nextActions: dailyWorkflowNextActions(approvalRequestIds, wroteSidecarArtifacts, operatorPreflight),
   };
 }
 
@@ -2150,25 +2225,122 @@ function summarizeValidateStep(result: ValidateResult): Omit<ValidateResult, 'va
   };
 }
 
+function buildAgentDockReadonlyOperatorSummary(app: AppContext): AgentDockReadonlyOperatorSummaryResult {
+  const duplicateSelfHeal = selfHealDuplicateApprovalRequests(app, { dryRun: true });
+  const feedbackRewrite = reviseFeedback(app, { dryRun: true, pending: true });
+  const duplicateConfirmCommands = duplicateSelfHeal.candidateCount > 0
+    ? ['haro self-heal duplicates --confirm']
+    : [];
+  const feedbackConfirmCommands = [
+    ...feedbackRewrite.operatorPreflight.confirmCommands,
+    ...(feedbackRewrite.operatorPreflight.batchConfirmCommand ? [feedbackRewrite.operatorPreflight.batchConfirmCommand] : []),
+  ];
+  const result: AgentDockReadonlyOperatorSummaryResult = {
+    command: 'agentdock-operator-preflight',
+    mode: 'dry-run',
+    dryRun: true,
+    wouldWrite: false,
+    requiresExplicitConfirm: true,
+    generatedAt: app.now().toISOString(),
+    duplicateSelfHeal: {
+      dryRun: true,
+      candidateCount: duplicateSelfHeal.candidateCount,
+      manualCheckCount: duplicateSelfHeal.manualCheckCount,
+      skippedCount: duplicateSelfHeal.skippedCount,
+      blockedCount: 0,
+      candidateApprovalRequestIds: duplicateSelfHeal.candidates.map((candidate) => candidate.approvalRequestId),
+      manualCheckApprovalRequestIds: duplicateSelfHeal.manualChecks.map((item) => item.approvalRequestId),
+      skippedApprovalRequestIds: duplicateSelfHeal.skipped.map((item) => item.approvalRequestId),
+      confirmCommands: duplicateConfirmCommands,
+    },
+    feedbackRewrite: {
+      dryRun: true,
+      safeToConfirmCount: feedbackRewrite.operatorPreflight.safeToConfirmCount,
+      unsafeCount: feedbackRewrite.operatorPreflight.unsafeCount,
+      safeDecisionIds: feedbackRewrite.operatorPreflight.safeDecisionIds,
+      unsafeDecisionIds: feedbackRewrite.operatorPreflight.unsafeDecisionIds,
+      unsafeReasonsByDecisionId: feedbackRewrite.operatorPreflight.unsafeReasonsByDecisionId,
+      confirmCommands: feedbackRewrite.operatorPreflight.confirmCommands,
+      batchConfirmSafe: feedbackRewrite.operatorPreflight.batchConfirmSafe,
+      ...(feedbackRewrite.operatorPreflight.batchConfirmCommand
+        ? { batchConfirmCommand: feedbackRewrite.operatorPreflight.batchConfirmCommand }
+        : {}),
+    },
+    confirmCommands: [...duplicateConfirmCommands, ...feedbackConfirmCommands],
+    recommendedActions: [],
+  };
+  result.recommendedActions = readonlyOperatorRecommendedActions(result);
+  return result;
+}
+
+function readonlyOperatorRecommendedActions(result: AgentDockReadonlyOperatorSummaryResult): string[] {
+  const actions: string[] = [];
+  if (result.duplicateSelfHeal.candidateCount > 0) {
+    actions.push(`self-heal duplicates 有 ${result.duplicateSelfHeal.candidateCount} 个可确认候选；确认前先复核候选 request id。`);
+  }
+  if (result.duplicateSelfHeal.manualCheckCount > 0) {
+    actions.push(`self-heal duplicates 有 ${result.duplicateSelfHeal.manualCheckCount} 个需人工复核项；不要自动确认。`);
+  }
+  if (result.feedbackRewrite.safeToConfirmCount > 0) {
+    actions.push(`feedback rewrite 有 ${result.feedbackRewrite.safeToConfirmCount} 个可确认候选；优先复制 per-decision confirm 命令。`);
+  }
+  if (result.feedbackRewrite.unsafeCount > 0) {
+    actions.push(`feedback rewrite 有 ${result.feedbackRewrite.unsafeCount} 个不可确认候选；先处理 unsafe reason。`);
+  }
+  if (actions.length === 0) {
+    actions.push('当前没有 self-heal 或 feedback rewrite 的可确认候选。');
+  }
+  actions.push('真实写入仍需要用户或 supervisor 显式授权；daily/on-demand summary 不会 confirm。');
+  return actions;
+}
+
+function renderAgentDockReadonlyOperatorSummary(result: AgentDockReadonlyOperatorSummaryResult): string {
+  return [
+    'Haro operator preflight: dry-run',
+    '只读摘要：不会写 approval-decision、proposal、feedback-revision、approval-request 或 blocked event。',
+    `requiresExplicitConfirm: ${result.requiresExplicitConfirm}`,
+    `self-heal duplicates: 可确认=${result.duplicateSelfHeal.candidateCount} 需人工=${result.duplicateSelfHeal.manualCheckCount} skipped=${result.duplicateSelfHeal.skippedCount} blocked=${result.duplicateSelfHeal.blockedCount}`,
+    `feedback rewrite: 可确认=${result.feedbackRewrite.safeToConfirmCount} unsafe=${result.feedbackRewrite.unsafeCount} batchConfirmSafe=${result.feedbackRewrite.batchConfirmSafe}`,
+    '可复制命令:',
+    ...(result.confirmCommands.length > 0 ? result.confirmCommands.map((command) => `- ${command}`) : ['- (none)']),
+    '建议动作:',
+    ...result.recommendedActions.map((action) => `- ${action}`),
+    ...Object.entries(result.feedbackRewrite.unsafeReasonsByDecisionId).map(([decisionId, reasons]) =>
+      `unsafe ${decisionId}: ${reasons.join(' | ')}`),
+  ].join('\n') + '\n';
+}
+
 function dailyWorkflowNextActions(
   approvalRequestIds: readonly string[],
   wroteSidecarArtifacts: boolean,
+  operatorPreflight: AgentDockReadonlyOperatorSummaryResult,
 ): string[] {
+  const operatorActions = operatorPreflight.confirmCommands.length > 0 ||
+    operatorPreflight.duplicateSelfHeal.manualCheckCount > 0 ||
+    operatorPreflight.feedbackRewrite.unsafeCount > 0
+    ? [
+        '只读 operator preflight 已汇总 self-heal duplicates 与 feedback rewrite；不会自动 confirm。',
+        ...operatorPreflight.recommendedActions,
+      ]
+    : [];
   if (approvalRequestIds.length > 0) {
     return [
       '通过 AgentDock IM/workspace 向用户展示审批请求摘要。',
       '在执行任何应用（apply）或补丁分支（patch branch）动作前，必须等待通过、驳回或要求修改的人审结论。',
       'Haro Web 可以作为同一批审批请求的看板，但它不是 workflow runner。',
+      ...operatorActions,
     ];
   }
   if (wroteSidecarArtifacts) {
     return [
       '本轮没有新增审批请求；重试前请先检查各步骤计数。',
       '除非已验证提案具备明确的人审证据，否则不要应用变更。',
+      ...operatorActions,
     ];
   }
   return [
     '本轮没有产生新的 sidecar artifact；AgentDock workspace 可以汇报当前没有待审内容。',
+    ...operatorActions,
   ];
 }
 
