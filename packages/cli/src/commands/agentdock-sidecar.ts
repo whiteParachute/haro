@@ -539,6 +539,9 @@ export interface AgentDockDailyWorkflowResult {
     feedbackRewriteSafeToConfirmCount: number;
     feedbackRewriteUnsafeCount: number;
     operatorConfirmCommands: string[];
+    operatorConfirmCommandRecords: OperatorCommandRecord[];
+    operatorDryRunCommands: string[];
+    operatorDryRunCommandRecords: OperatorCommandRecord[];
     wroteSidecarArtifacts: boolean;
   };
   nextActions: string[];
@@ -715,6 +718,9 @@ interface ReviseFeedbackResult {
 }
 
 interface ReviseFeedbackOperatorPreflight {
+  scope: 'operator-preflight';
+  appliesTo: 'operator-preflight';
+  currentRunMode: 'dry-run' | 'confirm';
   requiresExplicitConfirm: boolean;
   safeToConfirmCount: number;
   unsafeCount: number;
@@ -723,12 +729,24 @@ interface ReviseFeedbackOperatorPreflight {
     manualCheck: string[];
     blocked: string[];
     skipped: string[];
+    needsMoreInfo: string[];
     other: string[];
   };
   unsafeReasonsByDecisionId: Record<string, string[]>;
   confirmCommands: string[];
+  confirmCommandRecords: OperatorCommandRecord[];
+  dryRunCommands: string[];
+  dryRunCommandRecords: OperatorCommandRecord[];
   batchConfirmSafe: boolean;
   batchConfirmCommand?: string;
+}
+
+interface OperatorCommandRecord {
+  source: 'self-heal-duplicates' | 'feedback-rewrite' | 'feedback-rewrite-batch';
+  command: string;
+  decisionId?: string;
+  approvalRequestIds?: string[];
+  note?: string;
 }
 
 interface AgentDockReadonlyOperatorSummaryResult {
@@ -736,6 +754,11 @@ interface AgentDockReadonlyOperatorSummaryResult {
   mode: 'dry-run';
   dryRun: true;
   wouldWrite: false;
+  status: 'ok' | 'failed';
+  errors: string[];
+  scope: 'operator-preflight';
+  appliesTo: 'operator-preflight';
+  currentRunMode: 'dry-run';
   requiresExplicitConfirm: true;
   generatedAt: string;
   duplicateSelfHeal: {
@@ -748,6 +771,9 @@ interface AgentDockReadonlyOperatorSummaryResult {
     manualCheckApprovalRequestIds: string[];
     skippedApprovalRequestIds: string[];
     confirmCommands: string[];
+    confirmCommandRecords: OperatorCommandRecord[];
+    dryRunCommands: string[];
+    dryRunCommandRecords: OperatorCommandRecord[];
   };
   feedbackRewrite: {
     dryRun: true;
@@ -757,10 +783,16 @@ interface AgentDockReadonlyOperatorSummaryResult {
     unsafeDecisionIds: ReviseFeedbackOperatorPreflight['unsafeDecisionIds'];
     unsafeReasonsByDecisionId: Record<string, string[]>;
     confirmCommands: string[];
+    confirmCommandRecords: OperatorCommandRecord[];
+    dryRunCommands: string[];
+    dryRunCommandRecords: OperatorCommandRecord[];
     batchConfirmSafe: boolean;
     batchConfirmCommand?: string;
   };
   confirmCommands: string[];
+  confirmCommandRecords: OperatorCommandRecord[];
+  dryRunCommands: string[];
+  dryRunCommandRecords: OperatorCommandRecord[];
   recommendedActions: string[];
 }
 
@@ -1455,16 +1487,20 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
             `Plans: ${result.planCount}`,
             `Summary: processed=${result.processedCount} written=${result.writtenCount} skipped=${result.skippedCount} manualCheck=${result.manualCheckCount} blocked=${result.blockedCount} idempotent=${result.idempotentCount} didWrite=${result.didWrite}`,
             'Operator preflight:',
+            `  scope: ${result.operatorPreflight.scope}`,
+            `  currentRunMode: ${result.operatorPreflight.currentRunMode}`,
             `  requiresExplicitConfirm: ${result.operatorPreflight.requiresExplicitConfirm}`,
             `  safeToConfirm: ${result.operatorPreflight.safeToConfirmCount}`,
             `  unsafe: ${result.operatorPreflight.unsafeCount}`,
             `  batchConfirmSafe: ${result.operatorPreflight.batchConfirmSafe}`,
+            '  commands are for manual copy only; do not eval/exec them automatically.',
             ...(result.operatorPreflight.batchConfirmCommand
               ? [`  batchConfirmCommand: ${result.operatorPreflight.batchConfirmCommand}`]
               : result.mode === 'dry-run' && result.operatorPreflight.safeToConfirmCount > 0
                 ? ['  batchConfirmCommand: (not recommended for mixed/unsafe preflight)']
                 : []),
-            ...result.operatorPreflight.confirmCommands.map((command) => `  confirmCommand: ${command}`),
+            ...result.operatorPreflight.confirmCommandRecords.map((record) => `  confirmCommand[${record.source}]: ${record.command}`),
+            ...result.operatorPreflight.dryRunCommandRecords.map((record) => `  dryRunCommand[${record.source}]: ${record.command}`),
             ...Object.entries(result.operatorPreflight.unsafeReasonsByDecisionId).map(([decisionId, reasons]) =>
               `  unsafeDecision: ${decisionId} :: ${reasons.join(' | ')}`),
             ...result.plans.map((plan) => [
@@ -2133,7 +2169,7 @@ export async function runAgentDockDailyWorkflow(
     pending: true,
     ...(options.approvalRequestLimit ? { limit: String(options.approvalRequestLimit) } : {}),
   });
-  const operatorPreflight = buildAgentDockReadonlyOperatorSummary(app);
+  const operatorPreflight = tryBuildAgentDockReadonlyOperatorSummary(app);
   const approvalRequestIds = approvalRequest.approvalRequests.map((request) => request.id);
   const wroteSidecarArtifacts =
     observe.wroteObservation ||
@@ -2171,6 +2207,9 @@ export async function runAgentDockDailyWorkflow(
       feedbackRewriteSafeToConfirmCount: operatorPreflight.feedbackRewrite.safeToConfirmCount,
       feedbackRewriteUnsafeCount: operatorPreflight.feedbackRewrite.unsafeCount,
       operatorConfirmCommands: operatorPreflight.confirmCommands,
+      operatorConfirmCommandRecords: operatorPreflight.confirmCommandRecords,
+      operatorDryRunCommands: operatorPreflight.dryRunCommands,
+      operatorDryRunCommandRecords: operatorPreflight.dryRunCommandRecords,
       wroteSidecarArtifacts,
     },
     nextActions: dailyWorkflowNextActions(approvalRequestIds, wroteSidecarArtifacts, operatorPreflight),
@@ -2228,18 +2267,34 @@ function summarizeValidateStep(result: ValidateResult): Omit<ValidateResult, 'va
 function buildAgentDockReadonlyOperatorSummary(app: AppContext): AgentDockReadonlyOperatorSummaryResult {
   const duplicateSelfHeal = selfHealDuplicateApprovalRequests(app, { dryRun: true });
   const feedbackRewrite = reviseFeedback(app, { dryRun: true, pending: true });
-  const duplicateConfirmCommands = duplicateSelfHeal.candidateCount > 0
-    ? ['haro self-heal duplicates --confirm']
+  const duplicateConfirmCommandRecords: OperatorCommandRecord[] = duplicateSelfHeal.candidateCount > 0
+    ? [{
+        source: 'self-heal-duplicates',
+        command: 'haro self-heal duplicates --confirm',
+        approvalRequestIds: duplicateSelfHeal.candidates.map((candidate) => candidate.approvalRequestId),
+        note: 'batch confirm only; rerun dry-run before executing',
+      }]
     : [];
-  const feedbackConfirmCommands = [
-    ...feedbackRewrite.operatorPreflight.confirmCommands,
-    ...(feedbackRewrite.operatorPreflight.batchConfirmCommand ? [feedbackRewrite.operatorPreflight.batchConfirmCommand] : []),
-  ];
+  const duplicateDryRunCommandRecords: OperatorCommandRecord[] = [{
+    source: 'self-heal-duplicates',
+    command: 'haro self-heal duplicates --dry-run',
+    approvalRequestIds: duplicateSelfHeal.candidates.map((candidate) => candidate.approvalRequestId),
+    note: 'read-only mirror command',
+  }];
+  const feedbackConfirmCommandRecords = feedbackRewrite.operatorPreflight.confirmCommandRecords;
+  const feedbackDryRunCommandRecords = feedbackRewrite.operatorPreflight.dryRunCommandRecords;
+  const confirmCommandRecords = [...duplicateConfirmCommandRecords, ...feedbackConfirmCommandRecords];
+  const dryRunCommandRecords = [...duplicateDryRunCommandRecords, ...feedbackDryRunCommandRecords];
   const result: AgentDockReadonlyOperatorSummaryResult = {
     command: 'agentdock-operator-preflight',
     mode: 'dry-run',
     dryRun: true,
     wouldWrite: false,
+    status: 'ok',
+    errors: [],
+    scope: 'operator-preflight',
+    appliesTo: 'operator-preflight',
+    currentRunMode: 'dry-run',
     requiresExplicitConfirm: true,
     generatedAt: app.now().toISOString(),
     duplicateSelfHeal: {
@@ -2251,7 +2306,10 @@ function buildAgentDockReadonlyOperatorSummary(app: AppContext): AgentDockReadon
       candidateApprovalRequestIds: duplicateSelfHeal.candidates.map((candidate) => candidate.approvalRequestId),
       manualCheckApprovalRequestIds: duplicateSelfHeal.manualChecks.map((item) => item.approvalRequestId),
       skippedApprovalRequestIds: duplicateSelfHeal.skipped.map((item) => item.approvalRequestId),
-      confirmCommands: duplicateConfirmCommands,
+      confirmCommands: duplicateConfirmCommandRecords.map((record) => record.command),
+      confirmCommandRecords: duplicateConfirmCommandRecords,
+      dryRunCommands: duplicateDryRunCommandRecords.map((record) => record.command),
+      dryRunCommandRecords: duplicateDryRunCommandRecords,
     },
     feedbackRewrite: {
       dryRun: true,
@@ -2261,16 +2319,86 @@ function buildAgentDockReadonlyOperatorSummary(app: AppContext): AgentDockReadon
       unsafeDecisionIds: feedbackRewrite.operatorPreflight.unsafeDecisionIds,
       unsafeReasonsByDecisionId: feedbackRewrite.operatorPreflight.unsafeReasonsByDecisionId,
       confirmCommands: feedbackRewrite.operatorPreflight.confirmCommands,
+      confirmCommandRecords: feedbackConfirmCommandRecords,
+      dryRunCommands: feedbackRewrite.operatorPreflight.dryRunCommands,
+      dryRunCommandRecords: feedbackDryRunCommandRecords,
       batchConfirmSafe: feedbackRewrite.operatorPreflight.batchConfirmSafe,
       ...(feedbackRewrite.operatorPreflight.batchConfirmCommand
         ? { batchConfirmCommand: feedbackRewrite.operatorPreflight.batchConfirmCommand }
         : {}),
     },
-    confirmCommands: [...duplicateConfirmCommands, ...feedbackConfirmCommands],
+    confirmCommands: confirmCommandRecords.map((record) => record.command),
+    confirmCommandRecords,
+    dryRunCommands: dryRunCommandRecords.map((record) => record.command),
+    dryRunCommandRecords,
     recommendedActions: [],
   };
   result.recommendedActions = readonlyOperatorRecommendedActions(result);
   return result;
+}
+
+function tryBuildAgentDockReadonlyOperatorSummary(app: AppContext): AgentDockReadonlyOperatorSummaryResult {
+  try {
+    return buildAgentDockReadonlyOperatorSummary(app);
+  } catch (error) {
+    return emptyAgentDockReadonlyOperatorSummary(app, [
+      error instanceof Error ? error.message : String(error),
+    ]);
+  }
+}
+
+function emptyAgentDockReadonlyOperatorSummary(app: AppContext, errors: string[]): AgentDockReadonlyOperatorSummaryResult {
+  const selfHealDryRunRecord: OperatorCommandRecord = {
+    source: 'self-heal-duplicates',
+    command: 'haro self-heal duplicates --dry-run',
+    approvalRequestIds: [],
+    note: 'read-only mirror command',
+  };
+  return {
+    command: 'agentdock-operator-preflight',
+    mode: 'dry-run',
+    dryRun: true,
+    wouldWrite: false,
+    status: 'failed',
+    errors,
+    scope: 'operator-preflight',
+    appliesTo: 'operator-preflight',
+    currentRunMode: 'dry-run',
+    requiresExplicitConfirm: true,
+    generatedAt: app.now().toISOString(),
+    duplicateSelfHeal: {
+      dryRun: true,
+      candidateCount: 0,
+      manualCheckCount: 0,
+      skippedCount: 0,
+      blockedCount: 0,
+      candidateApprovalRequestIds: [],
+      manualCheckApprovalRequestIds: [],
+      skippedApprovalRequestIds: [],
+      confirmCommands: [],
+      confirmCommandRecords: [],
+      dryRunCommands: [selfHealDryRunRecord.command],
+      dryRunCommandRecords: [selfHealDryRunRecord],
+    },
+    feedbackRewrite: {
+      dryRun: true,
+      safeToConfirmCount: 0,
+      unsafeCount: 0,
+      safeDecisionIds: [],
+      unsafeDecisionIds: { manualCheck: [], blocked: [], skipped: [], needsMoreInfo: [], other: [] },
+      unsafeReasonsByDecisionId: {},
+      confirmCommands: [],
+      confirmCommandRecords: [],
+      dryRunCommands: [],
+      dryRunCommandRecords: [],
+      batchConfirmSafe: false,
+    },
+    confirmCommands: [],
+    confirmCommandRecords: [],
+    dryRunCommands: [selfHealDryRunRecord.command],
+    dryRunCommandRecords: [selfHealDryRunRecord],
+    recommendedActions: ['operator preflight 失败；请先查看 errors，再决定是否单独运行 dry-run 命令。'],
+  };
 }
 
 function readonlyOperatorRecommendedActions(result: AgentDockReadonlyOperatorSummaryResult): string[] {
@@ -2295,14 +2423,33 @@ function readonlyOperatorRecommendedActions(result: AgentDockReadonlyOperatorSum
 }
 
 function renderAgentDockReadonlyOperatorSummary(result: AgentDockReadonlyOperatorSummaryResult): string {
+  const compactList = (items: readonly string[], limit = 5): string => {
+    if (items.length === 0) return '(none)';
+    const shown = items.slice(0, limit).join(', ');
+    return items.length > limit ? `${shown}, ... +${items.length - limit}` : shown;
+  };
   return [
     'Haro operator preflight: dry-run',
     '只读摘要：不会写 approval-decision、proposal、feedback-revision、approval-request 或 blocked event。',
+    `status: ${result.status}`,
+    ...(result.errors.length > 0 ? result.errors.map((error) => `error: ${error}`) : []),
+    `scope: ${result.scope}`,
+    `currentRunMode: ${result.currentRunMode}`,
     `requiresExplicitConfirm: ${result.requiresExplicitConfirm}`,
     `self-heal duplicates: 可确认=${result.duplicateSelfHeal.candidateCount} 需人工=${result.duplicateSelfHeal.manualCheckCount} skipped=${result.duplicateSelfHeal.skippedCount} blocked=${result.duplicateSelfHeal.blockedCount}`,
+    `self-heal candidate request ids: ${compactList(result.duplicateSelfHeal.candidateApprovalRequestIds)}`,
+    `self-heal manualCheck request ids: ${compactList(result.duplicateSelfHeal.manualCheckApprovalRequestIds)}`,
+    `self-heal skipped request ids: ${compactList(result.duplicateSelfHeal.skippedApprovalRequestIds)}`,
     `feedback rewrite: 可确认=${result.feedbackRewrite.safeToConfirmCount} unsafe=${result.feedbackRewrite.unsafeCount} batchConfirmSafe=${result.feedbackRewrite.batchConfirmSafe}`,
-    '可复制命令:',
-    ...(result.confirmCommands.length > 0 ? result.confirmCommands.map((command) => `- ${command}`) : ['- (none)']),
+    `feedback safe decision ids: ${compactList(result.feedbackRewrite.safeDecisionIds)}`,
+    `feedback needsMoreInfo decision ids: ${compactList(result.feedbackRewrite.unsafeDecisionIds.needsMoreInfo)}`,
+    'confirm 命令只供人工复制；禁止 eval/exec 自动执行。',
+    'Confirm commands:',
+    ...(result.confirmCommandRecords.length > 0
+      ? result.confirmCommandRecords.map((record) => `- [${record.source}] ${record.command}`)
+      : ['- (none)']),
+    'Dry-run mirror commands:',
+    ...result.dryRunCommandRecords.map((record) => `- [${record.source}] ${record.command}`),
     '建议动作:',
     ...result.recommendedActions.map((action) => `- ${action}`),
     ...Object.entries(result.feedbackRewrite.unsafeReasonsByDecisionId).map(([decisionId, reasons]) =>
@@ -3240,6 +3387,7 @@ function buildReviseFeedbackOperatorPreflight(
     manualCheck: [],
     blocked: [],
     skipped: [],
+    needsMoreInfo: [],
     other: [],
   };
   const unsafeReasonsByDecisionId: Record<string, string[]> = {};
@@ -3247,15 +3395,43 @@ function buildReviseFeedbackOperatorPreflight(
     unsafeDecisionIds[classifyUnsafeReviseFeedbackPlan(plan)].push(plan.decisionId);
     unsafeReasonsByDecisionId[plan.decisionId] = unsafeReasonsForReviseFeedbackPlan(plan);
   }
+  const perDecisionConfirmRecords: OperatorCommandRecord[] = safePlans.map((plan) => ({
+    source: 'feedback-rewrite',
+    command: `haro revise feedback --confirm --decision-id ${plan.decisionId}`,
+    decisionId: plan.decisionId,
+    note: 'rerun dry-run before executing',
+  }));
+  const dryRunCommandRecords: OperatorCommandRecord[] = plans.map((plan) => ({
+    source: 'feedback-rewrite',
+    command: `haro revise feedback --dry-run --decision-id ${plan.decisionId}`,
+    decisionId: plan.decisionId,
+    note: 'read-only mirror command',
+  }));
   const batchConfirmSafe = options.pending && plans.length > 0 && unsafePlans.length === 0;
+  const batchConfirmRecord: OperatorCommandRecord | undefined = batchConfirmSafe
+    ? {
+        source: 'feedback-rewrite-batch',
+        command: 'haro revise feedback --confirm --pending',
+        note: 'only safe when every pending plan is safe; rerun dry-run before executing',
+      }
+    : undefined;
+  const confirmCommandRecords = batchConfirmRecord
+    ? [...perDecisionConfirmRecords, batchConfirmRecord]
+    : perDecisionConfirmRecords;
   return {
+    scope: 'operator-preflight',
+    appliesTo: 'operator-preflight',
+    currentRunMode: options.mode,
     requiresExplicitConfirm: options.mode === 'dry-run',
     safeToConfirmCount: safePlans.length,
     unsafeCount: unsafePlans.length,
     safeDecisionIds: safePlans.map((plan) => plan.decisionId),
     unsafeDecisionIds,
     unsafeReasonsByDecisionId,
-    confirmCommands: safePlans.map((plan) => `haro revise feedback --confirm --decision-id ${plan.decisionId}`),
+    confirmCommands: confirmCommandRecords.map((record) => record.command),
+    confirmCommandRecords,
+    dryRunCommands: dryRunCommandRecords.map((record) => record.command),
+    dryRunCommandRecords,
     batchConfirmSafe,
     ...(batchConfirmSafe ? { batchConfirmCommand: 'haro revise feedback --confirm --pending' } : {}),
   };
@@ -3280,6 +3456,7 @@ function classifyUnsafeReviseFeedbackPlan(plan: ReviseFeedbackPlan): keyof Revis
   if (plan.blockedReasons.length > 0 || plan.validationBlockingReasons.some((reason) => reason.startsWith('REVISION_NO_OP'))) {
     return 'blocked';
   }
+  if (plan.plannerVerdict === 'needs-more-info') return 'needsMoreInfo';
   if (plan.manualCheckReasons.length > 0 || plan.validationBlockingReasons.length > 0) return 'manualCheck';
   return 'other';
 }

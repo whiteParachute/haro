@@ -338,11 +338,16 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       plannerVerdict: string;
       parsedRequirements: Array<{ category: string }>;
       operatorPreflight: {
+        scope: string;
+        currentRunMode: string;
         requiresExplicitConfirm: boolean;
         safeToConfirmCount: number;
         unsafeCount: number;
         safeDecisionIds: string[];
         confirmCommands: string[];
+        confirmCommandRecords: Array<{ source: string; command: string; decisionId?: string }>;
+        dryRunCommands: string[];
+        dryRunCommandRecords: Array<{ source: string; command: string; decisionId?: string }>;
       };
     }>(stdout);
     expect(payload).toMatchObject({ dryRun: true, wouldWrite: false, decisionId, approvalRequestId, proposalId, plannerVerdict: 'can-rewrite' });
@@ -353,6 +358,11 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       unsafeCount: 0,
       safeDecisionIds: [decisionId],
       confirmCommands: [`haro revise feedback --confirm --decision-id ${decisionId}`],
+      scope: 'operator-preflight',
+      currentRunMode: 'dry-run',
+      confirmCommandRecords: [{ source: 'feedback-rewrite', command: `haro revise feedback --confirm --decision-id ${decisionId}`, decisionId }],
+      dryRunCommands: [`haro revise feedback --dry-run --decision-id ${decisionId}`],
+      dryRunCommandRecords: [{ source: 'feedback-rewrite', command: `haro revise feedback --dry-run --decision-id ${decisionId}`, decisionId }],
     });
     expect(evolutionFileCounts(root)).toEqual(before);
   });
@@ -764,8 +774,11 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
         safeToConfirmCount: number;
         unsafeCount: number;
         safeDecisionIds: string[];
-        unsafeDecisionIds: { other: string[] };
+        unsafeDecisionIds: { needsMoreInfo: string[]; other: string[] };
         confirmCommands: string[];
+        confirmCommandRecords: Array<{ source: string; command: string; decisionId?: string }>;
+        dryRunCommands: string[];
+        dryRunCommandRecords: Array<{ source: string; command: string; decisionId?: string }>;
         batchConfirmSafe: boolean;
         batchConfirmCommand?: string;
       };
@@ -779,8 +792,18 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       safeDecisionIds: [safe.decisionId],
       batchConfirmSafe: false,
       confirmCommands: [`haro revise feedback --confirm --decision-id ${safe.decisionId}`],
+      confirmCommandRecords: [{ source: 'feedback-rewrite', command: `haro revise feedback --confirm --decision-id ${safe.decisionId}`, decisionId: safe.decisionId }],
     });
-    expect(payload.operatorPreflight.unsafeDecisionIds.other).toEqual([unsafe.decisionId]);
+    expect(payload.operatorPreflight.unsafeDecisionIds.needsMoreInfo).toEqual([unsafe.decisionId]);
+    expect(payload.operatorPreflight.unsafeDecisionIds.other).toEqual([]);
+    expect(payload.operatorPreflight.dryRunCommands).toEqual([
+      `haro revise feedback --dry-run --decision-id ${safe.decisionId}`,
+      `haro revise feedback --dry-run --decision-id ${unsafe.decisionId}`,
+    ]);
+    expect(payload.operatorPreflight.dryRunCommandRecords).toEqual([
+      { source: 'feedback-rewrite', command: `haro revise feedback --dry-run --decision-id ${safe.decisionId}`, decisionId: safe.decisionId, note: 'read-only mirror command' },
+      { source: 'feedback-rewrite', command: `haro revise feedback --dry-run --decision-id ${unsafe.decisionId}`, decisionId: unsafe.decisionId, note: 'read-only mirror command' },
+    ]);
     expect(payload.operatorPreflight.batchConfirmCommand).toBeUndefined();
     expect(evolutionFileCounts(root)).toEqual(before);
   });
@@ -799,6 +822,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
         unsafeCount: number;
         safeDecisionIds: string[];
         confirmCommands: string[];
+        confirmCommandRecords: Array<{ source: string; command: string; decisionId?: string }>;
         batchConfirmSafe: boolean;
         batchConfirmCommand?: string;
       };
@@ -810,10 +834,16 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       confirmCommands: [
         `haro revise feedback --confirm --decision-id ${first.decisionId}`,
         `haro revise feedback --confirm --decision-id ${second.decisionId}`,
+        'haro revise feedback --confirm --pending',
       ],
       batchConfirmSafe: true,
       batchConfirmCommand: 'haro revise feedback --confirm --pending',
     });
+    expect(payload.operatorPreflight.confirmCommandRecords.map((record) => record.source)).toEqual([
+      'feedback-rewrite',
+      'feedback-rewrite',
+      'feedback-rewrite-batch',
+    ]);
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
@@ -829,7 +859,9 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(text).toContain('Operator preflight:');
     expect(text).toContain('safeToConfirm: 1');
     expect(text).toContain('batchConfirmCommand: (not recommended for mixed/unsafe preflight)');
-    expect(text).toContain(`confirmCommand: haro revise feedback --confirm --decision-id ${safe.decisionId}`);
+    expect(text).toContain(`confirmCommand[feedback-rewrite]: haro revise feedback --confirm --decision-id ${safe.decisionId}`);
+    expect(text).toContain(`dryRunCommand[feedback-rewrite]: haro revise feedback --dry-run --decision-id ${unsafe.decisionId}`);
+    expect(text).toContain('commands are for manual copy only; do not eval/exec them automatically.');
     expect(text).toContain(`unsafeDecision: ${unsafe.decisionId}`);
     expect(evolutionFileCounts(root)).toEqual(before);
   });
@@ -848,30 +880,44 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       dryRun: boolean;
       wouldWrite: boolean;
       requiresExplicitConfirm: boolean;
+      scope: string;
+      currentRunMode: string;
       duplicateSelfHeal: {
         candidateCount: number;
         candidateApprovalRequestIds: string[];
         confirmCommands: string[];
+        confirmCommandRecords: Array<{ source: string; command: string; approvalRequestIds?: string[] }>;
+        dryRunCommands: string[];
+        dryRunCommandRecords: Array<{ source: string; command: string }>;
       };
       feedbackRewrite: {
         safeToConfirmCount: number;
         unsafeCount: number;
         safeDecisionIds: string[];
-        unsafeDecisionIds: { other: string[] };
+        unsafeDecisionIds: { needsMoreInfo: string[]; other: string[] };
         confirmCommands: string[];
+        confirmCommandRecords: Array<{ source: string; command: string; decisionId?: string }>;
+        dryRunCommands: string[];
+        dryRunCommandRecords: Array<{ source: string; command: string; decisionId?: string }>;
         batchConfirmSafe: boolean;
       };
       confirmCommands: string[];
+      confirmCommandRecords: Array<{ source: string; command: string }>;
+      dryRunCommands: string[];
+      dryRunCommandRecords: Array<{ source: string; command: string }>;
       recommendedActions: string[];
     }>(stdout);
     expect(payload).toMatchObject({
       dryRun: true,
       wouldWrite: false,
       requiresExplicitConfirm: true,
+      scope: 'operator-preflight',
+      currentRunMode: 'dry-run',
       duplicateSelfHeal: {
         candidateCount: 1,
         candidateApprovalRequestIds: [duplicate.approvalRequestId],
         confirmCommands: ['haro self-heal duplicates --confirm'],
+        dryRunCommands: ['haro self-heal duplicates --dry-run'],
       },
       feedbackRewrite: {
         safeToConfirmCount: 1,
@@ -881,10 +927,33 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
         batchConfirmSafe: false,
       },
     });
-    expect(payload.feedbackRewrite.unsafeDecisionIds.other).toEqual([unsafeRewrite.decisionId]);
+    expect(payload.duplicateSelfHeal.confirmCommandRecords).toEqual([{
+      source: 'self-heal-duplicates',
+      command: 'haro self-heal duplicates --confirm',
+      approvalRequestIds: [duplicate.approvalRequestId],
+      note: 'batch confirm only; rerun dry-run before executing',
+    }]);
+    expect(payload.feedbackRewrite.confirmCommandRecords).toEqual([{
+      source: 'feedback-rewrite',
+      command: `haro revise feedback --confirm --decision-id ${safeRewrite.decisionId}`,
+      decisionId: safeRewrite.decisionId,
+      note: 'rerun dry-run before executing',
+    }]);
+    expect(payload.feedbackRewrite.dryRunCommands).toEqual([
+      `haro revise feedback --dry-run --decision-id ${safeRewrite.decisionId}`,
+      `haro revise feedback --dry-run --decision-id ${unsafeRewrite.decisionId}`,
+    ]);
+    expect(payload.feedbackRewrite.unsafeDecisionIds.needsMoreInfo).toEqual([unsafeRewrite.decisionId]);
+    expect(payload.feedbackRewrite.unsafeDecisionIds.other).toEqual([]);
     expect(payload.confirmCommands).toEqual([
       'haro self-heal duplicates --confirm',
       `haro revise feedback --confirm --decision-id ${safeRewrite.decisionId}`,
+    ]);
+    expect(payload.confirmCommandRecords.map((record) => record.source)).toEqual(['self-heal-duplicates', 'feedback-rewrite']);
+    expect(payload.dryRunCommands).toEqual([
+      'haro self-heal duplicates --dry-run',
+      `haro revise feedback --dry-run --decision-id ${safeRewrite.decisionId}`,
+      `haro revise feedback --dry-run --decision-id ${unsafeRewrite.decisionId}`,
     ]);
     expect(payload.recommendedActions.join('\n')).toContain('显式授权');
     expect(evolutionFileCounts(root)).toEqual(before);
@@ -900,8 +969,11 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     const text = stdout.read();
     expect(text).toContain('Haro operator preflight: dry-run');
     expect(text).toContain('只读摘要');
+    expect(text).toContain('scope: operator-preflight');
     expect(text).toContain('feedback rewrite: 可确认=1');
+    expect(text).toContain('confirm 命令只供人工复制；禁止 eval/exec 自动执行。');
     expect(text).toContain(`haro revise feedback --confirm --decision-id ${safeRewrite.decisionId}`);
+    expect(text).toContain(`haro revise feedback --dry-run --decision-id ${safeRewrite.decisionId}`);
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

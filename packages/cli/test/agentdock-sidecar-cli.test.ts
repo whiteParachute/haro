@@ -5575,16 +5575,39 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(result.steps.operatorPreflight).toMatchObject({
       dryRun: true,
       wouldWrite: false,
+      scope: 'operator-preflight',
+      currentRunMode: 'dry-run',
       requiresExplicitConfirm: true,
       duplicateSelfHeal: {
         candidateCount: 1,
         candidateApprovalRequestIds: ['approval_current_duplicate'],
         confirmCommands: ['haro self-heal duplicates --confirm'],
+        confirmCommandRecords: [{
+          source: 'self-heal-duplicates',
+          command: 'haro self-heal duplicates --confirm',
+          approvalRequestIds: ['approval_current_duplicate'],
+          note: 'batch confirm only; rerun dry-run before executing',
+        }],
+        dryRunCommands: ['haro self-heal duplicates --dry-run'],
       },
       feedbackRewrite: {
         safeToConfirmCount: 1,
         safeDecisionIds: ['approval_decision_feedback_safe'],
-        confirmCommands: ['haro revise feedback --confirm --decision-id approval_decision_feedback_safe'],
+        confirmCommands: [
+          'haro revise feedback --confirm --decision-id approval_decision_feedback_safe',
+          'haro revise feedback --confirm --pending',
+        ],
+        confirmCommandRecords: [{
+          source: 'feedback-rewrite',
+          command: 'haro revise feedback --confirm --decision-id approval_decision_feedback_safe',
+          decisionId: 'approval_decision_feedback_safe',
+          note: 'rerun dry-run before executing',
+        }, {
+          source: 'feedback-rewrite-batch',
+          command: 'haro revise feedback --confirm --pending',
+          note: 'only safe when every pending plan is safe; rerun dry-run before executing',
+        }],
+        dryRunCommands: ['haro revise feedback --dry-run --decision-id approval_decision_feedback_safe'],
       },
     });
     expect(result.summary).toMatchObject({
@@ -5595,6 +5618,15 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(result.summary.operatorConfirmCommands).toEqual(expect.arrayContaining([
       'haro self-heal duplicates --confirm',
       'haro revise feedback --confirm --decision-id approval_decision_feedback_safe',
+    ]));
+    expect(result.summary.operatorConfirmCommandRecords.map((record) => record.source)).toEqual([
+      'self-heal-duplicates',
+      'feedback-rewrite',
+      'feedback-rewrite-batch',
+    ]);
+    expect(result.summary.operatorDryRunCommands).toEqual(expect.arrayContaining([
+      'haro self-heal duplicates --dry-run',
+      'haro revise feedback --dry-run --decision-id approval_decision_feedback_safe',
     ]));
     expect(result.nextActions.join('\n')).toContain('只读 operator preflight');
     expect(readEvolutionFileNames(root, 'approval-decisions')).toEqual(beforeDecisions);

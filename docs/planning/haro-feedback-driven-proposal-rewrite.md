@@ -643,8 +643,12 @@ dry-run 输出 `operatorPreflight`。
 - `safeDecisionIds`：可确认决策。
 - `unsafeDecisionIds`：需人工处理的决策。
 - `confirmCommands`：可复制的单条命令。
+- `confirmCommandRecords`：带 source 的命令。
+- `dryRunCommandRecords`：复查用 dry-run 命令。
 - `batchConfirmSafe`：是否适合批量确认。
 - `batchConfirmCommand`：仅全安全时出现。
+- `scope=operator-preflight`：只约束预检命令。
+- `currentRunMode=dry-run`：当前只是只读预检。
 
 mixed batch 时不要直接批量确认。
 
@@ -655,6 +659,16 @@ mixed batch 时不要直接批量确认。
 真实写入仍需显式授权。
 
 本阶段禁止自动对真实 `~/.haro/evolution` confirm。
+
+禁止自动 `eval` 或 `exec` 输出命令。
+
+命令只供人工复制复核。
+
+self-heal duplicates 当前是批量确认粒度。
+
+feedback rewrite 当前是 per-decision 粒度。
+
+执行 confirm 前必须重新 dry-run。
 
 ### 10.7 FEAT-078A daily/on-demand summary
 
@@ -685,12 +699,24 @@ haro operator-preflight --dry-run --human
 - 可复制 confirm 命令。
 - `requiresExplicitConfirm=true`。
 - `wouldWrite=false`。
+- `confirmCommandRecords` 带来源。
+- `dryRunCommandRecords` 用于复查。
+- `scope=operator-preflight`。
+- `currentRunMode=dry-run`。
 
 该命令只读。
 
 它不写真实 `~/.haro/evolution`。
 
 它不 approve、apply 或 rollback。
+
+注意：daily workflow 仍可能写已有的 observe/propose/validate/approval-request artifacts。
+
+`requiresExplicitConfirm` 只约束 operator preflight 推荐命令。
+
+它表示不会自动 confirm self-heal 或 feedback rewrite。
+
+不要把 `operatorConfirmCommands` 自动 eval/exec。
 
 ## 11. Negative scope
 
