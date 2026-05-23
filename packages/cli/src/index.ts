@@ -96,6 +96,10 @@ import {
   runAgentDockDailyWorkflow,
 } from './commands/agentdock-sidecar.js';
 import { buildServiceContext } from './commands/service-context.js';
+import {
+  buildLegacyRemovalGuardReport,
+  formatLegacyRemovalGuardHuman,
+} from './legacy-removal-guard.js';
 import { renderJson, renderJsonDiagnostic, renderListJson, resolveOutputMode } from './output/index.js';
 import {
   assertProviderModelExists,
@@ -203,6 +207,7 @@ export type RunCliAction =
   | 'gateway'
   | 'web'
   | 'mcp'
+  | 'legacy-removal'
   | 'update'
   | 'config-error';
 
@@ -624,6 +629,7 @@ function buildProgram(app: AppContext): Command {
   registerGatewayCommands(program, app);
   registerWebCommand(program, app);
   registerMcpCommand(program, app);
+  registerLegacyRemovalCommands(program, app);
   registerAgentDockSidecarCommands(program, app);
   registerUpdateCommand(program, app);
   registerSessionCommands(program, app, { runRepl });
@@ -638,6 +644,38 @@ function buildProgram(app: AppContext): Command {
   registerCronCommands(program, app);
 
   return program;
+}
+
+function registerLegacyRemovalCommands(program: Command, app: AppContext): void {
+  registerCommand(
+    'legacy-removal',
+    (cmd) => {
+      cmd.description('Read-only guard report for Haro legacy removal candidates');
+      cmd
+        .command('guard')
+        .description('Report legacy removal blockers without deleting files')
+        .option('--dry-run', 'required; prove this command is read-only')
+        .option('--confirm', 'not supported; physical deletion requires a later approved task')
+        .option('--json', 'force JSON output')
+        .option('--human', 'force human output')
+        .action((options: { dryRun?: boolean; confirm?: boolean; json?: boolean; human?: boolean }) => {
+          if (options.confirm) {
+            throw new CommanderExit(2, '`haro legacy-removal guard` does not support --confirm; FEAT-081A is read-only.');
+          }
+          if (!options.dryRun) {
+            throw new CommanderExit(2, '`haro legacy-removal guard` requires --dry-run and never deletes files.');
+          }
+          const report = buildLegacyRemovalGuardReport(app.opts.projectRoot ?? process.cwd());
+          const mode = resolveOutputMode(options, app.stdout);
+          if (mode === 'json') {
+            renderJson(report, { stdout: app.stdout });
+            return;
+          }
+          app.stdout.write(formatLegacyRemovalGuardHuman(report));
+        });
+    },
+    program,
+  );
 }
 
 function registerProviderCommands(program: Command, app: AppContext): void {
@@ -3227,7 +3265,7 @@ function inferAction(argv: readonly string[]): RunCliAction {
   if (first === 'setup' || first === 'onboard') {
     return 'setup';
   }
-  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'approval-request' || first === 'snapshot' || first === 'apply' || first === 'rollback' || first === 'patch-branch' || first === 'intake' || first === 'lint' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
+  if (first === 'run' || first === 'model' || first === 'config' || first === 'doctor' || first === 'provider' || first === 'status' || first === 'legacy-removal' || first === 'connect' || first === 'observe' || first === 'propose' || first === 'validate' || first === 'approval-request' || first === 'snapshot' || first === 'apply' || first === 'rollback' || first === 'patch-branch' || first === 'intake' || first === 'lint' || first === 'channel' || first === 'skills' || first === 'eat' || first === 'shit' || first === 'gateway' || first === 'web' || first === 'mcp' || first === 'update') {
     return first;
   }
   if (first === 'help' || first === '--help') {

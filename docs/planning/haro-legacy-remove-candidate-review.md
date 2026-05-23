@@ -318,3 +318,65 @@
 第二批才是 `team-orchestrator.ts` 与 `scenario-router.ts`。
 provider、channel、MemoryFabric、runtime 不应近期删除。
 这些模块仍有 CLI、tests、exports 或历史兼容依赖。
+
+## 8. FEAT-081A 删除前置解绑守卫（2026-05-23）
+
+FEAT-081A 只完成删除前置守卫。
+
+它不是物理删除批准。
+
+新增只读命令：
+
+```bash
+haro legacy-removal guard --dry-run --json
+haro legacy-removal guard --dry-run --human
+```
+
+该命令会输出机器可读报告。
+
+报告包含：
+
+- legacy candidate id。
+- 当前状态。
+- 仍被引用的证据。
+- 替代承接方。
+- 删除前 blocker。
+- 必跑验证命令。
+- negative scope。
+
+命令默认 fail-closed。
+
+不带 `--dry-run` 会拒绝。
+
+传 `--confirm` 也会拒绝。
+
+报告里的 `deleteAllowed` 固定为 `false`。
+
+`physicalDeleteApproved` 固定为 `false`。
+
+这保证后续 agent 不能把候选清单当删除授权。
+
+FEAT-081A 覆盖的首批 guard：
+
+| guard id | 当前状态 | 说明 |
+| --- | --- | --- |
+| `provider-codex` | deprecate | 仍被 CLI provider bootstrap 和 package dependency 引用 |
+| `channel-layer` | deprecate | 仍有 CLI channel 和 MCP send_message legacy 入口 |
+| `memory-fabric` | deprecate | 仍有 core export、CLI memory 和 MCP memory tools |
+| `agent-runtime-router` | freeze | 仍有 agent/runtime/team/scenario 旧路径 |
+| `skills-marketplace` | freeze | 仍有 skills package 和 CLI bootstrap 依赖 |
+| `web-dashboard-non-review` | freeze | review board keep，其它 Web/API 需逐路由评审 |
+
+下一步 FEAT-081B 才能考虑单项解绑。
+
+081B 仍不能直接删除文件。
+
+081B 应先处理 export/import 或 registry 隔离。
+
+每个解绑 PR 必须继续通过：
+
+```bash
+git diff --check
+pnpm test:sidecar
+pnpm test:legacy
+```
