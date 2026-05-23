@@ -127,6 +127,15 @@ describe('approval request review API', () => {
     const appliedBody = await applied.json();
     expect(appliedBody.data.lifecycle.status).toBe('applied');
     expect(appliedBody.data.lifecycle.application.id).toBe('application_smoke');
+    expect(appliedBody.data.lifecycle.executionFeedback).toMatchObject({
+      status: 'applied',
+      applicationId: 'application_smoke',
+      gateCode: 'READY',
+      applied: true,
+      blockedOrFailed: false,
+      assetEventIds: ['asset_event_smoke'],
+    });
+    expect(appliedBody.data.lifecycle.executionFeedback.nextAction).toContain('已应用');
     expect(appliedBody.data.lifecycle.snapshot.id).toBe('snapshot_smoke');
     expect(appliedBody.data.lifecycle.rollback.id).toBe('rollback_smoke');
     expect(appliedBody.data.lifecycle.assetEvents[0].id).toBe('asset_event_smoke');

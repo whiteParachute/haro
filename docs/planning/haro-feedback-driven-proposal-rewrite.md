@@ -751,6 +751,48 @@ MCP 新增只读工具。
 
 执行前仍需人工重新 dry-run。
 
+
+### 10.9 FEAT-080A execution feedback summary
+
+执行后反馈进入只读摘要。
+
+它复用现有 artifacts：
+
+- application record。
+- rollback record。
+- asset event。
+- feedback event marker。
+
+operator preflight 追加 `executionFeedback`。
+
+daily summary 追加执行状态计数。
+
+Web API lifecycle 追加 `executionFeedback`。
+
+首版只做可见性。
+
+它统计这些状态：
+
+- applied。
+- failed。
+- blocked。
+- rolled-back。
+- ready。
+
+`skipped` 暂按 0 输出。
+
+后续若有独立 skipped artifact，再补计数。
+
+该切片不改 application schema。
+
+它不自动 approve、apply 或 rollback。
+
+它不发送真实飞书消息。
+
+上层只展示 next actions。
+
+真实处理仍要人工确认。
+
 ## 11. Negative scope
 
 10C 和后续 FEAT-076 系列不得做这些事：

@@ -79,6 +79,7 @@ interface ApprovalRequestView {
 }
 
 type ApprovalLifecycleStatus = 'undecided' | 'approved' | 'rejected' | 'applied' | 'rolled-back';
+type ExecutionFeedbackLifecycleStatus = 'none' | ApplicationRecord['status'];
 
 type ApprovalRequestRevisionLabel = 'original' | 'revision' | 'superseded-source';
 
@@ -145,6 +146,17 @@ interface ApprovalRequestLifecycle {
     blockingReasons: string[];
     createdAt: string;
     updatedAt: string;
+  };
+  executionFeedback: {
+    status: ExecutionFeedbackLifecycleStatus;
+    applicationId?: string;
+    gateCode?: ApplicationRecord['gateCode'];
+    applied: boolean;
+    blockedOrFailed: boolean;
+    blockingReasons: string[];
+    assetEventIds: string[];
+    nextAction: string;
+    updatedAt?: string;
   };
   assetEvents: Array<{
     id: string;
@@ -710,6 +722,7 @@ function buildApprovalLifecycle(
   const status = deriveLifecycleStatus(latestDecision, application, assetEvents, rolledBack);
   const lifecycle: ApprovalRequestLifecycle = {
     status,
+    executionFeedback: summarizeExecutionFeedback(application, rolledBack),
     assetEvents,
     ...(latestDecision
       ? {
@@ -890,6 +903,42 @@ function deriveLifecycleStatus(
     return 'applied';
   }
   return 'approved';
+}
+
+function summarizeExecutionFeedback(
+  application: ApplicationRecord | null,
+  rolledBack: boolean,
+): ApprovalRequestLifecycle['executionFeedback'] {
+  if (!application) {
+    return {
+      status: 'none',
+      applied: false,
+      blockedOrFailed: false,
+      blockingReasons: [],
+      assetEventIds: [],
+      nextAction: '暂无执行反馈。',
+    };
+  }
+  const status: ExecutionFeedbackLifecycleStatus = rolledBack ? 'rolled-back' : application.status;
+  const blockedOrFailed = status === 'blocked' || status === 'failed';
+  const nextAction = blockedOrFailed
+    ? '先查看 gateCode 与 blockingReasons，再决定是否修订提案。'
+    : status === 'rolled-back'
+      ? '已回滚，核对 rollback 与 snapshot 记录。'
+      : status === 'applied'
+        ? '已应用，必要时用 application id 追踪 snapshot/rollback。'
+        : '执行记录已生成，等待后续 apply 或人工处理。';
+  return {
+    status,
+    applicationId: application.id,
+    gateCode: application.gateCode,
+    applied: application.applied,
+    blockedOrFailed,
+    blockingReasons: application.blockingReasons,
+    assetEventIds: application.assetEventRefs.map((ref) => ref.id),
+    nextAction,
+    updatedAt: application.updatedAt,
+  };
 }
 
 function readProposal(root: string, proposalId: string): EvolutionProposal | null {

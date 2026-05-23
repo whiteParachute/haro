@@ -542,6 +542,13 @@ export interface AgentDockDailyWorkflowResult {
     operatorConfirmCommandRecords: OperatorCommandRecord[];
     operatorDryRunCommands: string[];
     operatorDryRunCommandRecords: OperatorCommandRecord[];
+    executionFeedbackApplicationCount: number;
+    executionFeedbackAppliedCount: number;
+    executionFeedbackFailedCount: number;
+    executionFeedbackBlockedCount: number;
+    executionFeedbackRolledBackCount: number;
+    executionFeedbackSkippedCount: number;
+    executionFeedbackRecentApplicationIds: string[];
     wroteSidecarArtifacts: boolean;
   };
   nextActions: string[];
@@ -749,6 +756,36 @@ export interface OperatorCommandRecord {
   note?: string;
 }
 
+interface ExecutionFeedbackApplicationItem {
+  applicationId: string;
+  proposalId: string;
+  validationId: string;
+  status: ApplicationRecord['status'];
+  gateCode: ApplicationRecord['gateCode'];
+  applied: boolean;
+  blockingReasons: string[];
+  assetEventIds: string[];
+  snapshotId?: string;
+  rollbackId?: string;
+  updatedAt: string;
+}
+
+interface ExecutionFeedbackSummary {
+  dryRun: true;
+  wouldWrite: false;
+  applicationCount: number;
+  corruptApplicationCount: number;
+  readyCount: number;
+  appliedCount: number;
+  failedCount: number;
+  blockedCount: number;
+  rolledBackCount: number;
+  skippedCount: number;
+  feedbackEventCount: number;
+  recentApplications: ExecutionFeedbackApplicationItem[];
+  nextActions: string[];
+}
+
 export interface AgentDockReadonlyOperatorSummaryResult {
   command: 'agentdock-operator-preflight';
   mode: 'dry-run';
@@ -761,6 +798,7 @@ export interface AgentDockReadonlyOperatorSummaryResult {
   currentRunMode: 'dry-run';
   requiresExplicitConfirm: true;
   generatedAt: string;
+  executionFeedback: ExecutionFeedbackSummary;
   duplicateSelfHeal: {
     dryRun: true;
     candidateCount: number;
@@ -871,6 +909,8 @@ interface SidecarStatusResult {
     corruptCount: number;
     readyCount: number;
     appliedCount: number;
+    blockedCount: number;
+    failedCount: number;
     rolledBackCount: number;
   };
   patchBranches: {
@@ -2210,6 +2250,13 @@ export async function runAgentDockDailyWorkflow(
       operatorConfirmCommandRecords: operatorPreflight.confirmCommandRecords,
       operatorDryRunCommands: operatorPreflight.dryRunCommands,
       operatorDryRunCommandRecords: operatorPreflight.dryRunCommandRecords,
+      executionFeedbackApplicationCount: operatorPreflight.executionFeedback.applicationCount,
+      executionFeedbackAppliedCount: operatorPreflight.executionFeedback.appliedCount,
+      executionFeedbackFailedCount: operatorPreflight.executionFeedback.failedCount,
+      executionFeedbackBlockedCount: operatorPreflight.executionFeedback.blockedCount,
+      executionFeedbackRolledBackCount: operatorPreflight.executionFeedback.rolledBackCount,
+      executionFeedbackSkippedCount: operatorPreflight.executionFeedback.skippedCount,
+      executionFeedbackRecentApplicationIds: operatorPreflight.executionFeedback.recentApplications.map((item) => item.applicationId),
       wroteSidecarArtifacts,
     },
     nextActions: dailyWorkflowNextActions(approvalRequestIds, wroteSidecarArtifacts, operatorPreflight),
@@ -2264,9 +2311,71 @@ function summarizeValidateStep(result: ValidateResult): Omit<ValidateResult, 'va
   };
 }
 
+
+function buildExecutionFeedbackSummary(app: AppContext): ExecutionFeedbackSummary {
+  const { records, corruptCount } = readApplicationRecords(app.paths.root);
+  const recentApplications = records
+    .slice()
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || b.id.localeCompare(a.id))
+    .slice(0, 10)
+    .map((record): ExecutionFeedbackApplicationItem => ({
+      applicationId: record.id,
+      proposalId: record.proposalId,
+      validationId: record.validationId,
+      status: record.status,
+      gateCode: record.gateCode,
+      applied: record.applied,
+      blockingReasons: record.blockingReasons,
+      assetEventIds: record.assetEventRefs.map((ref) => ref.id),
+      ...(record.snapshotRef ? { snapshotId: record.snapshotRef.id } : {}),
+      ...(record.rollbackRef ? { rollbackId: record.rollbackRef.id } : {}),
+      updatedAt: record.updatedAt,
+    }));
+  const appliedCount = records.filter((record) => record.status === 'applied').length;
+  const failedCount = records.filter((record) => record.status === 'failed').length;
+  const blockedCount = records.filter((record) => record.status === 'blocked').length;
+  const rolledBackCount = records.filter((record) => record.status === 'rolled-back').length;
+  const readyCount = records.filter((record) => record.status === 'ready').length;
+  const skippedCount = 0;
+  const nextActions: string[] = [];
+  if (failedCount + blockedCount > 0) {
+    nextActions.push(`execution feedback 有 ${failedCount + blockedCount} 个 failed/blocked 应用记录；先看 gateCode 和 blockingReasons。`);
+  }
+  if (rolledBackCount > 0) {
+    nextActions.push(`execution feedback 有 ${rolledBackCount} 个 rolled-back 记录；确认 Web/API 已展示回滚状态。`);
+  }
+  if (appliedCount > 0) {
+    nextActions.push(`execution feedback 有 ${appliedCount} 个 applied 记录；需要时用 application id 追踪 snapshot/rollback。`);
+  }
+  if (records.length === 0) {
+    nextActions.push('当前没有 execution application artifact。');
+  }
+  return {
+    dryRun: true,
+    wouldWrite: false,
+    applicationCount: records.length,
+    corruptApplicationCount: corruptCount,
+    readyCount,
+    appliedCount,
+    failedCount,
+    blockedCount,
+    rolledBackCount,
+    skippedCount,
+    feedbackEventCount: countJsonFiles(feedbackEventsDir(app.paths.root)),
+    recentApplications,
+    nextActions,
+  };
+}
+
+function countJsonFiles(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  return readdirSync(dir).filter((name) => name.endsWith('.json')).length;
+}
+
 function buildAgentDockReadonlyOperatorSummary(app: AppContext): AgentDockReadonlyOperatorSummaryResult {
   const duplicateSelfHeal = selfHealDuplicateApprovalRequests(app, { dryRun: true });
   const feedbackRewrite = reviseFeedback(app, { dryRun: true, pending: true });
+  const executionFeedback = buildExecutionFeedbackSummary(app);
   const duplicateConfirmCommandRecords: OperatorCommandRecord[] = duplicateSelfHeal.candidateCount > 0
     ? [{
         source: 'self-heal-duplicates',
@@ -2297,6 +2406,7 @@ function buildAgentDockReadonlyOperatorSummary(app: AppContext): AgentDockReadon
     currentRunMode: 'dry-run',
     requiresExplicitConfirm: true,
     generatedAt: app.now().toISOString(),
+    executionFeedback,
     duplicateSelfHeal: {
       dryRun: true,
       candidateCount: duplicateSelfHeal.candidateCount,
@@ -2366,6 +2476,21 @@ function emptyAgentDockReadonlyOperatorSummary(app: AppContext, errors: string[]
     currentRunMode: 'dry-run',
     requiresExplicitConfirm: true,
     generatedAt: app.now().toISOString(),
+    executionFeedback: {
+      dryRun: true,
+      wouldWrite: false,
+      applicationCount: 0,
+      corruptApplicationCount: 0,
+      readyCount: 0,
+      appliedCount: 0,
+      failedCount: 0,
+      blockedCount: 0,
+      rolledBackCount: 0,
+      skippedCount: 0,
+      feedbackEventCount: 0,
+      recentApplications: [],
+      nextActions: ['operator preflight 失败，未读取 execution feedback。'],
+    },
     duplicateSelfHeal: {
       dryRun: true,
       candidateCount: 0,
@@ -2420,6 +2545,7 @@ function readonlyOperatorRecommendedActions(result: AgentDockReadonlyOperatorSum
   if (result.feedbackRewrite.unsafeCount > 0) {
     actions.push(`feedback rewrite 有 ${result.feedbackRewrite.unsafeCount} 个不可确认候选；先处理 unsafe reason。`);
   }
+  actions.push(...result.executionFeedback.nextActions);
   if (actions.length === 0) {
     actions.push('当前没有 self-heal 或 feedback rewrite 的可确认候选。');
   }
@@ -2448,6 +2574,8 @@ function renderAgentDockReadonlyOperatorSummary(result: AgentDockReadonlyOperato
     `feedback rewrite: 可确认=${result.feedbackRewrite.safeToConfirmCount} unsafe=${result.feedbackRewrite.unsafeCount} batchConfirmSafe=${result.feedbackRewrite.batchConfirmSafe}`,
     `feedback safe decision ids: ${compactList(result.feedbackRewrite.safeDecisionIds)}`,
     `feedback needsMoreInfo decision ids: ${compactList(result.feedbackRewrite.unsafeDecisionIds.needsMoreInfo)}`,
+    `execution feedback: applications=${result.executionFeedback.applicationCount} applied=${result.executionFeedback.appliedCount} failed=${result.executionFeedback.failedCount} blocked=${result.executionFeedback.blockedCount} rolledBack=${result.executionFeedback.rolledBackCount} skipped=${result.executionFeedback.skippedCount} feedbackEvents=${result.executionFeedback.feedbackEventCount}`,
+    `execution recent applications: ${compactList(result.executionFeedback.recentApplications.map((item) => `${item.applicationId}:${item.status}`))}`,
     'confirm 命令只供人工复制；禁止 eval/exec 自动执行。',
     'Confirm commands:',
     ...(result.confirmCommandRecords.length > 0
@@ -2467,9 +2595,15 @@ function dailyWorkflowNextActions(
   wroteSidecarArtifacts: boolean,
   operatorPreflight: AgentDockReadonlyOperatorSummaryResult,
 ): string[] {
+  const executionFeedbackHasItems = operatorPreflight.executionFeedback.applicationCount > 0;
+  const executionFeedbackNeedsAttention = operatorPreflight.executionFeedback.failedCount > 0 ||
+    operatorPreflight.executionFeedback.blockedCount > 0 ||
+    operatorPreflight.executionFeedback.rolledBackCount > 0;
   const operatorActions = operatorPreflight.confirmCommands.length > 0 ||
     operatorPreflight.duplicateSelfHeal.manualCheckCount > 0 ||
-    operatorPreflight.feedbackRewrite.unsafeCount > 0
+    operatorPreflight.feedbackRewrite.unsafeCount > 0 ||
+    executionFeedbackHasItems ||
+    executionFeedbackNeedsAttention
     ? [
         '只读 operator preflight 已汇总 self-heal duplicates 与 feedback rewrite；不会自动 confirm。',
         ...operatorPreflight.recommendedActions,
@@ -5062,6 +5196,8 @@ export function readAgentDockSidecarStatus(app: AppContext): SidecarStatusResult
       corruptCount: applicationStats.corruptCount,
       readyCount: applicationStats.readyCount,
       appliedCount: applicationStats.appliedCount,
+      blockedCount: applicationStats.blockedCount,
+      failedCount: applicationStats.failedCount,
       rolledBackCount: applicationStats.rolledBackCount,
     },
     patchBranches: {
@@ -5396,6 +5532,10 @@ function blockedProposalEventsDir(root: string): string {
 
 function feedbackRevisionsDir(root: string): string {
   return join(root, 'evolution', 'feedback-revisions');
+}
+
+function feedbackEventsDir(root: string): string {
+  return join(root, 'evolution', 'feedback-events');
 }
 
 function applicationsDir(root: string): string {
@@ -6161,21 +6301,24 @@ function readApplicationById(root: string, applicationId: string): ApplicationRe
   }
 }
 
-function readApplicationRecordsForProposal(root: string, proposalId: string): ApplicationRecord[] {
+function readApplicationRecords(root: string): { records: ApplicationRecord[]; corruptCount: number } {
   const dir = applicationsDir(root);
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) return { records: [], corruptCount: 0 };
   const records: ApplicationRecord[] = [];
+  let corruptCount = 0;
   for (const name of readdirSync(dir).sort()) {
     if (!name.endsWith('.json')) continue;
     try {
-      const record = ApplicationRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
-      if (record.proposalId === proposalId) records.push(record);
+      records.push(ApplicationRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8'))));
     } catch {
-      // Corrupt application artifacts are surfaced by status/doctor; auto apply
-      // ignores them so a valid application record can still provide idempotence.
+      corruptCount += 1;
     }
   }
-  return records;
+  return { records, corruptCount };
+}
+
+function readApplicationRecordsForProposal(root: string, proposalId: string): ApplicationRecord[] {
+  return readApplicationRecords(root).records.filter((record) => record.proposalId === proposalId);
 }
 
 function readLatestValidationForProposal(root: string, proposalId: string): ValidationReport | undefined {
@@ -6373,30 +6516,20 @@ function readApplicationStats(root: string): {
   corruptCount: number;
   readyCount: number;
   appliedCount: number;
+  blockedCount: number;
+  failedCount: number;
   rolledBackCount: number;
 } {
-  const dir = applicationsDir(root);
-  if (!existsSync(dir)) {
-    return { count: 0, corruptCount: 0, readyCount: 0, appliedCount: 0, rolledBackCount: 0 };
-  }
-  let count = 0;
-  let corruptCount = 0;
-  let readyCount = 0;
-  let appliedCount = 0;
-  let rolledBackCount = 0;
-  for (const name of readdirSync(dir).sort()) {
-    if (!name.endsWith('.json')) continue;
-    try {
-      const record = ApplicationRecordSchema.parse(JSON.parse(readFileSync(join(dir, name), 'utf8')));
-      count += 1;
-      if (record.status === 'ready') readyCount += 1;
-      if (record.status === 'applied') appliedCount += 1;
-      if (record.status === 'rolled-back') rolledBackCount += 1;
-    } catch {
-      corruptCount += 1;
-    }
-  }
-  return { count, corruptCount, readyCount, appliedCount, rolledBackCount };
+  const { records, corruptCount } = readApplicationRecords(root);
+  return {
+    count: records.length,
+    corruptCount,
+    readyCount: records.filter((record) => record.status === 'ready').length,
+    appliedCount: records.filter((record) => record.status === 'applied').length,
+    blockedCount: records.filter((record) => record.status === 'blocked').length,
+    failedCount: records.filter((record) => record.status === 'failed').length,
+    rolledBackCount: records.filter((record) => record.status === 'rolled-back').length,
+  };
 }
 
 function readApprovalRequestStats(root: string): {

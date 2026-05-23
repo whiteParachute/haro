@@ -5538,6 +5538,23 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       updatedAt: createdAt,
     });
 
+    const writeApplication = (record: ApplicationRecord) => {
+      const dir = join(root, 'evolution', 'applications');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${record.id}.json`), `${JSON.stringify(ApplicationRecordSchema.parse(record), null, 2)}\n`);
+    };
+    const writeFeedbackEvent = (id: string, applicationId: string) => {
+      const dir = join(root, 'evolution', 'feedback-events');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${id}.json`), `${JSON.stringify({
+        id,
+        applicationId,
+        status: 'sent',
+        channel: 'mock',
+        createdAt: '2026-05-08T11:09:00.000Z',
+      }, null, 2)}\n`);
+    };
+
     writeProposal('proposal_prior_duplicate', 'duplicate-target', 'sha256:duplicate');
     writeValidation('proposal_prior_duplicate');
     writeRequest('approval_prior_duplicate', 'proposal_prior_duplicate');
@@ -5558,9 +5575,45 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       '2026-05-08T11:04:00.000Z',
     );
 
+    writeApplication({
+      id: 'application_feedback_applied',
+      proposalId: 'proposal_feedback_safe',
+      validationId: 'validation_proposal_feedback_safe',
+      status: 'applied',
+      gateCode: 'READY',
+      level: 'L1',
+      targetKind: 'runner-profile',
+      applied: true,
+      snapshotRef: { id: 'snapshot_feedback_applied', kind: 'asset-snapshot' },
+      rollbackRef: { id: 'rollback_feedback_applied', kind: 'rollback-ref' },
+      assetEventRefs: [{ id: 'asset_event_feedback_applied', kind: 'asset-event' }],
+      evidenceRefs: [{ id: 'proposal_feedback_safe', kind: 'evolution-proposal' }],
+      blockingReasons: [],
+      createdAt: '2026-05-08T11:07:00.000Z',
+      updatedAt: '2026-05-08T11:07:00.000Z',
+    });
+    writeApplication({
+      id: 'application_feedback_failed',
+      proposalId: 'proposal_current_duplicate',
+      validationId: 'validation_proposal_current_duplicate',
+      status: 'failed',
+      gateCode: 'APPLY_EXECUTION_FAILED',
+      level: 'L1',
+      targetKind: 'runner-profile',
+      applied: false,
+      assetEventRefs: [],
+      evidenceRefs: [{ id: 'proposal_current_duplicate', kind: 'evolution-proposal' }],
+      blockingReasons: ['模拟 apply 执行失败。'],
+      createdAt: '2026-05-08T11:08:00.000Z',
+      updatedAt: '2026-05-08T11:08:00.000Z',
+    });
+    writeFeedbackEvent('feedback_application_feedback_failed', 'application_feedback_failed');
+
     const beforeDecisions = readEvolutionFileNames(root, 'approval-decisions');
     const beforeFeedbackRevisions = readEvolutionFileNames(root, 'feedback-revisions');
     const beforeBlockedEvents = readEvolutionFileNames(root, 'blocked-proposal-events');
+    const beforeApplications = readEvolutionFileNames(root, 'applications');
+    const beforeFeedbackEvents = readEvolutionFileNames(root, 'feedback-events');
     const app = autoApplyApp(root);
     const result = await runAgentDockDailyWorkflow(app, {
       source: 'fake',
@@ -5590,6 +5643,17 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         }],
         dryRunCommands: ['haro self-heal duplicates --dry-run'],
       },
+      executionFeedback: {
+        dryRun: true,
+        wouldWrite: false,
+        applicationCount: 2,
+        appliedCount: 1,
+        failedCount: 1,
+        blockedCount: 0,
+        rolledBackCount: 0,
+        skippedCount: 0,
+        feedbackEventCount: 1,
+      },
       feedbackRewrite: {
         safeToConfirmCount: 1,
         safeDecisionIds: ['approval_decision_feedback_safe'],
@@ -5610,10 +5674,24 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
         dryRunCommands: ['haro revise feedback --dry-run --decision-id approval_decision_feedback_safe'],
       },
     });
+    expect(result.steps.operatorPreflight.executionFeedback.recentApplications.map((item) => item.applicationId)).toEqual([
+      'application_feedback_failed',
+      'application_feedback_applied',
+    ]);
     expect(result.summary).toMatchObject({
       duplicateSelfHealCandidateCount: 1,
       duplicateSelfHealManualCheckCount: 0,
       feedbackRewriteSafeToConfirmCount: 1,
+      executionFeedbackApplicationCount: 2,
+      executionFeedbackAppliedCount: 1,
+      executionFeedbackFailedCount: 1,
+      executionFeedbackBlockedCount: 0,
+      executionFeedbackRolledBackCount: 0,
+      executionFeedbackSkippedCount: 0,
+      executionFeedbackRecentApplicationIds: [
+        'application_feedback_failed',
+        'application_feedback_applied',
+      ],
     });
     expect(result.summary.operatorConfirmCommands).toEqual(expect.arrayContaining([
       'haro self-heal duplicates --confirm',
@@ -5629,9 +5707,12 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       'haro revise feedback --dry-run --decision-id approval_decision_feedback_safe',
     ]));
     expect(result.nextActions.join('\n')).toContain('只读 operator preflight');
+    expect(result.nextActions.join('\n')).toContain('execution feedback 有 1 个 failed/blocked');
     expect(readEvolutionFileNames(root, 'approval-decisions')).toEqual(beforeDecisions);
     expect(readEvolutionFileNames(root, 'feedback-revisions')).toEqual(beforeFeedbackRevisions);
     expect(readEvolutionFileNames(root, 'blocked-proposal-events')).toEqual(beforeBlockedEvents);
+    expect(readEvolutionFileNames(root, 'applications')).toEqual(beforeApplications);
+    expect(readEvolutionFileNames(root, 'feedback-events')).toEqual(beforeFeedbackEvents);
   });
 
   it('status summarizes an empty sidecar store without creating memory', async () => {
@@ -5657,7 +5738,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       approvalRequests: { count: number; pendingCount: number; corruptCount: number };
       snapshots: { count: number; corruptCount: number };
       rollbacks: { count: number; corruptCount: number };
-      applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
+      applications: { count: number; readyCount: number; appliedCount: number; blockedCount: number; failedCount: number; rolledBackCount: number; corruptCount: number };
       patchBranches: { count: number; plannedCount: number; corruptCount: number };
       frontierSignals: {
         count: number;
@@ -5680,6 +5761,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       count: 0,
       readyCount: 0,
       appliedCount: 0,
+      blockedCount: 0,
+      failedCount: 0,
       rolledBackCount: 0,
       corruptCount: 0,
     });
@@ -5772,7 +5855,7 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       approvalRequests: { count: number; pendingCount: number; corruptCount: number };
       snapshots: { count: number; corruptCount: number };
       rollbacks: { count: number; corruptCount: number };
-      applications: { count: number; readyCount: number; appliedCount: number; rolledBackCount: number; corruptCount: number };
+      applications: { count: number; readyCount: number; appliedCount: number; blockedCount: number; failedCount: number; rolledBackCount: number; corruptCount: number };
       patchBranches: { count: number; plannedCount: number; corruptCount: number };
       frontierSignals: {
         count: number;
@@ -5804,6 +5887,8 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
       count: 0,
       readyCount: 0,
       appliedCount: 0,
+      blockedCount: 0,
+      failedCount: 0,
       rolledBackCount: 0,
       corruptCount: 0,
     });

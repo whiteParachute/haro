@@ -302,7 +302,7 @@ function parseJsonData<T>(stdout: Capture): T {
 }
 
 function evolutionFileCounts(root: string) {
-  const names = ['proposals', 'validations', 'approval-requests', 'approval-decisions', 'feedback-revisions', 'blocked-proposal-events'];
+  const names = ['proposals', 'validations', 'approval-requests', 'approval-decisions', 'feedback-revisions', 'blocked-proposal-events', 'applications', 'feedback-events'];
   return Object.fromEntries(names.map((name) => {
     const dir = join(root, 'evolution', name);
     return [name, existsSync(dir) ? readdirSync(dir).sort() : []];
@@ -870,6 +870,28 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     const root = tempRoot();
     const priorDuplicate = seedDecisionForTarget(root, 'duplicate-target', '这是旧重复提案。', 'reject');
     const duplicate = seedDuplicatePendingForPrior(root, priorDuplicate);
+    writeArtifact(root, 'applications', 'application_operator_failed', {
+      id: 'application_operator_failed',
+      proposalId: duplicate.proposalId,
+      validationId: `validation_${duplicate.proposalId}`,
+      status: 'failed',
+      gateCode: 'APPLY_EXECUTION_FAILED',
+      level: 'L1',
+      targetKind: 'runner-profile',
+      applied: false,
+      assetEventRefs: [],
+      evidenceRefs: [{ id: duplicate.proposalId, kind: 'evolution-proposal' }],
+      blockingReasons: ['测试中的执行失败。'],
+      createdAt: '2026-05-21T10:15:00.000Z',
+      updatedAt: '2026-05-21T10:15:00.000Z',
+    });
+    writeArtifact(root, 'feedback-events', 'feedback_application_operator_failed', {
+      id: 'feedback_application_operator_failed',
+      applicationId: 'application_operator_failed',
+      status: 'sent',
+      channel: 'mock',
+      createdAt: '2026-05-21T10:16:00.000Z',
+    });
     const safeRewrite = seedDecisionForTarget(root, 'rewrite-safe', '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
     const unsafeRewrite = seedDecisionForTarget(root, 'rewrite-unsafe', '我看不懂，什么是 Haro 运行出现错误？请说明。');
     const before = evolutionFileCounts(root);
@@ -889,6 +911,12 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
         confirmCommandRecords: Array<{ source: string; command: string; approvalRequestIds?: string[] }>;
         dryRunCommands: string[];
         dryRunCommandRecords: Array<{ source: string; command: string }>;
+      };
+      executionFeedback: {
+        applicationCount: number;
+        failedCount: number;
+        feedbackEventCount: number;
+        recentApplications: Array<{ applicationId: string; status: string }>;
       };
       feedbackRewrite: {
         safeToConfirmCount: number;
@@ -918,6 +946,12 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
         candidateApprovalRequestIds: [duplicate.approvalRequestId],
         confirmCommands: ['haro self-heal duplicates --confirm'],
         dryRunCommands: ['haro self-heal duplicates --dry-run'],
+      },
+      executionFeedback: {
+        applicationCount: 1,
+        failedCount: 1,
+        feedbackEventCount: 1,
+        recentApplications: [{ applicationId: 'application_operator_failed', status: 'failed' }],
       },
       feedbackRewrite: {
         safeToConfirmCount: 1,
@@ -971,6 +1005,7 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
     expect(text).toContain('只读摘要');
     expect(text).toContain('scope: operator-preflight');
     expect(text).toContain('feedback rewrite: 可确认=1');
+    expect(text).toContain('execution feedback: applications=0');
     expect(text).toContain('confirm 命令只供人工复制；禁止 eval/exec 自动执行。');
     expect(text).toContain(`haro revise feedback --confirm --decision-id ${safeRewrite.decisionId}`);
     expect(text).toContain(`haro revise feedback --dry-run --decision-id ${safeRewrite.decisionId}`);
