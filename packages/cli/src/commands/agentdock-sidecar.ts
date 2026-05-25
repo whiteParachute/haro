@@ -156,6 +156,7 @@ interface ReviseFeedbackOptions extends OutputFlags {
   decisionId?: string;
   pending?: boolean;
   llmDraft?: boolean;
+  draftPreviewHash?: string;
 }
 
 interface ObserveResult {
@@ -723,6 +724,9 @@ interface FeedbackRevisionDraftPreview {
     userPrompt: string;
     modelInstructions: string[];
   };
+  draftPreviewHash?: string;
+  confirmationToken?: string;
+  confirmCommand?: string;
   rewritePlan: string[];
   draftProposal?: {
     format: 'markdown' | 'json';
@@ -1559,6 +1563,7 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
     .option('--decision-id <id>', 'approval-decision id to plan from')
     .option('--pending', 'plan or confirm all pending request-changes decisions')
     .option('--llm-draft', 'generate a read-only LLM rewrite draft preview; never writes artifacts')
+    .option('--draft-preview-hash <hash>', 'required with --confirm --llm-draft; proves the reviewed draft preview')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
     .action(async (options: ReviseFeedbackOptions) => {
@@ -1627,13 +1632,17 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
                   `  dryRun: ${result.draftPreview.dryRun}`,
                   `  wouldWrite: ${result.draftPreview.wouldWrite}`,
                   `  requiresExplicitConfirm: ${result.draftPreview.requiresExplicitConfirm}`,
+                  ...(result.draftPreview.draftPreviewHash ? [`  draftPreviewHash: ${result.draftPreview.draftPreviewHash}`] : []),
+                  ...(result.draftPreview.confirmCommand ? [`  confirmCommand: ${result.draftPreview.confirmCommand}`] : []),
                   `  rewritePlan: ${result.draftPreview.rewritePlan.join(' | ') || '(none)'}`,
                   `  addressedFeedback: ${result.draftPreview.addressedFeedback.length}`,
                   `  unresolvedFeedback: ${result.draftPreview.unresolvedFeedback.length}`,
                   ...result.draftPreview.manualReviewReasons.map((reason) => `  manualReview: ${reason}`),
                   ...result.draftPreview.blockedReasons.map((reason) => `  blocked: ${reason}`),
                   `  nextAction: ${result.draftPreview.nextAction}`,
-                  '  该预览没有写入新版提案，也不会通知重审。',
+                  result.mode === 'dry-run'
+                    ? '  该预览没有写入新版提案，也不会通知重审。先人工审阅草稿；不要自动执行 confirm 命令。'
+                    : '  本次 confirm 只生成新版待审提案；没有审批、上线或通知重审。',
                 ]
               : []),
           ].join('\n') + '\n',
@@ -3520,27 +3529,46 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
   const finalPlans = confirm
     ? plans.map((plan) => confirmFeedbackRevisionForPlan(app, plan))
     : plans;
+  return buildReviseFeedbackResult(finalPlans, {
+    mode: confirm ? 'confirm' : 'dry-run',
+    dryRun,
+    confirm,
+    pending: options.pending === true,
+  });
+}
+
+function buildReviseFeedbackResult(
+  finalPlans: readonly ReviseFeedbackPlan[],
+  options: {
+    mode: 'dry-run' | 'confirm';
+    dryRun: boolean;
+    confirm: boolean;
+    pending: boolean;
+    draftPreview?: FeedbackRevisionDraftPreview;
+  },
+): ReviseFeedbackResult {
   const summary = summarizeReviseFeedbackPlans(finalPlans);
   const operatorPreflight = buildReviseFeedbackOperatorPreflight(finalPlans, {
-    mode: confirm ? 'confirm' : 'dry-run',
-    pending: options.pending === true,
+    mode: options.mode,
+    pending: options.pending,
   });
   const first = finalPlans[0];
   return {
     command: 'revise feedback',
-    mode: confirm ? 'confirm' : 'dry-run',
-    dryRun,
+    mode: options.mode,
+    dryRun: options.dryRun,
     // `wouldWrite` is kept for JSON compatibility. In confirm mode it means the
     // command did write at least one artifact in this run; `didWrite` is the
     // clearer alias introduced by FEAT-077C.
     wouldWrite: summary.writtenCount > 0,
     didWrite: summary.writtenCount > 0,
-    ...(confirm ? { confirmed: finalPlans.some((plan) => plan.confirmed === true) } : {}),
+    ...(options.confirm ? { confirmed: finalPlans.some((plan) => plan.confirmed === true) } : {}),
     planCount: finalPlans.length,
     ...summary,
-    plans: finalPlans,
+    plans: [...finalPlans],
     revisionDepthLimit: DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
     operatorPreflight,
+    ...(options.draftPreview ? { draftPreview: options.draftPreview } : {}),
     ...(first ? {
       decisionId: first.decisionId,
       approvalRequestId: first.approvalRequestId,
@@ -3566,20 +3594,138 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
 }
 
 async function reviseFeedbackWithDraftPreview(app: AppContext, options: ReviseFeedbackOptions): Promise<ReviseFeedbackResult> {
-  if (!options.dryRun || options.confirm) {
-    throw new CommanderExit(2, '`haro revise feedback --llm-draft` is read-only and requires --dry-run without --confirm.');
+  const dryRun = options.dryRun === true;
+  const confirm = options.confirm === true;
+  if (dryRun === confirm) {
+    throw new CommanderExit(2, '`haro revise feedback --llm-draft` requires exactly one of --dry-run or --confirm.');
   }
   if (!options.decisionId || options.pending) {
     throw new CommanderExit(2, '`haro revise feedback --llm-draft` requires exactly one --decision-id and does not support --pending.');
   }
-  const result = reviseFeedback(app, options);
-  const plan = result.plans[0];
+  if (confirm && !options.draftPreviewHash) {
+    throw new CommanderExit(2, '`haro revise feedback --confirm --llm-draft` requires --draft-preview-hash from a reviewed dry-run preview.');
+  }
+
+  const planningResult = dryRun
+    ? reviseFeedback(app, {
+        ...options,
+        dryRun: true,
+        confirm: false,
+        draftPreviewHash: undefined,
+      })
+    : buildDraftPreviewConfirmPlanningResult(app, options.decisionId);
+  const plan = planningResult.plans[0];
   if (!plan) {
     throw new CommanderExit(1, `No revision plan found for ${options.decisionId}.`);
   }
+  const draftPreview = withDraftPreviewConfirmation(plan, await buildFeedbackRevisionDraftPreview(app, plan));
+  if (dryRun) {
+    return {
+      ...planningResult,
+      draftPreview,
+    };
+  }
+  if (draftPreview.draftPreviewHash !== options.draftPreviewHash) {
+    throw new CommanderExit(2, 'draft preview hash mismatch; rerun --dry-run --llm-draft and review the latest draft before confirm.');
+  }
+  const blockingReasons = draftPreviewConfirmBlockingReasons(plan, draftPreview);
+  const finalPlan = blockingReasons.length > 0
+    ? failClosedDraftPreviewConfirmPlan(plan, draftPreview, blockingReasons)
+    : confirmFeedbackRevisionForPlan(app, plan, draftPreview);
+  return buildReviseFeedbackResult([finalPlan], {
+    mode: 'confirm',
+    dryRun: false,
+    confirm: true,
+    pending: false,
+    draftPreview,
+  });
+}
+
+function buildDraftPreviewConfirmPlanningResult(app: AppContext, decisionId: string): ReviseFeedbackResult {
+  const decision = readApprovalDecisionById(app.paths.root, decisionId);
+  if (!decision) {
+    throw new CommanderExit(1, `No approval-decision artifact found for ${decisionId}.`);
+  }
+  const plan = planFeedbackRevisionForDecision(app.paths.root, decision, {
+    ignorePendingRevisionForDecisionId: decision.id,
+  });
+  return buildReviseFeedbackResult([plan], {
+    mode: 'dry-run',
+    dryRun: true,
+    confirm: false,
+    pending: false,
+  });
+}
+
+function withDraftPreviewConfirmation(
+  plan: ReviseFeedbackPlan,
+  preview: FeedbackRevisionDraftPreview,
+): FeedbackRevisionDraftPreview {
+  const draftPreviewHash = sha256(stableJsonStringify({
+    decisionId: plan.decisionId,
+    sourceProposalId: plan.proposalId,
+    sourceDecisionId: plan.decisionId,
+    provider: preview.provider,
+    model: preview.model,
+    modelStatus: preview.modelStatus,
+    status: preview.status,
+    promptPackage: preview.promptPackage,
+    rewritePlan: preview.rewritePlan,
+    draftProposal: preview.draftProposal,
+    draftPatch: preview.draftPatch,
+    addressedFeedback: preview.addressedFeedback,
+    unresolvedFeedback: preview.unresolvedFeedback,
+  }));
   return {
-    ...result,
-    draftPreview: await buildFeedbackRevisionDraftPreview(app, plan),
+    ...preview,
+    draftPreviewHash,
+    confirmationToken: `draft-preview:${draftPreviewHash.slice(0, 24)}`,
+    ...(preview.status === 'generated' ? {
+      confirmCommand: `haro revise feedback --confirm --decision-id ${plan.decisionId} --llm-draft --draft-preview-hash ${draftPreviewHash}`,
+    } : {}),
+  };
+}
+
+function draftPreviewConfirmBlockingReasons(
+  plan: ReviseFeedbackPlan,
+  preview: FeedbackRevisionDraftPreview,
+): string[] {
+  return uniqueSorted([
+    ...(isReviseFeedbackPlanSafeToConfirm(plan) ? [] : ['planner is not safe to confirm']),
+    ...(preview.status === 'generated' ? [] : [`draftPreview status is ${preview.status}`]),
+    ...(preview.modelStatus === 'available' ? [] : [`model status is ${preview.modelStatus}`]),
+    ...(preview.unresolvedFeedback.length === 0 ? [] : ['draftPreview has unresolvedFeedback; FEAT-082B requires empty unresolvedFeedback']),
+    ...preview.manualReviewReasons.map((reason) => `draftPreview manual review required: ${reason}`),
+    ...preview.blockedReasons.map((reason) => `draftPreview blocked: ${reason}`),
+  ]);
+}
+
+function failClosedDraftPreviewConfirmPlan(
+  plan: ReviseFeedbackPlan,
+  preview: FeedbackRevisionDraftPreview,
+  reasons: readonly string[],
+): ReviseFeedbackPlan {
+  const blocked = preview.status === 'blocked' || preview.blockedReasons.length > 0;
+  return {
+    ...plan,
+    dryRun: false,
+    wouldWrite: false,
+    confirmed: false,
+    manualCheckReasons: uniqueSorted([
+      ...plan.manualCheckReasons,
+      ...(!blocked ? reasons : []),
+    ]),
+    blockedReasons: uniqueSorted([
+      ...plan.blockedReasons,
+      ...(blocked ? reasons : []),
+    ]),
+    actualActions: {
+      wroteRevisedProposal: false,
+      wroteValidation: false,
+      wroteFeedbackRevision: false,
+      wroteApprovalRequest: false,
+      idempotent: false,
+    },
   };
 }
 
@@ -4001,7 +4147,11 @@ function unsafeReasonsForReviseFeedbackPlan(plan: ReviseFeedbackPlan): string[] 
   return [`planner verdict ${plan.plannerVerdict} is not safe to confirm`];
 }
 
-function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisionRecord): ReviseFeedbackPlan {
+function planFeedbackRevisionForDecision(
+  root: string,
+  decision: ApprovalDecisionRecord,
+  options: { ignorePendingRevisionForDecisionId?: string } = {},
+): ReviseFeedbackPlan {
   const reasons: string[] = [];
   const manualCheckReasons: string[] = [];
   const blockedReasons: string[] = [];
@@ -4048,7 +4198,8 @@ function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisio
     }
 
     const newerPendingRevision = readPendingRevisionForRoot(root, proposal);
-    if (newerPendingRevision) {
+    const ignorePendingRevision = newerPendingRevision?.proposal.revisionMetadata?.sourceDecisionId === options.ignorePendingRevisionForDecisionId;
+    if (newerPendingRevision && !ignorePendingRevision) {
       manualCheckReasons.push(`newer revision ${newerPendingRevision.proposal.id} already has pending approval request ${newerPendingRevision.approvalRequest.id}`);
       noOpCheck = evaluateRevisionNoOpGate(root, proposal, newerPendingRevision.proposal);
       validationBlockingReasons.push(...feedbackRevisionValidationBlockingReasons(root, newerPendingRevision.proposal));
@@ -4109,7 +4260,11 @@ function planFeedbackRevisionForDecision(root: string, decision: ApprovalDecisio
   };
 }
 
-function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPlan): ReviseFeedbackPlan {
+function confirmFeedbackRevisionForPlan(
+  app: AppContext,
+  plan: ReviseFeedbackPlan,
+  draftPreview?: FeedbackRevisionDraftPreview,
+): ReviseFeedbackPlan {
   const existing = readFeedbackRevisionBySourceDecisionId(app.paths.root, plan.decisionId);
   if (existing?.revisedProposalId && existing.revisedApprovalRequestId) {
     const existingArtifacts = readFeedbackRevisionArtifacts(app.paths.root, existing);
@@ -4341,6 +4496,7 @@ function confirmFeedbackRevisionForPlan(app: AppContext, plan: ReviseFeedbackPla
       plan: currentPlan,
       ids,
       timestamp,
+      draftPreview,
     });
     noOpCheck = evaluateRevisionNoOpGate(app.paths.root, sourceProposal, draft);
     if (noOpCheck.verdict !== 'substantive-change') {
@@ -4560,6 +4716,7 @@ function buildConfirmedRevisionProposal(input: {
   plan: ReviseFeedbackPlan;
   ids: { revisionId: string; revisedProposalId: string; feedbackRevisionId: string };
   timestamp: string;
+  draftPreview?: FeedbackRevisionDraftPreview;
 }): EvolutionProposal {
   const rootProposalId = input.sourceProposal.revisionMetadata?.rootProposalId ?? input.sourceProposal.id;
   const revisionDepth = (input.sourceProposal.revisionMetadata?.revisionDepth ?? 0) + 1;
@@ -4574,7 +4731,7 @@ function buildConfirmedRevisionProposal(input: {
       requirements: input.plan.parsedRequirements.map((requirement) => requirement.category),
     })).slice(0, 48)}`,
   }));
-  return EvolutionProposalSchema.parse({
+  const baseProposal = EvolutionProposalSchema.parse({
     ...input.sourceProposal,
     id: input.ids.revisedProposalId,
     status: 'proposed',
@@ -4624,6 +4781,70 @@ function buildConfirmedRevisionProposal(input: {
     },
     createdAt: input.timestamp,
     updatedAt: input.timestamp,
+  });
+  return input.draftPreview
+    ? applyConfirmedDraftPreviewToProposal(baseProposal, input.draftPreview)
+    : baseProposal;
+}
+
+function applyConfirmedDraftPreviewToProposal(
+  proposal: EvolutionProposal,
+  draftPreview: FeedbackRevisionDraftPreview,
+): EvolutionProposal {
+  const draftObject = draftPreview.draftProposal?.format === 'json'
+    ? parseMaybeJsonObject(draftPreview.draftProposal.content)
+    : undefined;
+  const title = typeof draftObject?.title === 'string' && draftObject.title.trim().length > 0
+    ? draftObject.title
+    : proposal.title;
+  const changeSet = proposal.changeSet.map((change, index) => {
+    const draftChangeSet = Array.isArray(draftObject?.changeSet) ? draftObject.changeSet : undefined;
+    const draftChange = draftChangeSet?.[index];
+    const summary = isRecord(draftChange) && typeof draftChange.summary === 'string' && draftChange.summary.trim().length > 0
+      ? draftChange.summary
+      : change.summary;
+    return {
+      ...change,
+      summary,
+      contentHash: `sha256:${sha256(stableJsonStringify({
+        previousContentHash: change.contentHash ?? '',
+        draftPreviewHash: draftPreview.draftPreviewHash,
+        index,
+        summary,
+      })).slice(0, 48)}`,
+    };
+  });
+  const manualChecks = uniqueSorted([
+    ...proposal.testPlan.manualChecks,
+    `核对本次修订是否符合已确认 LLM 草稿：${draftPreview.draftPreviewHash?.slice(0, 12) ?? 'unknown'}`,
+  ]);
+  return EvolutionProposalSchema.parse({
+    ...proposal,
+    title,
+    changeSet,
+    testPlan: {
+      ...proposal.testPlan,
+      manualChecks,
+    },
+    feedbackSemanticFingerprint: sha256(stableJsonStringify({
+      original: proposal.feedbackSemanticFingerprint,
+      draftPreviewHash: draftPreview.draftPreviewHash,
+      title,
+      changeSet: changeSet.map((change) => ({ targetRef: change.targetRef, summary: change.summary, contentHash: change.contentHash })),
+    })),
+    feedbackContext: proposal.feedbackContext ? {
+      ...proposal.feedbackContext,
+      incorporationNote: `FEAT-082B 已按人工确认的 LLM 草稿预览生成新版待审提案：${draftPreview.draftPreviewHash?.slice(0, 12) ?? 'unknown'}。`,
+    } : proposal.feedbackContext,
+    revisionMetadata: proposal.revisionMetadata ? {
+      ...proposal.revisionMetadata,
+      resubmissionReason: `根据已确认 LLM 草稿预览重新提交：${draftPreview.draftPreviewHash?.slice(0, 12) ?? 'unknown'}。`,
+      incorporatedFeedback: draftPreview.addressedFeedback.length > 0
+        ? draftPreview.addressedFeedback
+        : proposal.revisionMetadata.incorporatedFeedback,
+      unresolvedFeedback: draftPreview.unresolvedFeedback,
+      updatedAt: proposal.updatedAt,
+    } : proposal.revisionMetadata,
   });
 }
 
@@ -9897,4 +10118,15 @@ function countSemanticObservations(batch: ObservationBatch): number {
 
 function sha256(input: string | Buffer): string {
   return createHash('sha256').update(input).digest('hex');
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === undefined) return 'null';
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }

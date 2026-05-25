@@ -847,6 +847,76 @@ FEAT-082B 才能做人审确认后的正式写入。
 
 FEAT-082C 才能做重审通知。
 
+### 10.11 FEAT-082B confirmed LLM draft write
+
+FEAT-082B 增加显式确认写入。
+
+它仍从 dry-run 开始。
+
+dry-run 输出 `draftPreviewHash`。
+
+dry-run 也输出确认命令：
+
+```bash
+haro revise feedback --confirm --decision-id <approval_decision_id> --llm-draft --draft-preview-hash <hash>
+```
+
+确认前必须人工审阅草稿。
+
+禁止自动 eval 或 exec 该命令。
+
+confirm 会重新生成草稿预览。
+
+随后校验 hash 是否一致。
+
+hash 覆盖这些输入：
+
+- decision id。
+- source proposal id。
+- provider / model。
+- prompt package。
+- rewrite plan。
+- draft proposal / draft patch。
+- addressed feedback。
+- unresolved feedback。
+
+hash 不一致时 fail closed。
+
+不会写任何 artifact。
+
+只有这些条件全满足才写：
+
+- planner 仍是 safe。
+- draft preview status 是 `generated`。
+- unresolved feedback 为空。
+- no-op gate 是 substantive change。
+- validation blockers 为空。
+- revision depth 未超限。
+- hash 与人工确认值一致。
+
+写入复用 FEAT-077B/C 状态机。
+
+它生成这些 artifact：
+
+- revised proposal。
+- validation。
+- approval request。
+- feedback revision。
+
+feedback revision 仍最后写入。
+
+重跑同一确认命令必须幂等。
+
+本切片仍不 approve。
+
+它仍不 apply。
+
+它仍不 rollback。
+
+它也不通知用户重审。
+
+FEAT-082C 才能做通知。
+
 ## 11. Negative scope
 
 10C 和后续 FEAT-076 系列不得做这些事：

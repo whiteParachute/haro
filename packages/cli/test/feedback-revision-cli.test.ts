@@ -436,6 +436,9 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
         draftProposal: { format: string; content: string };
         addressedFeedback: unknown[];
         unresolvedFeedback: unknown[];
+        draftPreviewHash: string;
+        confirmationToken: string;
+        confirmCommand: string;
         nextAction: string;
       };
     }>(stdout);
@@ -460,8 +463,155 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       rewritePlan: ['把范围收窄到 ModelHub timeout。', '补充样本、风险和回滚。'],
     });
     expect(payload.draftPreview.draftProposal.content).toContain('只处理 ModelHub timeout');
+    expect(payload.draftPreview.draftPreviewHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(payload.draftPreview.confirmationToken).toContain(payload.draftPreview.draftPreviewHash.slice(0, 24));
+    expect(payload.draftPreview.confirmCommand).toBe(`haro revise feedback --confirm --decision-id ${decisionId} --llm-draft --draft-preview-hash ${payload.draftPreview.draftPreviewHash}`);
     expect(payload.draftPreview.nextAction).toContain('人工审阅');
     expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('requires a draft preview hash before confirming an LLM draft', async () => {
+    const root = tempRoot();
+    const { decisionId } = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const before = evolutionFileCounts(root);
+    const { result, stderr } = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', decisionId, '--llm-draft', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 2 });
+    expect(stderr.read()).toContain('requires --draft-preview-hash');
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('prints human LLM draft preview disclaimers and the hash confirm command', async () => {
+    const root = tempRoot();
+    const { decisionId } = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', decisionId, '--llm-draft', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const text = stdout.read();
+    expect(text).toContain('LLM draft preview:');
+    expect(text).toContain('draftPreviewHash:');
+    expect(text).toContain(`haro revise feedback --confirm --decision-id ${decisionId} --llm-draft --draft-preview-hash`);
+    expect(text).toContain('不要自动执行 confirm 命令');
+    expect(text).toContain('没有写入新版提案');
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('rejects mismatched LLM draft hashes without writing artifacts', async () => {
+    const root = tempRoot();
+    const { decisionId } = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const before = evolutionFileCounts(root);
+    const { result, stderr } = runWithCapturedOutput(root, ['revise', 'feedback', '--confirm', '--decision-id', decisionId, '--llm-draft', '--draft-preview-hash', 'bad-hash', '--human']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 2 });
+    expect(stderr.read()).toContain('draft preview hash mismatch');
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('confirms a reviewed LLM draft by writing revised artifacts exactly once', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const before = evolutionFileCounts(root);
+    const dry = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', source.decisionId, '--llm-draft', '--json']);
+    await expect(dry.result).resolves.toMatchObject({ exitCode: 0 });
+    const dryPayload = parseJsonData<{ draftPreview: { draftPreviewHash: string; confirmCommand: string } }>(dry.stdout);
+    expect(dryPayload.draftPreview.confirmCommand).toContain('--llm-draft --draft-preview-hash');
+    expect(evolutionFileCounts(root)).toEqual(before);
+
+    const confirm = runWithCapturedOutput(root, [
+      'revise',
+      'feedback',
+      '--confirm',
+      '--decision-id',
+      source.decisionId,
+      '--llm-draft',
+      '--draft-preview-hash',
+      dryPayload.draftPreview.draftPreviewHash,
+      '--json',
+    ]);
+    await expect(confirm.result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      confirmed: boolean;
+      didWrite: boolean;
+      revisedProposalId: string;
+      revisedValidationId: string;
+      revisedApprovalRequestId: string;
+      feedbackRevisionId: string;
+      actualActions: { wroteRevisedProposal: boolean; wroteValidation: boolean; wroteApprovalRequest: boolean; wroteFeedbackRevision: boolean; idempotent: boolean };
+      draftPreview: { draftPreviewHash: string; status: string; unresolvedFeedback: unknown[] };
+    }>(confirm.stdout);
+    expect(payload).toMatchObject({
+      confirmed: true,
+      didWrite: true,
+      draftPreview: { draftPreviewHash: dryPayload.draftPreview.draftPreviewHash, status: 'generated', unresolvedFeedback: [] },
+      actualActions: {
+        wroteRevisedProposal: true,
+        wroteValidation: true,
+        wroteApprovalRequest: true,
+        wroteFeedbackRevision: true,
+        idempotent: false,
+      },
+    });
+    const revised = JSON.parse(readFileSync(join(root, 'evolution', 'proposals', `${payload.revisedProposalId}.json`), 'utf8')) as { title: string; feedbackContext?: { incorporationNote?: string }; revisionMetadata?: { resubmissionReason?: string } };
+    expect(revised.title).toBe('只处理 ModelHub timeout');
+    expect(revised.feedbackContext?.incorporationNote).toContain(dryPayload.draftPreview.draftPreviewHash.slice(0, 12));
+    expect(revised.revisionMetadata?.resubmissionReason).toContain(dryPayload.draftPreview.draftPreviewHash.slice(0, 12));
+    expect(existsSync(join(root, 'evolution', 'validations', `${payload.revisedValidationId}.json`))).toBe(true);
+    expect(existsSync(join(root, 'evolution', 'approval-requests', `${payload.revisedApprovalRequestId}.json`))).toBe(true);
+    expect(existsSync(join(root, 'evolution', 'feedback-revisions', `${payload.feedbackRevisionId}.json`))).toBe(true);
+
+    const second = runWithCapturedOutput(root, [
+      'revise',
+      'feedback',
+      '--confirm',
+      '--decision-id',
+      source.decisionId,
+      '--llm-draft',
+      '--draft-preview-hash',
+      dryPayload.draftPreview.draftPreviewHash,
+      '--json',
+    ]);
+    await expect(second.result).resolves.toMatchObject({ exitCode: 0 });
+    const secondPayload = parseJsonData<{ confirmed: boolean; revisedProposalId: string; actualActions: { idempotent: boolean; wroteFeedbackRevision: boolean } }>(second.stdout);
+    expect(secondPayload).toMatchObject({
+      confirmed: true,
+      revisedProposalId: payload.revisedProposalId,
+      actualActions: { idempotent: true, wroteFeedbackRevision: false },
+    });
+  });
+
+  it('does not write when an LLM draft confirm is model-unavailable or blocked', async () => {
+    const modelRoot = tempRoot();
+    const modelCase = seedDecision(modelRoot, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    stubProviderEnabled = false;
+    const modelBefore = evolutionFileCounts(modelRoot);
+    const modelDry = runWithCapturedOutput(modelRoot, ['revise', 'feedback', '--dry-run', '--decision-id', modelCase.decisionId, '--llm-draft', '--json']);
+    await expect(modelDry.result).resolves.toMatchObject({ exitCode: 0 });
+    const modelDryPayload = parseJsonData<{ draftPreview: { draftPreviewHash: string; status: string } }>(modelDry.stdout);
+    expect(modelDryPayload.draftPreview.status).toBe('model-unavailable');
+    const modelConfirm = runWithCapturedOutput(modelRoot, ['revise', 'feedback', '--confirm', '--decision-id', modelCase.decisionId, '--llm-draft', '--draft-preview-hash', modelDryPayload.draftPreview.draftPreviewHash, '--json']);
+    await expect(modelConfirm.result).resolves.toMatchObject({ exitCode: 0 });
+    const modelPayload = parseJsonData<{ confirmed: boolean; actualActions: { wroteRevisedProposal: boolean }; manualCheckReasons: string[] }>(modelConfirm.stdout);
+    expect(modelPayload.confirmed).toBe(false);
+    expect(modelPayload.actualActions.wroteRevisedProposal).toBe(false);
+    expect(modelPayload.manualCheckReasons.join('\n')).toContain('draftPreview status is model-unavailable');
+    expect(evolutionFileCounts(modelRoot)).toEqual(modelBefore);
+
+    stubProviderEnabled = true;
+    const blockedRoot = tempRoot();
+    const blockedCase = seedDecision(blockedRoot, '这个不在范围，安全边界不允许改。');
+    const blockedBefore = evolutionFileCounts(blockedRoot);
+    const blockedDry = runWithCapturedOutput(blockedRoot, ['revise', 'feedback', '--dry-run', '--decision-id', blockedCase.decisionId, '--llm-draft', '--json']);
+    await expect(blockedDry.result).resolves.toMatchObject({ exitCode: 0 });
+    const blockedDryPayload = parseJsonData<{ draftPreview: { draftPreviewHash: string; status: string } }>(blockedDry.stdout);
+    expect(blockedDryPayload.draftPreview.status).toBe('blocked');
+    const blockedConfirm = runWithCapturedOutput(blockedRoot, ['revise', 'feedback', '--confirm', '--decision-id', blockedCase.decisionId, '--llm-draft', '--draft-preview-hash', blockedDryPayload.draftPreview.draftPreviewHash, '--json']);
+    await expect(blockedConfirm.result).resolves.toMatchObject({ exitCode: 0 });
+    const blockedPayload = parseJsonData<{ confirmed: boolean; actualActions: { wroteRevisedProposal: boolean }; blockedReasons: string[] }>(blockedConfirm.stdout);
+    expect(blockedPayload.confirmed).toBe(false);
+    expect(blockedPayload.actualActions.wroteRevisedProposal).toBe(false);
+    expect(blockedPayload.blockedReasons.join('\n')).toContain('draftPreview status is blocked');
+    expect(evolutionFileCounts(blockedRoot)).toEqual(blockedBefore);
   });
 
   it('fails closed when no model provider is available for llm draft preview', async () => {
