@@ -155,6 +155,7 @@ interface ReviseFeedbackOptions extends OutputFlags {
   confirm?: boolean;
   decisionId?: string;
   pending?: boolean;
+  llmDraft?: boolean;
 }
 
 interface ObserveResult {
@@ -686,6 +687,55 @@ interface ReviseFeedbackPlan {
   };
 }
 
+type FeedbackRevisionDraftPreviewStatus =
+  | 'generated'
+  | 'model-unavailable'
+  | 'manual-review'
+  | 'blocked';
+
+interface FeedbackRevisionDraftPreview {
+  dryRun: true;
+  wouldWrite: false;
+  requiresExplicitConfirm: true;
+  status: FeedbackRevisionDraftPreviewStatus;
+  provider?: string;
+  model?: string;
+  modelStatus: 'available' | 'unavailable' | 'not-called';
+  inputSummary: {
+    decisionId: string;
+    approvalRequestId?: string;
+    proposalId?: string;
+    validationId?: string;
+    approvalRequestFound: boolean;
+    proposalFound: boolean;
+    validationFound: boolean;
+    decisionDirection?: string;
+  };
+  planner: {
+    verdict: FeedbackRewritePlannerVerdict;
+    revisionDepth: number;
+    revisionDepthLimit: number;
+    noOpVerdict: RevisionNoOpCheck['verdict'];
+    validationBlockingReasons: string[];
+  };
+  promptPackage?: {
+    systemPrompt: string;
+    userPrompt: string;
+    modelInstructions: string[];
+  };
+  rewritePlan: string[];
+  draftProposal?: {
+    format: 'markdown' | 'json';
+    content: string;
+  };
+  draftPatch?: Record<string, unknown>;
+  addressedFeedback: FeedbackRequirementResolution[];
+  unresolvedFeedback: FeedbackRequirementResolution[];
+  manualReviewReasons: string[];
+  blockedReasons: string[];
+  nextAction: string;
+}
+
 interface ReviseFeedbackResult {
   command: 'revise feedback';
   mode: 'dry-run' | 'confirm';
@@ -722,6 +772,7 @@ interface ReviseFeedbackResult {
   revisionDepthLimit: number;
   exceedsRevisionDepthLimit?: boolean;
   operatorPreflight: ReviseFeedbackOperatorPreflight;
+  draftPreview?: FeedbackRevisionDraftPreview;
 }
 
 export interface ReviseFeedbackOperatorPreflight {
@@ -1507,12 +1558,15 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
     .option('--confirm', 'write one revised proposal, feedback-revision, and approval request')
     .option('--decision-id <id>', 'approval-decision id to plan from')
     .option('--pending', 'plan or confirm all pending request-changes decisions')
+    .option('--llm-draft', 'generate a read-only LLM rewrite draft preview; never writes artifacts')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
-    .action((options: ReviseFeedbackOptions) => {
+    .action(async (options: ReviseFeedbackOptions) => {
       const mode = resolveOutputMode(options, app.stdout);
       try {
-        const result = reviseFeedback(app, options);
+        const result = options.llmDraft
+          ? await reviseFeedbackWithDraftPreview(app, options)
+          : reviseFeedback(app, options);
         if (mode === 'json') {
           renderJson(result, { stdout: app.stdout });
           return;
@@ -1563,6 +1617,25 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
               ...plan.validationBlockingReasons.map((reason) => `  validationBlocker: ${reason}`),
               ...plan.skippedReasons.map((reason) => `  skipped: ${reason}`),
             ].join('\n')),
+            ...(result.draftPreview
+              ? [
+                  'LLM draft preview:',
+                  `  status: ${result.draftPreview.status}`,
+                  `  provider: ${result.draftPreview.provider ?? '(unavailable)'}`,
+                  `  model: ${result.draftPreview.model ?? '(unavailable)'}`,
+                  `  modelStatus: ${result.draftPreview.modelStatus}`,
+                  `  dryRun: ${result.draftPreview.dryRun}`,
+                  `  wouldWrite: ${result.draftPreview.wouldWrite}`,
+                  `  requiresExplicitConfirm: ${result.draftPreview.requiresExplicitConfirm}`,
+                  `  rewritePlan: ${result.draftPreview.rewritePlan.join(' | ') || '(none)'}`,
+                  `  addressedFeedback: ${result.draftPreview.addressedFeedback.length}`,
+                  `  unresolvedFeedback: ${result.draftPreview.unresolvedFeedback.length}`,
+                  ...result.draftPreview.manualReviewReasons.map((reason) => `  manualReview: ${reason}`),
+                  ...result.draftPreview.blockedReasons.map((reason) => `  blocked: ${reason}`),
+                  `  nextAction: ${result.draftPreview.nextAction}`,
+                  '  该预览没有写入新版提案，也不会通知重审。',
+                ]
+              : []),
           ].join('\n') + '\n',
         );
       } catch (error) {
@@ -3490,6 +3563,323 @@ function reviseFeedback(app: AppContext, options: ReviseFeedbackOptions): Revise
       exceedsRevisionDepthLimit: first.exceedsRevisionDepthLimit,
     } : {}),
   };
+}
+
+async function reviseFeedbackWithDraftPreview(app: AppContext, options: ReviseFeedbackOptions): Promise<ReviseFeedbackResult> {
+  if (!options.dryRun || options.confirm) {
+    throw new CommanderExit(2, '`haro revise feedback --llm-draft` is read-only and requires --dry-run without --confirm.');
+  }
+  if (!options.decisionId || options.pending) {
+    throw new CommanderExit(2, '`haro revise feedback --llm-draft` requires exactly one --decision-id and does not support --pending.');
+  }
+  const result = reviseFeedback(app, options);
+  const plan = result.plans[0];
+  if (!plan) {
+    throw new CommanderExit(1, `No revision plan found for ${options.decisionId}.`);
+  }
+  return {
+    ...result,
+    draftPreview: await buildFeedbackRevisionDraftPreview(app, plan),
+  };
+}
+
+async function buildFeedbackRevisionDraftPreview(
+  app: AppContext,
+  plan: ReviseFeedbackPlan,
+): Promise<FeedbackRevisionDraftPreview> {
+  const source = readFeedbackRevisionDraftInput(app.paths.root, plan);
+  const base = createFeedbackRevisionDraftPreviewBase(plan, source);
+  if (!isReviseFeedbackPlanSafeToConfirm(plan)) {
+    const blocked = plan.plannerVerdict === 'blocked' || plan.blockedReasons.length > 0 || plan.validationBlockingReasons.some((reason) => reason.startsWith('REVISION_NO_OP'));
+    return {
+      ...base,
+      status: blocked ? 'blocked' : 'manual-review',
+      modelStatus: 'not-called',
+      rewritePlan: [],
+      addressedFeedback: [],
+      unresolvedFeedback: plan.parsedRequirements,
+      manualReviewReasons: uniqueSorted([
+        ...plan.manualCheckReasons,
+        ...plan.skippedReasons,
+        ...(plan.plannerVerdict === 'needs-more-info' ? ['feedback needs more information before LLM draft preview'] : []),
+      ]),
+      blockedReasons: uniqueSorted([
+        ...plan.blockedReasons,
+        ...plan.validationBlockingReasons,
+      ]),
+      nextAction: blocked
+        ? '先处理 blocked reason；本轮不会生成修改草稿。'
+        : '先人工复核 manual-review reason；本轮不会生成正式新版提案。',
+    };
+  }
+
+  const promptPackage = buildFeedbackRevisionDraftPrompt(plan, source);
+  const provider = app.providerRegistry.tryGet('codex') ?? app.providerRegistry.list()[0];
+  if (!provider) {
+    return {
+      ...base,
+      status: 'model-unavailable',
+      modelStatus: 'unavailable',
+      promptPackage,
+      rewritePlan: [],
+      addressedFeedback: [],
+      unresolvedFeedback: plan.parsedRequirements,
+      manualReviewReasons: ['no registered Haro provider is available for LLM draft preview'],
+      blockedReasons: [],
+      nextAction: '先接入可用模型，再重新运行只读草稿预览。',
+    };
+  }
+
+  const model = await resolveDraftPreviewModel(provider);
+  const healthy = await provider.healthCheck().catch(() => false);
+  if (!healthy) {
+    return {
+      ...base,
+      status: 'model-unavailable',
+      provider: provider.id,
+      ...(model ? { model } : {}),
+      modelStatus: 'unavailable',
+      promptPackage,
+      rewritePlan: [],
+      addressedFeedback: [],
+      unresolvedFeedback: plan.parsedRequirements,
+      manualReviewReasons: [`provider ${provider.id} failed health check for LLM draft preview`],
+      blockedReasons: [],
+      nextAction: '先修复模型健康检查，再重新运行只读草稿预览。',
+    };
+  }
+
+  const raw = await runDraftPreviewProvider(provider, {
+    systemPrompt: promptPackage.systemPrompt,
+    userPrompt: promptPackage.userPrompt,
+    model,
+  });
+  if (!raw.ok) {
+    return {
+      ...base,
+      status: 'model-unavailable',
+      provider: provider.id,
+      ...(model ? { model } : {}),
+      modelStatus: 'unavailable',
+      promptPackage,
+      rewritePlan: [],
+      addressedFeedback: [],
+      unresolvedFeedback: plan.parsedRequirements,
+      manualReviewReasons: [raw.reason],
+      blockedReasons: [],
+      nextAction: '模型未返回可用草稿；不要生成新版提案。',
+    };
+  }
+
+  const normalized = normalizeDraftPreviewOutput(raw.content, plan);
+  return {
+    ...base,
+    status: 'generated',
+    provider: provider.id,
+    ...(model ? { model } : {}),
+    modelStatus: 'available',
+    rewritePlan: normalized.rewritePlan,
+    draftProposal: normalized.draftProposal,
+    ...(normalized.draftPatch ? { draftPatch: normalized.draftPatch } : {}),
+    addressedFeedback: normalized.addressedFeedback,
+    unresolvedFeedback: normalized.unresolvedFeedback,
+    manualReviewReasons: normalized.manualReviewReasons,
+    blockedReasons: [],
+    nextAction: '请人工审阅草稿。确认后再进入后续正式修订切片。',
+  };
+}
+
+function readFeedbackRevisionDraftInput(root: string, plan: ReviseFeedbackPlan): {
+  decision?: ApprovalDecisionRecord;
+  approvalRequest?: ApprovalRequestRecord;
+  proposal?: EvolutionProposal;
+  validation?: ValidationReport;
+} {
+  const decision = readApprovalDecisionById(root, plan.decisionId);
+  const approvalRequest = plan.approvalRequestId ? readApprovalRequestById(root, plan.approvalRequestId) : undefined;
+  const proposal = plan.proposalId ? readProposalById(root, plan.proposalId) : undefined;
+  const validation = plan.validationId ? readValidationById(root, plan.validationId) : undefined;
+  return { decision, approvalRequest, proposal, validation };
+}
+
+function createFeedbackRevisionDraftPreviewBase(
+  plan: ReviseFeedbackPlan,
+  source: ReturnType<typeof readFeedbackRevisionDraftInput>,
+): Omit<FeedbackRevisionDraftPreview, 'status' | 'modelStatus' | 'rewritePlan' | 'addressedFeedback' | 'unresolvedFeedback' | 'manualReviewReasons' | 'blockedReasons' | 'nextAction'> {
+  return {
+    dryRun: true,
+    wouldWrite: false,
+    requiresExplicitConfirm: true,
+    inputSummary: {
+      decisionId: plan.decisionId,
+      ...(plan.approvalRequestId ? { approvalRequestId: plan.approvalRequestId } : {}),
+      ...(plan.proposalId ? { proposalId: plan.proposalId } : {}),
+      ...(plan.validationId ? { validationId: plan.validationId } : {}),
+      approvalRequestFound: source.approvalRequest !== undefined,
+      proposalFound: source.proposal !== undefined,
+      validationFound: source.validation !== undefined,
+      ...(source.decision?.direction ? { decisionDirection: source.decision.direction } : {}),
+    },
+    planner: {
+      verdict: plan.plannerVerdict,
+      revisionDepth: plan.revisionDepth,
+      revisionDepthLimit: plan.revisionDepthLimit,
+      noOpVerdict: plan.noOpCheck.verdict,
+      validationBlockingReasons: plan.validationBlockingReasons,
+    },
+  };
+}
+
+function buildFeedbackRevisionDraftPrompt(
+  plan: ReviseFeedbackPlan,
+  source: ReturnType<typeof readFeedbackRevisionDraftInput>,
+): NonNullable<FeedbackRevisionDraftPreview['promptPackage']> {
+  const systemPrompt = [
+    '你是 Haro sidecar 的只读修改草稿助手。',
+    '你只能输出修改预览，不能声称已经写入。',
+    '不要 approve、apply、rollback 或 confirm。',
+    '用中文短句说明修改计划。',
+  ].join('\n');
+  const modelInstructions = [
+    '返回 JSON，字段包含 rewritePlan、draftProposal、addressedFeedback、unresolvedFeedback、manualReviewReasons。',
+    'draftProposal 只是草稿，不是正式 proposal artifact。',
+    '如信息不足，把不确定项放入 unresolvedFeedback。',
+  ];
+  const userPayload = {
+    task: '生成 request-changes 后的只读修改草稿预览。',
+    decision: source.decision ? {
+      id: source.decision.id,
+      decision: source.decision.decision,
+      direction: source.decision.direction,
+    } : undefined,
+    approvalRequest: source.approvalRequest ? {
+      id: source.approvalRequest.id,
+      title: source.approvalRequest.title,
+      whyChange: source.approvalRequest.whyChange,
+      howChange: source.approvalRequest.howChange,
+      reviewerInstruction: source.approvalRequest.reviewerInstruction,
+    } : undefined,
+    proposal: source.proposal ? {
+      id: source.proposal.id,
+      title: source.proposal.title,
+      targetKind: source.proposal.targetKind,
+      level: source.proposal.level,
+      changeSet: source.proposal.changeSet,
+      testPlan: source.proposal.testPlan,
+      rollbackPlan: source.proposal.rollbackPlan,
+    } : undefined,
+    validation: source.validation ? {
+      id: source.validation.id,
+      riskVerdict: source.validation.riskVerdict,
+      applyEligible: source.validation.applyEligible,
+      blockingReasons: source.validation.blockingReasons,
+      requiredTests: source.validation.requiredTests,
+    } : undefined,
+    planner: {
+      verdict: plan.plannerVerdict,
+      requirements: plan.parsedRequirements,
+      noOpCheck: plan.noOpCheck,
+      validationBlockingReasons: plan.validationBlockingReasons,
+      revisionDepth: plan.revisionDepth,
+      revisionDepthLimit: plan.revisionDepthLimit,
+    },
+  };
+  return {
+    systemPrompt,
+    modelInstructions,
+    userPrompt: `${modelInstructions.join('\n')}\n\n${JSON.stringify(userPayload, null, 2)}`,
+  };
+}
+
+async function resolveDraftPreviewModel(provider: object): Promise<string | undefined> {
+  const listModels = (provider as { listModels?: () => Promise<readonly { id: string }[]> }).listModels;
+  const models = await listModels?.call(provider).catch(() => []);
+  return models?.[0]?.id;
+}
+
+async function runDraftPreviewProvider(
+  provider: { query: (params: { prompt: string; systemPrompt?: string; model?: string }) => AsyncGenerator<{ type: string; content?: string; message?: string }, void, void> },
+  input: { systemPrompt: string; userPrompt: string; model?: string },
+): Promise<{ ok: true; content: string } | { ok: false; reason: string }> {
+  const chunks: string[] = [];
+  try {
+    for await (const event of provider.query({
+      prompt: input.userPrompt,
+      systemPrompt: input.systemPrompt,
+      ...(input.model ? { model: input.model } : {}),
+    })) {
+      if ((event.type === 'text' || event.type === 'result') && typeof event.content === 'string') {
+        chunks.push(event.content);
+      } else if (event.type === 'error') {
+        return { ok: false, reason: event.message ?? 'provider returned error event' };
+      }
+    }
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  const content = chunks.join('').trim();
+  return content.length > 0
+    ? { ok: true, content }
+    : { ok: false, reason: 'provider returned empty draft preview' };
+}
+
+function normalizeDraftPreviewOutput(raw: string, plan: ReviseFeedbackPlan): {
+  rewritePlan: string[];
+  draftProposal: FeedbackRevisionDraftPreview['draftProposal'];
+  draftPatch?: Record<string, unknown>;
+  addressedFeedback: FeedbackRequirementResolution[];
+  unresolvedFeedback: FeedbackRequirementResolution[];
+  manualReviewReasons: string[];
+} {
+  const parsed = parseMaybeJsonObject(raw);
+  if (!parsed) {
+    return {
+      rewritePlan: [raw],
+      draftProposal: { format: 'markdown', content: raw },
+      addressedFeedback: plan.parsedRequirements,
+      unresolvedFeedback: [],
+      manualReviewReasons: [],
+    };
+  }
+  const rewritePlan = stringArrayValue(parsed.rewritePlan);
+  const draftProposalValue = parsed.draftProposal ?? parsed.draftPatch;
+  const draftProposal = typeof draftProposalValue === 'string'
+    ? { format: 'markdown' as const, content: draftProposalValue }
+    : draftProposalValue !== undefined
+      ? { format: 'json' as const, content: JSON.stringify(draftProposalValue, null, 2) }
+      : undefined;
+  const addressedFeedback = parseDraftRequirementList(parsed.addressedFeedback, plan.parsedRequirements);
+  const unresolvedFeedback = parseDraftRequirementList(parsed.unresolvedFeedback, []);
+  return {
+    rewritePlan: rewritePlan.length > 0 ? rewritePlan : ['LLM 返回了草稿，但未提供 rewritePlan 字段。'],
+    draftProposal: draftProposal ?? { format: 'markdown', content: raw },
+    ...(isRecord(parsed.draftPatch) ? { draftPatch: parsed.draftPatch } : {}),
+    addressedFeedback,
+    unresolvedFeedback,
+    manualReviewReasons: stringArrayValue(parsed.manualReviewReasons),
+  };
+}
+
+function parseMaybeJsonObject(raw: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(raw);
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function stringArrayValue(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => (typeof item === 'string' && item.trim().length > 0 ? [item] : []));
+  return typeof value === 'string' && value.trim().length > 0 ? [value] : [];
+}
+
+function parseDraftRequirementList(value: unknown, fallback: FeedbackRequirementResolution[]): FeedbackRequirementResolution[] {
+  if (!Array.isArray(value)) return fallback;
+  return value.flatMap((item) => {
+    const parsed = FeedbackRequirementResolutionSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
 }
 
 

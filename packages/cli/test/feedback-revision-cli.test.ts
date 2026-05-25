@@ -7,15 +7,29 @@ import { AgentRegistry, ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
 
+let stubProviderEnabled = true;
+let stubProviderHealthy = true;
+let stubProviderResponse = JSON.stringify({
+  rewritePlan: ['把提案收窄到 ModelHub timeout。', '补充样本、风险和回滚。'],
+  draftProposal: {
+    title: '只处理 ModelHub timeout',
+    whyChange: ['旧提案没有写清具体错误。'],
+    howChange: ['新增一条具体处理规则。'],
+  },
+  addressedFeedback: [],
+  unresolvedFeedback: [],
+  manualReviewReasons: [],
+});
+
 class StubProvider implements AgentProvider {
   readonly id = 'codex';
   capabilities() {
     return { streaming: false, toolLoop: false, contextCompaction: false, contextContinuation: true } as const;
   }
-  async healthCheck(): Promise<boolean> { return true; }
+  async healthCheck(): Promise<boolean> { return stubProviderHealthy; }
   async listModels(): Promise<readonly { id: string }[]> { return [{ id: 'codex-primary' }]; }
   async *query(params: AgentQueryParams): AsyncGenerator<AgentEvent, void, void> {
-    yield { type: 'result', content: `echo:${params.prompt}`, responseId: 'resp-1' };
+    yield { type: 'result', content: stubProviderResponse, responseId: 'resp-1' };
   }
 }
 
@@ -36,7 +50,7 @@ function createAgentRegistry(): AgentRegistry {
 
 function createProviderRegistry(): ProviderRegistry {
   const registry = new ProviderRegistry();
-  registry.register(new StubProvider());
+  if (stubProviderEnabled) registry.register(new StubProvider());
   return registry;
 }
 
@@ -320,6 +334,19 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    stubProviderEnabled = true;
+    stubProviderHealthy = true;
+    stubProviderResponse = JSON.stringify({
+      rewritePlan: ['把提案收窄到 ModelHub timeout。', '补充样本、风险和回滚。'],
+      draftProposal: {
+        title: '只处理 ModelHub timeout',
+        whyChange: ['旧提案没有写清具体错误。'],
+        howChange: ['新增一条具体处理规则。'],
+      },
+      addressedFeedback: [],
+      unresolvedFeedback: [],
+      manualReviewReasons: [],
+    });
   });
 
   it('plans a scope-reduction request-changes rewrite without writing files', async () => {
@@ -364,6 +391,128 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       dryRunCommands: [`haro revise feedback --dry-run --decision-id ${decisionId}`],
       dryRunCommandRecords: [{ source: 'feedback-rewrite', command: `haro revise feedback --dry-run --decision-id ${decisionId}`, decisionId }],
     });
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('generates a read-only LLM draft preview with a mocked provider', async () => {
+    const root = tempRoot();
+    const { decisionId, approvalRequestId, proposalId } = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    stubProviderResponse = JSON.stringify({
+      rewritePlan: ['把范围收窄到 ModelHub timeout。', '补充样本、风险和回滚。'],
+      draftProposal: {
+        title: '只处理 ModelHub timeout',
+        whyChange: ['旧提案没有写清具体错误。'],
+        howChange: ['新增一条 timeout 处理规则。'],
+      },
+      addressedFeedback: [],
+      unresolvedFeedback: [],
+      manualReviewReasons: [],
+    });
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', decisionId, '--llm-draft', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      dryRun: boolean;
+      wouldWrite: boolean;
+      draftPreview: {
+        dryRun: boolean;
+        wouldWrite: boolean;
+        requiresExplicitConfirm: boolean;
+        status: string;
+        provider: string;
+        model: string;
+        modelStatus: string;
+        inputSummary: {
+          decisionId: string;
+          approvalRequestId: string;
+          proposalId: string;
+          approvalRequestFound: boolean;
+          proposalFound: boolean;
+          validationFound: boolean;
+        };
+        planner: { verdict: string; noOpVerdict: string };
+        rewritePlan: string[];
+        draftProposal: { format: string; content: string };
+        addressedFeedback: unknown[];
+        unresolvedFeedback: unknown[];
+        nextAction: string;
+      };
+    }>(stdout);
+    expect(payload).toMatchObject({ dryRun: true, wouldWrite: false });
+    expect(payload.draftPreview).toMatchObject({
+      dryRun: true,
+      wouldWrite: false,
+      requiresExplicitConfirm: true,
+      status: 'generated',
+      provider: 'codex',
+      model: 'codex-primary',
+      modelStatus: 'available',
+      inputSummary: {
+        decisionId,
+        approvalRequestId,
+        proposalId,
+        approvalRequestFound: true,
+        proposalFound: true,
+        validationFound: true,
+      },
+      planner: { verdict: 'can-rewrite', noOpVerdict: 'substantive-change' },
+      rewritePlan: ['把范围收窄到 ModelHub timeout。', '补充样本、风险和回滚。'],
+    });
+    expect(payload.draftPreview.draftProposal.content).toContain('只处理 ModelHub timeout');
+    expect(payload.draftPreview.nextAction).toContain('人工审阅');
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('fails closed when no model provider is available for llm draft preview', async () => {
+    const root = tempRoot();
+    const { decisionId } = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    stubProviderEnabled = false;
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', decisionId, '--llm-draft', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      draftPreview: {
+        status: string;
+        modelStatus: string;
+        promptPackage: { systemPrompt: string; userPrompt: string; modelInstructions: string[] };
+        manualReviewReasons: string[];
+        unresolvedFeedback: unknown[];
+        draftProposal?: unknown;
+      };
+    }>(stdout);
+    expect(payload.draftPreview.status).toBe('model-unavailable');
+    expect(payload.draftPreview.modelStatus).toBe('unavailable');
+    expect(payload.draftPreview.promptPackage.systemPrompt).toContain('只读修改草稿助手');
+    expect(payload.draftPreview.promptPackage.modelInstructions.length).toBeGreaterThan(0);
+    expect(payload.draftPreview.manualReviewReasons.join('\n')).toContain('no registered Haro provider');
+    expect(payload.draftPreview.unresolvedFeedback.length).toBeGreaterThan(0);
+    expect(payload.draftPreview.draftProposal).toBeUndefined();
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('does not call the model for blocked/manual-check draft previews', async () => {
+    const root = tempRoot();
+    const { decisionId } = seedDecision(root, '这个不在范围，安全边界不允许改。');
+    const before = evolutionFileCounts(root);
+    const { result, stdout } = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', decisionId, '--llm-draft', '--json']);
+
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      draftPreview: {
+        status: string;
+        modelStatus: string;
+        rewritePlan: string[];
+        blockedReasons: string[];
+        draftProposal?: unknown;
+      };
+    }>(stdout);
+    expect(payload.draftPreview.status).toBe('blocked');
+    expect(payload.draftPreview.modelStatus).toBe('not-called');
+    expect(payload.draftPreview.rewritePlan).toEqual([]);
+    expect(payload.draftPreview.blockedReasons.join('\n')).toContain('out of scope');
+    expect(payload.draftPreview.draftProposal).toBeUndefined();
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

@@ -793,6 +793,60 @@ Web API lifecycle 追加 `executionFeedback`。
 
 真实处理仍要人工确认。
 
+### 10.10 FEAT-082A LLM draft preview
+
+审批被 request-changes 后，
+Haro 可生成只读草稿预览。
+
+入口：
+
+```bash
+haro revise feedback --dry-run --decision-id <approval_decision_id> --llm-draft
+```
+
+该入口只读。
+
+它读取这些输入：
+
+- 原 approval request。
+- 原 proposal。
+- 用户打回意见。
+- validation report。
+- 当前 planner / no-op gate。
+
+输出包含这些部分：
+
+- `draftPreview.dryRun=true`。
+- `wouldWrite=false`。
+- 模型 provider / model / status。
+- input summary。
+- rewrite plan。
+- draft proposal 或 draft patch。
+- addressed feedback。
+- unresolved feedback。
+- manual review / blocked reasons。
+- next action。
+
+模型不可用时必须 fail closed。
+
+此时不能伪造草稿。
+
+输出 `promptPackage`。
+
+后续可用真实模型重试。
+
+本切片不写新版 proposal。
+
+它不写 feedback revision。
+
+它不生成 approval request。
+
+它不通知用户重审。
+
+FEAT-082B 才能做人审确认后的正式写入。
+
+FEAT-082C 才能做重审通知。
+
 ## 11. Negative scope
 
 10C 和后续 FEAT-076 系列不得做这些事：
