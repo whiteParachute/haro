@@ -156,26 +156,15 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.deleteAllowedCount).toBe(0);
     expect(payload.data.summary.total).toBeGreaterThanOrEqual(6);
     expect(payload.data.summary.stillReferencedCount).toBeGreaterThan(0);
-    expect(payload.data.summary.verifiedAbsentCount).toBeGreaterThanOrEqual(5);
+    expect(payload.data.summary.verifiedAbsentCount).toBeGreaterThanOrEqual(7);
     expect(payload.data.summary.verifiedAbsentFailedCount).toBe(0);
-    expect(payload.data.summary.nextSafeCandidateCount).toBe(1);
+    expect(payload.data.summary.nextSafeCandidateCount).toBe(0);
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(1);
     expect(payload.data.planning).toMatchObject({
       stage: 'FEAT-081F',
-      nextDeletionCandidate: {
-        id: 'channel-layer',
-        nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
-      },
+      nextDeletionCandidate: null,
     });
-    expect(payload.data.planning.nextDeletionCandidate?.reason).toContain('channel onboarding CLI');
-    expect(payload.data.planning.nextDeletionCandidate?.requiredBeforeDelete.join('\n')).toContain('haro channel setup/onboarding');
-    expect(payload.data.planning.nextDeletionCandidate?.forbiddenScope).toEqual(expect.arrayContaining([
-      'packages/channel',
-      'packages/channel-feishu',
-      'packages/channel-telegram',
-      'packages/mcp-tools/src/tools/send-message.ts',
-    ]));
     expect(payload.data.planning.forbiddenCandidateIds).toContain('web-dashboard-non-review');
     expect(payload.data.planning.blockedCandidateIds).toEqual(expect.arrayContaining([
       'provider-codex',
@@ -191,11 +180,16 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     const channelLayer = byId.get('channel-layer');
     expect(channelLayer).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     expect(channelLayer?.candidatePriority).toMatchObject({
-      status: 'next-safe-candidate',
+      status: 'done',
       rank: 1,
       nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
     });
     expect(channelLayer?.candidatePriority.forbiddenScope).toContain('packages/channel-feishu');
+    expect(channelLayer?.pilotUnbind).toMatchObject({
+      candidate: 'packages/cli/src/channel.ts#setup-onboarding',
+      status: 'default-path-unbound',
+    });
+    expect(channelLayer?.pilotUnbind?.note).toContain('FEAT-081G');
     expect(channelLayer?.physicalRemoval).toMatchObject({
       candidate: 'packages/cli/src/gateway.ts',
       status: 'physically-removed',
@@ -204,6 +198,8 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(channelLayer?.physicalRemoval?.note).toContain('未获物理删除批准');
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.path === 'packages/cli/src/gateway.ts')).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('legacy env'))).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('不再调用旧 channel.setup'))).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('不再写入 channel config'))).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/channel/package.json')?.present).toBe(true);
     expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/mcp-tools/src/tools/send-message.ts')?.present).toBe(true);
     expect(byId.get('memory-fabric')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
@@ -248,11 +244,12 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('081F next deletion candidate: channel-layer scope=packages/cli/src/channel.ts#setup-onboarding');
+    expect(text).toContain('081F next deletion candidate: none');
     expect(text).toContain('081F forbidden now: web-dashboard-non-review');
     expect(text).toContain('verifiedAbsent: total=');
     expect(text).toContain('failed=0');
-    expect(text).toContain('priority=next-safe-candidate#1');
+    expect(text).toContain('priority=done#1');
+    expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/channel.ts#setup-onboarding');
     expect(text).toContain('FEAT-081D');
     expect(text).toContain('FEAT-081E');
     expect(text).toContain('physicalRemoval=physically-removed:packages/core/src/team-orchestrator.ts:FEAT-081D');

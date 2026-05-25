@@ -87,7 +87,7 @@ export async function runSetup(input: {
   const nextSteps = [
     `haro doctor`,
     `haro run "列出当前目录下的 TypeScript 文件"`,
-    `haro channel setup feishu`,
+    `haro channel doctor feishu`,
   ];
 
   const lines = [

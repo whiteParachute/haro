@@ -994,6 +994,37 @@ function formatProviderModels(provider: string, models: readonly { id: string; m
 }
 
 function registerChannelCommands(program: Command, app: AppContext): void {
+  const renderRemovedOnboarding = (id: string, options: { json?: boolean; human?: boolean } = {}) => {
+    const report = {
+      command: 'channel setup',
+      channelId: id,
+      status: 'removed',
+      code: 'LEGACY_CHANNEL_ONBOARDING_REMOVED',
+      legacy: true,
+      dryRun: true,
+      wouldConfigure: false,
+      pilotUnbind: {
+        candidate: 'packages/cli/src/channel.ts#setup-onboarding',
+        status: 'default-path-unbound',
+        removedBy: 'FEAT-081G',
+      },
+      message: `channel setup/onboarding 旧入口已在 FEAT-081G 下线：${id} 不会启动旧 onboarding，也不会写入 channel 配置。`,
+      nextActions: [
+        '不要再通过 haro channel setup/onboarding 新增 Haro-owned channel 能力。',
+        '生产消息能力仍由现有 Feishu/Telegram channel 与 MCP send_message 路径保留；后续迁移必须单项评审。',
+      ],
+    };
+    const mode = resolveOutputMode(options, app.stdout);
+    if (mode === 'json') {
+      renderJson(report, { stdout: app.stdout });
+    } else {
+      writeLegacySurfaceWarning(app);
+      app.stdout.write(`${report.message}\n`);
+      app.stdout.write('该摘线不删除 channel/channel-feishu/channel-telegram，也不影响 MCP send_message。\n');
+    }
+    throw new CommanderExit(2, report.message);
+  };
+
   registerCommand(
     'channel',
     (cmd) => {
@@ -1083,7 +1114,7 @@ function registerChannelCommands(program: Command, app: AppContext): void {
             renderJsonDiagnostic(report, { stdout: app.stdout, stderr: app.stderr }, {
               code: 'CHANNEL_DOCTOR_FAILED',
               message: `channel doctor ${id} found issues: ${report.message}`,
-              remediation: `Run \`haro channel setup ${id}\` then rerun \`haro channel doctor ${id}\`.`,
+              remediation: `Fix the channel configuration outside the removed Haro-owned onboarding path, then rerun \`haro channel doctor ${id}\`.`,
             });
           } else {
             writeLegacySurfaceWarningForMode(app, mode);
@@ -1097,20 +1128,16 @@ function registerChannelCommands(program: Command, app: AppContext): void {
       cmd
         .command('setup')
         .argument('<id>', 'channel id')
-        .action(async (id: string) => {
-          writeLegacySurfaceWarning(app);
-          const entry = app.channelRegistry.getEntry(id);
-          if (typeof entry.channel.setup !== 'function') {
-            throw new CommanderExit(1, `Channel '${id}' does not provide setup()`);
-          }
-          const result = await entry.channel.setup(createChannelSetupContext(app, id));
-          if (!result.ok) {
-            throw new CommanderExit(1, result.message);
-          }
-          updateChannelConfig(app, id, { ...result.config, enabled: true });
-          app.channelRegistry.enable(id);
-          app.stdout.write(`${result.message}\n`);
-        });
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action((id: string, options: { json?: boolean; human?: boolean }) => renderRemovedOnboarding(id, options));
+
+      cmd
+        .command('onboarding')
+        .argument('<id>', 'channel id')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action((id: string, options: { json?: boolean; human?: boolean }) => renderRemovedOnboarding(id, options));
     },
     program,
   );

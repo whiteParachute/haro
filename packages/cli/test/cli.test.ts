@@ -514,7 +514,8 @@ describe('runCli [FEAT-006]', () => {
     expect(output).toContain('Haro setup / onboard');
     expect(output).toContain('haro doctor');
     expect(output).toContain('haro run "列出当前目录下的 TypeScript 文件"');
-    expect(output).toContain('haro channel setup feishu');
+    expect(output).toContain('haro channel doctor feishu');
+    expect(output).not.toContain('haro channel setup feishu');
   });
 
   it('FEAT-012 AC2: onboard aliases setup', async () => {
@@ -706,16 +707,17 @@ describe('runCli [FEAT-006]', () => {
     });
   });
 
-  it('FEAT-008 AC2: channel setup feishu persists enabled config via wizard', async () => {
+  it('FEAT-081G: channel setup feishu is removed and does not call legacy onboarding', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-setup-'));
     roots.push(root);
     const stdout = new PassThrough();
-    const stdin = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+    let setupCalled = false;
 
-    const runPromise = runCli({
-      argv: ['channel', 'setup', 'feishu'],
+    const result = await runCli({
+      argv: ['channel', 'setup', 'feishu', '--json'],
       root,
-      stdin,
       stdout,
       createProviderRegistry: async () =>
         createProviderRegistry(
@@ -730,32 +732,44 @@ describe('runCli [FEAT-006]', () => {
         createTestChannelRegistration({
           id: 'feishu',
           enabled: false,
-          setup: async () => ({
-            ok: true,
-            config: {
-              enabled: true,
-              appId: 'cli_test_app',
-              appSecret: 'secret_value',
-              transport: 'websocket',
-              sessionScope: 'per-user',
-            },
-            message: 'Feishu configured',
-          }),
+          setup: async () => {
+            setupCalled = true;
+            return {
+              ok: false,
+              config: {},
+              message: 'legacy setup must not run',
+            };
+          },
         }),
       ],
     });
 
-    const result = await runPromise;
-    expect(result.exitCode).toBe(0);
-    const config = parseYaml(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
-      channels: { feishu: { enabled: boolean; appId: string; appSecret: string; sessionScope: string } };
+    expect(result.exitCode).toBe(2);
+    const payload = JSON.parse(chunks.join('')) as {
+      ok: true;
+      data: {
+        command: string;
+        channelId: string;
+        status: string;
+        code: string;
+        wouldConfigure: boolean;
+        pilotUnbind: { candidate: string; status: string; removedBy: string };
+      };
     };
-    expect(config.channels.feishu).toMatchObject({
-      enabled: true,
-      appId: 'cli_test_app',
-      appSecret: 'secret_value',
-      sessionScope: 'per-user',
+    expect(payload.data).toMatchObject({
+      command: 'channel setup',
+      channelId: 'feishu',
+      status: 'removed',
+      code: 'LEGACY_CHANNEL_ONBOARDING_REMOVED',
+      wouldConfigure: false,
+      pilotUnbind: {
+        candidate: 'packages/cli/src/channel.ts#setup-onboarding',
+        status: 'default-path-unbound',
+        removedBy: 'FEAT-081G',
+      },
     });
+    expect(setupCalled).toBe(false);
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
   });
 
   it('FEAT-008 AC8: channel doctor feishu exits non-zero and prints reason on credential failure', async () => {
@@ -828,13 +842,16 @@ describe('runCli [FEAT-006]', () => {
     expect(chunks.join('')).toContain('still works');
   });
 
-  it('FEAT-009 AC1: channel setup telegram persists enabled config via existing channel commands', async () => {
+  it('FEAT-081G: channel onboarding telegram is a removed alias and does not write config', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-telegram-setup-'));
     roots.push(root);
     const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+    let setupCalled = false;
 
     const result = await runCli({
-      argv: ['channel', 'setup', 'telegram'],
+      argv: ['channel', 'onboarding', 'telegram', '--json'],
       root,
       stdout,
       createProviderRegistry: async () =>
@@ -850,31 +867,34 @@ describe('runCli [FEAT-006]', () => {
         createTestChannelRegistration({
           id: 'telegram',
           enabled: false,
-          setup: async () => ({
-            ok: true,
-            config: {
-              enabled: true,
-              botToken: '${TELEGRAM_BOT_TOKEN}',
-              transport: 'long-polling',
-              allowedUpdates: ['message'],
-              sessionScope: 'per-user',
-            },
-            message: 'Telegram configured',
-          }),
+          setup: async () => {
+            setupCalled = true;
+            return {
+              ok: true,
+              config: {
+                enabled: true,
+                botToken: '${TELEGRAM_BOT_TOKEN}',
+                transport: 'long-polling',
+                allowedUpdates: ['message'],
+                sessionScope: 'per-user',
+              },
+              message: 'Telegram configured',
+            };
+          },
         }),
       ],
     });
 
-    expect(result.exitCode).toBe(0);
-    const config = parseYaml(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
-      channels: { telegram: { enabled: boolean; botToken: string; transport: string; sessionScope: string } };
-    };
-    expect(config.channels.telegram).toMatchObject({
-      enabled: true,
-      botToken: '${TELEGRAM_BOT_TOKEN}',
-      transport: 'long-polling',
-      sessionScope: 'per-user',
+    expect(result.exitCode).toBe(2);
+    const payload = JSON.parse(chunks.join('')) as { ok: true; data: { command: string; channelId: string; code: string; wouldConfigure: boolean } };
+    expect(payload.data).toMatchObject({
+      command: 'channel setup',
+      channelId: 'telegram',
+      code: 'LEGACY_CHANNEL_ONBOARDING_REMOVED',
+      wouldConfigure: false,
     });
+    expect(setupCalled).toBe(false);
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
   });
 
   it('FEAT-009 AC5: channel doctor telegram exits non-zero and prints Unauthorized on bad token', async () => {

@@ -115,7 +115,7 @@ export async function runDiagnostics(input: DiagnosticsInput): Promise<Diagnosti
   const issues = stages.flatMap((stage) => stage.issues);
   const nextActions = unique([
     ...stages.flatMap((stage) => stage.nextActions),
-    ...(input.mode === 'setup' ? ['haro doctor', 'haro channel setup feishu'] : []),
+    ...(input.mode === 'setup' ? ['haro doctor', 'haro channel doctor feishu'] : []),
   ]);
   const providerStage = allStages.find((stage) => stage.id === 'provider');
   const channelStage = allStages.find((stage) => stage.id === 'channels');
@@ -452,7 +452,7 @@ async function checkChannels(ctx: { channelRegistry: ChannelRegistry }): Promise
       severity: 'warning',
       component: 'channel' as const,
       evidence: check.error ? `${check.id}: ${check.error}` : `${check.id}: healthCheck() returned false`,
-      remediation: `Run haro channel doctor ${check.id} or haro channel setup ${check.id}.`,
+      remediation: `Run haro channel doctor ${check.id}; legacy haro channel setup/onboarding is removed.`,
       fixable: false,
     }));
   return stage('channels', issues, issues.length > 0 ? unique(checks.filter((check) => !check.healthy).map((check) => `haro channel doctor ${check.id}`)) : [], { channels: checks });

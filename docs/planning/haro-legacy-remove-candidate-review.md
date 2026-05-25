@@ -689,3 +689,84 @@ pnpm test:sidecar
 - `verifiedAbsentFailedCount=0`。
 - 下一候选只指向 channel setup/onboarding 子入口。
 - channel package、provider、memory、skills、Web/API、scenario-router、agent/runtime 仍未获得删除批准。
+
+## 14. FEAT-081G channel setup/onboarding 默认路径摘线（2026-05-25）
+
+081G 只处理 081F 排序出的最小安全候选：`haro channel setup/onboarding` 旧入口。
+
+本轮不是物理删除批准。
+
+本轮没有删除任何源码、目录、package 或测试文件。
+
+### 14.1 摘线内容
+
+默认运行以下入口时，CLI 只返回 removed/fail-closed 报告：
+
+```bash
+haro channel setup <id>
+haro channel onboarding <id>
+```
+
+输出含义：
+
+- `status=removed`。
+- `code=LEGACY_CHANNEL_ONBOARDING_REMOVED`。
+- `wouldConfigure=false`。
+- `pilotUnbind.candidate=packages/cli/src/channel.ts#setup-onboarding`。
+- 不调用旧 `channel.setup(...)`。
+- 不写入 `config.yaml` 的 channel 配置。
+- 不启用 channel。
+
+### 14.2 明确保留范围
+
+081G 不处理以下对象：
+
+- `packages/channel`。
+- `packages/channel-feishu`。
+- `packages/channel-telegram`。
+- Feishu / Telegram 生产消息能力。
+- MCP `packages/mcp-tools/src/tools/send-message.ts`。
+- provider、memory、skills、Web/API、scenario-router、agent/runtime/services。
+- AgentDock host。
+
+### 14.3 guard 状态
+
+`channel-layer` 在 guard 中更新为：
+
+- `candidatePriority.status=done`。
+- `pilotUnbind.status=default-path-unbound`。
+- `pilotUnbind.candidate=packages/cli/src/channel.ts#setup-onboarding`。
+- `verifiedAbsent` 额外检查旧 `channel.setup(...)` 调用和旧 config 写入路径缺席。
+
+同时仍保持：
+
+- `deleteAllowed=false`。
+- `physicalDeleteApproved=false`。
+- `wouldDelete=false`。
+- gateway 的 `physicalRemoval=FEAT-081E` 继续保留。
+- channel package 和 MCP send_message 仍显示为 present，表示未删除、未批准删除。
+
+### 14.4 回滚方式
+
+如需恢复旧 onboarding，可 revert FEAT-081G commit。
+
+恢复后必须重新运行：
+
+```bash
+pnpm -F @haro/cli build
+pnpm -F @haro/cli test -- test/cli.test.ts test/legacy-removal-guard.test.ts
+pnpm test:legacy
+pnpm test:sidecar
+```
+
+### 14.5 验收方式
+
+081G 验收重点：
+
+- `haro channel setup feishu --json` 返回 removed/fail-closed，不调用旧 setup callback。
+- `haro channel onboarding telegram --json` 返回 removed/fail-closed，不写配置。
+- `haro channel list`、`haro channel doctor` 等非 onboarding 路径继续可用。
+- guard JSON/human 展示 081G 摘线状态。
+- `deleteAllowedCount=0`。
+- `physicalDeleteApproved=false`。
+- 没有物理删除 channel package、Feishu/Telegram channel 或 MCP send_message。

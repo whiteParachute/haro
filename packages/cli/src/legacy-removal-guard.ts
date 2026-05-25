@@ -159,18 +159,23 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     replacement: 'AgentDock IM / channel layer',
     blockingDependencies: [
       '隔离 mcp-tools legacy send_message tool',
-      '移除 CLI channel setup 主路径依赖',
+      'FEAT-081G 已摘线 CLI channel setup/onboarding 默认执行路径',
       '确认 AgentDock IM 已承接生产消息通道',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/channel test', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 deprecate/freeze；FEAT-081E 仅物理删除 gateway 旧 CLI daemon 入口，channel package/IM 能力未批准删除。',
+    decision: '保持 deprecate/freeze；FEAT-081G 仅摘线 channel setup/onboarding 旧入口，channel package/IM 能力未批准删除。',
     candidatePriority: {
-      status: 'next-safe-candidate',
+      status: 'done',
       rank: 1,
       nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
-      reason: 'gateway 已移除后，下一步最小安全面是 channel onboarding CLI，而不是 channel packages 或生产消息能力。',
-      blockedUntil: ['限定只处理 haro channel setup/onboarding 子入口', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '新增 removed/fail-closed 提示与回滚说明'],
+      reason: 'FEAT-081G 已将 channel setup/onboarding 旧入口从默认执行路径摘线；channel packages 与生产消息路径仍保留。',
+      blockedUntil: ['后续若要物理删除 channel onboarding stub，必须单项评审', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '确认 AgentDock IM 已承接相关 onboarding 流程'],
       forbiddenScope: ['packages/channel', 'packages/channel-feishu', 'packages/channel-telegram', 'packages/mcp-tools/src/tools/send-message.ts'],
+    },
+    pilotUnbind: {
+      candidate: 'packages/cli/src/channel.ts#setup-onboarding',
+      status: 'default-path-unbound',
+      note: 'FEAT-081G 默认 haro channel setup/onboarding 只返回 removed/fail-closed 报告，不调用 channel.setup，不写 channel config。',
     },
     physicalRemoval: {
       candidate: 'packages/cli/src/gateway.ts',
@@ -187,6 +192,8 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     verifiedAbsent: [
       { path: 'packages/cli/src/gateway.ts', kind: 'exists', description: 'gateway 旧 CLI daemon 源文件已由 FEAT-081E 删除' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "HARO_ENABLE_LEGACY_GATEWAY_COMMANDS === '1'", description: 'gateway legacy env 注册判断已由 FEAT-081E 移除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'entry.channel.setup(createChannelSetupContext', description: 'channel setup/onboarding 不再调用旧 channel.setup 实现' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'updateChannelConfig(app, id, { ...result.config, enabled: true })', description: 'channel setup/onboarding 不再写入 channel config' },
     ],
   },
   {
@@ -396,7 +403,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
     nextActions: [
       '本报告只读，不批准物理删除。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
-      'FEAT-081F 只输出体检排序；下一步建议仅评审 channel setup/onboarding 子入口，仍不批准任何物理删除。',
+      'FEAT-081G 已摘线 channel setup/onboarding 默认执行路径；后续任何物理删除仍需另行单项批准。',
     ],
   };
 }
