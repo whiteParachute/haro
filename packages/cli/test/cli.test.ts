@@ -266,6 +266,7 @@ describe('runCli [FEAT-006]', () => {
         'leaf-team-ci',
       ]),
       createConversationId: createIdFactory(['cli-bootstrap-team-1', 'channel-team-1']),
+      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '1' } },
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
@@ -349,6 +350,42 @@ describe('runCli [FEAT-006]', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('FEAT-081B: team orchestrator is disabled on the default run path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-team-disabled-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const outputChunks: string[] = [];
+    stdout.on('data', (chunk) => outputChunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['run', '请分析这个复杂系统故障，跨文件定位根因并拆分信息维度'],
+      root,
+      stdout,
+      stderr,
+      createSessionId: createIdFactory(['workflow-team-disabled-1']),
+      createConversationId: createIdFactory(['cli-bootstrap-team-disabled-1', 'channel-team-disabled-1']),
+      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '0' } },
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'should-not-run-team-branch', responseId: 'resp-disabled' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const text = outputChunks.join('');
+    expect(text).toContain('legacy_team_orchestrator_disabled');
+    expect(text).toContain('默认已解绑');
+    expect(text).toContain('HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1');
+    expect(text).not.toContain('"mergeEnvelope"');
+    expect(text).not.toContain('should-not-run-team-branch');
   });
 
   it('AC2/AC6: repl /help lists slash commands and /compress reports unsupported for codex', async () => {
@@ -1079,6 +1116,7 @@ describe('runCli [FEAT-006]', () => {
       argv: ['run', '/eat Principle: Keep interfaces narrow'],
       root,
       stdout,
+      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '1' } },
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
@@ -1109,6 +1147,7 @@ describe('runCli [FEAT-006]', () => {
       argv: ['run', '请吸收这个经验：接口要保持窄边界'],
       root,
       stdout,
+      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '1' } },
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({

@@ -380,3 +380,57 @@ git diff --check
 pnpm test:sidecar
 pnpm test:legacy
 ```
+
+## 9. FEAT-081B 单项解绑试点（2026-05-25）
+
+081B 只选择一个候选。
+
+本次选择 `team-orchestrator`。
+
+原因：
+
+- 它只服务旧 workbench team mode。
+- sidecar 主链路不需要它。
+- 文件可以保留。
+- 兼容入口可以显式打开。
+- 风险低于 provider、channel、memory。
+
+本次不动其它候选。
+
+未选择其它项的原因：
+
+- provider 仍被 CLI provider bootstrap 引用。
+- channel 仍有 legacy IM 入口。
+- memory 仍有 CLI/MCP 兼容入口。
+- skills 仍有 eat/shit 兼容流程。
+- Web/API 需要逐路由评审。
+
+081B 做的只是默认路径解绑。
+
+具体行为：
+
+- `@haro/core` 默认 barrel 不再导出 `TeamOrchestrator`。
+- 新增显式 legacy 入口：
+  `@haro/core/legacy/team-orchestrator`。
+- CLI 不再静态 import `TeamOrchestrator`。
+- 默认 `haro run` 遇到 team workflow 会 fail closed。
+- 只有设置 `HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1`，
+  才会走旧 team orchestrator。
+
+这不是物理删除批准。
+
+`packages/core/src/team-orchestrator.ts` 仍保留。
+
+legacy test 仍可显式验证旧路径。
+
+guard 报告新增 `pilotUnbind`。
+
+它只表达“默认路径已解绑”。
+
+`deleteAllowed` 仍固定为 `false`。
+
+后续如果继续 081C，
+
+也必须逐项评审。
+
+不能顺手删除多个候选。

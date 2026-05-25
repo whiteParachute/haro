@@ -71,6 +71,10 @@
     "./types/cli-output": {
       "types": "./dist/types/cli-output.d.ts",
       "default": "./dist/types/cli-output.js"
+    },
+    "./legacy/team-orchestrator": {
+      "types": "./dist/legacy/team-orchestrator.d.ts",
+      "default": "./dist/legacy/team-orchestrator.js"
     }
   },
   "files": [

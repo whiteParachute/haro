@@ -3,19 +3,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  BRANCH_STATUS_VALUES,
   CheckpointStore,
   PermissionBudgetStore,
-  TeamOrchestrator,
   createWorkflowBudgetEstimate,
-  assertValidCriticOutput,
-  type BranchLedgerEntry,
   type RunAgentInput,
   type RunAgentResult,
   type ScenarioWorkflow,
+} from '../src/index.js';
+import {
+  BRANCH_STATUS_VALUES,
+  TeamOrchestrator,
+  assertValidCriticOutput,
+  type BranchLedgerEntry,
   type TeamBranchState,
   type TeamOrchestratorAgentRunner,
-} from '../src/index.js';
+} from '../src/legacy/team-orchestrator.js';
 
 interface RunnerReply {
   content?: string;

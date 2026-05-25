@@ -99,7 +99,14 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       status: string;
       sidecarKeepAllowlist: string[];
       summary: { total: number; stillReferencedCount: number; deleteAllowedCount: number };
-      items: Array<{ id: string; state: string; deleteAllowed: boolean; stillReferenced: boolean; evidence: Array<{ present: boolean }> }>;
+      items: Array<{
+        id: string;
+        state: string;
+        deleteAllowed: boolean;
+        stillReferenced: boolean;
+        pilotUnbind?: { candidate: string; status: string; note: string };
+        evidence: Array<{ present: boolean; description?: string }>;
+      }>;
       negativeScope: string[];
     } };
     expect(payload.ok).toBe(true);
@@ -120,7 +127,14 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(byId.get('provider-codex')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     expect(byId.get('channel-layer')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     expect(byId.get('memory-fabric')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
-    expect(byId.get('agent-runtime-router')?.evidence.some((entry) => entry.present)).toBe(true);
+    const agentRuntime = byId.get('agent-runtime-router');
+    expect(agentRuntime?.evidence.some((entry) => entry.present)).toBe(true);
+    expect(agentRuntime?.pilotUnbind).toMatchObject({
+      candidate: 'packages/core/src/team-orchestrator.ts',
+      status: 'default-path-unbound',
+    });
+    expect(agentRuntime?.pilotUnbind?.note).toContain('HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1');
+    expect(agentRuntime?.deleteAllowed).toBe(false);
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
@@ -138,6 +152,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
     expect(text).toContain('FEAT-081B');
+    expect(text).toContain('pilotUnbind=default-path-unbound:packages/core/src/team-orchestrator.ts');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

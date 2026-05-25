@@ -21,6 +21,11 @@ export interface LegacyRemovalGuardDefinition {
   blockingDependencies: string[];
   requiredVerification: string[];
   decision: string;
+  pilotUnbind?: {
+    candidate: string;
+    status: 'default-path-unbound';
+    note: string;
+  };
   evidence: LegacyRemovalEvidenceDefinition[];
 }
 
@@ -153,11 +158,17 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       '完成 L2/L3 workspace execution plan contract',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 freeze；team/scenario 可进入后续删除评审，但本轮不删。',
+    decision: '保持 freeze；FEAT-081B 仅解绑 team-orchestrator 默认执行路径，不删除文件。',
+    pilotUnbind: {
+      candidate: 'packages/core/src/team-orchestrator.ts',
+      status: 'default-path-unbound',
+      note: '默认 haro run 不再执行 TeamOrchestrator；只有显式 HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1 才走兼容路径。',
+    },
     evidence: [
       { path: 'packages/core/src/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator 文件仍存在' },
       { path: 'packages/core/src/scenario-router.ts', kind: 'exists', description: 'scenario router 文件仍存在' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'ScenarioRouter', description: 'CLI bootstrap 仍构造/引用 scenario router' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR', description: 'team orchestrator 默认执行路径已改为显式 legacy env' },
     ],
   },
   {
@@ -274,7 +285,10 @@ export function formatLegacyRemovalGuardHuman(report: LegacyRemovalGuardReport):
     'guard items:',
     ...report.items.map((item) => {
       const present = item.evidence.filter((entry) => entry.present).length;
-      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length} decision=${item.decision}`;
+      const pilot = item.pilotUnbind
+        ? ` pilotUnbind=${item.pilotUnbind.status}:${item.pilotUnbind.candidate}`
+        : '';
+      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${pilot} decision=${item.decision}`;
     }),
     'next actions:',
     ...report.nextActions.map((action) => `- ${action}`),
