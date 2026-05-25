@@ -3,6 +3,16 @@ import { dirname, join, resolve } from 'node:path';
 
 export type LegacyRemovalState = 'keep' | 'freeze' | 'deprecate' | 'remove-candidate';
 export type LegacyRemovalEvidenceKind = 'exists' | 'contains';
+export type LegacyCandidatePriorityStatus = 'done' | 'next-safe-candidate' | 'blocked' | 'forbidden' | 'defer';
+
+export interface LegacyCandidatePriority {
+  status: LegacyCandidatePriorityStatus;
+  rank?: number;
+  nextScope?: string;
+  reason: string;
+  blockedUntil?: string[];
+  forbiddenScope?: string[];
+}
 
 export interface LegacyRemovalEvidenceDefinition {
   path: string;
@@ -21,6 +31,7 @@ export interface LegacyRemovalGuardDefinition {
   blockingDependencies: string[];
   requiredVerification: string[];
   decision: string;
+  candidatePriority: LegacyCandidatePriority;
   pilotUnbind?: {
     candidate: string;
     status: 'default-path-unbound';
@@ -34,14 +45,21 @@ export interface LegacyRemovalGuardDefinition {
     note: string;
   };
   evidence: LegacyRemovalEvidenceDefinition[];
+  verifiedAbsent?: LegacyRemovalEvidenceDefinition[];
 }
 
 export interface LegacyRemovalEvidenceResult extends LegacyRemovalEvidenceDefinition {
   present: boolean;
 }
 
-export interface LegacyRemovalGuardItem extends Omit<LegacyRemovalGuardDefinition, 'evidence'> {
+export interface LegacyRemovalVerifiedAbsentResult extends LegacyRemovalEvidenceDefinition {
+  present: boolean;
+  absent: boolean;
+}
+
+export interface LegacyRemovalGuardItem extends Omit<LegacyRemovalGuardDefinition, 'evidence' | 'verifiedAbsent'> {
   evidence: LegacyRemovalEvidenceResult[];
+  verifiedAbsent: LegacyRemovalVerifiedAbsentResult[];
   stillReferenced: boolean;
   deleteAllowed: false;
 }
@@ -64,6 +82,25 @@ export interface LegacyRemovalGuardReport {
     removeCandidateCount: number;
     stillReferencedCount: number;
     deleteAllowedCount: 0;
+    verifiedAbsentCount: number;
+    verifiedAbsentFailedCount: number;
+    nextSafeCandidateCount: number;
+    blockedCandidateCount: number;
+    forbiddenCandidateCount: number;
+  };
+  planning: {
+    stage: 'FEAT-081F';
+    nextDeletionCandidate: {
+      id: string;
+      title: string;
+      nextScope: string;
+      reason: string;
+      requiredBeforeDelete: string[];
+      forbiddenScope: string[];
+    } | null;
+    forbiddenCandidateIds: string[];
+    blockedCandidateIds: string[];
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -101,6 +138,12 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/provider-codex test', 'pnpm -F @haro/cli test:legacy'],
     decision: '保持 deprecate；本轮不删除。',
+    candidatePriority: {
+      status: 'blocked',
+      rank: 4,
+      reason: 'provider-codex 仍被 CLI bootstrap 与后续 LLM draft/provider 能力引用。',
+      blockedUntil: ['AgentDock/ModelHub provider bridge 接管默认 provider', '移除 CLI 默认 createCodexProvider 构造', 'LLM draft provider path 完成替代验证'],
+    },
     evidence: [
       { path: 'packages/provider-codex/package.json', kind: 'exists', description: 'provider package 仍存在' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'createCodexProvider', description: 'CLI bootstrap 仍引用 Codex provider' },
@@ -121,6 +164,14 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/channel test', 'pnpm -F @haro/cli test:legacy'],
     decision: '保持 deprecate/freeze；FEAT-081E 仅物理删除 gateway 旧 CLI daemon 入口，channel package/IM 能力未批准删除。',
+    candidatePriority: {
+      status: 'next-safe-candidate',
+      rank: 1,
+      nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
+      reason: 'gateway 已移除后，下一步最小安全面是 channel onboarding CLI，而不是 channel packages 或生产消息能力。',
+      blockedUntil: ['限定只处理 haro channel setup/onboarding 子入口', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '新增 removed/fail-closed 提示与回滚说明'],
+      forbiddenScope: ['packages/channel', 'packages/channel-feishu', 'packages/channel-telegram', 'packages/mcp-tools/src/tools/send-message.ts'],
+    },
     physicalRemoval: {
       candidate: 'packages/cli/src/gateway.ts',
       status: 'physically-removed',
@@ -129,11 +180,13 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       note: '仅 gateway 旧 CLI daemon/control-plane 入口被删除；channel/provider/memory/skills/Web/scenario-router 未获物理删除批准。',
     },
     evidence: [
-      { path: 'packages/cli/src/gateway.ts', kind: 'exists', description: 'gateway 旧 CLI daemon 源文件应已不存在' },
-      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "HARO_ENABLE_LEGACY_GATEWAY_COMMANDS === '1'", description: 'gateway legacy env 注册判断应已移除' },
       { path: 'packages/channel/package.json', kind: 'exists', description: 'channel package 仍存在，不在 081E 删除范围' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'registerChannelCommands', description: 'CLI 仍注册 channel 入口' },
       { path: 'packages/mcp-tools/src/tools/send-message.ts', kind: 'exists', description: 'MCP legacy send_message tool 仍存在' },
+    ],
+    verifiedAbsent: [
+      { path: 'packages/cli/src/gateway.ts', kind: 'exists', description: 'gateway 旧 CLI daemon 源文件已由 FEAT-081E 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "HARO_ENABLE_LEGACY_GATEWAY_COMMANDS === '1'", description: 'gateway legacy env 注册判断已由 FEAT-081E 移除' },
     ],
   },
   {
@@ -150,6 +203,13 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
     decision: '保持 deprecate；真实 memory 数据不在删除范围。',
+    candidatePriority: {
+      status: 'blocked',
+      rank: 5,
+      reason: 'Haro-owned memory 牵涉真实用户数据和 MCP memory tools，删除前必须先完成数据/owner 边界验证。',
+      blockedUntil: ['确认真实 ~/.haro memory 数据迁移/保留策略', '隔离 MCP memory_* 默认 registry', '证明 sidecar 主链路不读写 Haro-owned memory'],
+      forbiddenScope: ['真实 ~/.haro 数据', 'aria-memory vault'],
+    },
     evidence: [
       { path: 'packages/core/src/index.ts', kind: 'contains', pattern: 'createMemoryFabric', description: 'core barrel 仍导出 MemoryFabric' },
       { path: 'packages/cli/src/commands/memory.ts', kind: 'exists', description: 'legacy memory CLI 仍存在' },
@@ -175,6 +235,13 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
     decision: 'FEAT-081D 已物理删除 TeamOrchestrator 旧兼容路径；agent/runtime/scenario 其它候选仍保持 freeze，未批准删除。',
+    candidatePriority: {
+      status: 'blocked',
+      rank: 3,
+      nextScope: 'packages/core/src/scenario-router.ts',
+      reason: 'TeamOrchestrator 已删除，但 scenario-router/agent/runtime 仍被 CLI run 与 legacy tests 引用。',
+      blockedUntil: ['迁移或 legacy 化 haro run/chat 路由', '证明 ScenarioRouter 不再被 CLI bootstrap 使用', '完成 L2/L3 workspace execution plan contract'],
+    },
     physicalRemoval: {
       candidate: 'packages/core/src/team-orchestrator.ts',
       status: 'physically-removed',
@@ -183,11 +250,13 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       note: '仅 TeamOrchestrator 旧兼容入口被删除；gateway/provider/channel/memory/skills/Web/scenario-router 未获物理删除批准。',
     },
     evidence: [
-      { path: 'packages/core/src/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator 源文件应已不存在' },
-      { path: 'packages/core/src/legacy/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator legacy re-export 应已不存在' },
-      { path: 'packages/core/package.json', kind: 'contains', pattern: './legacy/team-orchestrator', description: 'legacy package export 应已移除' },
       { path: 'packages/core/src/scenario-router.ts', kind: 'exists', description: 'scenario router 文件仍存在，不在 081D 删除范围' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'ScenarioRouter', description: 'CLI bootstrap 仍构造/引用 scenario router' },
+    ],
+    verifiedAbsent: [
+      { path: 'packages/core/src/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator 源文件已由 FEAT-081D 删除' },
+      { path: 'packages/core/src/legacy/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator legacy re-export 已由 FEAT-081D 删除' },
+      { path: 'packages/core/package.json', kind: 'contains', pattern: './legacy/team-orchestrator', description: 'legacy package export 已由 FEAT-081D 移除' },
     ],
   },
   {
@@ -204,6 +273,12 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/skills test', 'pnpm -F @haro/cli test:legacy'],
     decision: '保持 freeze；不新增 marketplace 能力。',
+    candidatePriority: {
+      status: 'defer',
+      rank: 2,
+      reason: 'packages/skills 仍承载 eat/shit 兼容流程；可后续先评审 marketplace 扩展面，但不应删除核心兼容资产。',
+      blockedUntil: ['确认 eat/shit 资产语义由 sidecar artifacts 或 AgentDock skills 承接', '拆分 marketplace 与保留技能资产边界'],
+    },
     evidence: [
       { path: 'packages/skills/package.json', kind: 'exists', description: 'skills package 仍存在' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'SkillsManager', description: 'CLI bootstrap 仍初始化 SkillsManager' },
@@ -223,6 +298,11 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/web-api test', 'pnpm -F @haro/web build'],
     decision: '保留 review board；非 review dashboard 只能后续逐路由评审。',
+    candidatePriority: {
+      status: 'forbidden',
+      reason: 'Review Board 是 Haro sidecar 主链路看板，Web/API 包级删除被禁止；只能逐个非 review 路由评审。',
+      forbiddenScope: ['packages/web', 'packages/web-api', 'approval review board routes'],
+    },
     evidence: [
       { path: 'packages/web-api/src/routes/approval-requests.ts', kind: 'exists', description: 'approval review API 是 keep allowlist' },
       { path: 'packages/web/src', kind: 'exists', description: 'Web package 仍存在' },
@@ -248,21 +328,39 @@ export function resolveLegacyRemovalWorkspaceRoot(start: string = process.cwd())
 export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemovalGuardReport {
   const root = resolveLegacyRemovalWorkspaceRoot(workspaceRoot);
   const items = LEGACY_REMOVAL_GUARD_DEFINITIONS.map((definition): LegacyRemovalGuardItem => {
-    const evidence = definition.evidence.map((entry): LegacyRemovalEvidenceResult => {
+    const check = (entry: LegacyRemovalEvidenceDefinition): boolean => {
       const absolute = join(root, entry.path);
-      const present = entry.kind === 'exists'
+      return entry.kind === 'exists'
         ? existsSync(absolute)
         : existsSync(absolute) && readFileSync(absolute, 'utf8').includes(entry.pattern ?? '');
-      return { ...entry, present };
+    };
+    const evidence = definition.evidence.map((entry): LegacyRemovalEvidenceResult => ({ ...entry, present: check(entry) }));
+    const verifiedAbsent = (definition.verifiedAbsent ?? []).map((entry): LegacyRemovalVerifiedAbsentResult => {
+      const present = check(entry);
+      return { ...entry, present, absent: !present };
     });
     return {
       ...definition,
       evidence,
+      verifiedAbsent,
       stillReferenced: evidence.some((entry) => entry.present),
       deleteAllowed: false,
     };
   });
   const countState = (state: LegacyRemovalState): number => items.filter((item) => item.state === state).length;
+  const nextDeletion = items
+    .filter((item) => item.candidatePriority.status === 'next-safe-candidate')
+    .sort((a, b) => (a.candidatePriority.rank ?? Number.MAX_SAFE_INTEGER) - (b.candidatePriority.rank ?? Number.MAX_SAFE_INTEGER))[0];
+  const planningNext = nextDeletion?.candidatePriority.nextScope
+    ? {
+        id: nextDeletion.id,
+        title: nextDeletion.title,
+        nextScope: nextDeletion.candidatePriority.nextScope,
+        reason: nextDeletion.candidatePriority.reason,
+        requiredBeforeDelete: nextDeletion.candidatePriority.blockedUntil ?? [],
+        forbiddenScope: nextDeletion.candidatePriority.forbiddenScope ?? [],
+      }
+    : null;
   return {
     command: 'legacy-removal guard',
     guardVersion: 'FEAT-081A',
@@ -281,12 +379,24 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       removeCandidateCount: countState('remove-candidate'),
       stillReferencedCount: items.filter((item) => item.stillReferenced).length,
       deleteAllowedCount: 0,
+      verifiedAbsentCount: items.reduce((sum, item) => sum + item.verifiedAbsent.length, 0),
+      verifiedAbsentFailedCount: items.reduce((sum, item) => sum + item.verifiedAbsent.filter((entry) => !entry.absent).length, 0),
+      nextSafeCandidateCount: items.filter((item) => item.candidatePriority.status === 'next-safe-candidate').length,
+      blockedCandidateCount: items.filter((item) => item.candidatePriority.status === 'blocked').length,
+      forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
+    },
+    planning: {
+      stage: 'FEAT-081F',
+      nextDeletionCandidate: planningNext,
+      forbiddenCandidateIds: items.filter((item) => item.candidatePriority.status === 'forbidden').map((item) => item.id),
+      blockedCandidateIds: items.filter((item) => item.candidatePriority.status === 'blocked').map((item) => item.id),
+      completedPhysicalRemovals: items.flatMap((item) => item.physicalRemoval ? [{ id: item.id, candidate: item.physicalRemoval.candidate, removedBy: item.physicalRemoval.removedBy, rollbackPlan: item.physicalRemoval.rollbackPlan }] : []),
     },
     items,
     nextActions: [
       '本报告只读，不批准物理删除。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
-      'FEAT-081D 只删除 TeamOrchestrator，FEAT-081E 只删除 gateway 旧 CLI daemon 入口；其它候选物理删除仍需另行单项批准。',
+      'FEAT-081F 只输出体检排序；下一步建议仅评审 channel setup/onboarding 子入口，仍不批准任何物理删除。',
     ],
   };
 }
@@ -299,6 +409,10 @@ export function formatLegacyRemovalGuardHuman(report: LegacyRemovalGuardReport):
     `wouldDelete: ${report.wouldDelete}`,
     `physicalDeleteApproved: ${report.physicalDeleteApproved}`,
     `items: total=${report.summary.total} freeze=${report.summary.freezeCount} deprecate=${report.summary.deprecateCount} removeCandidate=${report.summary.removeCandidateCount} stillReferenced=${report.summary.stillReferencedCount}`,
+    `081F next deletion candidate: ${report.planning.nextDeletionCandidate ? `${report.planning.nextDeletionCandidate.id} scope=${report.planning.nextDeletionCandidate.nextScope}` : 'none'}`,
+    `081F forbidden now: ${report.planning.forbiddenCandidateIds.join(',') || 'none'}`,
+    `081F completed removals: ${report.planning.completedPhysicalRemovals.map((item) => `${item.candidate}:${item.removedBy}`).join(',') || 'none'}`,
+    `verifiedAbsent: total=${report.summary.verifiedAbsentCount} failed=${report.summary.verifiedAbsentFailedCount}`,
     'negative scope:',
     ...report.negativeScope.map((item) => `- ${item}`),
     'guard items:',
@@ -310,7 +424,11 @@ export function formatLegacyRemovalGuardHuman(report: LegacyRemovalGuardReport):
       const removal = item.physicalRemoval
         ? ` physicalRemoval=${item.physicalRemoval.status}:${item.physicalRemoval.candidate}:${item.physicalRemoval.removedBy}`
         : '';
-      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${pilot}${removal} decision=${item.decision}`;
+      const absent = item.verifiedAbsent.length > 0
+        ? ` verifiedAbsent=${item.verifiedAbsent.filter((entry) => entry.absent).length}/${item.verifiedAbsent.length}`
+        : '';
+      const priority = ` priority=${item.candidatePriority.status}${item.candidatePriority.rank ? `#${item.candidatePriority.rank}` : ''}`;
+      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${absent}${priority}${pilot}${removal} decision=${item.decision}`;
     }),
     'next actions:',
     ...report.nextActions.map((action) => `- ${action}`),

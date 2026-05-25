@@ -98,15 +98,47 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       physicalDeleteApproved: boolean;
       status: string;
       sidecarKeepAllowlist: string[];
-      summary: { total: number; stillReferencedCount: number; deleteAllowedCount: number };
+      summary: {
+        total: number;
+        stillReferencedCount: number;
+        deleteAllowedCount: number;
+        verifiedAbsentCount: number;
+        verifiedAbsentFailedCount: number;
+        nextSafeCandidateCount: number;
+        blockedCandidateCount: number;
+        forbiddenCandidateCount: number;
+      };
+      planning: {
+        stage: string;
+        nextDeletionCandidate: null | {
+          id: string;
+          title: string;
+          nextScope: string;
+          reason: string;
+          requiredBeforeDelete: string[];
+          forbiddenScope: string[];
+        };
+        forbiddenCandidateIds: string[];
+        blockedCandidateIds: string[];
+        completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: string; rollbackPlan: string }>;
+      };
       items: Array<{
         id: string;
         state: string;
         deleteAllowed: boolean;
         stillReferenced: boolean;
+        candidatePriority: {
+          status: string;
+          rank?: number;
+          nextScope?: string;
+          reason: string;
+          blockedUntil?: string[];
+          forbiddenScope?: string[];
+        };
         pilotUnbind?: { candidate: string; status: string; note: string };
         physicalRemoval?: { candidate: string; status: string; removedBy: string; rollbackPlan: string; note: string };
         evidence: Array<{ path: string; present: boolean; description?: string }>;
+        verifiedAbsent: Array<{ path: string; present: boolean; absent: boolean; description?: string }>;
       }>;
       negativeScope: string[];
     } };
@@ -124,34 +156,78 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.deleteAllowedCount).toBe(0);
     expect(payload.data.summary.total).toBeGreaterThanOrEqual(6);
     expect(payload.data.summary.stillReferencedCount).toBeGreaterThan(0);
+    expect(payload.data.summary.verifiedAbsentCount).toBeGreaterThanOrEqual(5);
+    expect(payload.data.summary.verifiedAbsentFailedCount).toBe(0);
+    expect(payload.data.summary.nextSafeCandidateCount).toBe(1);
+    expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
+    expect(payload.data.summary.forbiddenCandidateCount).toBe(1);
+    expect(payload.data.planning).toMatchObject({
+      stage: 'FEAT-081F',
+      nextDeletionCandidate: {
+        id: 'channel-layer',
+        nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
+      },
+    });
+    expect(payload.data.planning.nextDeletionCandidate?.reason).toContain('channel onboarding CLI');
+    expect(payload.data.planning.nextDeletionCandidate?.requiredBeforeDelete.join('\n')).toContain('haro channel setup/onboarding');
+    expect(payload.data.planning.nextDeletionCandidate?.forbiddenScope).toEqual(expect.arrayContaining([
+      'packages/channel',
+      'packages/channel-feishu',
+      'packages/channel-telegram',
+      'packages/mcp-tools/src/tools/send-message.ts',
+    ]));
+    expect(payload.data.planning.forbiddenCandidateIds).toContain('web-dashboard-non-review');
+    expect(payload.data.planning.blockedCandidateIds).toEqual(expect.arrayContaining([
+      'provider-codex',
+      'memory-fabric',
+      'agent-runtime-router',
+    ]));
+    expect(payload.data.planning.completedPhysicalRemovals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'agent-runtime-router', candidate: 'packages/core/src/team-orchestrator.ts', removedBy: 'FEAT-081D' }),
+      expect.objectContaining({ id: 'channel-layer', candidate: 'packages/cli/src/gateway.ts', removedBy: 'FEAT-081E' }),
+    ]));
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     expect(byId.get('provider-codex')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     const channelLayer = byId.get('channel-layer');
     expect(channelLayer).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
+    expect(channelLayer?.candidatePriority).toMatchObject({
+      status: 'next-safe-candidate',
+      rank: 1,
+      nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
+    });
+    expect(channelLayer?.candidatePriority.forbiddenScope).toContain('packages/channel-feishu');
     expect(channelLayer?.physicalRemoval).toMatchObject({
       candidate: 'packages/cli/src/gateway.ts',
       status: 'physically-removed',
       removedBy: 'FEAT-081E',
     });
     expect(channelLayer?.physicalRemoval?.note).toContain('未获物理删除批准');
-    expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/cli/src/gateway.ts')?.present).toBe(false);
-    expect(channelLayer?.evidence.find((entry) => entry.description?.includes('legacy env'))?.present).toBe(false);
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.path === 'packages/cli/src/gateway.ts')).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('legacy env'))).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/channel/package.json')?.present).toBe(true);
+    expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/mcp-tools/src/tools/send-message.ts')?.present).toBe(true);
     expect(byId.get('memory-fabric')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     const agentRuntime = byId.get('agent-runtime-router');
     expect(agentRuntime?.evidence.some((entry) => entry.present)).toBe(true);
+    expect(agentRuntime?.candidatePriority).toMatchObject({
+      status: 'blocked',
+      rank: 3,
+      nextScope: 'packages/core/src/scenario-router.ts',
+    });
     expect(agentRuntime?.physicalRemoval).toMatchObject({
       candidate: 'packages/core/src/team-orchestrator.ts',
       status: 'physically-removed',
       removedBy: 'FEAT-081D',
     });
     expect(agentRuntime?.physicalRemoval?.note).toContain('未获物理删除批准');
-    const byPath = new Map(agentRuntime?.evidence.map((entry) => [entry.path, entry.present]));
-    expect(byPath.get('packages/core/src/team-orchestrator.ts')).toBe(false);
-    expect(byPath.get('packages/core/src/legacy/team-orchestrator.ts')).toBe(false);
-    expect(byPath.get('packages/core/package.json')).toBe(false);
-    expect(byPath.get('packages/core/src/scenario-router.ts')).toBe(true);
+    const evidenceByPath = new Map(agentRuntime?.evidence.map((entry) => [entry.path, entry.present]));
+    const absentByPath = new Map(agentRuntime?.verifiedAbsent.map((entry) => [entry.path, entry.absent]));
+    expect(absentByPath.get('packages/core/src/team-orchestrator.ts')).toBe(true);
+    expect(absentByPath.get('packages/core/src/legacy/team-orchestrator.ts')).toBe(true);
+    expect(absentByPath.get('packages/core/package.json')).toBe(true);
+    expect(evidenceByPath.get('packages/core/src/scenario-router.ts')).toBe(true);
     expect(agentRuntime?.deleteAllowed).toBe(false);
+    expect(byId.get('web-dashboard-non-review')?.candidatePriority.status).toBe('forbidden');
     const workspaceRoot = resolve(process.cwd(), '../..');
     expect(existsSync(join(workspaceRoot, 'packages/core/src/team-orchestrator.ts'))).toBe(false);
     expect(existsSync(join(workspaceRoot, 'packages/core/src/legacy/team-orchestrator.ts'))).toBe(false);
@@ -172,6 +248,11 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
+    expect(text).toContain('081F next deletion candidate: channel-layer scope=packages/cli/src/channel.ts#setup-onboarding');
+    expect(text).toContain('081F forbidden now: web-dashboard-non-review');
+    expect(text).toContain('verifiedAbsent: total=');
+    expect(text).toContain('failed=0');
+    expect(text).toContain('priority=next-safe-candidate#1');
     expect(text).toContain('FEAT-081D');
     expect(text).toContain('FEAT-081E');
     expect(text).toContain('physicalRemoval=physically-removed:packages/core/src/team-orchestrator.ts:FEAT-081D');

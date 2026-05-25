@@ -598,3 +598,94 @@ CLI 行为：
 - 081E 不能推广成 channel/provider/memory/skills/Web/scenario-router 的删除批准。
 - 如继续 081F，必须再选择一个候选并单独评审。
 - 不得顺手删除 channel package 或飞书/Telegram 消息能力。
+
+## 13. FEAT-081F 剩余候选体检与排序（2026-05-25）
+
+081F 只做剩余 legacy 删除候选的体检和排序。
+
+它不是物理删除批准。
+
+本轮没有删除任何源码、目录、package 或测试文件。
+
+`deleteAllowed`、`physicalDeleteApproved`、`wouldDelete` 仍必须保持 `false`。
+
+### 13.1 已完成项
+
+| 候选 | 当前状态 | 证据 | 后续约束 |
+| --- | --- | --- | --- |
+| TeamOrchestrator | removed/done | FEAT-081D 已删除 `packages/core/src/team-orchestrator.ts`、legacy re-export、旧 CLI env 兼容路径 | 不能扩大成 scenario-router / agent / runtime 删除批准 |
+| gateway CLI daemon | removed/done | FEAT-081E 已删除 `packages/cli/src/gateway.ts`、旧 gateway 测试、legacy env 注册路径 | 不能扩大成 channel package、Feishu/Telegram 或 MCP send_message 删除批准 |
+
+guard 中的“应缺席”检查已经从普通 evidence 拆到 `verifiedAbsent`：
+
+- TeamOrchestrator 源文件、legacy re-export、package export 必须缺席。
+- gateway 源文件、legacy env 注册判断必须缺席。
+
+如果这些 `verifiedAbsent` 变回 present，说明历史删除被意外恢复或回归。
+
+### 13.2 下一步最小安全候选
+
+下一步建议候选只有一个：`channel-layer` 的 `packages/cli/src/channel.ts#setup-onboarding`。
+
+理由：
+
+- gateway 旧 daemon/control-plane 已删除。
+- `haro channel setup` 仍属于旧 Haro-owned channel onboarding 方向。
+- 它比删除 channel package、Feishu/Telegram channel、MCP send_message 风险更小。
+- 可以先做 fail-closed/removed 提示和单项测试，不触碰生产消息链路。
+
+明确禁止把该候选扩大到：
+
+- `packages/channel`。
+- `packages/channel-feishu`。
+- `packages/channel-telegram`。
+- `packages/mcp-tools/src/tools/send-message.ts`。
+- 飞书/Telegram 生产消息能力。
+
+### 13.3 暂不删除候选
+
+| 候选 | 081F 排序 | 阻塞原因 | 删除前必须完成 |
+| --- | --- | --- | --- |
+| provider / provider-codex | blocked | CLI bootstrap 仍构造 provider；082A/082B LLM draft/rewrite 仍需要 provider path 或替代桥 | AgentDock/ModelHub provider bridge 接管默认能力，移除 CLI `createCodexProvider` 默认构造，验证 LLM draft provider 替代路径 |
+| memory / MemoryFabric / memory CLI | blocked | 涉及真实 `~/.haro` 数据、MCP memory tools、aria-memory owner 边界 | 明确数据保留/迁移策略，隔离 MCP memory 默认注册，证明 sidecar 主链路不读写 Haro-owned memory |
+| skills / marketplace / eat/shit 兼容 | defer | `packages/skills` 仍承载 eat/shit 兼容语义 | 先拆分 marketplace 扩展面与保留技能资产，确认替代承接方 |
+| scenario-router / agent / runtime / services | blocked | `haro run/chat`、legacy tests、L2/L3 execution plan contract 仍有引用 | 完成 run/chat 迁移或 legacy 化，解除 ScenarioRouter 默认 bootstrap，完成 L2/L3 contract |
+| Web / Web API / Review Board | forbidden | Review Board 是 Haro sidecar 主链路看板 | 只能逐个非 review 路由评审；不得删除 `packages/web` / `packages/web-api` 包级能力 |
+| channel package / Feishu / Telegram / MCP send_message | forbidden for 081G | 生产 IM 和 MCP 消息边界未完成替代证明 | 只能在 channel setup onboarding 单项完成后重新评审 |
+
+### 13.4 guard 输出契约
+
+081F 后 `legacy-removal guard --dry-run --json` 必须提供：
+
+- `planning.stage=FEAT-081F`。
+- `planning.nextDeletionCandidate`：当前为 `channel-layer` / `packages/cli/src/channel.ts#setup-onboarding`。
+- `planning.forbiddenCandidateIds`：当前至少包含 `web-dashboard-non-review`。
+- `planning.blockedCandidateIds`：当前至少包含 `provider-codex`、`memory-fabric`、`agent-runtime-router`。
+- `planning.completedPhysicalRemovals`：记录 FEAT-081D / FEAT-081E 已删除项。
+- `summary.verifiedAbsentCount` / `summary.verifiedAbsentFailedCount`。
+- `summary.nextSafeCandidateCount`、`blockedCandidateCount`、`forbiddenCandidateCount`。
+
+human 输出必须用通俗语言说明：下一步建议做什么、哪些不能碰、为什么仍不是删除批准。
+
+### 13.5 验收方式
+
+081F 只允许文档、guard 报告和测试变化。
+
+验收命令：
+
+```bash
+git diff --check HEAD~1..HEAD
+pnpm -F @haro/cli build
+pnpm -F @haro/cli test -- test/legacy-removal-guard.test.ts
+pnpm test:legacy
+pnpm test:sidecar
+```
+
+验收重点：
+
+- 不新增物理删除。
+- `deleteAllowedCount=0`。
+- `physicalDeleteApproved=false`。
+- `verifiedAbsentFailedCount=0`。
+- 下一候选只指向 channel setup/onboarding 子入口。
+- channel package、provider、memory、skills、Web/API、scenario-router、agent/runtime 仍未获得删除批准。
