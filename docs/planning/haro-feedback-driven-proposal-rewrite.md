@@ -917,6 +917,62 @@ feedback revision 仍最后写入。
 
 FEAT-082C 才能做通知。
 
+## 10.8 FEAT-082C：新版提案后的重审通知
+
+FEAT-082C 只做显式通知。
+
+它不自动审批。
+
+它不自动上线。
+
+它不自动应用提案。
+
+通知入口分两步：
+
+1. 先预览：
+   `haro revise feedback --dry-run --notify-review --feedback-revision-id <id>`
+2. 再显式发送：
+   `haro revise feedback --confirm --notify-review --feedback-revision-id <id> --notify-review-channel <channel>`
+
+没有 `--notify-review` 时不会发消息。
+
+没有 `--confirm` 时不会发消息。
+
+缺少 channel 时 fail closed。
+
+有 unresolved feedback 时默认不发。
+
+提案或待审请求过期时默认不发。
+
+通知文案必须说明：
+
+- 哪个新版提案已生成。
+- 原来为什么被打回。
+- 这次主要改了什么。
+- 是否还有不确定项。
+- 对应 approval request。
+- 请去 Review Board 重审。
+
+通知文案不能暗示已经审批。
+
+通知文案不能暗示已经上线。
+
+通知文案不能暗示已经应用。
+
+082B confirm 输出下一步预览命令。
+
+operator 必须先看预览。
+
+然后再手动复制 confirm 命令。
+
+禁止自动 eval/exec 通知命令。
+
+后续若需要优化体验，
+
+可以做 Web/飞书模板增强。
+
+那不是本切片范围。
+
 ## 11. Negative scope
 
 10C 和后续 FEAT-076 系列不得做这些事：

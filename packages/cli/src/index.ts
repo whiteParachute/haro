@@ -176,6 +176,15 @@ export interface RunCliOptions {
   doctorDeps?: SetupRunDeps;
   providerCatalog?: readonly ProviderCatalogEntry[];
   fetchLatestNpmVersion?: (pkg: string) => Promise<string>;
+  sendReviewNotification?: (message: {
+    channel: string;
+    idempotencyKey: string;
+    text: string;
+    feedbackRevisionId: string;
+    approvalRequestId: string;
+    proposalId: string;
+    sourceDecisionId: string;
+  }) => void | Promise<void>;
 }
 
 export type RunCliAction =

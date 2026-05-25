@@ -54,7 +54,21 @@ function createProviderRegistry(): ProviderRegistry {
   return registry;
 }
 
-function runWithCapturedOutput(root: string, argv: readonly string[]) {
+interface ReviewNotificationTestMessage {
+  channel: string;
+  idempotencyKey: string;
+  text: string;
+  feedbackRevisionId: string;
+  approvalRequestId: string;
+  proposalId: string;
+  sourceDecisionId: string;
+}
+
+function runWithCapturedOutput(
+  root: string,
+  argv: readonly string[],
+  options: { sendReviewNotification?: (message: ReviewNotificationTestMessage) => void | Promise<void> } = {},
+) {
   const stdout = captureStream();
   const stderr = captureStream();
   return {
@@ -69,6 +83,7 @@ function runWithCapturedOutput(root: string, argv: readonly string[]) {
       createProviderRegistry: async () => createProviderRegistry(),
       loadAgentRegistry: async () => createAgentRegistry(),
       createAdditionalChannels: async () => [],
+      ...(options.sendReviewNotification ? { sendReviewNotification: options.sendReviewNotification } : {}),
     }),
   };
 }
@@ -321,6 +336,31 @@ function evolutionFileCounts(root: string) {
     const dir = join(root, 'evolution', name);
     return [name, existsSync(dir) ? readdirSync(dir).sort() : []];
   }));
+}
+
+async function confirmLlmDraftRevision(root: string, decisionId: string) {
+  const dry = runWithCapturedOutput(root, ['revise', 'feedback', '--dry-run', '--decision-id', decisionId, '--llm-draft', '--json']);
+  await expect(dry.result).resolves.toMatchObject({ exitCode: 0 });
+  const dryPayload = parseJsonData<{ draftPreview: { draftPreviewHash: string } }>(dry.stdout);
+  const confirm = runWithCapturedOutput(root, [
+    'revise',
+    'feedback',
+    '--confirm',
+    '--decision-id',
+    decisionId,
+    '--llm-draft',
+    '--draft-preview-hash',
+    dryPayload.draftPreview.draftPreviewHash,
+    '--json',
+  ]);
+  await expect(confirm.result).resolves.toMatchObject({ exitCode: 0 });
+  return parseJsonData<{
+    confirmed: boolean;
+    revisedProposalId: string;
+    revisedApprovalRequestId: string;
+    feedbackRevisionId: string;
+    reviewNotificationCommand?: string;
+  }>(confirm.stdout);
 }
 
 describe('haro revise feedback --dry-run [FEAT-076B]', () => {
@@ -578,6 +618,232 @@ describe('haro revise feedback --dry-run [FEAT-076B]', () => {
       revisedProposalId: payload.revisedProposalId,
       actualActions: { idempotent: true, wroteFeedbackRevision: false },
     });
+  });
+
+  it('prints the next explicit review notification command after LLM draft confirm', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const payload = await confirmLlmDraftRevision(root, source.decisionId);
+
+    expect(payload.confirmed).toBe(true);
+    expect(payload.reviewNotificationCommand).toBe(`haro revise feedback --dry-run --notify-review --feedback-revision-id ${payload.feedbackRevisionId}`);
+  });
+
+  it('previews review notification without sending or writing files', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const revision = await confirmLlmDraftRevision(root, source.decisionId);
+    const before = evolutionFileCounts(root);
+    const sent: ReviewNotificationTestMessage[] = [];
+    const preview = runWithCapturedOutput(root, [
+      'revise',
+      'feedback',
+      '--dry-run',
+      '--notify-review',
+      '--feedback-revision-id',
+      revision.feedbackRevisionId,
+      '--json',
+    ], { sendReviewNotification: (message) => { sent.push(message); } });
+
+    await expect(preview.result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      reviewNotification: {
+        dryRun: boolean;
+        wouldSend: boolean;
+        didSend: boolean;
+        requiresExplicitConfirm: boolean;
+        messagePreview: string;
+        feedbackRevisionId: string;
+        revisedProposalId: string;
+        approvalRequestId: string;
+        notifyCommand: string;
+        blockedReasons: string[];
+        manualReviewReasons: string[];
+      };
+    }>(preview.stdout);
+    expect(payload.reviewNotification).toMatchObject({
+      dryRun: true,
+      wouldSend: false,
+      didSend: false,
+      requiresExplicitConfirm: true,
+      feedbackRevisionId: revision.feedbackRevisionId,
+      revisedProposalId: revision.revisedProposalId,
+      approvalRequestId: revision.revisedApprovalRequestId,
+      blockedReasons: [],
+      manualReviewReasons: [],
+    });
+    expect(payload.reviewNotification.notifyCommand).toContain('--notify-review-channel <channel>');
+    expect(payload.reviewNotification.messagePreview).toContain('请重审');
+    expect(payload.reviewNotification.messagePreview).toContain(revision.revisedApprovalRequestId);
+    expect(payload.reviewNotification.messagePreview).toContain('这不是审批、上线或应用通知');
+    expect(sent).toEqual([]);
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('fails closed when confirming review notification without a channel', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const revision = await confirmLlmDraftRevision(root, source.decisionId);
+    const before = evolutionFileCounts(root);
+    const sent: ReviewNotificationTestMessage[] = [];
+    const oldReviewChannel = process.env.HARO_REVIEW_NOTIFICATION_CHANNEL;
+    const oldFeedbackChannel = process.env.HARO_FEEDBACK_CHANNEL;
+    delete process.env.HARO_REVIEW_NOTIFICATION_CHANNEL;
+    delete process.env.HARO_FEEDBACK_CHANNEL;
+    try {
+      const confirm = runWithCapturedOutput(root, [
+        'revise',
+        'feedback',
+        '--confirm',
+        '--notify-review',
+        '--feedback-revision-id',
+        revision.feedbackRevisionId,
+        '--json',
+      ], { sendReviewNotification: (message) => { sent.push(message); } });
+
+      await expect(confirm.result).resolves.toMatchObject({ exitCode: 0 });
+      const payload = parseJsonData<{
+        confirmed: boolean;
+        reviewNotification: { didSend: boolean; manualReviewReasons: string[] };
+      }>(confirm.stdout);
+      expect(payload.confirmed).toBe(false);
+      expect(payload.reviewNotification.didSend).toBe(false);
+      expect(payload.reviewNotification.manualReviewReasons.join('\n')).toContain('notification channel is not configured');
+      expect(sent).toEqual([]);
+      expect(evolutionFileCounts(root)).toEqual(before);
+    } finally {
+      if (oldReviewChannel === undefined) delete process.env.HARO_REVIEW_NOTIFICATION_CHANNEL;
+      else process.env.HARO_REVIEW_NOTIFICATION_CHANNEL = oldReviewChannel;
+      if (oldFeedbackChannel === undefined) delete process.env.HARO_FEEDBACK_CHANNEL;
+      else process.env.HARO_FEEDBACK_CHANNEL = oldFeedbackChannel;
+    }
+  });
+
+  it('sends review notification only with explicit confirm channel and a mock sender', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const revision = await confirmLlmDraftRevision(root, source.decisionId);
+    const before = evolutionFileCounts(root);
+    const sent: ReviewNotificationTestMessage[] = [];
+    const confirm = runWithCapturedOutput(root, [
+      'revise',
+      'feedback',
+      '--confirm',
+      '--notify-review',
+      '--feedback-revision-id',
+      revision.feedbackRevisionId,
+      '--notify-review-channel',
+      'feishu:oc_test',
+      '--json',
+    ], { sendReviewNotification: (message) => { sent.push(message); } });
+
+    await expect(confirm.result).resolves.toMatchObject({ exitCode: 0 });
+    const payload = parseJsonData<{
+      confirmed: boolean;
+      reviewNotification: {
+        dryRun: boolean;
+        wouldSend: boolean;
+        didSend: boolean;
+        channel: string;
+        messagePreview: string;
+      };
+    }>(confirm.stdout);
+    expect(payload.confirmed).toBe(true);
+    expect(payload.reviewNotification).toMatchObject({
+      dryRun: false,
+      wouldSend: true,
+      didSend: true,
+      channel: 'feishu:oc_test',
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      channel: 'feishu:oc_test',
+      feedbackRevisionId: revision.feedbackRevisionId,
+      approvalRequestId: revision.revisedApprovalRequestId,
+      proposalId: revision.revisedProposalId,
+      sourceDecisionId: source.decisionId,
+    });
+    expect(sent[0].text).toContain('请重审');
+    expect(sent[0].text).not.toContain('已审批');
+    expect(sent[0].text).not.toContain('已上线');
+    expect(evolutionFileCounts(root)).toEqual(before);
+  });
+
+  it('does not send review notifications for missing, stale, or unresolved revisions', async () => {
+    const root = tempRoot();
+    const source = seedDecision(root, '请收窄范围，只针对 ModelHub timeout 做一个具体 change。');
+    const revision = await confirmLlmDraftRevision(root, source.decisionId);
+    const before = evolutionFileCounts(root);
+    const sent: ReviewNotificationTestMessage[] = [];
+
+    const missing = runWithCapturedOutput(root, [
+      'revise',
+      'feedback',
+      '--confirm',
+      '--notify-review',
+      '--feedback-revision-id',
+      'feedback_revision_missing',
+      '--notify-review-channel',
+      'feishu:oc_test',
+      '--json',
+    ], { sendReviewNotification: (message) => { sent.push(message); } });
+    await expect(missing.result).resolves.toMatchObject({ exitCode: 0 });
+    const missingPayload = parseJsonData<{ reviewNotification: { didSend: boolean; blockedReasons: string[] } }>(missing.stdout);
+    expect(missingPayload.reviewNotification.didSend).toBe(false);
+    expect(missingPayload.reviewNotification.blockedReasons.join('\n')).toContain('not found');
+
+    const revisedPath = join(root, 'evolution', 'proposals', `${revision.revisedProposalId}.json`);
+    const revised = JSON.parse(readFileSync(revisedPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(revisedPath, `${JSON.stringify({ ...revised, status: 'superseded' }, null, 2)}\n`);
+    const stale = runWithCapturedOutput(root, [
+      'revise',
+      'feedback',
+      '--confirm',
+      '--notify-review',
+      '--feedback-revision-id',
+      revision.feedbackRevisionId,
+      '--notify-review-channel',
+      'feishu:oc_test',
+      '--json',
+    ], { sendReviewNotification: (message) => { sent.push(message); } });
+    await expect(stale.result).resolves.toMatchObject({ exitCode: 0 });
+    const stalePayload = parseJsonData<{ reviewNotification: { didSend: boolean; blockedReasons: string[] } }>(stale.stdout);
+    expect(stalePayload.reviewNotification.didSend).toBe(false);
+    expect(stalePayload.reviewNotification.blockedReasons.join('\n')).toContain('superseded');
+
+    writeFileSync(revisedPath, `${JSON.stringify({
+      ...revised,
+      revisionMetadata: {
+        ...(revised.revisionMetadata as Record<string, unknown>),
+        unresolvedFeedback: [{
+          id: 'feedback_unresolved',
+          category: 'needs-more-info',
+          disposition: 'needs-human',
+          userText: '还有一个问题。',
+          normalizedRequirement: '需要人工确认。',
+          proposalChangeRefs: [],
+          evidenceRefs: [],
+          explanation: '测试未解决项。',
+        }],
+      },
+    }, null, 2)}\n`);
+    const unresolved = runWithCapturedOutput(root, [
+      'revise',
+      'feedback',
+      '--confirm',
+      '--notify-review',
+      '--feedback-revision-id',
+      revision.feedbackRevisionId,
+      '--notify-review-channel',
+      'feishu:oc_test',
+      '--json',
+    ], { sendReviewNotification: (message) => { sent.push(message); } });
+    await expect(unresolved.result).resolves.toMatchObject({ exitCode: 0 });
+    const unresolvedPayload = parseJsonData<{ reviewNotification: { didSend: boolean; manualReviewReasons: string[] } }>(unresolved.stdout);
+    expect(unresolvedPayload.reviewNotification.didSend).toBe(false);
+    expect(unresolvedPayload.reviewNotification.manualReviewReasons.join('\n')).toContain('unresolved feedback');
+    expect(sent).toEqual([]);
+    expect(evolutionFileCounts(root)).toEqual(before);
   });
 
   it('does not write when an LLM draft confirm is model-unavailable or blocked', async () => {

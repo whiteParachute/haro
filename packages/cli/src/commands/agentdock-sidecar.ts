@@ -157,6 +157,10 @@ interface ReviseFeedbackOptions extends OutputFlags {
   pending?: boolean;
   llmDraft?: boolean;
   draftPreviewHash?: string;
+  notifyReview?: boolean;
+  feedbackRevisionId?: string;
+  notifyReviewChannel?: string;
+  reviewBoardUrl?: string;
 }
 
 interface ObserveResult {
@@ -740,6 +744,35 @@ interface FeedbackRevisionDraftPreview {
   nextAction: string;
 }
 
+interface ReviewNotificationMessage {
+  channel: string;
+  idempotencyKey: string;
+  text: string;
+  feedbackRevisionId: string;
+  approvalRequestId: string;
+  proposalId: string;
+  sourceDecisionId: string;
+}
+
+interface FeedbackRevisionReviewNotification {
+  dryRun: boolean;
+  wouldSend: boolean;
+  didSend: boolean;
+  requiresExplicitConfirm: boolean;
+  channel?: string;
+  recipient?: string;
+  messagePreview: string;
+  sourceDecisionId?: string;
+  revisedProposalId?: string;
+  approvalRequestId?: string;
+  feedbackRevisionId: string;
+  reviewBoardUrl?: string;
+  notifyCommand?: string;
+  previewCommand: string;
+  blockedReasons: string[];
+  manualReviewReasons: string[];
+}
+
 interface ReviseFeedbackResult {
   command: 'revise feedback';
   mode: 'dry-run' | 'confirm';
@@ -777,6 +810,8 @@ interface ReviseFeedbackResult {
   exceedsRevisionDepthLimit?: boolean;
   operatorPreflight: ReviseFeedbackOperatorPreflight;
   draftPreview?: FeedbackRevisionDraftPreview;
+  reviewNotification?: FeedbackRevisionReviewNotification;
+  reviewNotificationCommand?: string;
 }
 
 export interface ReviseFeedbackOperatorPreflight {
@@ -1564,12 +1599,18 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
     .option('--pending', 'plan or confirm all pending request-changes decisions')
     .option('--llm-draft', 'generate a read-only LLM rewrite draft preview; never writes artifacts')
     .option('--draft-preview-hash <hash>', 'required with --confirm --llm-draft; proves the reviewed draft preview')
+    .option('--notify-review', 'preview or explicitly send a review notification for a revised proposal')
+    .option('--feedback-revision-id <id>', 'feedback-revision id for --notify-review')
+    .option('--notify-review-channel <channel>', 'target IM channel for --confirm --notify-review')
+    .option('--review-board-url <url>', 'Review Board URL or base URL included in --notify-review output')
     .option('--json', 'force JSON output')
     .option('--human', 'force human output')
     .action(async (options: ReviseFeedbackOptions) => {
       const mode = resolveOutputMode(options, app.stdout);
       try {
-        const result = options.llmDraft
+        const result = options.notifyReview
+          ? await reviseFeedbackReviewNotification(app, options)
+          : options.llmDraft
           ? await reviseFeedbackWithDraftPreview(app, options)
           : reviseFeedback(app, options);
         if (mode === 'json') {
@@ -1643,6 +1684,35 @@ export function registerAgentDockSidecarCommands(program: Command, app: AppConte
                   result.mode === 'dry-run'
                     ? '  该预览没有写入新版提案，也不会通知重审。先人工审阅草稿；不要自动执行 confirm 命令。'
                     : '  本次 confirm 只生成新版待审提案；没有审批、上线或通知重审。',
+                ]
+              : []),
+            ...(result.reviewNotificationCommand
+              ? [
+                  `Review notification next step: ${result.reviewNotificationCommand}`,
+                  '  该命令只用于显式通知重审；不会审批、上线或应用提案。',
+                ]
+              : []),
+            ...(result.reviewNotification
+              ? [
+                  'Review notification:',
+                  `  dryRun: ${result.reviewNotification.dryRun}`,
+                  `  wouldSend: ${result.reviewNotification.wouldSend}`,
+                  `  didSend: ${result.reviewNotification.didSend}`,
+                  `  requiresExplicitConfirm: ${result.reviewNotification.requiresExplicitConfirm}`,
+                  `  channel: ${result.reviewNotification.channel ?? '(not configured)'}`,
+                  `  feedbackRevision: ${result.reviewNotification.feedbackRevisionId}`,
+                  `  revisedProposal: ${result.reviewNotification.revisedProposalId ?? '(missing)'}`,
+                  `  approvalRequest: ${result.reviewNotification.approvalRequestId ?? '(missing)'}`,
+                  ...(result.reviewNotification.reviewBoardUrl ? [`  reviewBoard: ${result.reviewNotification.reviewBoardUrl}`] : []),
+                  ...(result.reviewNotification.notifyCommand ? [`  notifyCommand: ${result.reviewNotification.notifyCommand}`] : []),
+                  `  previewCommand: ${result.reviewNotification.previewCommand}`,
+                  '  messagePreview:',
+                  ...result.reviewNotification.messagePreview.split('\n').map((line) => `    ${line}`),
+                  ...result.reviewNotification.manualReviewReasons.map((reason) => `  manualReview: ${reason}`),
+                  ...result.reviewNotification.blockedReasons.map((reason) => `  blocked: ${reason}`),
+                  result.reviewNotification.dryRun
+                    ? '  预览没有发送消息。请人工确认后，再显式运行 notify confirm 命令。'
+                    : '  通知只提示重审；没有审批、上线或应用提案。',
                 ]
               : []),
           ].join('\n') + '\n',
@@ -3569,6 +3639,7 @@ function buildReviseFeedbackResult(
     revisionDepthLimit: DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
     operatorPreflight,
     ...(options.draftPreview ? { draftPreview: options.draftPreview } : {}),
+    ...(options.confirm && first?.feedbackRevisionId ? { reviewNotificationCommand: reviewNotificationPreviewCommand(first.feedbackRevisionId) } : {}),
     ...(first ? {
       decisionId: first.decisionId,
       approvalRequestId: first.approvalRequestId,
@@ -3591,6 +3662,217 @@ function buildReviseFeedbackResult(
       exceedsRevisionDepthLimit: first.exceedsRevisionDepthLimit,
     } : {}),
   };
+}
+
+async function reviseFeedbackReviewNotification(app: AppContext, options: ReviseFeedbackOptions): Promise<ReviseFeedbackResult> {
+  const dryRun = options.dryRun === true;
+  const confirm = options.confirm === true;
+  if (dryRun === confirm) {
+    throw new CommanderExit(2, '`haro revise feedback --notify-review` requires exactly one of --dry-run or --confirm.');
+  }
+  if (options.llmDraft || options.decisionId || options.pending || options.draftPreviewHash) {
+    throw new CommanderExit(2, '`haro revise feedback --notify-review` uses --feedback-revision-id and cannot be combined with --decision-id, --pending, --llm-draft, or --draft-preview-hash.');
+  }
+  if (!options.feedbackRevisionId?.trim()) {
+    throw new CommanderExit(2, '`haro revise feedback --notify-review` requires --feedback-revision-id.');
+  }
+
+  const reviewNotification = await buildFeedbackRevisionReviewNotification(app, {
+    feedbackRevisionId: options.feedbackRevisionId.trim(),
+    dryRun,
+    confirm,
+    channel: options.notifyReviewChannel,
+    reviewBoardUrl: options.reviewBoardUrl,
+  });
+  return {
+    command: 'revise feedback',
+    mode: confirm ? 'confirm' : 'dry-run',
+    dryRun,
+    wouldWrite: false,
+    didWrite: false,
+    ...(confirm ? { confirmed: reviewNotification.didSend } : {}),
+    planCount: 0,
+    processedCount: 0,
+    writtenCount: 0,
+    skippedCount: 0,
+    manualCheckCount: reviewNotification.manualReviewReasons.length > 0 ? 1 : 0,
+    blockedCount: reviewNotification.blockedReasons.length > 0 ? 1 : 0,
+    idempotentCount: 0,
+    plans: [],
+    revisionDepthLimit: DEFAULT_FEEDBACK_REVISION_DEPTH_LIMIT,
+    operatorPreflight: buildReviseFeedbackOperatorPreflight([], { mode: confirm ? 'confirm' : 'dry-run', pending: false }),
+    reviewNotification,
+  };
+}
+
+async function buildFeedbackRevisionReviewNotification(
+  app: AppContext,
+  input: {
+    feedbackRevisionId: string;
+    dryRun: boolean;
+    confirm: boolean;
+    channel?: string;
+    reviewBoardUrl?: string;
+  },
+): Promise<FeedbackRevisionReviewNotification> {
+  const feedbackRevisionId = input.feedbackRevisionId.trim();
+  const record = readFeedbackRevisionById(app.paths.root, feedbackRevisionId);
+  const channel = input.channel ?? process.env.HARO_REVIEW_NOTIFICATION_CHANNEL ?? process.env.HARO_FEEDBACK_CHANNEL;
+  const sourceDecision = record ? readApprovalDecisionById(app.paths.root, record.sourceDecisionId) : undefined;
+  const sourceProposal = record ? readProposalById(app.paths.root, record.sourceProposalId) : undefined;
+  const revisedProposal = record?.revisedProposalId ? readProposalById(app.paths.root, record.revisedProposalId) : undefined;
+  const approvalRequest = record?.revisedApprovalRequestId ? readApprovalRequestById(app.paths.root, record.revisedApprovalRequestId) : undefined;
+  const unresolvedFeedback = revisedProposal?.revisionMetadata?.unresolvedFeedback ?? [];
+  const reviewBoardUrl = approvalRequest
+    ? reviewBoardApprovalRequestUrl(input.reviewBoardUrl ?? process.env.HARO_REVIEW_BOARD_URL, approvalRequest.id)
+    : input.reviewBoardUrl ?? process.env.HARO_REVIEW_BOARD_URL;
+  const blockedReasons = uniqueSorted([
+    ...(!record ? [`feedback revision ${feedbackRevisionId} not found`] : []),
+    ...(record && record.status !== 'revised' ? [`feedback revision status is ${record.status}, not revised`] : []),
+    ...(record && !record.revisedProposalId ? ['feedback revision does not reference a revised proposal'] : []),
+    ...(record && !record.revisedApprovalRequestId ? ['feedback revision does not reference a revised approval request'] : []),
+    ...(record?.revisedProposalId && !revisedProposal ? [`revised proposal ${record.revisedProposalId} not found`] : []),
+    ...(record?.revisedApprovalRequestId && !approvalRequest ? [`revised approval request ${record.revisedApprovalRequestId} not found`] : []),
+    ...(revisedProposal && (revisedProposal.status === 'rejected' || revisedProposal.status === 'superseded' || revisedProposal.status === 'applied')
+      ? [`revised proposal status is ${revisedProposal.status}; no review notification will be sent`]
+      : []),
+    ...(approvalRequest && approvalRequest.status !== 'pending'
+      ? [`revised approval request status is ${approvalRequest.status}; no review notification will be sent`]
+      : []),
+  ]);
+  const manualReviewReasons = uniqueSorted([
+    ...(unresolvedFeedback.length > 0 ? [`revised proposal still has ${unresolvedFeedback.length} unresolved feedback item(s)`] : []),
+    ...(!input.dryRun && !channel ? ['notification channel is not configured; pass --notify-review-channel or set HARO_REVIEW_NOTIFICATION_CHANNEL'] : []),
+  ]);
+  const messagePreview = formatReviewNotificationMessage({
+    timestamp: app.now().toISOString(),
+    record,
+    sourceDecision,
+    sourceProposal,
+    revisedProposal,
+    approvalRequest,
+    reviewBoardUrl,
+    unresolvedFeedbackCount: unresolvedFeedback.length,
+  });
+  const notifyCommand = record
+    ? reviewNotificationConfirmCommand(record.id, channel)
+    : undefined;
+  const canSend = input.confirm && blockedReasons.length === 0 && manualReviewReasons.length === 0 && channel !== undefined;
+  let didSend = false;
+  if (canSend && channel && record && revisedProposal && approvalRequest) {
+    const message: ReviewNotificationMessage = {
+      channel,
+      idempotencyKey: `haro-review-notify-${record.id}`,
+      text: messagePreview,
+      feedbackRevisionId: record.id,
+      approvalRequestId: approvalRequest.id,
+      proposalId: revisedProposal.id,
+      sourceDecisionId: record.sourceDecisionId,
+    };
+    await sendReviewNotification(app, message);
+    didSend = true;
+  }
+  return {
+    dryRun: input.dryRun,
+    wouldSend: canSend,
+    didSend,
+    requiresExplicitConfirm: input.dryRun,
+    ...(channel ? { channel, recipient: channel } : {}),
+    messagePreview,
+    ...(record ? {
+      sourceDecisionId: record.sourceDecisionId,
+      feedbackRevisionId: record.id,
+    } : { feedbackRevisionId }),
+    ...(revisedProposal ? { revisedProposalId: revisedProposal.id } : {}),
+    ...(approvalRequest ? { approvalRequestId: approvalRequest.id } : {}),
+    ...(reviewBoardUrl ? { reviewBoardUrl } : {}),
+    ...(notifyCommand ? { notifyCommand } : {}),
+    previewCommand: reviewNotificationPreviewCommand(feedbackRevisionId),
+    blockedReasons,
+    manualReviewReasons,
+  };
+}
+
+async function sendReviewNotification(app: AppContext, message: ReviewNotificationMessage): Promise<void> {
+  const sender = app.opts.sendReviewNotification ?? sendReviewNotificationWithLarkCli;
+  await sender(message);
+}
+
+function sendReviewNotificationWithLarkCli(message: ReviewNotificationMessage): void {
+  const chatId = message.channel.startsWith('feishu:') ? message.channel.slice('feishu:'.length) : message.channel;
+  if (!chatId.startsWith('oc_')) throw new Error(`unsupported review notification channel: ${message.channel}`);
+  const bin = process.env.HARO_LARK_CLI_BIN ?? 'lark-cli';
+  const result = spawnSync(bin, [
+    'im',
+    '+messages-send',
+    '--as',
+    'bot',
+    '--chat-id',
+    chatId,
+    '--text',
+    message.text,
+    '--idempotency-key',
+    message.idempotencyKey,
+  ], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || `lark-cli exited with ${result.status ?? 'unknown status'}`).trim());
+  }
+}
+
+function formatReviewNotificationMessage(input: {
+  timestamp: string;
+  record?: FeedbackRevisionRecord;
+  sourceDecision?: ApprovalDecisionRecord;
+  sourceProposal?: EvolutionProposal;
+  revisedProposal?: EvolutionProposal;
+  approvalRequest?: ApprovalRequestRecord;
+  reviewBoardUrl?: string;
+  unresolvedFeedbackCount: number;
+}): string {
+  if (!input.record || !input.revisedProposal || !input.approvalRequest) {
+    return [
+      'Haro 重审通知预览失败。',
+      `feedback-revision：${input.record?.id ?? '未找到'}`,
+      '原因：缺少新版提案或待审请求。',
+      '没有发送消息，也没有审批或应用提案。',
+    ].join('\n');
+  }
+  const rewriteSummary = input.record.rewriteActions.map((action) => action.summary).join('；') ||
+    input.revisedProposal.revisionMetadata?.resubmissionReason ||
+    '已根据上次意见生成新版提案。';
+  return [
+    'Haro 已生成修改后的提案，请重审。',
+    `新版提案：${input.revisedProposal.title}（${input.revisedProposal.id}）`,
+    `待审请求：${input.approvalRequest.id}`,
+    `原提案：${input.sourceProposal?.id ?? input.record.sourceProposalId}`,
+    `原打回意见：${truncateForLog(input.sourceDecision?.direction ?? input.record.sourceDecisionDirection, 90)}`,
+    `这次主要改动：${truncateForLog(rewriteSummary, 120)}`,
+    `不确定项：${input.unresolvedFeedbackCount === 0 ? '无' : `${input.unresolvedFeedbackCount} 项，需人工处理`}`,
+    ...(input.reviewBoardUrl ? [`Review Board：${input.reviewBoardUrl}`] : []),
+    '请在 Review Board 中重审。',
+    '这不是审批、上线或应用通知。',
+    `时间：${input.timestamp}`,
+  ].join('\n');
+}
+
+function reviewNotificationPreviewCommand(feedbackRevisionId: string): string {
+  return `haro revise feedback --dry-run --notify-review --feedback-revision-id ${feedbackRevisionId}`;
+}
+
+function reviewNotificationConfirmCommand(feedbackRevisionId: string, channel?: string): string {
+  return [
+    'haro revise feedback --confirm --notify-review',
+    `--feedback-revision-id ${feedbackRevisionId}`,
+    channel ? `--notify-review-channel ${channel}` : '--notify-review-channel <channel>',
+  ].join(' ');
+}
+
+function reviewBoardApprovalRequestUrl(baseUrl: string | undefined, approvalRequestId: string): string | undefined {
+  if (!baseUrl?.trim()) return undefined;
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (base.includes('{approvalRequestId}')) return base.replace('{approvalRequestId}', approvalRequestId);
+  if (/approval-requests\/?$/u.test(base)) return `${base}/${approvalRequestId}`;
+  return `${base}/approval-requests/${approvalRequestId}`;
 }
 
 async function reviseFeedbackWithDraftPreview(app: AppContext, options: ReviseFeedbackOptions): Promise<ReviseFeedbackResult> {
@@ -4905,6 +5187,16 @@ function readFeedbackRevisionBySourceDecisionId(root: string, decisionId: string
     }
   }
   return records.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))[0];
+}
+
+function readFeedbackRevisionById(root: string, feedbackRevisionId: string): FeedbackRevisionRecord | undefined {
+  const path = join(feedbackRevisionsDir(root), `${safePathSegment(feedbackRevisionId)}.json`);
+  if (!existsSync(path)) return undefined;
+  try {
+    return FeedbackRevisionRecordSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+  } catch {
+    return undefined;
+  }
 }
 
 
