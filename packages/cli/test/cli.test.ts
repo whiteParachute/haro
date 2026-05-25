@@ -707,16 +707,14 @@ describe('runCli [FEAT-006]', () => {
     });
   });
 
-  it('FEAT-081G: channel setup feishu is removed and does not call legacy onboarding', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-setup-'));
+  it('FEAT-081H: channel setup feishu command is physically removed and does not call legacy onboarding', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-setup-removed-'));
     roots.push(root);
     const stdout = new PassThrough();
-    const chunks: string[] = [];
-    stdout.on('data', (chunk) => chunks.push(String(chunk)));
     let setupCalled = false;
 
     const result = await runCli({
-      argv: ['channel', 'setup', 'feishu', '--json'],
+      argv: ['channel', 'setup', 'feishu'],
       root,
       stdout,
       createProviderRegistry: async () =>
@@ -734,40 +732,13 @@ describe('runCli [FEAT-006]', () => {
           enabled: false,
           setup: async () => {
             setupCalled = true;
-            return {
-              ok: false,
-              config: {},
-              message: 'legacy setup must not run',
-            };
+            return { ok: true, config: { enabled: true }, message: 'legacy setup must not run' };
           },
         }),
       ],
     });
 
-    expect(result.exitCode).toBe(2);
-    const payload = JSON.parse(chunks.join('')) as {
-      ok: true;
-      data: {
-        command: string;
-        channelId: string;
-        status: string;
-        code: string;
-        wouldConfigure: boolean;
-        pilotUnbind: { candidate: string; status: string; removedBy: string };
-      };
-    };
-    expect(payload.data).toMatchObject({
-      command: 'channel setup',
-      channelId: 'feishu',
-      status: 'removed',
-      code: 'LEGACY_CHANNEL_ONBOARDING_REMOVED',
-      wouldConfigure: false,
-      pilotUnbind: {
-        candidate: 'packages/cli/src/channel.ts#setup-onboarding',
-        status: 'default-path-unbound',
-        removedBy: 'FEAT-081G',
-      },
-    });
+    expect(result.exitCode).not.toBe(0);
     expect(setupCalled).toBe(false);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
   });
@@ -842,16 +813,14 @@ describe('runCli [FEAT-006]', () => {
     expect(chunks.join('')).toContain('still works');
   });
 
-  it('FEAT-081G: channel onboarding telegram is a removed alias and does not write config', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-telegram-setup-'));
+  it('FEAT-081H: channel onboarding telegram alias is physically removed and does not write config', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-onboarding-removed-'));
     roots.push(root);
     const stdout = new PassThrough();
-    const chunks: string[] = [];
-    stdout.on('data', (chunk) => chunks.push(String(chunk)));
     let setupCalled = false;
 
     const result = await runCli({
-      argv: ['channel', 'onboarding', 'telegram', '--json'],
+      argv: ['channel', 'onboarding', 'telegram'],
       root,
       stdout,
       createProviderRegistry: async () =>
@@ -869,30 +838,13 @@ describe('runCli [FEAT-006]', () => {
           enabled: false,
           setup: async () => {
             setupCalled = true;
-            return {
-              ok: true,
-              config: {
-                enabled: true,
-                botToken: '${TELEGRAM_BOT_TOKEN}',
-                transport: 'long-polling',
-                allowedUpdates: ['message'],
-                sessionScope: 'per-user',
-              },
-              message: 'Telegram configured',
-            };
+            return { ok: true, config: { enabled: true }, message: 'legacy setup must not run' };
           },
         }),
       ],
     });
 
-    expect(result.exitCode).toBe(2);
-    const payload = JSON.parse(chunks.join('')) as { ok: true; data: { command: string; channelId: string; code: string; wouldConfigure: boolean } };
-    expect(payload.data).toMatchObject({
-      command: 'channel setup',
-      channelId: 'telegram',
-      code: 'LEGACY_CHANNEL_ONBOARDING_REMOVED',
-      wouldConfigure: false,
-    });
+    expect(result.exitCode).not.toBe(0);
     expect(setupCalled).toBe(false);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
   });

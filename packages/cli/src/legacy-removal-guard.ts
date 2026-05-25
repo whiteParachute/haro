@@ -21,6 +21,14 @@ export interface LegacyRemovalEvidenceDefinition {
   description: string;
 }
 
+export interface LegacyPhysicalRemovalRecord {
+  candidate: string;
+  status: 'physically-removed';
+  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H';
+  rollbackPlan: string;
+  note: string;
+}
+
 export interface LegacyRemovalGuardDefinition {
   id: string;
   title: string;
@@ -37,13 +45,8 @@ export interface LegacyRemovalGuardDefinition {
     status: 'default-path-unbound';
     note: string;
   };
-  physicalRemoval?: {
-    candidate: string;
-    status: 'physically-removed';
-    removedBy: 'FEAT-081D' | 'FEAT-081E';
-    rollbackPlan: string;
-    note: string;
-  };
+  physicalRemoval?: LegacyPhysicalRemovalRecord;
+  physicalRemovals?: LegacyPhysicalRemovalRecord[];
   evidence: LegacyRemovalEvidenceDefinition[];
   verifiedAbsent?: LegacyRemovalEvidenceDefinition[];
 }
@@ -89,9 +92,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081G-1';
-    lastCompletedStage: 'FEAT-081G';
-    lastUpdatedBy: 'FEAT-081G-1';
+    stage: 'FEAT-081H';
+    lastCompletedStage: 'FEAT-081H';
+    lastUpdatedBy: 'FEAT-081H';
     nextDeletionCandidate: {
       id: string;
       title: string;
@@ -112,7 +115,7 @@ export interface LegacyRemovalGuardReport {
     } | null;
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
-    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E'; rollbackPlan: string }>;
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -171,23 +174,18 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     replacement: 'AgentDock IM / channel layer',
     blockingDependencies: [
       '隔离 mcp-tools legacy send_message tool',
-      'FEAT-081G 已摘线 CLI channel setup/onboarding 默认执行路径',
+      'FEAT-081H 已物理删除 CLI channel setup/onboarding removed stub',
       '确认 AgentDock IM 已承接生产消息通道',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/channel test', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 deprecate/freeze；FEAT-081G 仅摘线 channel setup/onboarding 旧入口，channel package/IM 能力未批准删除。',
+    decision: '保持 deprecate/freeze；FEAT-081H 仅物理删除 channel setup/onboarding removed stub，channel package/IM 能力未批准删除。',
     candidatePriority: {
       status: 'done',
       rank: 1,
       nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
-      reason: 'FEAT-081G 已将 channel setup/onboarding 旧入口从默认执行路径摘线；channel packages 与生产消息路径仍保留。',
-      blockedUntil: ['后续若要物理删除 channel onboarding stub，必须单项评审', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '确认 AgentDock IM 已承接相关 onboarding 流程'],
+      reason: 'FEAT-081H 已删除 channel setup/onboarding removed stub；channel packages 与生产消息路径仍保留。',
+      blockedUntil: ['后续若要删除 channel package/IM 能力，必须重新排序并单项评审', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '确认 AgentDock IM 已承接相关 onboarding 流程'],
       forbiddenScope: ['packages/channel', 'packages/channel-feishu', 'packages/channel-telegram', 'packages/mcp-tools/src/tools/send-message.ts'],
-    },
-    pilotUnbind: {
-      candidate: 'packages/cli/src/channel.ts#setup-onboarding',
-      status: 'default-path-unbound',
-      note: 'FEAT-081G 默认 haro channel setup/onboarding 只返回 removed/fail-closed 报告，不调用 channel.setup，不写 channel config。',
     },
     physicalRemoval: {
       candidate: 'packages/cli/src/gateway.ts',
@@ -196,6 +194,15 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       rollbackPlan: 'git revert FEAT-081E commit 可恢复 gateway 源码、legacy env 注册路径和旧 gateway 测试。',
       note: '仅 gateway 旧 CLI daemon/control-plane 入口被删除；channel/provider/memory/skills/Web/scenario-router 未获物理删除批准。',
     },
+    physicalRemovals: [
+      {
+        candidate: 'packages/cli/src/index.ts#channel-setup-onboarding-stub',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081H',
+        rollbackPlan: 'git revert FEAT-081H commit 可恢复 channel setup/onboarding removed stub 与对应测试。',
+        note: '仅删除 081G removed/fail-closed stub 与 onboarding alias；packages/channel、Feishu/Telegram channel、MCP send_message 未获物理删除批准。',
+      },
+    ],
     evidence: [
       { path: 'packages/channel/package.json', kind: 'exists', description: 'channel package 仍存在，不在 081E 删除范围' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'registerChannelCommands', description: 'CLI 仍注册 channel 入口' },
@@ -204,6 +211,9 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     verifiedAbsent: [
       { path: 'packages/cli/src/gateway.ts', kind: 'exists', description: 'gateway 旧 CLI daemon 源文件已由 FEAT-081E 删除' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "HARO_ENABLE_LEGACY_GATEWAY_COMMANDS === '1'", description: 'gateway legacy env 注册判断已由 FEAT-081E 移除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'LEGACY_CHANNEL_ONBOARDING_REMOVED', description: 'channel onboarding removed stub code 已由 FEAT-081H 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'renderRemovedOnboarding', description: 'channel onboarding removed helper 已由 FEAT-081H 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: ".command('onboarding')", description: 'channel onboarding alias 已由 FEAT-081H 删除' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'entry.channel.setup(createChannelSetupContext', description: 'channel setup/onboarding 不再调用旧 channel.setup 实现' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'updateChannelConfig(app, id, { ...result.config, enabled: true })', description: 'channel setup/onboarding 不再写入 channel config' },
     ],
@@ -422,20 +432,23 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081G-1',
-      lastCompletedStage: 'FEAT-081G',
-      lastUpdatedBy: 'FEAT-081G-1',
+      stage: 'FEAT-081H',
+      lastCompletedStage: 'FEAT-081H',
+      lastUpdatedBy: 'FEAT-081H',
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
       forbiddenCandidateIds: items.filter((item) => item.candidatePriority.status === 'forbidden').map((item) => item.id),
       blockedCandidateIds: items.filter((item) => item.candidatePriority.status === 'blocked').map((item) => item.id),
-      completedPhysicalRemovals: items.flatMap((item) => item.physicalRemoval ? [{ id: item.id, candidate: item.physicalRemoval.candidate, removedBy: item.physicalRemoval.removedBy, rollbackPlan: item.physicalRemoval.rollbackPlan }] : []),
+      completedPhysicalRemovals: items.flatMap((item) => [
+        ...(item.physicalRemoval ? [{ id: item.id, candidate: item.physicalRemoval.candidate, removedBy: item.physicalRemoval.removedBy, rollbackPlan: item.physicalRemoval.rollbackPlan }] : []),
+        ...(item.physicalRemovals ?? []).map((removal) => ({ id: item.id, candidate: removal.candidate, removedBy: removal.removedBy, rollbackPlan: removal.rollbackPlan })),
+      ]),
     },
     items,
     nextActions: [
       '本报告只读，不批准物理删除。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
-      'FEAT-081G-1 只补充下一评审候选；nextReviewCandidate 不是删除授权，nextDeletionCandidate 仍为 null。',
+      'FEAT-081H 已删除 channel setup/onboarding removed stub；nextReviewCandidate 与 nextDeletionCandidate 均为 null，后续需重新排序评审。',
     ],
   };
 }
@@ -465,11 +478,14 @@ export function formatLegacyRemovalGuardHuman(report: LegacyRemovalGuardReport):
       const removal = item.physicalRemoval
         ? ` physicalRemoval=${item.physicalRemoval.status}:${item.physicalRemoval.candidate}:${item.physicalRemoval.removedBy}`
         : '';
+      const extraRemovals = item.physicalRemovals && item.physicalRemovals.length > 0
+        ? ` physicalRemovals=${item.physicalRemovals.map((entry) => `${entry.status}:${entry.candidate}:${entry.removedBy}`).join(',')}`
+        : '';
       const absent = item.verifiedAbsent.length > 0
         ? ` verifiedAbsent=${item.verifiedAbsent.filter((entry) => entry.absent).length}/${item.verifiedAbsent.length}`
         : '';
       const priority = ` priority=${item.candidatePriority.status}${item.candidatePriority.rank ? `#${item.candidatePriority.rank}` : ''}`;
-      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${absent}${priority}${pilot}${removal} decision=${item.decision}`;
+      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${absent}${priority}${pilot}${removal}${extraRemovals} decision=${item.decision}`;
     }),
     'next actions:',
     ...report.nextActions.map((action) => `- ${action}`),

@@ -827,3 +827,77 @@ pnpm test:sidecar
 - 所有 candidate 的 `deleteAllowed=false`。
 
 081G-1 不能被解释成 081H/后续删除授权。
+
+## 16. FEAT-081H channel onboarding removed stub 物理删除（2026-05-25）
+
+081H 只处理 081G 摘线后留下的 CLI removed/fail-closed stub。
+
+本轮删除范围仅限：
+
+- `packages/cli/src/index.ts#channel-setup-onboarding-stub`。
+- `haro channel onboarding <id>` removed alias 注册。
+- `LEGACY_CHANNEL_ONBOARDING_REMOVED` 报告 helper。
+- 对应的 removed-stub 测试断言。
+
+本轮没有删除或修改：
+
+- `packages/channel`。
+- `packages/channel-feishu`。
+- `packages/channel-telegram`。
+- Feishu / Telegram 生产消息能力。
+- MCP `packages/mcp-tools/src/tools/send-message.ts`。
+- provider、memory、skills、Web/API、scenario-router、agent/runtime/services。
+- AgentDock host。
+
+### 16.1 当前 CLI 行为
+
+`haro channel setup <id>` 和 `haro channel onboarding <id>` 不再注册为 channel 子命令。
+
+因此它们不会调用旧 `channel.setup(...)`，也不会写 channel config。
+
+`haro channel list`、`haro channel doctor` 等非 onboarding 路径继续保留。
+
+### 16.2 guard 状态
+
+`channel-layer` 继续保留 gateway 的 FEAT-081E 删除记录，并新增 FEAT-081H 删除记录：
+
+- `physicalRemoval=packages/cli/src/gateway.ts:FEAT-081E`。
+- `physicalRemovals[]=packages/cli/src/index.ts#channel-setup-onboarding-stub:FEAT-081H`。
+
+当前 report 必须保持：
+
+- `planning.stage=FEAT-081H`。
+- `planning.lastCompletedStage=FEAT-081H`。
+- `planning.nextDeletionCandidate=null`。
+- `planning.nextReviewCandidate=null`。
+- `deleteAllowed=false`。
+- `physicalDeleteApproved=false`。
+- `wouldDelete=false`。
+- `summary.deleteAllowedCount=0`。
+
+`verifiedAbsent` 必须证明以下残留缺席：
+
+- `LEGACY_CHANNEL_ONBOARDING_REMOVED`。
+- `renderRemovedOnboarding`。
+- `channel onboarding` alias 注册。
+- 旧 `channel.setup(...)` 调用。
+- 旧 channel config 写入路径。
+
+### 16.3 回滚方式
+
+如需恢复 removed stub，可 revert FEAT-081H commit。
+
+回滚后必须重新运行：
+
+```bash
+pnpm -F @haro/cli build
+pnpm -F @haro/cli test -- test/cli.test.ts test/legacy-removal-guard.test.ts
+pnpm test:legacy
+pnpm test:sidecar
+```
+
+### 16.4 后续规则
+
+081H 不能推广成 channel package 或生产消息能力删除批准。
+
+如后续要继续 legacy 删除，必须重新排序并单项评审。
