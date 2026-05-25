@@ -110,11 +110,23 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       };
       planning: {
         stage: string;
+        lastCompletedStage: string;
+        lastUpdatedBy: string;
         nextDeletionCandidate: null | {
           id: string;
           title: string;
           nextScope: string;
           reason: string;
+          requiredBeforeDelete: string[];
+          forbiddenScope: string[];
+        };
+        nextReviewCandidate: null | {
+          id: string;
+          title: string;
+          reviewScope: string;
+          reviewPurpose: string;
+          reason: string;
+          notApproval: boolean;
           requiredBeforeDelete: string[];
           forbiddenScope: string[];
         };
@@ -162,9 +174,25 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(1);
     expect(payload.data.planning).toMatchObject({
-      stage: 'FEAT-081F',
+      stage: 'FEAT-081G-1',
+      lastCompletedStage: 'FEAT-081G',
+      lastUpdatedBy: 'FEAT-081G-1',
       nextDeletionCandidate: null,
+      nextReviewCandidate: {
+        id: 'channel-layer',
+        reviewScope: 'packages/cli/src/channel.ts#setup-onboarding',
+        reviewPurpose: 'physical-delete-review',
+        notApproval: true,
+      },
     });
+    expect(payload.data.planning.nextReviewCandidate?.reason).toContain('不是删除授权');
+    expect(payload.data.planning.nextReviewCandidate?.requiredBeforeDelete.join('\n')).toContain('影响面列表');
+    expect(payload.data.planning.nextReviewCandidate?.forbiddenScope).toEqual(expect.arrayContaining([
+      'packages/channel',
+      'packages/channel-feishu',
+      'packages/channel-telegram',
+      'packages/mcp-tools/src/tools/send-message.ts',
+    ]));
     expect(payload.data.planning.forbiddenCandidateIds).toContain('web-dashboard-non-review');
     expect(payload.data.planning.blockedCandidateIds).toEqual(expect.arrayContaining([
       'provider-codex',
@@ -244,8 +272,10 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('081F next deletion candidate: none');
-    expect(text).toContain('081F forbidden now: web-dashboard-non-review');
+    expect(text).toContain('planning stage: FEAT-081G-1 lastCompleted=FEAT-081G');
+    expect(text).toContain('next deletion candidate: none');
+    expect(text).toContain('next review candidate: channel-layer scope=packages/cli/src/channel.ts#setup-onboarding notApproval=true');
+    expect(text).toContain('forbidden now: web-dashboard-non-review');
     expect(text).toContain('verifiedAbsent: total=');
     expect(text).toContain('failed=0');
     expect(text).toContain('priority=done#1');

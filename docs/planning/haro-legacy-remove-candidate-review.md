@@ -770,3 +770,60 @@ pnpm test:sidecar
 - `deleteAllowedCount=0`。
 - `physicalDeleteApproved=false`。
 - 没有物理删除 channel package、Feishu/Telegram channel 或 MCP send_message。
+
+## 15. FEAT-081G-1 guard 阶段表达与下一评审候选（2026-05-25）
+
+081G-1 只修正 guard/report 的表达。
+
+本轮没有删除任何源码、目录、package 或测试文件。
+
+本轮也没有批准任何下一项删除。
+
+### 15.1 当前 report 语义
+
+`legacy-removal guard --dry-run --json` 当前应表达：
+
+- `planning.stage=FEAT-081G-1`。
+- `planning.lastCompletedStage=FEAT-081G`。
+- `planning.lastUpdatedBy=FEAT-081G-1`。
+- `planning.nextDeletionCandidate=null`。
+- `planning.nextReviewCandidate` 可提示后续评审对象，但不是删除批准。
+- `deleteAllowed=false`。
+- `physicalDeleteApproved=false`。
+- `wouldDelete=false`。
+- `summary.deleteAllowedCount=0`。
+
+### 15.2 下一评审候选
+
+当前 `nextReviewCandidate` 指向：
+
+- candidate：`channel-layer`。
+- scope：`packages/cli/src/channel.ts#setup-onboarding`。
+- purpose：`physical-delete-review`。
+
+含义：
+
+- 081G 已完成默认路径摘线。
+- 后续如果要考虑物理删除 channel onboarding stub，必须另开单项评审。
+- 这不是删除授权。
+- 执行前必须提交影响面、回滚方案和验证结果。
+
+禁止把该评审扩大到：
+
+- `packages/channel`。
+- `packages/channel-feishu`。
+- `packages/channel-telegram`。
+- Feishu / Telegram 生产消息能力。
+- MCP `packages/mcp-tools/src/tools/send-message.ts`。
+
+### 15.3 保持不变的安全边界
+
+以下状态必须保持不变：
+
+- `nextDeletionCandidate=null`。
+- `deleteAllowed=false`。
+- `physicalDeleteApproved=false`。
+- `wouldDelete=false`。
+- 所有 candidate 的 `deleteAllowed=false`。
+
+081G-1 不能被解释成 081H/后续删除授权。

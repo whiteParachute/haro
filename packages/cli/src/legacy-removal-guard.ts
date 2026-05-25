@@ -89,12 +89,24 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081F';
+    stage: 'FEAT-081G-1';
+    lastCompletedStage: 'FEAT-081G';
+    lastUpdatedBy: 'FEAT-081G-1';
     nextDeletionCandidate: {
       id: string;
       title: string;
       nextScope: string;
       reason: string;
+      requiredBeforeDelete: string[];
+      forbiddenScope: string[];
+    } | null;
+    nextReviewCandidate: {
+      id: string;
+      title: string;
+      reviewScope: string;
+      reviewPurpose: string;
+      reason: string;
+      notApproval: true;
       requiredBeforeDelete: string[];
       forbiddenScope: string[];
     } | null;
@@ -368,6 +380,23 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
         forbiddenScope: nextDeletion.candidatePriority.forbiddenScope ?? [],
       }
     : null;
+  const channelReview = items.find((item) => item.id === 'channel-layer' && item.pilotUnbind?.candidate === 'packages/cli/src/channel.ts#setup-onboarding');
+  const nextReviewCandidate = channelReview?.candidatePriority.nextScope
+    ? {
+        id: channelReview.id,
+        title: channelReview.title,
+        reviewScope: channelReview.candidatePriority.nextScope,
+        reviewPurpose: 'physical-delete-review',
+        reason: '081G 已完成默认路径摘线；这是下一评审候选，不是删除授权。后续如要物理删除 channel onboarding stub，必须先做单项评审并证明不影响 channel package、Feishu/Telegram 生产消息与 MCP send_message。',
+        notApproval: true as const,
+        requiredBeforeDelete: [
+          '提交影响面列表和回滚方案',
+          '证明 channel package、Feishu/Telegram 生产消息能力、MCP send_message 不受影响',
+          '通过 targeted channel/guard tests、pnpm test:legacy、pnpm test:sidecar',
+        ],
+        forbiddenScope: channelReview.candidatePriority.forbiddenScope ?? [],
+      }
+    : null;
   return {
     command: 'legacy-removal guard',
     guardVersion: 'FEAT-081A',
@@ -393,8 +422,11 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081F',
+      stage: 'FEAT-081G-1',
+      lastCompletedStage: 'FEAT-081G',
+      lastUpdatedBy: 'FEAT-081G-1',
       nextDeletionCandidate: planningNext,
+      nextReviewCandidate,
       forbiddenCandidateIds: items.filter((item) => item.candidatePriority.status === 'forbidden').map((item) => item.id),
       blockedCandidateIds: items.filter((item) => item.candidatePriority.status === 'blocked').map((item) => item.id),
       completedPhysicalRemovals: items.flatMap((item) => item.physicalRemoval ? [{ id: item.id, candidate: item.physicalRemoval.candidate, removedBy: item.physicalRemoval.removedBy, rollbackPlan: item.physicalRemoval.rollbackPlan }] : []),
@@ -403,7 +435,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
     nextActions: [
       '本报告只读，不批准物理删除。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
-      'FEAT-081G 已摘线 channel setup/onboarding 默认执行路径；后续任何物理删除仍需另行单项批准。',
+      'FEAT-081G-1 只补充下一评审候选；nextReviewCandidate 不是删除授权，nextDeletionCandidate 仍为 null。',
     ],
   };
 }
@@ -416,9 +448,11 @@ export function formatLegacyRemovalGuardHuman(report: LegacyRemovalGuardReport):
     `wouldDelete: ${report.wouldDelete}`,
     `physicalDeleteApproved: ${report.physicalDeleteApproved}`,
     `items: total=${report.summary.total} freeze=${report.summary.freezeCount} deprecate=${report.summary.deprecateCount} removeCandidate=${report.summary.removeCandidateCount} stillReferenced=${report.summary.stillReferencedCount}`,
-    `081F next deletion candidate: ${report.planning.nextDeletionCandidate ? `${report.planning.nextDeletionCandidate.id} scope=${report.planning.nextDeletionCandidate.nextScope}` : 'none'}`,
-    `081F forbidden now: ${report.planning.forbiddenCandidateIds.join(',') || 'none'}`,
-    `081F completed removals: ${report.planning.completedPhysicalRemovals.map((item) => `${item.candidate}:${item.removedBy}`).join(',') || 'none'}`,
+    `planning stage: ${report.planning.stage} lastCompleted=${report.planning.lastCompletedStage}`,
+    `next deletion candidate: ${report.planning.nextDeletionCandidate ? `${report.planning.nextDeletionCandidate.id} scope=${report.planning.nextDeletionCandidate.nextScope}` : 'none'}`,
+    `next review candidate: ${report.planning.nextReviewCandidate ? `${report.planning.nextReviewCandidate.id} scope=${report.planning.nextReviewCandidate.reviewScope} notApproval=${report.planning.nextReviewCandidate.notApproval}` : 'none'}`,
+    `forbidden now: ${report.planning.forbiddenCandidateIds.join(',') || 'none'}`,
+    `completed removals: ${report.planning.completedPhysicalRemovals.map((item) => `${item.candidate}:${item.removedBy}`).join(',') || 'none'}`,
     `verifiedAbsent: total=${report.summary.verifiedAbsentCount} failed=${report.summary.verifiedAbsentFailedCount}`,
     'negative scope:',
     ...report.negativeScope.map((item) => `- ${item}`),
