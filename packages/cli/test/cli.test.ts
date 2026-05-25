@@ -628,8 +628,8 @@ describe('runCli [FEAT-006]', () => {
     expect(output).toContain('telegram\tdisabled\tpackage');
   });
 
-  it('FEAT-081C: gateway daemon commands are disabled on the default CLI path', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-gateway-disabled-'));
+  it('FEAT-081E: gateway daemon commands are removed on the default CLI path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-gateway-removed-'));
     roots.push(root);
     const stdout = new PassThrough();
     const chunks: string[] = [];
@@ -657,27 +657,31 @@ describe('runCli [FEAT-006]', () => {
       command: string;
       status: string;
       code: string;
-      requiresExplicitEnv: string;
       wouldStart: boolean;
+      physicalRemoval: { candidate: string; status: string; removedBy: string };
     } };
     expect(payload.data).toMatchObject({
       command: 'gateway',
-      status: 'disabled',
-      code: 'LEGACY_GATEWAY_COMMANDS_DISABLED',
-      requiresExplicitEnv: 'HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1',
+      status: 'removed',
+      code: 'LEGACY_GATEWAY_COMMANDS_REMOVED',
       wouldStart: false,
+      physicalRemoval: {
+        candidate: 'packages/cli/src/gateway.ts',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081E',
+      },
     });
   });
 
-  it('FEAT-081C: gateway status remains available only through the explicit legacy env', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-gateway-enabled-'));
+  it('FEAT-081E: legacy gateway env cannot restore the removed daemon path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-gateway-env-removed-'));
     roots.push(root);
     const stdout = new PassThrough();
     const chunks: string[] = [];
     stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
     const result = await runCli({
-      argv: ['gateway', 'status', '--json'],
+      argv: ['gateway', 'start', '--daemon', '--json'],
       root,
       stdout,
       setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_GATEWAY_COMMANDS: '1' } },
@@ -693,13 +697,13 @@ describe('runCli [FEAT-006]', () => {
       createAdditionalChannels: async () => [],
     });
 
-    expect(result.exitCode).toBe(0);
-    const payload = JSON.parse(chunks.join('')) as { ok: true; data: {
-      running: boolean;
-      paths: { root: string };
-    } };
-    expect(payload.data.running).toBe(false);
-    expect(payload.data.paths.root).toBe(root);
+    expect(result.exitCode).toBe(2);
+    const payload = JSON.parse(chunks.join('')) as { ok: true; data: { status: string; code: string; wouldStart: boolean } };
+    expect(payload.data).toMatchObject({
+      status: 'removed',
+      code: 'LEGACY_GATEWAY_COMMANDS_REMOVED',
+      wouldStart: false,
+    });
   });
 
   it('FEAT-008 AC2: channel setup feishu persists enabled config via wizard', async () => {

@@ -21,7 +21,7 @@
     "clean": "rm -rf dist",
     "test": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" vitest run",
     "test:sidecar": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" vitest run test/agentdock-sidecar-cli.test.ts test/bin-entrypoint.test.ts test/cron-cli.test.ts test/legacy-surface-warning.test.ts test/legacy-removal-guard.test.ts test/self-heal-duplicates-cli.test.ts test/feedback-revision-cli.test.ts",
-    "test:legacy": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" vitest run test/cli.test.ts test/feat026-provider-onboarding.test.ts test/feat027-setup-doctor.test.ts test/feat039-batch1.test.ts test/feat039-batch1-fixes.test.ts test/feat039-batch2.test.ts test/feat039-batch2-fixes.test.ts test/feat039-batch3-fixes.test.ts test/feat039-batch3-slash.test.ts test/feat039-e2e.test.ts test/gateway.test.ts test/install-scripts.test.ts test/output-shape.test.ts test/output.test.ts test/provider-codex-wizard.test.ts"
+    "test:legacy": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" vitest run test/cli.test.ts test/feat026-provider-onboarding.test.ts test/feat027-setup-doctor.test.ts test/feat039-batch1.test.ts test/feat039-batch1-fixes.test.ts test/feat039-batch2.test.ts test/feat039-batch2-fixes.test.ts test/feat039-batch3-fixes.test.ts test/feat039-batch3-slash.test.ts test/feat039-e2e.test.ts test/install-scripts.test.ts test/output-shape.test.ts test/output.test.ts test/provider-codex-wizard.test.ts"
   },
   "dependencies": {
     "@clack/prompts": "^0.10.1",

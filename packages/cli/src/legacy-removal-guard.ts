@@ -29,7 +29,7 @@ export interface LegacyRemovalGuardDefinition {
   physicalRemoval?: {
     candidate: string;
     status: 'physically-removed';
-    removedBy: 'FEAT-081D';
+    removedBy: 'FEAT-081D' | 'FEAT-081E';
     rollbackPlan: string;
     note: string;
   };
@@ -120,16 +120,19 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       '确认 AgentDock IM 已承接生产消息通道',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/channel test', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 deprecate/freeze；FEAT-081C 仅解绑 gateway 默认命令路径，不删除文件。',
-    pilotUnbind: {
+    decision: '保持 deprecate/freeze；FEAT-081E 仅物理删除 gateway 旧 CLI daemon 入口，channel package/IM 能力未批准删除。',
+    physicalRemoval: {
       candidate: 'packages/cli/src/gateway.ts',
-      status: 'default-path-unbound',
-      note: '默认 CLI 不再执行 gateway daemon/control-plane 命令；只有显式 HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1 才注册旧兼容路径。',
+      status: 'physically-removed',
+      removedBy: 'FEAT-081E',
+      rollbackPlan: 'git revert FEAT-081E commit 可恢复 gateway 源码、legacy env 注册路径和旧 gateway 测试。',
+      note: '仅 gateway 旧 CLI daemon/control-plane 入口被删除；channel/provider/memory/skills/Web/scenario-router 未获物理删除批准。',
     },
     evidence: [
-      { path: 'packages/channel/package.json', kind: 'exists', description: 'channel package 仍存在' },
+      { path: 'packages/cli/src/gateway.ts', kind: 'exists', description: 'gateway 旧 CLI daemon 源文件应已不存在' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "HARO_ENABLE_LEGACY_GATEWAY_COMMANDS === '1'", description: 'gateway legacy env 注册判断应已移除' },
+      { path: 'packages/channel/package.json', kind: 'exists', description: 'channel package 仍存在，不在 081E 删除范围' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'registerChannelCommands', description: 'CLI 仍注册 channel 入口' },
-      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'HARO_ENABLE_LEGACY_GATEWAY_COMMANDS', description: 'gateway 默认命令路径已改为显式 legacy env' },
       { path: 'packages/mcp-tools/src/tools/send-message.ts', kind: 'exists', description: 'MCP legacy send_message tool 仍存在' },
     ],
   },
@@ -283,7 +286,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
     nextActions: [
       '本报告只读，不批准物理删除。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
-      'FEAT-081D 只删除 TeamOrchestrator 旧兼容路径；其它候选物理删除仍需另行单项批准。',
+      'FEAT-081D 只删除 TeamOrchestrator，FEAT-081E 只删除 gateway 旧 CLI daemon 入口；其它候选物理删除仍需另行单项批准。',
     ],
   };
 }

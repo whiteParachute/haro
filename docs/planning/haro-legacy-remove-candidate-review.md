@@ -76,14 +76,14 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| current_state | deprecate |
-| still_imported_by | `packages/cli/src/channel.ts`；`haro channel`；gateway；channel package tests |
+| current_state | deprecate；gateway CLI daemon 入口已由 FEAT-081E 单项删除 |
+| still_imported_by | `packages/cli/src/channel.ts`；`haro channel`；channel package tests；gateway 概念仅作为 removed CLI stub 保留 |
 | replacement | AgentDock IM / channel layer；Haro 只接收 sidecar observation 与 approval feedback |
 | blocking_dependencies | AgentDock channel contract 明确；旧 `haro channel setup` 入口降级；gateway 移除依赖 |
-| risk_if_removed | Feishu/Telegram 旧入口不可用；gateway doctor/list 测试失败 |
+| risk_if_removed | Feishu/Telegram 旧入口不可用；gateway 已删除后不再作为阻塞项 |
 | rollback_plan | git revert；恢复 packages 与 workspace dependencies |
 | required_verification | `pnpm test:sidecar`；`pnpm -F @haro/channel test`；`pnpm -F @haro/channel-feishu test`；`pnpm -F @haro/channel-telegram test`；`pnpm -F @haro/cli test:legacy` |
-| decision | 保持 deprecate，不删除；先确认 AgentDock 已完全承接 IM |
+| decision | 保持 deprecate，不删除 channel packages；FEAT-081E 只删除 gateway 旧 CLI daemon 入口 |
 
 ### 3.3 packages/skills
 
@@ -451,8 +451,8 @@ guard 报告新增 `pilotUnbind`。
 
 - gateway 只服务旧后台 channel daemon。
 - sidecar 主链路不需要它。
-- 源码和测试可以保留。
-- 旧命令可以用显式环境变量复核。
+- 081C 阶段源码和测试先保留。
+- 081C 阶段旧命令可以用显式环境变量复核。
 - 风险低于 provider、memory、skills、Web。
 
 本次不动其它候选。
@@ -478,11 +478,14 @@ guard 报告新增 `pilotUnbind`。
 
 这不是物理删除批准。
 
-`packages/cli/src/gateway.ts` 仍保留。
+`packages/cli/src/gateway.ts` 在 081C 后仍保留。
+
+081E 后续已经把 gateway 旧 CLI daemon 入口升级为单项物理删除：
+`HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1` 只作为历史记录保留，当前代码不再支持该旧兼容执行路径。
 
 channel packages 仍保留。
 
-legacy test 仍可显式验证旧路径。
+legacy test 在 081E 后不再验证旧 daemon 实现，只验证 removed/fail-closed 报告。
 
 guard 报告在 `channel-layer` 下新增 `pilotUnbind`。
 
@@ -539,5 +542,59 @@ guard 报告在 `channel-layer` 下新增 `pilotUnbind`。
 后续规则：
 
 - 081D 不能推广成其它候选的删除批准。
-- 如继续 081E，必须再选择一个候选并单独评审。
-- 不得顺手删除 gateway/provider/channel/memory/skills/Web/scenario-router。
+- 081E 已单项删除 gateway 旧 CLI daemon 入口。
+- 不得顺手删除 provider/channel/memory/skills/Web/scenario-router。
+
+## 12. FEAT-081E 第二个真实物理删除（2026-05-25）
+
+081E 只处理一个已摘线候选。
+
+本次删除 `gateway` 旧 CLI daemon/control-plane 入口。
+
+删除原因：
+
+- 081C 已经把真实 gateway daemon 命令从默认 CLI 路径摘线。
+- gateway 只服务旧 Haro-owned channel/control-plane 方向。
+- sidecar 主链路不需要 Haro 自有后台 channel daemon。
+- 删除范围可以通过 git revert 清晰回滚。
+
+本次删除内容：
+
+- `packages/cli/src/gateway.ts`。
+- `packages/cli/test/gateway.test.ts`。
+- CLI 中 `HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1` 恢复旧 gateway 命令的注册路径。
+- `@haro/cli` legacy test script 中的 gateway 单测入口。
+
+本次保留内容：
+
+- `packages/channel`。
+- `packages/channel-feishu`。
+- `packages/channel-telegram`。
+- `haro channel ...` 旧兼容入口。
+- MCP `send_message` 相关兼容工具。
+- provider、memory、skills、Web/API、scenario-router、agent/runtime/services。
+
+CLI 行为：
+
+- `haro gateway ...` 仍保留为 fail-closed stub。
+- 输出 `LEGACY_GATEWAY_COMMANDS_REMOVED`。
+- 不启动 daemon。
+- 设置旧环境变量也不能恢复 daemon。
+
+守卫状态：
+
+- `channel-layer` 记录 `physicalRemoval.status=physically-removed`。
+- `physicalRemoval.removedBy=FEAT-081E`。
+- `deleteAllowed` 仍固定为 `false`。
+- `physicalDeleteApproved` 仍为 `false`，表示 guard 报告本身不是后续删除批准。
+
+回滚方式：
+
+- revert FEAT-081E commit。
+- 重新运行 CLI build、legacy tests、sidecar tests。
+
+后续规则：
+
+- 081E 不能推广成 channel/provider/memory/skills/Web/scenario-router 的删除批准。
+- 如继续 081F，必须再选择一个候选并单独评审。
+- 不得顺手删除 channel package 或飞书/Telegram 消息能力。

@@ -631,11 +631,7 @@ function buildProgram(app: AppContext): Command {
   registerProviderCommands(program, app);
   registerSkillsCommands(program, app);
   registerMetabolismCommands(program, app);
-  if (isLegacyGatewayCommandsEnabled(app)) {
-    registerGatewayCommands(program, app);
-  } else {
-    registerLegacyGatewayDisabledCommand(program, app);
-  }
+  registerLegacyGatewayRemovedCommand(program, app);
   registerWebCommand(program, app);
   registerMcpCommand(program, app);
   registerLegacyRemovalCommands(program, app);
@@ -1377,99 +1373,24 @@ function registerMetabolismCommands(program: Command, app: AppContext): void {
   );
 }
 
-function registerGatewayCommands(program: Command, app: AppContext): void {
-  registerCommand(
-    'gateway',
-    (cmd) => {
-      cmd.description('Gateway / daemon control for background channels');
-
-      cmd
-        .command('start')
-        .option('-d, --daemon', 'run in background')
-        .action(async (options: { daemon?: boolean }) => {
-          writeLegacySurfaceWarning(app);
-          const { gatewayStart } = await import('./gateway.js');
-          const result = await gatewayStart(app, { daemon: options.daemon });
-          app.stdout.write(result.output);
-          if (result.exitCode !== 0) {
-            throw new CommanderExit(result.exitCode, result.output.trim());
-          }
-        });
-
-      cmd
-        .command('stop')
-        .action(async () => {
-          writeLegacySurfaceWarning(app);
-          const { gatewayStop } = await import('./gateway.js');
-          const result = gatewayStop({ root: app.paths.root });
-          app.stdout.write(result.output);
-          if (result.exitCode !== 0) {
-            throw new CommanderExit(result.exitCode, result.output.trim());
-          }
-        });
-
-      cmd
-        .command('status')
-        .option('--json', 'force JSON output (default for non-TTY)')
-        .option('--human', 'force human output')
-        .action(async (options: { json?: boolean; human?: boolean }) => {
-          const { gatewayStatus } = await import('./gateway.js');
-          const result = await gatewayStatus(app);
-          const mode = resolveOutputMode(options, app.stdout);
-          if (mode === 'json') {
-            renderJson(result.report, { stdout: app.stdout });
-          } else {
-            writeLegacySurfaceWarningForMode(app, mode);
-            app.stdout.write(result.output);
-          }
-        });
-
-      cmd
-        .command('doctor')
-        .option('--json', 'force JSON output (default for non-TTY)')
-        .option('--human', 'force human output')
-        .action(async (options: { json?: boolean; human?: boolean }) => {
-          const { gatewayDoctor } = await import('./gateway.js');
-          const result = await gatewayDoctor(app);
-          const mode = resolveOutputMode(options, app.stdout);
-          if (mode === 'json') {
-            renderJsonDiagnostic(result.report, { stdout: app.stdout, stderr: app.stderr }, {
-              code: 'GATEWAY_DOCTOR_FAILED',
-              message: 'gateway doctor found issues',
-              remediation: 'Inspect the unhealthy channels listed in the report and run `haro channel doctor <id>` for each.',
-            });
-          } else {
-            writeLegacySurfaceWarningForMode(app, mode);
-            app.stdout.write(result.output);
-          }
-          if (result.exitCode !== 0) {
-            throw new CommanderExit(result.exitCode, 'gateway doctor found issues');
-          }
-        });
-    },
-    program,
-  );
-}
-
-function isLegacyGatewayCommandsEnabled(app: AppContext): boolean {
-  const env = app.opts.doctorDeps?.env ?? app.opts.setupDeps?.env ?? process.env;
-  return env.HARO_ENABLE_LEGACY_GATEWAY_COMMANDS === '1';
-}
-
-function registerLegacyGatewayDisabledCommand(program: Command, app: AppContext): void {
-  const renderDisabled = (options: { json?: boolean; human?: boolean } = {}) => {
+function registerLegacyGatewayRemovedCommand(program: Command, app: AppContext): void {
+  const renderRemoved = (options: { json?: boolean; human?: boolean } = {}) => {
     const report = {
       command: 'gateway',
-      status: 'disabled',
-      code: 'LEGACY_GATEWAY_COMMANDS_DISABLED',
+      status: 'removed',
+      code: 'LEGACY_GATEWAY_COMMANDS_REMOVED',
       legacy: true,
       dryRun: true,
       wouldStart: false,
-      requiresExplicitEnv: 'HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1',
-      message: 'gateway 属于历史 Haro-owned channel/control-plane 路径，默认已解绑。',
+      physicalRemoval: {
+        candidate: 'packages/cli/src/gateway.ts',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081E',
+      },
+      message: 'gateway 属于历史 Haro-owned channel/control-plane 路径，已在 FEAT-081E 物理删除。',
       nextActions: [
-        '确认确实需要复核旧 gateway 后，再显式设置 HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1。',
-        '不要把本守卫视为物理删除批准；channel/gateway 源码仍保留。',
+        '不要再通过 haro gateway 启动旧后台 daemon；生产消息能力应由 AgentDock 或明确 sidecar contract 承接。',
+        '本删除只覆盖 gateway 旧 CLI daemon 入口；channel/provider/memory/skills/Web/scenario-router 未获物理删除批准。',
       ],
     };
     const mode = resolveOutputMode(options, app.stdout);
@@ -1478,7 +1399,7 @@ function registerLegacyGatewayDisabledCommand(program: Command, app: AppContext)
     } else {
       writeLegacySurfaceWarning(app);
       app.stdout.write(`${report.message}\n`);
-      app.stdout.write(`如需旧兼容路径，请显式设置 ${report.requiresExplicitEnv}。\n`);
+      app.stdout.write('旧 HARO_ENABLE_LEGACY_GATEWAY_COMMANDS 兼容路径已移除，不能恢复旧 daemon。\n');
     }
     throw new CommanderExit(2, report.message);
   };
@@ -1487,35 +1408,35 @@ function registerLegacyGatewayDisabledCommand(program: Command, app: AppContext)
     'gateway',
     (cmd) => {
       cmd
-        .description('Gateway / daemon control for background channels (legacy, disabled by default)')
+        .description('Gateway / daemon control for background channels (legacy, removed)')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action(renderDisabled);
+        .action(renderRemoved);
 
       cmd
         .command('start')
         .option('-d, --daemon', 'run in background')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action(renderDisabled);
+        .action(renderRemoved);
 
       cmd
         .command('stop')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action(renderDisabled);
+        .action(renderRemoved);
 
       cmd
         .command('status')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action(renderDisabled);
+        .action(renderRemoved);
 
       cmd
         .command('doctor')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action(renderDisabled);
+        .action(renderRemoved);
     },
     program,
   );

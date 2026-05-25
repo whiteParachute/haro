@@ -128,11 +128,15 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(byId.get('provider-codex')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     const channelLayer = byId.get('channel-layer');
     expect(channelLayer).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
-    expect(channelLayer?.pilotUnbind).toMatchObject({
+    expect(channelLayer?.physicalRemoval).toMatchObject({
       candidate: 'packages/cli/src/gateway.ts',
-      status: 'default-path-unbound',
+      status: 'physically-removed',
+      removedBy: 'FEAT-081E',
     });
-    expect(channelLayer?.pilotUnbind?.note).toContain('HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1');
+    expect(channelLayer?.physicalRemoval?.note).toContain('未获物理删除批准');
+    expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/cli/src/gateway.ts')?.present).toBe(false);
+    expect(channelLayer?.evidence.find((entry) => entry.description?.includes('legacy env'))?.present).toBe(false);
+    expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/channel/package.json')?.present).toBe(true);
     expect(byId.get('memory-fabric')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     const agentRuntime = byId.get('agent-runtime-router');
     expect(agentRuntime?.evidence.some((entry) => entry.present)).toBe(true);
@@ -169,8 +173,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
     expect(text).toContain('FEAT-081D');
+    expect(text).toContain('FEAT-081E');
     expect(text).toContain('physicalRemoval=physically-removed:packages/core/src/team-orchestrator.ts:FEAT-081D');
-    expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/gateway.ts');
+    expect(text).toContain('physicalRemoval=physically-removed:packages/cli/src/gateway.ts:FEAT-081E');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
