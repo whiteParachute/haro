@@ -26,6 +26,13 @@ export interface LegacyRemovalGuardDefinition {
     status: 'default-path-unbound';
     note: string;
   };
+  physicalRemoval?: {
+    candidate: string;
+    status: 'physically-removed';
+    removedBy: 'FEAT-081D';
+    rollbackPlan: string;
+    note: string;
+  };
   evidence: LegacyRemovalEvidenceDefinition[];
 }
 
@@ -76,7 +83,7 @@ export const LEGACY_REMOVAL_NEGATIVE_SCOPE = [
   'approval decisions / proposals / validations / applications / rollbacks 真实 artifact',
   'AgentDock host 代码',
   '自动 approve/apply/rollback/confirm',
-  '物理删除 package/module/file',
+  '未经单项批准的物理删除 package/module/file',
 ];
 
 export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = [
@@ -164,17 +171,20 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       '完成 L2/L3 workspace execution plan contract',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 freeze；FEAT-081B 仅解绑 team-orchestrator 默认执行路径，不删除文件。',
-    pilotUnbind: {
+    decision: 'FEAT-081D 已物理删除 TeamOrchestrator 旧兼容路径；agent/runtime/scenario 其它候选仍保持 freeze，未批准删除。',
+    physicalRemoval: {
       candidate: 'packages/core/src/team-orchestrator.ts',
-      status: 'default-path-unbound',
-      note: '默认 haro run 不再执行 TeamOrchestrator；只有显式 HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1 才走兼容路径。',
+      status: 'physically-removed',
+      removedBy: 'FEAT-081D',
+      rollbackPlan: 'git revert FEAT-081D commit 可恢复 team-orchestrator 源码、legacy export、CLI 兼容路径与旧测试。',
+      note: '仅 TeamOrchestrator 旧兼容入口被删除；gateway/provider/channel/memory/skills/Web/scenario-router 未获物理删除批准。',
     },
     evidence: [
-      { path: 'packages/core/src/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator 文件仍存在' },
-      { path: 'packages/core/src/scenario-router.ts', kind: 'exists', description: 'scenario router 文件仍存在' },
+      { path: 'packages/core/src/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator 源文件应已不存在' },
+      { path: 'packages/core/src/legacy/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator legacy re-export 应已不存在' },
+      { path: 'packages/core/package.json', kind: 'contains', pattern: './legacy/team-orchestrator', description: 'legacy package export 应已移除' },
+      { path: 'packages/core/src/scenario-router.ts', kind: 'exists', description: 'scenario router 文件仍存在，不在 081D 删除范围' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'ScenarioRouter', description: 'CLI bootstrap 仍构造/引用 scenario router' },
-      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR', description: 'team orchestrator 默认执行路径已改为显式 legacy env' },
     ],
   },
   {
@@ -273,7 +283,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
     nextActions: [
       '本报告只读，不批准物理删除。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
-      'FEAT-081B/081C 只能按单项候选评审是否解除默认路径；物理删除仍需另行批准。',
+      'FEAT-081D 只删除 TeamOrchestrator 旧兼容路径；其它候选物理删除仍需另行单项批准。',
     ],
   };
 }
@@ -294,7 +304,10 @@ export function formatLegacyRemovalGuardHuman(report: LegacyRemovalGuardReport):
       const pilot = item.pilotUnbind
         ? ` pilotUnbind=${item.pilotUnbind.status}:${item.pilotUnbind.candidate}`
         : '';
-      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${pilot} decision=${item.decision}`;
+      const removal = item.physicalRemoval
+        ? ` physicalRemoval=${item.physicalRemoval.status}:${item.physicalRemoval.candidate}:${item.physicalRemoval.removedBy}`
+        : '';
+      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${pilot}${removal} decision=${item.decision}`;
     }),
     'next actions:',
     ...report.nextActions.map((action) => `- ${action}`),

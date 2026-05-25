@@ -30,13 +30,10 @@ import {
   type HaroPaths,
   type OperationClass,
   type OperationPolicy,
-  type RawContextRef,
   type RoutingDecision,
-  type RunAgentInput,
   type RunAgentResult,
   type ScenarioWorkflow,
 } from '@haro/core';
-import type { TeamWorkflowExecutionResult } from '@haro/core/legacy/team-orchestrator';
 import { createCodexProvider } from '@haro/provider-codex';
 import type { ReviewConversationReplyInput, ReviewConversationReplyResult } from '@haro/web-api';
 import {
@@ -2209,31 +2206,16 @@ async function executeTask(
   };
   try {
     if (decision.executionMode === 'team') {
-      if (!isLegacyTeamOrchestratorEnabled(app)) {
-        if (prepared.matchedSkillId) {
-          app.logger.warn?.({
-            skillId: prepared.matchedSkillId,
-            workflowId: workflow.workflowId,
-          }, 'legacy team orchestrator disabled; executing skill-prepared task as single-agent fallback');
-        } else {
-          const teamResult = legacyTeamOrchestratorDisabledResult(input, workflow, decision);
-          const disabledContent = teamResult.finalEvent.type === 'error'
-            ? `ERROR [${teamResult.finalEvent.code}] ${teamResult.finalEvent.message}`
-            : teamResult.finalEvent.content;
-          await sendWithPermissionGuard(app, budgetStore, {
-            workflowId: workflow.workflowId,
-            agentId: input.agentId,
-            channel: outputChannel,
-            sessionId: channelSessionId,
-            message: {
-              type: 'text',
-              content: disabledContent,
-            },
-          });
-          return { ...teamResult, workflowId: workflow.workflowId };
-        }
+      if (prepared.matchedSkillId) {
+        app.logger.warn?.({
+          skillId: prepared.matchedSkillId,
+          workflowId: workflow.workflowId,
+        }, 'legacy team orchestrator removed; executing skill-prepared task as single-agent fallback');
       } else {
-        const teamResult = await executeTeamWorkflow(app, input, workflow, decision, rawContextRefs, budgetStore);
+        const teamResult = legacyTeamOrchestratorRemovedResult(input, workflow, decision);
+        const disabledContent = teamResult.finalEvent.type === 'error'
+          ? `ERROR [${teamResult.finalEvent.code}] ${teamResult.finalEvent.message}`
+          : teamResult.finalEvent.content;
         await sendWithPermissionGuard(app, budgetStore, {
           workflowId: workflow.workflowId,
           agentId: input.agentId,
@@ -2241,10 +2223,7 @@ async function executeTask(
           sessionId: channelSessionId,
           message: {
             type: 'text',
-            content:
-              teamResult.finalEvent.type === 'result'
-                ? teamResult.finalEvent.content
-                : `ERROR [${teamResult.finalEvent.code}] ${teamResult.finalEvent.message}`,
+            content: disabledContent,
           },
         });
         return { ...teamResult, workflowId: workflow.workflowId };
@@ -2409,121 +2388,32 @@ function publishStreamEventsForChannel(
   }
 }
 
-function isLegacyTeamOrchestratorEnabled(app: AppContext): boolean {
-  const env = app.opts.doctorDeps?.env ?? app.opts.setupDeps?.env ?? process.env;
-  return env.HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR === '1';
-}
-
-function legacyTeamOrchestratorDisabledResult(
+function legacyTeamOrchestratorRemovedResult(
   input: ExecutionOptions,
   workflow: ScenarioWorkflow,
   decision: RoutingDecision,
 ): RunAgentResult {
   const message = [
-    'legacy_team_orchestrator_disabled：TeamOrchestrator 属于历史 Haro-owned workbench/runtime 路径，默认已解绑。',
-    '当前主线是 AgentDock self-evolution sidecar。',
-    '如需临时验证旧兼容路径，请显式设置 HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1。',
+    'legacy_team_orchestrator_removed：TeamOrchestrator 属于历史 Haro-owned workbench/runtime 路径，已在 FEAT-081D 物理删除。',
+    '当前主线是 AgentDock self-evolution sidecar；多 agent/workspace orchestration 应由 AgentDock 承接。',
+    '本删除只覆盖 TeamOrchestrator，未批准删除 gateway/provider/channel/memory/skills/Web/scenario-router。',
   ].join(' ');
   return {
     sessionId: workflow.workflowId,
     ruleId: decision.matchedRuleId ?? decision.workflowTemplateId,
-    provider: input.provider ?? 'legacy-team-orchestrator',
+    provider: input.provider ?? 'legacy-team-orchestrator-removed',
     model: input.model ?? workflow.workflowTemplateId,
     events: [{
       type: 'result',
       content: message,
-      responseId: 'legacy_team_orchestrator_disabled',
+      responseId: 'legacy_team_orchestrator_removed',
     }],
     finalEvent: {
       type: 'result',
       content: message,
-      responseId: 'legacy_team_orchestrator_disabled',
+      responseId: 'legacy_team_orchestrator_removed',
     },
   };
-}
-
-async function executeTeamWorkflow(
-  app: AppContext,
-  input: ExecutionOptions,
-  workflow: ScenarioWorkflow,
-  decision: RoutingDecision,
-  rawContextRefs: RawContextRef[],
-  budgetStore: PermissionBudgetStore,
-): Promise<RunAgentResult> {
-  const { TeamOrchestrator } = await import('@haro/core/legacy/team-orchestrator');
-  const runner = app.createRunner();
-  const teamAgentRunner = {
-    run: (branchInput: RunAgentInput) =>
-      runner.run({
-        ...branchInput,
-        ...(input.provider ? { provider: input.provider } : {}),
-        ...(input.model ? { model: input.model } : {}),
-        ...(input.noMemory ? { noMemory: true } : {}),
-        ...(input.legacyMemory ? { legacyMemory: true } : {}),
-      }),
-  };
-  const orchestrator = new TeamOrchestrator({
-    agentRunner: teamAgentRunner,
-    checkpointStore: app.checkpointStore,
-    budgetStore,
-    budgetEstimate: workflow.budget,
-    now: app.now,
-    defaultAgentId: input.agentId,
-  });
-
-  try {
-    const result = await orchestrator.executeWorkflow(workflow, decision, rawContextRefs);
-    const content = formatTeamWorkflowResult(result);
-    return {
-      sessionId: workflow.workflowId,
-      ruleId: decision.matchedRuleId ?? decision.workflowTemplateId,
-      provider: input.provider ?? 'team-orchestrator',
-      model: input.model ?? workflow.workflowTemplateId,
-      events: [
-        {
-          type: 'result',
-          content,
-          responseId: result.envelope.checkpointRef,
-        },
-      ],
-      finalEvent: {
-        type: 'result',
-        content,
-        responseId: result.envelope.checkpointRef,
-      },
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    app.logger.error?.(
-      {
-        workflowId: workflow.workflowId,
-        workflowTemplateId: workflow.workflowTemplateId,
-        orchestrationMode: workflow.orchestrationMode,
-        err: message,
-      },
-      'Team workflow execution failed',
-    );
-    return {
-      sessionId: workflow.workflowId,
-      ruleId: decision.matchedRuleId ?? decision.workflowTemplateId,
-      provider: input.provider ?? 'team-orchestrator',
-      model: input.model ?? workflow.workflowTemplateId,
-      events: [
-        {
-          type: 'error',
-          code: 'team_workflow_failed',
-          message,
-          retryable: false,
-        },
-      ],
-      finalEvent: {
-        type: 'error',
-        code: 'team_workflow_failed',
-        message,
-        retryable: false,
-      },
-    };
-  }
 }
 
 async function sendWithPermissionGuard(
@@ -2639,23 +2529,6 @@ function recordCliPermissionDecision(
     store.close();
   }
   return decision;
-}
-
-function formatTeamWorkflowResult(result: TeamWorkflowExecutionResult): string {
-  return JSON.stringify(
-    {
-      workflowId: result.workflow.workflowId,
-      orchestrationMode: result.envelope.orchestrationMode,
-      teamStatus: result.state.teamStatus,
-      budget: result.state.budget,
-      budgetExceeded: result.state.budget?.state === 'exceeded',
-      blockedReason: result.state.budget?.blockedReason,
-      branchLedger: result.state.branches,
-      mergeEnvelope: result.envelope,
-    },
-    null,
-    2,
-  );
 }
 
 function resolveIngressSessionId(app: AppContext): string {

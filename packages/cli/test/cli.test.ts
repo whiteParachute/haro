@@ -244,115 +244,7 @@ describe('runCli [FEAT-006]', () => {
     }
   });
 
-  it('FEAT-014: team-mode requests execute through TeamOrchestrator and checkpoint branch/merge state', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-team-'));
-    roots.push(root);
-    const stdout = new PassThrough();
-    const stderr = new PassThrough();
-    const outputChunks: string[] = [];
-    const errorChunks: string[] = [];
-    stdout.on('data', (chunk) => outputChunks.push(String(chunk)));
-    stderr.on('data', (chunk) => errorChunks.push(String(chunk)));
-
-    const result = await runCli({
-      argv: ['run', '请分析这个复杂系统故障，跨文件定位根因并拆分信息维度'],
-      root,
-      stdout,
-      stderr,
-      createSessionId: createIdFactory([
-        'workflow-team-1',
-        'leaf-team-code',
-        'leaf-team-docs',
-        'leaf-team-ci',
-      ]),
-      createConversationId: createIdFactory(['cli-bootstrap-team-1', 'channel-team-1']),
-      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '1' } },
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* (params) {
-              yield {
-                type: 'result',
-                content: `team branch executed:${params.prompt}`,
-                responseId: `resp-${/memberKey: (.+)/.exec(params.prompt)?.[1] ?? 'unknown'}`,
-              };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(outputChunks.join('')).toContain('"mergeEnvelope"');
-    expect(outputChunks.join('')).toContain('"branchLedger"');
-    expect(outputChunks.join('')).toContain('workflow-team-1');
-    expect(errorChunks.join('')).not.toContain('WARN [FEAT-014]');
-
-    const db = openDatabase(root);
-    try {
-      const workflowCheckpoints = db
-        .prepare(
-          'SELECT workflow_id, node_id, state FROM workflow_checkpoints ORDER BY rowid ASC',
-        )
-        .all() as Array<{ workflow_id: string; node_id: string; state: string }>;
-      const sessions = db
-        .prepare('SELECT id FROM sessions ORDER BY id ASC')
-        .all() as Array<{ id: string }>;
-
-      expect(workflowCheckpoints).toHaveLength(6);
-      expect(workflowCheckpoints[0]?.node_id).toBe('dispatch-1');
-      expect(workflowCheckpoints.slice(1, 4).map((checkpoint) => checkpoint.node_id).sort()).toEqual([
-        'hub-spoke-branch-1',
-        'hub-spoke-branch-2',
-        'hub-spoke-branch-3',
-      ]);
-      expect(workflowCheckpoints.slice(4).map((checkpoint) => checkpoint.node_id)).toEqual(['merge-1', 'merge-1']);
-      expect(workflowCheckpoints.every((checkpoint) => checkpoint.workflow_id === 'workflow-team-1')).toBe(true);
-      expect(sessions.map((session) => session.id).sort()).toEqual([
-        'leaf-team-ci',
-        'leaf-team-code',
-        'leaf-team-docs',
-      ]);
-
-      const latest = workflowCheckpoints.at(-1);
-      const state = JSON.parse(latest!.state) as {
-        nodeType: string;
-        routingDecision: { executionMode: string; orchestrationMode?: string };
-        branchState: {
-          teamStatus: string;
-          fallbackExecutionMode?: string | null;
-          teamOrchestratorPending?: boolean;
-          branches: Record<string, { status: string; attempt: number; leafSessionRef?: { sessionId: string } }>;
-          merge?: { status: string; envelope?: { status: string; consumedBranches: string[] } };
-        };
-        leafSessionRefs: Array<{ sessionId: string; providerResponseId?: string }>;
-      };
-      expect(latest?.node_id).toBe('merge-1');
-      expect(state.nodeType).toBe('merge');
-      expect(state.routingDecision.executionMode).toBe('team');
-      expect(state.routingDecision.orchestrationMode).toBe('hub-spoke');
-      expect(state.branchState.fallbackExecutionMode).toBeNull();
-      expect(state.branchState.teamOrchestratorPending).toBe(false);
-      expect(state.branchState.teamStatus).toBe('merged');
-      expect(Object.values(state.branchState.branches)).toHaveLength(3);
-      expect(Object.values(state.branchState.branches).every((branch) => branch.status === 'merge-consumed')).toBe(
-        true,
-      );
-      expect(Object.values(state.branchState.branches).every((branch) => branch.attempt === 1)).toBe(true);
-      expect(state.branchState.merge?.status).toBe('completed');
-      expect(state.branchState.merge?.envelope?.status).toBe('completed');
-      expect(state.branchState.merge?.envelope?.consumedBranches).toHaveLength(3);
-      expect(state.leafSessionRefs.map((ref) => ref.sessionId).sort()).toEqual([
-        'leaf-team-ci',
-        'leaf-team-code',
-        'leaf-team-docs',
-      ]);
-    } finally {
-      db.close();
-    }
-  });
-
-  it('FEAT-081B: team orchestrator is disabled on the default run path', async () => {
+  it('FEAT-081D: team orchestrator remains removed even when the legacy env is set', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-team-disabled-'));
     roots.push(root);
     const stdout = new PassThrough();
@@ -367,7 +259,7 @@ describe('runCli [FEAT-006]', () => {
       stderr,
       createSessionId: createIdFactory(['workflow-team-disabled-1']),
       createConversationId: createIdFactory(['cli-bootstrap-team-disabled-1', 'channel-team-disabled-1']),
-      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '0' } },
+      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '1' } },
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
@@ -381,9 +273,9 @@ describe('runCli [FEAT-006]', () => {
 
     expect(result.exitCode).toBe(0);
     const text = outputChunks.join('');
-    expect(text).toContain('legacy_team_orchestrator_disabled');
-    expect(text).toContain('默认已解绑');
-    expect(text).toContain('HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1');
+    expect(text).toContain('legacy_team_orchestrator_removed');
+    expect(text).toContain('物理删除');
+    expect(text).toContain('FEAT-081D');
     expect(text).not.toContain('"mergeEnvelope"');
     expect(text).not.toContain('should-not-run-team-branch');
   });
@@ -1190,7 +1082,6 @@ describe('runCli [FEAT-006]', () => {
       argv: ['run', '/eat Principle: Keep interfaces narrow'],
       root,
       stdout,
-      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '1' } },
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
@@ -1221,7 +1112,6 @@ describe('runCli [FEAT-006]', () => {
       argv: ['run', '请吸收这个经验：接口要保持窄边界'],
       root,
       stdout,
-      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '1' } },
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({

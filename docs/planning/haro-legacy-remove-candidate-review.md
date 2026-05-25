@@ -141,14 +141,14 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| current_state | remove-candidate |
-| still_imported_by | core barrel exports；team-orchestrator tests；旧 orchestration docs/specs |
+| current_state | removed-by-FEAT-081D，仅限 TeamOrchestrator 单项 |
+| still_imported_by | 不应再有主链路 import；历史 docs/specs 仍可能引用概念 |
 | replacement | AgentDock 多 agent / workspace orchestration；Haro 只选择 proposal 对应 workspace |
-| blocking_dependencies | 确认无 sidecar 主链路 import；移除 barrel export；更新 legacy tests 分类 |
+| blocking_dependencies | 已完成 081B 默认路径解绑；081D 已移除 legacy re-export、package export、旧测试与 CLI 兼容执行路径 |
 | risk_if_removed | 旧 team workflow 无法使用；历史 specs 无法直接复现 |
-| rollback_plan | git revert；恢复单文件与 export |
-| required_verification | `pnpm test:sidecar`；`pnpm -F @haro/core test:legacy -- test/team-orchestrator.test.ts` |
-| decision | 可进入删除评审，但必须先做 export 解绑并获批 |
+| rollback_plan | git revert FEAT-081D commit，恢复源码、legacy export、CLI env 兼容路径与旧测试 |
+| required_verification | `pnpm test:sidecar`；`pnpm test:legacy`；`pnpm -F @haro/core build`；`pnpm -F @haro/cli build` |
+| decision | 仅 TeamOrchestrator 获得 081D 单项物理删除授权；scenario-router、runtime、agent 其它候选仍未批准删除 |
 
 ### 3.8 packages/core/src/scenario-router.ts
 
@@ -429,6 +429,10 @@ guard 报告新增 `pilotUnbind`。
 
 `deleteAllowed` 仍固定为 `false`。
 
+081D 后续已经把此兼容入口升级为单项物理删除：
+081B 的 `HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1` 说明只作为历史记录保留，
+当前代码不再支持该旧兼容执行路径。
+
 后续如果继续 081C，
 
 也必须逐项评审。
@@ -491,3 +495,49 @@ guard 报告在 `channel-layer` 下新增 `pilotUnbind`。
 也必须逐项评审。
 
 不能顺手删除多个候选。
+
+## 11. FEAT-081D 首个真实物理删除（2026-05-25）
+
+081D 只处理一个已摘线候选。
+
+本次删除 `TeamOrchestrator` 旧兼容路径。
+
+删除原因：
+
+- 081B 已经把它从默认执行路径解绑。
+- sidecar 主链路不依赖 Haro-owned team runtime。
+- 多 agent/workspace orchestration 应由 AgentDock 承接。
+- 删除范围可以通过 git revert 清晰回滚。
+
+本次删除内容：
+
+- `packages/core/src/team-orchestrator.ts`。
+- `packages/core/src/legacy/team-orchestrator.ts`。
+- `packages/core/test/team-orchestrator.test.ts`。
+- `@haro/core/legacy/team-orchestrator` package export。
+- CLI 中 `HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1` 的旧动态执行路径。
+
+本次保留内容：
+
+- `scenario-router`。
+- `agent` / `runtime` / services 旧路径。
+- gateway、provider、channel、memory、skills、Web/API。
+- 历史 docs/specs 中的背景记录。
+
+守卫状态：
+
+- `agent-runtime-router` 记录 `physicalRemoval.status=physically-removed`。
+- `physicalRemoval.removedBy=FEAT-081D`。
+- `deleteAllowed` 仍固定为 `false`。
+- `physicalDeleteApproved` 仍为 `false`，表示 guard 报告本身不是后续删除批准。
+
+回滚方式：
+
+- revert FEAT-081D commit。
+- 重新运行 core/cli build、legacy tests、sidecar tests。
+
+后续规则：
+
+- 081D 不能推广成其它候选的删除批准。
+- 如继续 081E，必须再选择一个候选并单独评审。
+- 不得顺手删除 gateway/provider/channel/memory/skills/Web/scenario-router。

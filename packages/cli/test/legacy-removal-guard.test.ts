@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -105,7 +105,8 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
         deleteAllowed: boolean;
         stillReferenced: boolean;
         pilotUnbind?: { candidate: string; status: string; note: string };
-        evidence: Array<{ present: boolean; description?: string }>;
+        physicalRemoval?: { candidate: string; status: string; removedBy: string; rollbackPlan: string; note: string };
+        evidence: Array<{ path: string; present: boolean; description?: string }>;
       }>;
       negativeScope: string[];
     } };
@@ -135,12 +136,22 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(byId.get('memory-fabric')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     const agentRuntime = byId.get('agent-runtime-router');
     expect(agentRuntime?.evidence.some((entry) => entry.present)).toBe(true);
-    expect(agentRuntime?.pilotUnbind).toMatchObject({
+    expect(agentRuntime?.physicalRemoval).toMatchObject({
       candidate: 'packages/core/src/team-orchestrator.ts',
-      status: 'default-path-unbound',
+      status: 'physically-removed',
+      removedBy: 'FEAT-081D',
     });
-    expect(agentRuntime?.pilotUnbind?.note).toContain('HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1');
+    expect(agentRuntime?.physicalRemoval?.note).toContain('未获物理删除批准');
+    const byPath = new Map(agentRuntime?.evidence.map((entry) => [entry.path, entry.present]));
+    expect(byPath.get('packages/core/src/team-orchestrator.ts')).toBe(false);
+    expect(byPath.get('packages/core/src/legacy/team-orchestrator.ts')).toBe(false);
+    expect(byPath.get('packages/core/package.json')).toBe(false);
+    expect(byPath.get('packages/core/src/scenario-router.ts')).toBe(true);
     expect(agentRuntime?.deleteAllowed).toBe(false);
+    const workspaceRoot = resolve(process.cwd(), '../..');
+    expect(existsSync(join(workspaceRoot, 'packages/core/src/team-orchestrator.ts'))).toBe(false);
+    expect(existsSync(join(workspaceRoot, 'packages/core/src/legacy/team-orchestrator.ts'))).toBe(false);
+    expect(readFileSync(join(workspaceRoot, 'packages/core/package.json'), 'utf8')).not.toContain('./legacy/team-orchestrator');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 
@@ -157,9 +168,8 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('FEAT-081B');
-    expect(text).toContain('FEAT-081B/081C');
-    expect(text).toContain('pilotUnbind=default-path-unbound:packages/core/src/team-orchestrator.ts');
+    expect(text).toContain('FEAT-081D');
+    expect(text).toContain('physicalRemoval=physically-removed:packages/core/src/team-orchestrator.ts:FEAT-081D');
     expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/gateway.ts');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
