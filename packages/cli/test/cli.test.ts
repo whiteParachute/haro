@@ -736,6 +736,80 @@ describe('runCli [FEAT-006]', () => {
     expect(output).toContain('telegram\tdisabled\tpackage');
   });
 
+  it('FEAT-081C: gateway daemon commands are disabled on the default CLI path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-gateway-disabled-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['gateway', 'status', '--json'],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.action).toBe('gateway');
+    const payload = JSON.parse(chunks.join('')) as { ok: true; data: {
+      command: string;
+      status: string;
+      code: string;
+      requiresExplicitEnv: string;
+      wouldStart: boolean;
+    } };
+    expect(payload.data).toMatchObject({
+      command: 'gateway',
+      status: 'disabled',
+      code: 'LEGACY_GATEWAY_COMMANDS_DISABLED',
+      requiresExplicitEnv: 'HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1',
+      wouldStart: false,
+    });
+  });
+
+  it('FEAT-081C: gateway status remains available only through the explicit legacy env', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-gateway-enabled-'));
+    roots.push(root);
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+
+    const result = await runCli({
+      argv: ['gateway', 'status', '--json'],
+      root,
+      stdout,
+      setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_GATEWAY_COMMANDS: '1' } },
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+      createAdditionalChannels: async () => [],
+    });
+
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(chunks.join('')) as { ok: true; data: {
+      running: boolean;
+      paths: { root: string };
+    } };
+    expect(payload.data.running).toBe(false);
+    expect(payload.data.paths.root).toBe(root);
+  });
+
   it('FEAT-008 AC2: channel setup feishu persists enabled config via wizard', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-setup-'));
     roots.push(root);

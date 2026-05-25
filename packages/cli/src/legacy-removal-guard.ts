@@ -113,10 +113,16 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       '确认 AgentDock IM 已承接生产消息通道',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/channel test', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 deprecate/freeze；本轮不删除。',
+    decision: '保持 deprecate/freeze；FEAT-081C 仅解绑 gateway 默认命令路径，不删除文件。',
+    pilotUnbind: {
+      candidate: 'packages/cli/src/gateway.ts',
+      status: 'default-path-unbound',
+      note: '默认 CLI 不再执行 gateway daemon/control-plane 命令；只有显式 HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1 才注册旧兼容路径。',
+    },
     evidence: [
       { path: 'packages/channel/package.json', kind: 'exists', description: 'channel package 仍存在' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'registerChannelCommands', description: 'CLI 仍注册 channel 入口' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'HARO_ENABLE_LEGACY_GATEWAY_COMMANDS', description: 'gateway 默认命令路径已改为显式 legacy env' },
       { path: 'packages/mcp-tools/src/tools/send-message.ts', kind: 'exists', description: 'MCP legacy send_message tool 仍存在' },
     ],
   },
@@ -267,7 +273,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
     nextActions: [
       '本报告只读，不批准物理删除。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
-      'FEAT-081B 才能按单项候选评审是否解除 export/import 或进入 archive。',
+      'FEAT-081B/081C 只能按单项候选评审是否解除默认路径；物理删除仍需另行批准。',
     ],
   };
 }

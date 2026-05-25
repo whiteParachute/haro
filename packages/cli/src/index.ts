@@ -634,7 +634,11 @@ function buildProgram(app: AppContext): Command {
   registerProviderCommands(program, app);
   registerSkillsCommands(program, app);
   registerMetabolismCommands(program, app);
-  registerGatewayCommands(program, app);
+  if (isLegacyGatewayCommandsEnabled(app)) {
+    registerGatewayCommands(program, app);
+  } else {
+    registerLegacyGatewayDisabledCommand(program, app);
+  }
   registerWebCommand(program, app);
   registerMcpCommand(program, app);
   registerLegacyRemovalCommands(program, app);
@@ -1445,6 +1449,76 @@ function registerGatewayCommands(program: Command, app: AppContext): void {
             throw new CommanderExit(result.exitCode, 'gateway doctor found issues');
           }
         });
+    },
+    program,
+  );
+}
+
+function isLegacyGatewayCommandsEnabled(app: AppContext): boolean {
+  const env = app.opts.doctorDeps?.env ?? app.opts.setupDeps?.env ?? process.env;
+  return env.HARO_ENABLE_LEGACY_GATEWAY_COMMANDS === '1';
+}
+
+function registerLegacyGatewayDisabledCommand(program: Command, app: AppContext): void {
+  const renderDisabled = (options: { json?: boolean; human?: boolean } = {}) => {
+    const report = {
+      command: 'gateway',
+      status: 'disabled',
+      code: 'LEGACY_GATEWAY_COMMANDS_DISABLED',
+      legacy: true,
+      dryRun: true,
+      wouldStart: false,
+      requiresExplicitEnv: 'HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1',
+      message: 'gateway 属于历史 Haro-owned channel/control-plane 路径，默认已解绑。',
+      nextActions: [
+        '确认确实需要复核旧 gateway 后，再显式设置 HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1。',
+        '不要把本守卫视为物理删除批准；channel/gateway 源码仍保留。',
+      ],
+    };
+    const mode = resolveOutputMode(options, app.stdout);
+    if (mode === 'json') {
+      renderJson(report, { stdout: app.stdout });
+    } else {
+      writeLegacySurfaceWarning(app);
+      app.stdout.write(`${report.message}\n`);
+      app.stdout.write(`如需旧兼容路径，请显式设置 ${report.requiresExplicitEnv}。\n`);
+    }
+    throw new CommanderExit(2, report.message);
+  };
+
+  registerCommand(
+    'gateway',
+    (cmd) => {
+      cmd
+        .description('Gateway / daemon control for background channels (legacy, disabled by default)')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(renderDisabled);
+
+      cmd
+        .command('start')
+        .option('-d, --daemon', 'run in background')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(renderDisabled);
+
+      cmd
+        .command('stop')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(renderDisabled);
+
+      cmd
+        .command('status')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(renderDisabled);
+
+      cmd
+        .command('doctor')
+        .option('--json', 'force JSON output (default for non-TTY)')
+        .option('--human', 'force human output')
+        .action(renderDisabled);
     },
     program,
   );

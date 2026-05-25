@@ -434,3 +434,60 @@ guard 报告新增 `pilotUnbind`。
 也必须逐项评审。
 
 不能顺手删除多个候选。
+
+## 10. FEAT-081C 单项解绑试点（2026-05-25）
+
+081C 继续只选择一个候选。
+
+本次选择 `gateway` CLI 入口。
+
+它归属 channel/control-plane 旧方向。
+
+选择原因：
+
+- gateway 只服务旧后台 channel daemon。
+- sidecar 主链路不需要它。
+- 源码和测试可以保留。
+- 旧命令可以用显式环境变量复核。
+- 风险低于 provider、memory、skills、Web。
+
+本次不动其它候选。
+
+未选择其它项的原因：
+
+- provider 仍被 provider bootstrap 引用。
+- memory 仍有 run 的显式 legacy 记忆路径。
+- skills 仍有 eat/shit 兼容流程。
+- Web/API 仍承载 Review Board。
+- scenario-router 仍被 `haro run` 旧路径使用。
+
+081C 做的只是默认命令路径隔离。
+
+具体行为：
+
+- 默认 CLI 不再注册真实 gateway daemon 命令。
+- 默认 `haro gateway ...` 只返回 disabled 报告。
+- 报告说明这是 legacy control-plane 路径。
+- 报告不会启动 daemon。
+- 只有设置 `HARO_ENABLE_LEGACY_GATEWAY_COMMANDS=1`，
+  才会注册旧 gateway 命令。
+
+这不是物理删除批准。
+
+`packages/cli/src/gateway.ts` 仍保留。
+
+channel packages 仍保留。
+
+legacy test 仍可显式验证旧路径。
+
+guard 报告在 `channel-layer` 下新增 `pilotUnbind`。
+
+它只表达“gateway 默认命令路径已解绑”。
+
+`deleteAllowed` 仍固定为 `false`。
+
+后续如果继续 081D，
+
+也必须逐项评审。
+
+不能顺手删除多个候选。
