@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 export type LegacyRemovalState = 'keep' | 'freeze' | 'deprecate' | 'remove-candidate';
 export type LegacyRemovalEvidenceKind = 'exists' | 'contains';
 export type LegacyCandidatePriorityStatus = 'done' | 'next-safe-candidate' | 'blocked' | 'forbidden' | 'defer';
+export type LegacyModuleRetirementStatus = 'retire-candidate' | 'deferred' | 'keep';
 
 export interface LegacyCandidatePriority {
   status: LegacyCandidatePriorityStatus;
@@ -51,6 +52,18 @@ export interface LegacyRemovalGuardDefinition {
   verifiedAbsent?: LegacyRemovalEvidenceDefinition[];
 }
 
+export interface LegacyModuleRetirementBoundary {
+  module: 'channel-message' | 'provider' | 'memory' | 'run-router-runtime-scenario' | 'skills' | 'web-api';
+  status: LegacyModuleRetirementStatus;
+  owner: string;
+  haroRetireScope: string[];
+  protectedScope: string[];
+  decision: string;
+  nextAction: string;
+  deletionCandidateAllowed: boolean;
+  deferredUntil?: string[];
+}
+
 export interface LegacyRemovalEvidenceResult extends LegacyRemovalEvidenceDefinition {
   present: boolean;
 }
@@ -92,9 +105,10 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081H';
-    lastCompletedStage: 'FEAT-081H';
-    lastUpdatedBy: 'FEAT-081H';
+    stage: 'FEAT-081I';
+    lastCompletedStage: 'FEAT-081I';
+    lastUpdatedBy: 'FEAT-081I';
+    moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
       title: string;
@@ -115,6 +129,7 @@ export interface LegacyRemovalGuardReport {
     } | null;
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
+    deferredCandidateIds: string[];
     completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
@@ -138,6 +153,83 @@ export const LEGACY_REMOVAL_NEGATIVE_SCOPE = [
   '未经单项批准的物理删除 package/module/file',
 ];
 
+export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary[] = [
+  {
+    module: 'channel-message',
+    status: 'retire-candidate',
+    owner: 'AgentDock',
+    haroRetireScope: [
+      'Haro-owned channel packages',
+      '旧 haro channel CLI/配置链路',
+      'Haro 自有 Feishu/Telegram onboarding 管理面',
+    ],
+    protectedScope: [
+      'packages/mcp-tools/src/tools/send-message.ts',
+      'AgentDock 生产消息能力',
+      '真实 Feishu/Telegram IM 投递链路',
+    ],
+    decision: 'Haro 只保留 MCP send_message 这类对外工具；真实 channel 管理由 AgentDock 提供。',
+    nextAction: '优先把 channel-layer 继续作为下一单项评审候选，但评审范围必须排除 MCP send_message 与 AgentDock 生产消息。',
+    deletionCandidateAllowed: true,
+  },
+  {
+    module: 'provider',
+    status: 'retire-candidate',
+    owner: 'AgentDock / ModelHub',
+    haroRetireScope: ['packages/provider-codex', 'Haro provider bootstrap/onboarding'],
+    protectedScope: ['后续 LLM draft 所需的 AgentDock provider bridge'],
+    decision: 'provider 由 AgentDock 提供；Haro 自带 provider-codex/provider bootstrap 进入退役候选。',
+    nextAction: '先补 AgentDock/ModelHub provider bridge 证据，再单项评审 Haro provider-codex 删除。',
+    deletionCandidateAllowed: true,
+  },
+  {
+    module: 'memory',
+    status: 'retire-candidate',
+    owner: 'aria-memory-vault / AgentDock memory',
+    haroRetireScope: ['packages/core/src/memory', 'packages/cli/src/commands/memory.ts', 'Haro-owned MemoryFabric'],
+    protectedScope: ['真实 ~/.haro 数据', 'aria-memory vault', 'AgentDock/aria-memory 共享记忆'],
+    decision: 'memory 统一走共享 aria-memory-vault；Haro 自有 MemoryFabric 进入退役候选。',
+    nextAction: '删除前必须先证明不会误删真实 ~/.haro 或 aria-memory vault 数据。',
+    deletionCandidateAllowed: true,
+  },
+  {
+    module: 'run-router-runtime-scenario',
+    status: 'deferred',
+    owner: '待 AgentDock scheduler / runner 稳定性验证后再定',
+    haroRetireScope: ['packages/core/src/agent', 'packages/core/src/runtime', 'packages/core/src/scenario-router.ts', '旧 haro run/chat/team/scenario 路径'],
+    protectedScope: ['AgentDock 定时任务 -> Haro 提案生成 -> 待审请求 -> Review Board 可审 的主链路验证前，不得删除'],
+    decision: 'run/router/runtime/scenario-router 本轮 deferred；081I 不得把第 4 项列为下一删除候选。',
+    nextAction: '等 AgentDock 定时任务稳定触发 Haro 提案生成并可在 Review Board 人审后，再判断是否退役。',
+    deletionCandidateAllowed: false,
+    deferredUntil: [
+      'AgentDock 定时任务稳定触发 Haro 生成提案',
+      'Haro 创建待审 approval request',
+      'Review Board 可审',
+      '证明链路不依赖旧 haro run/chat/team/scenario',
+    ],
+  },
+  {
+    module: 'skills',
+    status: 'retire-candidate',
+    owner: 'AgentDock skills',
+    haroRetireScope: ['packages/skills', 'skills marketplace/manager legacy surface'],
+    protectedScope: ['必要 eat/shit 兼容语义', '已落 Haro sidecar artifact 的资产引用'],
+    decision: 'skills 由 AgentDock 提供；Haro 旧 skills marketplace/legacy skills 进入退役候选，但要保留必要兼容说明。',
+    nextAction: '先拆清 marketplace 与必要兼容资产，再做单项删除评审。',
+    deletionCandidateAllowed: true,
+  },
+  {
+    module: 'web-api',
+    status: 'retire-candidate',
+    owner: 'Haro Review Board + AgentDock Web',
+    haroRetireScope: ['Review Board 之外的旧 dashboard/API'],
+    protectedScope: ['approval review board routes', 'packages/web-api/src/routes/approval-requests.ts'],
+    decision: 'Web/API 仅保留 Review Board/审批看板；看板外旧 dashboard/API 进入退役候选。',
+    nextAction: '只允许逐路由评审非 Review Board surface；不得包级删除 Web/API。',
+    deletionCandidateAllowed: true,
+  },
+];
+
 export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = [
   {
     id: 'provider-codex',
@@ -152,11 +244,11 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       '确认 AgentDock provider bridge 已覆盖 run/chat 旧能力',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/provider-codex test', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 deprecate；本轮不删除。',
+    decision: 'provider 由 AgentDock 提供；Haro provider-codex/provider bootstrap 进入退役候选，但本轮不删除。',
     candidatePriority: {
       status: 'blocked',
       rank: 4,
-      reason: 'provider-codex 仍被 CLI bootstrap 与后续 LLM draft/provider 能力引用。',
+      reason: 'provider-codex 的退役方向已明确，但仍被 CLI bootstrap 与后续 LLM draft/provider 能力引用。',
       blockedUntil: ['AgentDock/ModelHub provider bridge 接管默认 provider', '移除 CLI 默认 createCodexProvider 构造', 'LLM draft provider path 完成替代验证'],
     },
     evidence: [
@@ -171,21 +263,21 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     category: 'package',
     state: 'deprecate',
     candidatePaths: ['packages/channel', 'packages/channel-feishu', 'packages/channel-telegram'],
-    replacement: 'AgentDock IM / channel layer',
+    replacement: 'AgentDock IM / channel layer；Haro 仅保留 MCP send_message 对外工具',
     blockingDependencies: [
-      '隔离 mcp-tools legacy send_message tool',
+      '确认 MCP send_message 是保留工具而不是 channel package 删除范围',
       'FEAT-081H 已物理删除 CLI channel setup/onboarding removed stub',
       '确认 AgentDock IM 已承接生产消息通道',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/channel test', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 deprecate/freeze；FEAT-081H 仅物理删除 channel setup/onboarding removed stub，channel package/IM 能力未批准删除。',
+    decision: 'channel/消息边界已固化：真实 Feishu/Telegram/channel 管理由 AgentDock 提供，Haro 只保留 MCP send_message；下一步可单项评审 Haro-owned channel packages/CLI/registry，但本轮不删除。',
     candidatePriority: {
-      status: 'done',
+      status: 'next-safe-candidate',
       rank: 1,
-      nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
-      reason: 'FEAT-081H 已删除 channel setup/onboarding removed stub；channel packages 与生产消息路径仍保留。',
-      blockedUntil: ['后续若要删除 channel package/IM 能力，必须重新排序并单项评审', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '确认 AgentDock IM 已承接相关 onboarding 流程'],
-      forbiddenScope: ['packages/channel', 'packages/channel-feishu', 'packages/channel-telegram', 'packages/mcp-tools/src/tools/send-message.ts'],
+      nextScope: 'channel-layer / Haro-owned channel packages + CLI registry review（exclude MCP send_message and AgentDock production messaging）',
+      reason: '用户已确认 channel/消息由 AgentDock 承接，且 081G/081H 已完成 setup/onboarding 摘线和 stub 删除；下一步最小候选继续从 channel-layer 评审，但必须保护 MCP send_message 与生产消息。',
+      blockedUntil: ['提交 channel package/CLI/registry 影响面列表与回滚方案', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '确认 AgentDock IM 已承接相关 channel 管理/onboarding 流程'],
+      forbiddenScope: ['packages/mcp-tools/src/tools/send-message.ts', 'AgentDock 生产消息能力', '真实 Feishu/Telegram IM 投递链路'],
     },
     physicalRemoval: {
       candidate: 'packages/cli/src/gateway.ts',
@@ -224,18 +316,18 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     category: 'core-export',
     state: 'deprecate',
     candidatePaths: ['packages/core/src/memory', 'packages/cli/src/commands/memory.ts'],
-    replacement: 'AgentDock memory MCP / aria-memory owner',
+    replacement: '共享 aria-memory-vault / AgentDock memory',
     blockingDependencies: [
       '移除 core barrel MemoryFabric export',
       '确认 mcp-tools memory_* legacy registry 已隔离',
       '确认 sidecar 主链路不读写 Haro-owned memory',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 deprecate；真实 memory 数据不在删除范围。',
+    decision: 'memory 统一走共享 aria-memory-vault；Haro MemoryFabric 进入退役候选，但真实 memory 数据不在删除范围。',
     candidatePriority: {
       status: 'blocked',
       rank: 5,
-      reason: 'Haro-owned memory 牵涉真实用户数据和 MCP memory tools，删除前必须先完成数据/owner 边界验证。',
+      reason: 'Haro-owned memory 退役方向已明确，但牵涉真实 ~/.haro 数据、aria-memory vault 和 MCP memory tools，删除前必须先完成数据/owner 边界验证。',
       blockedUntil: ['确认真实 ~/.haro memory 数据迁移/保留策略', '隔离 MCP memory_* 默认 registry', '证明 sidecar 主链路不读写 Haro-owned memory'],
       forbiddenScope: ['真实 ~/.haro 数据', 'aria-memory vault'],
     },
@@ -256,20 +348,20 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       'packages/core/src/team-orchestrator.ts',
       'packages/core/src/scenario-router.ts',
     ],
-    replacement: 'AgentDock workspace / runner / multi-agent orchestration',
+    replacement: '待 AgentDock scheduler / runner 稳定性验证后再定',
     blockingDependencies: [
-      'CLI run/chat 完全 legacy 化或迁移',
-      '解除 packages/core/src/index.ts barrel exports',
-      '完成 L2/L3 workspace execution plan contract',
+      'AgentDock 定时任务稳定触发 Haro 生成提案',
+      'Haro 创建待审 approval request',
+      'Review Board 可审且不依赖旧 haro run/chat/team/scenario',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'FEAT-081D 已物理删除 TeamOrchestrator 旧兼容路径；agent/runtime/scenario 其它候选仍保持 freeze，未批准删除。',
+    decision: 'FEAT-081D 已物理删除 TeamOrchestrator 旧兼容路径；run/router/runtime/scenario-router 本轮 deferred，未批准删除，也不得作为下一删除候选。',
     candidatePriority: {
-      status: 'blocked',
-      rank: 3,
-      nextScope: 'packages/core/src/scenario-router.ts',
-      reason: 'TeamOrchestrator 已删除，但 scenario-router/agent/runtime 仍被 CLI run 与 legacy tests 引用。',
-      blockedUntil: ['迁移或 legacy 化 haro run/chat 路由', '证明 ScenarioRouter 不再被 CLI bootstrap 使用', '完成 L2/L3 workspace execution plan contract'],
+      status: 'defer',
+      rank: 6,
+      nextScope: 'deferred until AgentDock scheduled proposal chain is stable',
+      reason: '第 4 项按用户边界 deferred；先删其它，等 AgentDock 定时任务能稳定触发 Haro 提案生成并进入 Review Board 后再评估。',
+      blockedUntil: ['AgentDock 定时任务稳定触发 Haro 生成提案', 'Haro 创建待审请求', 'Review Board 可审', '证明不依赖旧 haro run/chat/team/scenario'],
     },
     physicalRemoval: {
       candidate: 'packages/core/src/team-orchestrator.ts',
@@ -294,18 +386,18 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     category: 'package',
     state: 'freeze',
     candidatePaths: ['packages/skills'],
-    replacement: 'Haro sidecar artifacts / AgentDock skills and MCP',
+    replacement: 'AgentDock skills / Haro sidecar artifacts',
     blockingDependencies: [
       '确认 sidecar 主链路不依赖 packages/skills',
       '保留或迁移 eat/shit 资产语义',
       'legacy tests 分类稳定',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/skills test', 'pnpm -F @haro/cli test:legacy'],
-    decision: '保持 freeze；不新增 marketplace 能力。',
+    decision: 'skills 由 AgentDock 提供；Haro 旧 skills marketplace/legacy skills 进入退役候选，但需要保留必要兼容说明。',
     candidatePriority: {
       status: 'defer',
-      rank: 2,
-      reason: 'packages/skills 仍承载 eat/shit 兼容流程；可后续先评审 marketplace 扩展面，但不应删除核心兼容资产。',
+      rank: 3,
+      reason: 'packages/skills 仍承载 eat/shit 兼容流程；可后续先评审 marketplace 扩展面，但不应删除必要兼容资产。',
       blockedUntil: ['确认 eat/shit 资产语义由 sidecar artifacts 或 AgentDock skills 承接', '拆分 marketplace 与保留技能资产边界'],
     },
     evidence: [
@@ -319,17 +411,19 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     category: 'web-api',
     state: 'freeze',
     candidatePaths: ['packages/web', 'packages/web-api'],
-    replacement: 'Haro Web 只保留 proposal review board；通用控制台由 AgentDock 承接',
+    replacement: 'Haro Web 只保留 proposal review board；通用 dashboard/API 由 AgentDock 承接',
     blockingDependencies: [
       '列出 review board endpoint allowlist',
       '确认 provider/channel/runtime 页面不在主入口',
       'Web/API 路由删除需单独批准',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/web-api test', 'pnpm -F @haro/web build'],
-    decision: '保留 review board；非 review dashboard 只能后续逐路由评审。',
+    decision: 'Web/API 仅保留 Review Board/审批看板；看板外旧 dashboard/API 可进入退役候选，但不得包级删除 Web/API。',
     candidatePriority: {
-      status: 'forbidden',
-      reason: 'Review Board 是 Haro sidecar 主链路看板，Web/API 包级删除被禁止；只能逐个非 review 路由评审。',
+      status: 'blocked',
+      rank: 5,
+      reason: 'Review Board 是 Haro sidecar 主链路看板，Web/API 包级删除被禁止；看板外旧 dashboard/API 只能逐路由评审。',
+      blockedUntil: ['列出 Review Board endpoint allowlist', '列出非 review dashboard/API 路由', '逐路由证明删除不影响审批看板'],
       forbiddenScope: ['packages/web', 'packages/web-api', 'approval review board routes'],
     },
     evidence: [
@@ -390,21 +484,21 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
         forbiddenScope: nextDeletion.candidatePriority.forbiddenScope ?? [],
       }
     : null;
-  const channelReview = items.find((item) => item.id === 'channel-layer' && item.pilotUnbind?.candidate === 'packages/cli/src/channel.ts#setup-onboarding');
-  const nextReviewCandidate = channelReview?.candidatePriority.nextScope
+  const reviewCandidate = nextDeletion ?? items
+    .filter((item) => item.candidatePriority.status === 'defer' && item.candidatePriority.nextScope)
+    .sort((a, b) => (a.candidatePriority.rank ?? Number.MAX_SAFE_INTEGER) - (b.candidatePriority.rank ?? Number.MAX_SAFE_INTEGER))[0];
+  const nextReviewCandidate = reviewCandidate?.candidatePriority.nextScope
     ? {
-        id: channelReview.id,
-        title: channelReview.title,
-        reviewScope: channelReview.candidatePriority.nextScope,
-        reviewPurpose: 'physical-delete-review',
-        reason: '081G 已完成默认路径摘线；这是下一评审候选，不是删除授权。后续如要物理删除 channel onboarding stub，必须先做单项评审并证明不影响 channel package、Feishu/Telegram 生产消息与 MCP send_message。',
+        id: reviewCandidate.id,
+        title: reviewCandidate.title,
+        reviewScope: reviewCandidate.candidatePriority.nextScope,
+        reviewPurpose: reviewCandidate.id === 'channel-layer' ? 'single-module-retirement-review' : 'pre-deletion-review',
+        reason: reviewCandidate.id === 'channel-layer'
+          ? '081I 按用户最新边界把 channel-layer 选为下一项可执行删除评审候选；这不是删除授权。下一阶段必须证明不影响 MCP send_message、AgentDock 生产消息和真实 Feishu/Telegram 投递。'
+          : `${reviewCandidate.title} 仅作为后续评审候选，不是删除授权。`,
         notApproval: true as const,
-        requiredBeforeDelete: [
-          '提交影响面列表和回滚方案',
-          '证明 channel package、Feishu/Telegram 生产消息能力、MCP send_message 不受影响',
-          '通过 targeted channel/guard tests、pnpm test:legacy、pnpm test:sidecar',
-        ],
-        forbiddenScope: channelReview.candidatePriority.forbiddenScope ?? [],
+        requiredBeforeDelete: reviewCandidate.candidatePriority.blockedUntil ?? [],
+        forbiddenScope: reviewCandidate.candidatePriority.forbiddenScope ?? [],
       }
     : null;
   return {
@@ -432,13 +526,15 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081H',
-      lastCompletedStage: 'FEAT-081H',
-      lastUpdatedBy: 'FEAT-081H',
+      stage: 'FEAT-081I',
+      lastCompletedStage: 'FEAT-081I',
+      lastUpdatedBy: 'FEAT-081I',
+      moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
       forbiddenCandidateIds: items.filter((item) => item.candidatePriority.status === 'forbidden').map((item) => item.id),
       blockedCandidateIds: items.filter((item) => item.candidatePriority.status === 'blocked').map((item) => item.id),
+      deferredCandidateIds: items.filter((item) => item.candidatePriority.status === 'defer').map((item) => item.id),
       completedPhysicalRemovals: items.flatMap((item) => [
         ...(item.physicalRemoval ? [{ id: item.id, candidate: item.physicalRemoval.candidate, removedBy: item.physicalRemoval.removedBy, rollbackPlan: item.physicalRemoval.rollbackPlan }] : []),
         ...(item.physicalRemovals ?? []).map((removal) => ({ id: item.id, candidate: removal.candidate, removedBy: removal.removedBy, rollbackPlan: removal.rollbackPlan })),
@@ -447,8 +543,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
     items,
     nextActions: [
       '本报告只读，不批准物理删除。',
+      '081I 固化模块级退役边界：channel/provider/memory/skills/Web 非主线面由 AgentDock 或共享能力承接；run/router/runtime/scenario 本轮 deferred。',
+      '下一项评审候选是 channel-layer，但评审和后续删除必须排除 MCP send_message 与 AgentDock 生产消息能力。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
-      'FEAT-081H 已删除 channel setup/onboarding removed stub；nextReviewCandidate 与 nextDeletionCandidate 均为 null，后续需重新排序评审。',
     ],
   };
 }
@@ -462,11 +559,14 @@ export function formatLegacyRemovalGuardHuman(report: LegacyRemovalGuardReport):
     `physicalDeleteApproved: ${report.physicalDeleteApproved}`,
     `items: total=${report.summary.total} freeze=${report.summary.freezeCount} deprecate=${report.summary.deprecateCount} removeCandidate=${report.summary.removeCandidateCount} stillReferenced=${report.summary.stillReferencedCount}`,
     `planning stage: ${report.planning.stage} lastCompleted=${report.planning.lastCompletedStage}`,
-    `next deletion candidate: ${report.planning.nextDeletionCandidate ? `${report.planning.nextDeletionCandidate.id} scope=${report.planning.nextDeletionCandidate.nextScope}` : 'none'}`,
+    `next deletion candidate (candidate only, not approval): ${report.planning.nextDeletionCandidate ? `${report.planning.nextDeletionCandidate.id} scope=${report.planning.nextDeletionCandidate.nextScope}` : 'none'}`,
     `next review candidate: ${report.planning.nextReviewCandidate ? `${report.planning.nextReviewCandidate.id} scope=${report.planning.nextReviewCandidate.reviewScope} notApproval=${report.planning.nextReviewCandidate.notApproval}` : 'none'}`,
     `forbidden now: ${report.planning.forbiddenCandidateIds.join(',') || 'none'}`,
+    `deferred now: ${report.planning.deferredCandidateIds.join(',') || 'none'}`,
     `completed removals: ${report.planning.completedPhysicalRemovals.map((item) => `${item.candidate}:${item.removedBy}`).join(',') || 'none'}`,
     `verifiedAbsent: total=${report.summary.verifiedAbsentCount} failed=${report.summary.verifiedAbsentFailedCount}`,
+    'module retirement boundaries:',
+    ...report.planning.moduleRetirementBoundaries.map((boundary) => `- ${boundary.module} status=${boundary.status} owner=${boundary.owner} deletionCandidateAllowed=${boundary.deletionCandidateAllowed} decision=${boundary.decision}`),
     'negative scope:',
     ...report.negativeScope.map((item) => `- ${item}`),
     'guard items:',

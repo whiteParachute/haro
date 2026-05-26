@@ -901,3 +901,116 @@ pnpm test:sidecar
 081H 不能推广成 channel package 或生产消息能力删除批准。
 
 如后续要继续 legacy 删除，必须重新排序并单项评审。
+
+## 17. FEAT-081I 模块级退役边界与下一候选（2026-05-26）
+
+081I 不删除任何源码、目录、package 或测试文件。
+
+本轮只把用户最新边界固化到 guard/report 和本文档：哪些能力由 AgentDock 或共享能力接管，哪些 Haro legacy 面可以进入后续单项评审，哪些必须暂缓。
+
+### 17.1 模块级边界
+
+1. channel / 消息
+   - Haro 只保留 MCP `send_message` 这类对外工具。
+   - 真实 Feishu / Telegram / channel 管理由 AgentDock 提供。
+   - Haro 自有 channel package、旧 CLI、旧配置链路可以进入退役候选。
+   - 禁止影响 MCP `send_message`、AgentDock 生产消息和真实 IM 投递链路。
+
+2. provider
+   - provider 由 AgentDock / ModelHub 提供。
+   - Haro 自带 `provider-codex`、provider bootstrap/onboarding 进入退役候选。
+   - 删除前必须先证明 AgentDock provider bridge 已覆盖后续 LLM draft/provider 需求。
+
+3. memory
+   - memory 统一走共享 `aria-memory-vault`。
+   - Haro 自有 MemoryFabric 进入退役候选。
+   - 删除前必须特别验证真实 `~/.haro` 数据、aria-memory vault 和 AgentDock memory 不受影响。
+
+4. run / router / runtime / scenario-router
+   - 本轮 deferred。
+   - 先删其它项。
+   - 等 AgentDock 定时任务能稳定触发 Haro 提案生成后再评估。
+   - 判断条件必须同时满足：AgentDock 定时任务 -> Haro 生成提案 -> 创建待审请求 -> Review Board 可审，并证明不依赖旧 `haro run/chat/team/scenario`。
+   - 081I 不得把该项列为下一删除候选。
+
+5. skills
+   - skills 由 AgentDock 提供。
+   - Haro 旧 skills marketplace / legacy skills 进入退役候选。
+   - 删除前必须保留或迁移必要 eat/shit 兼容语义。
+
+6. Web / API
+   - Haro Web/API 只保留 Review Board / 审批看板。
+   - 看板外旧 dashboard/API 进入退役候选。
+   - 不允许包级删除 `packages/web` 或 `packages/web-api`；只能逐路由评审非 Review Board surface。
+
+### 17.2 guard 当前表达
+
+`legacy-removal guard --dry-run --json` 在 081I 后应表达：
+
+- `planning.stage=FEAT-081I`。
+- `planning.lastCompletedStage=FEAT-081I`。
+- `planning.lastUpdatedBy=FEAT-081I`。
+- `planning.moduleRetirementBoundaries[]` 记录以上 6 类模块边界。
+- `planning.deferredCandidateIds` 包含 `agent-runtime-router`，表示第 4 项暂缓。
+- `planning.nextDeletionCandidate` 可指向下一项删除评审候选，但仍只是候选，不是删除授权。
+- `planning.nextReviewCandidate.notApproval=true`。
+- `deleteAllowed=false`。
+- `physicalDeleteApproved=false`。
+- `wouldDelete=false`。
+- `summary.deleteAllowedCount=0`。
+- 所有 candidate 的 `deleteAllowed=false`。
+
+081I 本身不是删除批准。
+
+### 17.3 下一项可执行删除评审候选
+
+下一项评审候选选为：
+
+- candidate：`channel-layer`。
+- scope：`channel-layer / Haro-owned channel packages + CLI registry review`。
+
+选择原因：
+
+- 用户已明确真实 channel/消息由 AgentDock 提供。
+- 081G 已摘线 `haro channel setup/onboarding` 默认路径。
+- 081H 已删除 setup/onboarding removed stub。
+- channel-layer 是剩余候选中最接近已摘线状态的一项。
+
+但这仍然只是“下一单项评审候选”，不是删除授权。
+
+下一阶段若要继续，必须先证明：
+
+- MCP `packages/mcp-tools/src/tools/send-message.ts` 不受影响。
+- AgentDock 生产消息能力不受影响。
+- Feishu / Telegram 真实 IM 投递链路不受影响。
+- 删除范围不扩大到 provider、memory、skills、Web/API、scenario-router、AgentDock。
+- 有明确影响面、回滚方案和验证命令。
+
+### 17.4 继续禁止和暂缓
+
+继续禁止：
+
+- 删除 MCP `send_message`。
+- 删除或破坏 AgentDock 生产消息能力。
+- 删除真实 `~/.haro` 数据或 aria-memory vault。
+- 删除 Review Board / 审批看板。
+- 把 081I 当作批量删除批准。
+
+继续暂缓：
+
+- `agent-runtime-router` / run / router / runtime / scenario-router。
+- 暂缓原因是 AgentDock 定时任务到 Haro 提案生成的生产链路还需要继续稳定验证。
+
+### 17.5 验收方式
+
+081I 的验收只证明 guard/docs/tests 边界正确：
+
+```bash
+git diff --check
+pnpm -F @haro/cli build
+pnpm -F @haro/cli test -- test/legacy-removal-guard.test.ts
+pnpm test:legacy
+pnpm test:sidecar
+```
+
+081I 不要求、也不允许物理删除任何新文件。

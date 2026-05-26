@@ -112,6 +112,17 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
         stage: string;
         lastCompletedStage: string;
         lastUpdatedBy: string;
+        moduleRetirementBoundaries: Array<{
+          module: string;
+          status: string;
+          owner: string;
+          deletionCandidateAllowed: boolean;
+          haroRetireScope: string[];
+          protectedScope: string[];
+          decision: string;
+          nextAction: string;
+          deferredUntil?: string[];
+        }>;
         nextDeletionCandidate: null | {
           id: string;
           title: string;
@@ -132,6 +143,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
         };
         forbiddenCandidateIds: string[];
         blockedCandidateIds: string[];
+        deferredCandidateIds: string[];
         completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: string; rollbackPlan: string }>;
       };
       items: Array<{
@@ -171,21 +183,63 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.stillReferencedCount).toBeGreaterThan(0);
     expect(payload.data.summary.verifiedAbsentCount).toBeGreaterThanOrEqual(7);
     expect(payload.data.summary.verifiedAbsentFailedCount).toBe(0);
-    expect(payload.data.summary.nextSafeCandidateCount).toBe(0);
+    expect(payload.data.summary.nextSafeCandidateCount).toBe(1);
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
-    expect(payload.data.summary.forbiddenCandidateCount).toBe(1);
+    expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
     expect(payload.data.planning).toMatchObject({
-      stage: 'FEAT-081H',
-      lastCompletedStage: 'FEAT-081H',
-      lastUpdatedBy: 'FEAT-081H',
-      nextDeletionCandidate: null,
-      nextReviewCandidate: null,
+      stage: 'FEAT-081I',
+      lastCompletedStage: 'FEAT-081I',
+      lastUpdatedBy: 'FEAT-081I',
     });
-    expect(payload.data.planning.forbiddenCandidateIds).toContain('web-dashboard-non-review');
+    expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        module: 'channel-message',
+        status: 'retire-candidate',
+        owner: 'AgentDock',
+        deletionCandidateAllowed: true,
+      }),
+      expect.objectContaining({
+        module: 'run-router-runtime-scenario',
+        status: 'deferred',
+        deletionCandidateAllowed: false,
+      }),
+      expect.objectContaining({
+        module: 'memory',
+        protectedScope: expect.arrayContaining(['aria-memory vault']),
+      }),
+    ]));
+    const runtimeBoundary = payload.data.planning.moduleRetirementBoundaries.find((boundary) => boundary.module === 'run-router-runtime-scenario');
+    expect(runtimeBoundary?.deferredUntil).toEqual(expect.arrayContaining([
+      'AgentDock 定时任务稳定触发 Haro 生成提案',
+      'Haro 创建待审 approval request',
+      'Review Board 可审',
+      '证明链路不依赖旧 haro run/chat/team/scenario',
+    ]));
+    expect(payload.data.planning.nextDeletionCandidate).toMatchObject({
+      id: 'channel-layer',
+      nextScope: expect.stringContaining('Haro-owned channel packages'),
+      forbiddenScope: expect.arrayContaining([
+        'packages/mcp-tools/src/tools/send-message.ts',
+        'AgentDock 生产消息能力',
+      ]),
+    });
+    expect(payload.data.planning.nextReviewCandidate).toMatchObject({
+      id: 'channel-layer',
+      reviewScope: expect.stringContaining('Haro-owned channel packages'),
+      notApproval: true,
+      forbiddenScope: expect.arrayContaining(['packages/mcp-tools/src/tools/send-message.ts']),
+    });
+    expect(payload.data.planning.nextReviewCandidate?.reason).toContain('不是删除授权');
+    expect(payload.data.planning.forbiddenCandidateIds).toEqual([]);
     expect(payload.data.planning.blockedCandidateIds).toEqual(expect.arrayContaining([
       'provider-codex',
       'memory-fabric',
+      'web-dashboard-non-review',
+    ]));
+    expect(payload.data.planning.blockedCandidateIds).not.toContain('agent-runtime-router');
+    expect(payload.data.planning.deferredCandidateIds).toEqual(expect.arrayContaining([
       'agent-runtime-router',
+      'skills-marketplace',
     ]));
     expect(payload.data.planning.completedPhysicalRemovals).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'agent-runtime-router', candidate: 'packages/core/src/team-orchestrator.ts', removedBy: 'FEAT-081D' }),
@@ -197,11 +251,11 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     const channelLayer = byId.get('channel-layer');
     expect(channelLayer).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     expect(channelLayer?.candidatePriority).toMatchObject({
-      status: 'done',
+      status: 'next-safe-candidate',
       rank: 1,
-      nextScope: 'packages/cli/src/channel.ts#setup-onboarding',
+      nextScope: expect.stringContaining('Haro-owned channel packages'),
     });
-    expect(channelLayer?.candidatePriority.forbiddenScope).toContain('packages/channel-feishu');
+    expect(channelLayer?.candidatePriority.forbiddenScope).toContain('packages/mcp-tools/src/tools/send-message.ts');
     expect(channelLayer?.pilotUnbind).toBeUndefined();
     expect(channelLayer?.physicalRemoval).toMatchObject({
       candidate: 'packages/cli/src/gateway.ts',
@@ -229,10 +283,11 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     const agentRuntime = byId.get('agent-runtime-router');
     expect(agentRuntime?.evidence.some((entry) => entry.present)).toBe(true);
     expect(agentRuntime?.candidatePriority).toMatchObject({
-      status: 'blocked',
-      rank: 3,
-      nextScope: 'packages/core/src/scenario-router.ts',
+      status: 'defer',
+      rank: 6,
+      nextScope: 'deferred until AgentDock scheduled proposal chain is stable',
     });
+    expect(agentRuntime?.candidatePriority.reason).toContain('第 4 项按用户边界 deferred');
     expect(agentRuntime?.physicalRemoval).toMatchObject({
       candidate: 'packages/core/src/team-orchestrator.ts',
       status: 'physically-removed',
@@ -246,7 +301,8 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(absentByPath.get('packages/core/package.json')).toBe(true);
     expect(evidenceByPath.get('packages/core/src/scenario-router.ts')).toBe(true);
     expect(agentRuntime?.deleteAllowed).toBe(false);
-    expect(byId.get('web-dashboard-non-review')?.candidatePriority.status).toBe('forbidden');
+    expect(byId.get('web-dashboard-non-review')?.candidatePriority.status).toBe('blocked');
+    expect(byId.get('web-dashboard-non-review')?.candidatePriority.forbiddenScope).toContain('approval review board routes');
     const workspaceRoot = resolve(process.cwd(), '../..');
     expect(existsSync(join(workspaceRoot, 'packages/core/src/team-orchestrator.ts'))).toBe(false);
     expect(existsSync(join(workspaceRoot, 'packages/core/src/legacy/team-orchestrator.ts'))).toBe(false);
@@ -267,13 +323,18 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081H lastCompleted=FEAT-081H');
-    expect(text).toContain('next deletion candidate: none');
-    expect(text).toContain('next review candidate: none');
-    expect(text).toContain('forbidden now: web-dashboard-non-review');
+    expect(text).toContain('planning stage: FEAT-081I lastCompleted=FEAT-081I');
+    expect(text).toContain('next deletion candidate (candidate only, not approval): channel-layer');
+    expect(text).toContain('next review candidate: channel-layer');
+    expect(text).toContain('notApproval=true');
+    expect(text).toContain('forbidden now: none');
+    expect(text).toContain('deferred now: agent-runtime-router,skills-marketplace');
+    expect(text).toContain('module retirement boundaries:');
+    expect(text).toContain('channel-message status=retire-candidate owner=AgentDock');
+    expect(text).toContain('run-router-runtime-scenario status=deferred');
     expect(text).toContain('verifiedAbsent: total=');
     expect(text).toContain('failed=0');
-    expect(text).toContain('priority=done#1');
+    expect(text).toContain('priority=next-safe-candidate#1');
     expect(text).toContain('FEAT-081D');
     expect(text).toContain('FEAT-081E');
     expect(text).toContain('FEAT-081H');
