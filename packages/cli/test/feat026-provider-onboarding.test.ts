@@ -137,8 +137,8 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     expect(output).toContain('fields=tenant');
   });
 
-  it('FEAT-081N: provider setup is retired fail-closed and never writes provider config', async () => {
-    const root = tempRoot('haro-feat081n-setup-retired-');
+  it('FEAT-081R: provider setup is physically removed, unknown command fails closed and never writes config', async () => {
+    const root = tempRoot('haro-feat081r-setup-removed-');
     const { result, output, stderr } = await runWithOutput({
       argv: ['provider', 'setup', 'codex', '--non-interactive'],
       root,
@@ -150,12 +150,29 @@ describe('provider onboarding wizard [FEAT-026]', () => {
 ${stderr}`;
     expect(result.action).toBe('provider');
     expect(result.exitCode).toBe(1);
-    expect(text).toContain('provider setup/onboarding has been retired in FEAT-081N');
-    expect(text).toContain('AgentDock Codex runner');
-    expect(text).toContain('external codex CLI/auth');
+    expect(text).toContain("error: unknown command 'setup'");
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(text).not.toContain('PROVIDER_SECRET_MISSING');
     expect(text).not.toContain('apiKey');
+  });
+
+  it('FEAT-081R: provider setup --json remains removed and fails closed without writes', async () => {
+    const root = tempRoot('haro-feat081r-setup-json-removed-');
+    const { result, output, stderr } = await runWithOutput({
+      argv: ['provider', 'setup', 'codex', '--json'],
+      root,
+      setupDeps: { env: { OPENAI_API_KEY: 'test-provider-secret-123', HOME: root }, runCommand: okCommand },
+      createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
+    });
+
+    const text = `${output}
+${stderr}`;
+    expect(result.action).toBe('provider');
+    expect(result.exitCode).toBe(1);
+    expect(text).toContain("error: unknown command 'setup'");
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+    expect(text).not.toContain('test-provider-secret-123');
+    expect(text).not.toContain('PROVIDER_SETUP_RETIRED');
   });
 
   it('AC2/R5/R6: models use live listModels, select persists defaults, doctor is healthy, and haro model shows the same model', async () => {
@@ -225,9 +242,9 @@ ${stderr}`;
     expect(output).toContain('model=codex-secondary');
   });
 
-  it('FEAT-081N: project-scoped provider setup is retired and does not mutate project config', async () => {
-    const root = tempRoot('haro-feat081n-project-root-');
-    const projectRoot = tempRoot('haro-feat081n-project-');
+  it('FEAT-081R: project-scoped provider setup is unknown command and does not mutate project config', async () => {
+    const root = tempRoot('haro-feat081r-project-root-');
+    const projectRoot = tempRoot('haro-feat081r-project-');
     mkdirSync(join(projectRoot, '.haro'), { recursive: true });
     const configPath = join(projectRoot, '.haro', 'config.yaml');
     writeFileSync(configPath, 'providers:\n  codex:\n    defaultModel: codex-keep\n');
@@ -244,15 +261,15 @@ ${stderr}`;
 
     expect(result.result.exitCode).toBe(1);
     expect(`${result.output}
-${result.stderr}`).toContain('PROVIDER_SETUP_RETIRED');
+${result.stderr}`).toContain("error: unknown command 'setup'");
     expect(readFileSync(configPath, 'utf8')).toBe(before);
     expect(readFileSync(configPath, 'utf8')).not.toContain('https://api.example.test/v1');
     expect(readFileSync(configPath, 'utf8')).not.toContain('test-provider-secret-123');
     expect(readFileSync(configPath, 'utf8')).not.toContain('apiKey');
   });
 
-  it('FEAT-081N: retired setup ignores --write-env-file and does not write secrets', async () => {
-    const root = tempRoot('haro-feat081n-envfile-root-');
+  it('FEAT-081R: unknown setup ignores --write-env-file and does not write secrets', async () => {
+    const root = tempRoot('haro-feat081r-envfile-root-');
     const envFile = join(root, 'providers.env');
     const secret = 'test-provider-secret-123';
     const { result, output, stderr } = await runWithOutput({
@@ -264,7 +281,7 @@ ${result.stderr}`).toContain('PROVIDER_SETUP_RETIRED');
 
     expect(result.exitCode).toBe(1);
     expect(`${output}
-${stderr}`).toContain('Haro no longer initializes provider config');
+${stderr}`).toContain("error: unknown command 'setup'");
     expect(existsSync(envFile)).toBe(false);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(`${output}
@@ -334,8 +351,8 @@ ${stderr}`).not.toContain(secret);
     expect(output).not.toContain(secret);
   });
 
-  it('FEAT-081N: retired interactive setup does not run the ChatGPT wizard or codex login', async () => {
-    const root = tempRoot('haro-feat081n-tty-root-');
+  it('FEAT-081R: unknown interactive setup fails and does not run the ChatGPT wizard or codex login', async () => {
+    const root = tempRoot('haro-feat081r-tty-root-');
     const codexHome = join(root, 'codex-home');
     const binDir = join(root, 'bin');
     mkdirSync(binDir, { recursive: true });
@@ -375,15 +392,15 @@ ${stderr}`).not.toContain(secret);
     const text = `${output}
 ${stderr}`;
     expect(result.exitCode).toBe(1);
-    expect(text).toContain('provider setup/onboarding has been retired in FEAT-081N');
+    expect(text).toContain("error: unknown command 'setup'");
     expect(existsSync(join(codexHome, 'auth.json'))).toBe(false);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(text).not.toContain('access-token-raw');
     expect(text).not.toContain('refresh-token-raw');
   });
 
-  it('FEAT-081N: retired --auth-mode chatgpt setup does not read or persist codex auth', async () => {
-    const root = tempRoot('haro-feat081n-noninteractive-root-');
+  it('FEAT-081R: unknown --auth-mode chatgpt setup does not read or persist codex auth', async () => {
+    const root = tempRoot('haro-feat081r-noninteractive-root-');
     const codexHome = join(root, 'codex-home');
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(
@@ -409,7 +426,7 @@ ${stderr}`;
     const text = `${output}
 ${stderr}`;
     expect(result.exitCode).toBe(1);
-    expect(text).toContain('PROVIDER_SETUP_RETIRED');
+    expect(text).toContain("error: unknown command 'setup'");
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(text).not.toContain('access-token-raw');
     expect(text).not.toContain('refresh-token-raw');

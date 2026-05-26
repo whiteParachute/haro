@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/haro-ai/haro/main/scripts/install.s
 # 1. 预检：只读检查，不写 provider secret
 haro setup --check --json
 
-# 2. 配置 Codex 认证（任选其一；FEAT-081N 后 Haro provider setup 已退役，FEAT-081O 已删除旧 setup wizard）
+# 2. 配置 Codex 认证（任选其一；FEAT-081R 后 Haro 不再注册 provider setup 子命令）
 #    A. 开发者 / 组织账号：导出 OPENAI_API_KEY（Haro 不会把 key 写入 YAML）
 export OPENAI_API_KEY=<your-key>
 #    B. ChatGPT 订阅用户：先使用外部 codex CLI 完成登录

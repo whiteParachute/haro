@@ -123,20 +123,20 @@ codex login --device-auth   # 或用户自行运行 codex login
   -> SDK/codex binary 直接读取 ~/.codex/auth.json 并自行 refresh
 ```
 
-ChatGPT 登录由外部 codex CLI 完成。devbox、SSH 远端和 headless 环境建议直接运行 `codex login --device-auth`；本机带浏览器也可以运行 `codex login`。`HARO_CODEX_LOGIN_MODE` 只属于历史 Haro setup 向导，FEAT-081N 后不再由 Haro 使用，FEAT-081O 已删除旧 setup wizard。
+ChatGPT 登录由外部 codex CLI 完成。devbox、SSH 远端和 headless 环境建议直接运行 `codex login --device-auth`；本机带浏览器也可以运行 `codex login`。`HARO_CODEX_LOGIN_MODE` 只属于历史 Haro setup 向导，FEAT-081O 已删除旧 setup wizard，FEAT-081R 后 Haro 不再注册 provider setup 子命令。
 
 `listModels()` 在 chatgpt 模式下读 codex CLI 自己维护的 `~/.codex/models_cache.json`（无硬编码 slug，仍保持 FEAT-003 AC6）；`authMode=env` 但 `OPENAI_API_KEY` 缺失时 throws，由 `/api/v1/providers` 折叠为 `liveModelsFailed: true`，避免 Dashboard 显示模型但运行必失败。
 
 安全边界：Haro 不复制 `access_token` / `refresh_token` / `id_token`，不把 `tokens.*` 写入 YAML；schema 显式拒绝 `providers.codex.tokens`。
 
-### Provider CLI 边界（FEAT-026 / FEAT-081N / FEAT-081O）
+### Provider CLI 边界（FEAT-026 / FEAT-081N / FEAT-081R）
 
-FEAT-026 曾提供 Haro-owned provider onboarding。FEAT-081N 后，根据产品定位，Haro 新产品不再初始化 provider config；`haro provider setup ...` 已退役并 fail-closed。FEAT-081O 已删除旧 setup-only Codex wizard 文件并清理 diagnostics/provider remediation；FEAT-081P 已删除旧 `--write-env-file` writer helper。保留范围：
+FEAT-026 曾提供 Haro-owned provider onboarding。FEAT-081R 后，根据产品定位，Haro 新产品不再初始化 provider config，也不再注册 `haro provider setup ...` 子命令；调用会 unknown-command fail-closed。FEAT-081O 已删除旧 setup-only Codex wizard 文件并清理 diagnostics/provider remediation；FEAT-081P 已删除旧 `--write-env-file` writer helper。保留范围：
 
 - 保留 `haro provider doctor/models/select/env`，把 provider 健康检查、模型发现、默认模型切换和 env 模板集中到一个命令族。
 - 保留 provider runtime、`createCodexProvider`、`readLocalCodexAuth`、run/chat/LLM provider path。
 - 配置文件只保存 `baseUrl`、`defaultModel`、`enabled`、`secretRef` 等非敏感字段。
-- Secret 默认来自环境变量或外部 codex CLI auth；Haro provider setup 不再写 env file，旧 env-file writer helper 已由 FEAT-081P 删除。
+- Secret 默认来自环境变量或外部 codex CLI auth；Haro 不再注册 provider setup，也不再写 env file，旧 env-file writer helper 已由 FEAT-081P 删除。
 - CLI 前台运行与 systemd/web 服务运行时必须能解释各自读取到的 provider 配置来源。
 
 后续不得把 081N/081O/081P 解读为 provider runtime/package 删除批准；若继续减法，必须另做 provider runtime 影响面评审。

@@ -71,7 +71,7 @@
 | risk_if_removed | `haro run/chat`、provider doctor/list/models/select/env、LLM draft/rewrite provider path 与 legacy tests 失效 |
 | rollback_plan | git revert 删除 PR；恢复 package 与 workspace dependency |
 | required_verification | `pnpm test:sidecar`；`pnpm -F @haro/provider-codex test`；`pnpm -F @haro/cli test:legacy` |
-| decision | FEAT-081N 只退役 `haro provider setup ...`；FEAT-081O 只删除 setup-only wizard dead file并清理 remediation；FEAT-081P 只删除旧 env-file writer helper；保持 deprecate，不删除 provider-codex package/runtime |
+| decision | FEAT-081N 只退役 `haro provider setup ...`；FEAT-081O 只删除 setup-only wizard dead file并清理 remediation；FEAT-081P 只删除旧 env-file writer helper；FEAT-081R 只删除 provider setup retired stub；保持 deprecate，不删除 provider-codex package/runtime |
 
 ### 3.2 packages/channel / channel-feishu / channel-telegram
 
@@ -1255,8 +1255,8 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 
 本阶段只处理窄面：
 
-- `haro provider setup ...` 注册入口保留为 retired/fail-closed，避免落入 commander unknown、REPL 或默认 handler。
-- 输出 `PROVIDER_SETUP_RETIRED`，说明 Haro provider setup/onboarding 已退役；新产品使用 AgentDock Codex runner / 外部 `codex login` 前置。
+- `haro provider setup ...` 注册入口在 081N 当时保留为 retired/fail-closed，避免落入 commander unknown、REPL 或默认 handler。
+- 081R 后该 retired 子命令 stub 已删除；当前 `haro provider setup ...` 由 provider command unknown-command fail-closed，新产品使用 AgentDock Codex runner / 外部 `codex login` 前置。
 - 不再调用 `runCodexAuthWizard`、`writeProviderConfig`、`writeProviderEnvFile`、`runProviderDoctor` 等 setup 写入/检查流程。
 - 保留 `haro provider list`、`doctor`、`models`、`select`、`env`。
 - 不修改 `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、provider runtime、diagnostics provider stage、run/chat/LLM provider path。
@@ -1284,7 +1284,7 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 
 - 物理删除 `packages/cli/src/provider-codex-wizard.ts`。
 - 删除只服务该 wizard 的 `packages/cli/test/provider-codex-wizard.test.ts`，并从 `packages/cli/package.json` `test:legacy` 移除该测试入口。
-- 保留 `haro provider setup ...` retired/fail-closed 行为与 `PROVIDER_SETUP_RETIRED` 输出。
+- 081O 当时仍保留 `haro provider setup ...` retired/fail-closed stub；081R 后该 stub 已删除。
 - 将 provider doctor/models/diagnostics 中仍指向 `haro provider setup codex` 的 remediation 改为 `OPENAI_API_KEY`、外部 `codex login --device-auth` 与 `haro provider doctor codex` 口径。
 
 081O guard 口径：
@@ -1311,7 +1311,7 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - 删除 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile`。
 - 删除 `ProviderEnvFileWriteResult`。
 - 删除随 writer 变 dead 的 `renameSync` / `chmodSync` import 和 env-file merge/quote helper。
-- 保留 `haro provider setup ...` retired/fail-closed stub、`provider env` 只读 summary、`provider select` 与 provider runtime。
+- 081P 当时仍保留 `haro provider setup ...` retired/fail-closed stub；081R 后该 stub 已删除。继续保留 `provider env` 只读 summary、`provider select` 与 provider runtime。
 
 081P guard 口径：
 
@@ -1340,5 +1340,33 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 
 - 不修改 `packages/cli/src/index.ts` 的 gateway removed runtime payload；其中的 `physicalRemoval` 是 CLI runtime/API contract，不是 guard schema。
 - 不修改 provider runtime、channel/MCP send_message、memory、skills、Web、runtime/scenario-router 或 AgentDock host。
-- `completedPhysicalRemovals` 的历史记录不丢失：FEAT-081D、FEAT-081E、FEAT-081H、FEAT-081J、FEAT-081L、FEAT-081O、FEAT-081P 记录仍在。
+- `completedPhysicalRemovals` 的历史记录不丢失：FEAT-081D、FEAT-081E、FEAT-081H、FEAT-081J、FEAT-081L、FEAT-081O、FEAT-081P 记录仍在。FEAT-081R 追加 provider setup retired stub scoped removal。
 - Guard 继续 fail-closed：`deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null`。
+
+
+## 26. FEAT-081R provider setup retired stub 删除（2026-05-26）
+
+081R 只处理 provider setup/onboarding 子面的最后一个 CLI surface，不扩大到 provider runtime。
+
+只读盘点结论：
+
+- `packages/cli/src/index.ts` 中仅剩 081N 后保留的 provider setup retired command registration/stub。
+- `runCodexAuthWizard`、旧 `provider-codex-wizard.ts`、旧 `writeProviderEnvFile` writer 已分别在 081N/081O/081P 后从业务入口摘线或删除。
+- `haro provider list/doctor/models/select/env` 仍共享 provider runtime/helper，必须保留。
+
+本阶段完成的最小安全代码清理：
+
+- 删除 `packages/cli/src/index.ts#provider-setup-retired-stub`。
+- `haro provider setup ...` 不再注册为子命令；调用会由 provider command unknown-command fail-closed，exit 非 0，不写 `HARO_HOME/config.yaml` 或 provider env file，不进入 REPL/default handler。
+- 保留 `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、provider list/doctor/models/select/env、diagnostics provider stage 与 run/chat/LLM provider path。
+
+081R guard 口径：
+
+- `planning.stage=FEAT-081R`。
+- `planning.lastCompletedStage=FEAT-081R`。
+- `planning.lastUpdatedBy=FEAT-081R`。
+- scoped removal 只记录 `packages/cli/src/index.ts#provider-setup-retired-stub`。
+- `provider-codex` 仍是 `blocked`，`deleteAllowed=false`，`stillReferenced=true`。
+- `deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
+
+后续风险：provider runtime、diagnostics provider stage、run/chat/LLM path、provider doctor/list/models/select/env 仍有业务引用；不得把 081R 解读为 provider runtime/package 删除批准。

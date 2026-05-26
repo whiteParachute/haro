@@ -185,11 +185,11 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.nextSafeCandidateCount).toBe(0);
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
-    expect(payload.data.planning).toMatchObject({
-      stage: 'FEAT-081Q',
-      lastCompletedStage: 'FEAT-081Q',
-      lastUpdatedBy: 'FEAT-081Q',
-    });
+      expect(payload.data.planning).toMatchObject({
+        stage: 'FEAT-081R',
+        lastCompletedStage: 'FEAT-081R',
+        lastUpdatedBy: 'FEAT-081R',
+      });
     expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
         module: 'channel-message',
@@ -240,6 +240,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'channel-layer', candidate: 'packages/channel-telegram', removedBy: 'FEAT-081L' }),
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/provider-codex-wizard.ts', removedBy: 'FEAT-081O' }),
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/provider-onboarding.ts#writeProviderEnvFile', removedBy: 'FEAT-081P' }),
+      expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/index.ts#provider-setup-retired-stub', removedBy: 'FEAT-081R' }),
     ]));
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     expect(payload.data.items.every((item) => !('physicalRemoval' in item))).toBe(true);
@@ -251,6 +252,8 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       status: 'default-path-unbound',
     });
     expect(providerCodex?.decision).toContain('不获删除批准');
+    expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('retired stub marker'))).toMatchObject({ present: false, absent: true });
+    expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('retired stub message'))).toMatchObject({ present: false, absent: true });
     expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('Codex auth wizard'))).toMatchObject({ present: false, absent: true });
     expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('provider env file writer'))).toMatchObject({ present: false, absent: true });
     expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('成功输出路径'))).toMatchObject({ present: false, absent: true });
@@ -262,6 +265,10 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({
         candidate: 'packages/cli/src/provider-onboarding.ts#writeProviderEnvFile',
         removedBy: 'FEAT-081P',
+      }),
+      expect.objectContaining({
+        candidate: 'packages/cli/src/index.ts#provider-setup-retired-stub',
+        removedBy: 'FEAT-081R',
       }),
     ]));
     expect(providerCodex?.verifiedAbsent.find((entry) => entry.path === 'packages/cli/src/provider-codex-wizard.ts' && entry.kind === 'exists')).toMatchObject({ present: false, absent: true });
@@ -395,7 +402,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081Q lastCompleted=FEAT-081Q');
+    expect(text).toContain('planning stage: FEAT-081R lastCompleted=FEAT-081R');
     expect(text).toContain('next deletion candidate (candidate only, not approval): none');
     expect(text).toContain('next review candidate: none');
     expect(text).toContain('forbidden now: none');
@@ -419,7 +426,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('FEAT-081N');
     expect(text).toContain('FEAT-081O');
     expect(text).toContain('FEAT-081P');
-    expect(text).toContain('FEAT-081Q');
+    expect(text).toContain('FEAT-081R');
     expect(text).toContain('provider setup/onboarding CLI 入口 retired/fail-closed');
     expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/index.ts#provider-setup-onboarding-command');
     expect(text).toContain('AgentDock IPC 消息 contract');
@@ -435,6 +442,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physically-removed:packages/channel-telegram:FEAT-081L');
     expect(text).toContain('physically-removed:packages/cli/src/provider-codex-wizard.ts:FEAT-081O');
     expect(text).toContain('physically-removed:packages/cli/src/provider-onboarding.ts#writeProviderEnvFile:FEAT-081P');
+    expect(text).toContain('physically-removed:packages/cli/src/index.ts#provider-setup-retired-stub:FEAT-081R');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

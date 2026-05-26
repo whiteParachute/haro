@@ -168,7 +168,7 @@
 
 **核心特点**：
 - 全部使用与配置可在 CLI 完成，Web UI 只作可选可视化
-- `provider setup / doctor / models / select / env` 命令族
+- `provider doctor / models / select / env` 命令族；旧 `provider setup` surface 已在 FEAT-081R 后不再注册
 - staged setup 流程：从 0 到能跑通的引导逻辑
 
 **Haro 参考**：

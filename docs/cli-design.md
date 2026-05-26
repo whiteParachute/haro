@@ -206,13 +206,13 @@ haro model codex <live-model-id>
 
 > 当前仅支持位置参数直接写入默认 Provider / Model；交互式 `--select` 选择器在 Phase 1.5 规划。
 
-### `haro provider`（FEAT-026 / FEAT-029 / FEAT-081O）
+### `haro provider`（FEAT-026 / FEAT-029 / FEAT-081R）
 
 Provider 配置与诊断命令族。`haro model` 保留为快速查看 / 切换默认模型；复杂 provider 首配、secretRef、model discovery 和 remediation 统一归入 `haro provider`。
 
 ```bash
 haro provider list
-# haro provider setup ... 已在 FEAT-081N 退役并 fail-closed；FEAT-081O 已删除旧 setup wizard
+# haro provider setup ... 已在 FEAT-081R 后不再注册；使用外部 codex login / OPENAI_API_KEY
 haro provider doctor codex
 haro provider models codex
 haro provider select codex <live-model-id>
@@ -221,15 +221,15 @@ haro provider env codex
 
 **设计边界**：
 - YAML 只保存 `enabled`、`baseUrl`、`defaultModel`、`secretRef` 等非敏感配置，不保存真实 API key
-- 默认通过环境变量或外部 codex CLI auth 读取 secret；Haro provider setup 不再写受保护 env file，旧 `--write-env-file` writer helper 已由 FEAT-081P 删除
+- 默认通过环境变量或外部 codex CLI auth 读取 secret；Haro 不再注册 provider setup，也不再写受保护 env file，旧 `--write-env-file` writer helper 已由 FEAT-081P 删除
 - `haro provider doctor` 输出 `PROVIDER_SECRET_MISSING`、`PROVIDER_HEALTHCHECK_FAILED`、`PROVIDER_MODEL_LIST_FAILED` 等 issue code；remediation 指向 `OPENAI_API_KEY`、外部 `codex login --device-auth` 与 `haro provider doctor`
 - provider 配置元数据来自 provider catalog/schema，避免命令层散落 `providerId === 'codex'` 分支
 
-> FEAT-081N 后 `haro provider setup <id>` 已退役；FEAT-081O 已删除旧 Codex setup wizard 文件。新增 provider 只能保留 runtime/doctor/models/select/env 等非 onboarding 面，setup/onboarding 需由 AgentDock 或外部工具承担。
+> FEAT-081R 后 Haro 不再注册 `haro provider setup <id>`；未知子命令 fail-closed。FEAT-081O 已删除旧 Codex setup wizard 文件。新增 provider 只能保留 runtime/doctor/models/select/env 等非 onboarding 面，setup/onboarding 需由 AgentDock 或外部工具承担。
 
 #### Codex ChatGPT subscription auth（FEAT-029）
 
-FEAT-081N 前，TTY 下运行 `haro provider setup codex` 会启动 Haro-owned setup wizard；FEAT-081O 已删除该 setup-only wizard 文件。当前 ChatGPT 登录必须由外部 codex CLI 完成：
+FEAT-081N 前，TTY 下运行 `haro provider setup codex` 会启动 Haro-owned setup wizard；FEAT-081O 已删除该 setup-only wizard 文件，FEAT-081R 后 Haro 不再注册 provider setup 子命令。当前 ChatGPT 登录必须由外部 codex CLI 完成：
 
 ```bash
 codex login --device-auth   # headless/devbox 推荐

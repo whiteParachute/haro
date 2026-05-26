@@ -699,36 +699,6 @@ function registerProviderCommands(program: Command, app: AppContext): void {
           app.stdout.write(formatProviderList(app.providerCatalog));
         });
 
-      cmd
-        .command('setup')
-        .argument('[id]', 'retired provider id')
-        .option('--scope <scope>', 'retired; provider setup/onboarding is no longer handled by Haro')
-        .option('--model <id>', 'retired; configure models through AgentDock/Codex runner or existing config')
-        .option('--base-url <url>', 'retired; provider setup/onboarding is no longer handled by Haro')
-        .option('--secret-ref <ref>', 'retired; use external codex CLI/auth or existing env configuration')
-        .option('--auth-mode <mode>', 'retired; use external codex CLI/auth')
-        .option('--non-interactive', 'retired; provider setup/onboarding is no longer handled by Haro')
-        .option('--write-env-file', 'retired; Haro no longer writes provider env files from setup')
-        .option('--env-file <path>', 'retired; Haro no longer writes provider env files from setup')
-        .option('--json', 'print machine-readable retired result')
-        .action((id: string | undefined, options: { json?: boolean }) => {
-          const message = 'Haro provider setup/onboarding has been retired in FEAT-081N.';
-          const remediation = 'Use the AgentDock Codex runner and external codex CLI/auth as the product-level prerequisite; Haro no longer initializes provider config via `haro provider setup`. Provider runtime, doctor/list/models/select/env remain available.';
-          if (options.json) {
-            app.stderr.write(`${JSON.stringify({
-              ok: false,
-              error: {
-                code: 'PROVIDER_SETUP_RETIRED',
-                message,
-                remediation,
-                details: { provider: id ?? null },
-              },
-            }, null, 2)}\n`);
-          } else {
-            app.stderr.write(`PROVIDER_SETUP_RETIRED: ${message}\n${remediation}\n`);
-          }
-          throw new CommanderExit(1, message);
-        });
 
       cmd
         .command('doctor')

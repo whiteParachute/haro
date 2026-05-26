@@ -32,7 +32,7 @@ Invalid Haro config (/home/user/.haro/config.yaml):
 haro doctor --component provider --json
 haro provider doctor codex --json
 haro provider env codex
-# haro provider setup ... 已在 FEAT-081N 退役，FEAT-081O 已删除旧 setup wizard；如需 ChatGPT auth，请运行外部 codex login --device-auth
+# haro provider setup ... 已在 FEAT-081R 后不再注册；如需 ChatGPT auth，请运行外部 codex login --device-auth
 ```
 
 常见分支：

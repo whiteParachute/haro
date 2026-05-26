@@ -91,7 +91,7 @@ defaultAgent: code-reviewer
 |--------|------|------|
 | `OPENAI_API_KEY` | Codex Provider 在 `authMode=env` 时使用的 API key；ChatGPT 订阅用户走 `codex login` 路径，不需要这个变量 | `sk-...` |
 | `HARO_HOME` | 覆盖全局数据目录路径 | `/data/haro` |
-| `HARO_CODEX_LOGIN_MODE` | 历史 Haro provider setup 向导变量；FEAT-081N 后 `haro provider setup` 已退役。ChatGPT 订阅用户请直接使用外部 `codex login` / `codex login --device-auth`。 | legacy |
+| `HARO_CODEX_LOGIN_MODE` | 历史 Haro provider setup 向导变量；FEAT-081R 后 Haro 不再注册 `haro provider setup`。ChatGPT 订阅用户请直接使用外部 `codex login` / `codex login --device-auth`。 | legacy |
 | `NPM_CONFIG_REGISTRY` | `haro update` 使用的 registry | `https://registry.npmmirror.com` |
 
 ### Channel 凭证环境变量
@@ -151,7 +151,7 @@ haro run "分析当前代码"
 
 ### Provider 引导配置（FEAT-026）
 
-`haro provider` 命令族用于解释 `OPENAI_API_KEY`、`config.yaml`、provider env file 与 systemd/user service 的关系。FEAT-081N 后 `haro provider setup ...` 已退役并 fail-closed；FEAT-081O 已删除旧 setup wizard；Haro 不再初始化 provider config，只保留 list/doctor/models/select/env：
+`haro provider` 命令族用于解释 `OPENAI_API_KEY`、`config.yaml`、provider env file 与 systemd/user service 的关系。FEAT-081R 后 Haro 不再注册 `haro provider setup ...`；调用会由 provider command unknown-command fail-closed，Haro 不再初始化 provider config，只保留 list/doctor/models/select/env：
 
 ```bash
 haro provider list
@@ -159,7 +159,7 @@ haro provider doctor codex
 haro provider models codex
 haro provider select codex <live-model-id>
 haro provider env codex
-# haro provider setup ... 已在 FEAT-081N 退役并 fail-closed；FEAT-081O 已删除旧 setup wizard
+# haro provider setup ... 已在 FEAT-081R 后不再注册；请使用外部 codex login / OPENAI_API_KEY
 ```
 
 配置示例：
@@ -176,7 +176,7 @@ providers:
 原则：
 
 - `config.yaml` 只写入 `defaultModel`、`baseUrl`、`enabled`、`secretRef` 等非敏感字段。
-- FEAT-081N 后 `haro provider setup --write-env-file` 已退役，FEAT-081O 已删除旧 setup wizard，FEAT-081P 已删除旧 env-file writer helper；如需 env file，请由外部部署/AgentDock 环境管理写入，并用 `haro provider env codex` 只读检查。
+- FEAT-081R 后 `haro provider setup --write-env-file` 不再注册，FEAT-081O 已删除旧 setup wizard，FEAT-081P 已删除旧 env-file writer helper；如需 env file，请由外部部署/AgentDock 环境管理写入，并用 `haro provider env codex` 只读检查。
 - `haro provider env codex` 只展示模板、来源摘要和 masked 状态，不回显真实 key。
 - `haro doctor` 与 Web Dashboard 只展示脱敏后的 provider 配置状态和 remediation。
 - systemd 用户服务与 CLI 前台运行必须能解释各自读取到的 env 来源，避免“命令行可用但服务不可用”。
