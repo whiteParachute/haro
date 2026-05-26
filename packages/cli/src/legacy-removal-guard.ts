@@ -46,7 +46,6 @@ export interface LegacyRemovalGuardDefinition {
     status: 'default-path-unbound';
     note: string;
   };
-  physicalRemoval?: LegacyPhysicalRemovalRecord;
   physicalRemovals?: LegacyPhysicalRemovalRecord[];
   evidence: LegacyRemovalEvidenceDefinition[];
   verifiedAbsent?: LegacyRemovalEvidenceDefinition[];
@@ -105,9 +104,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081P';
-    lastCompletedStage: 'FEAT-081P';
-    lastUpdatedBy: 'FEAT-081P';
+    stage: 'FEAT-081Q';
+    lastCompletedStage: 'FEAT-081Q';
+    lastUpdatedBy: 'FEAT-081Q';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -326,14 +325,14 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       reason: 'FEAT-081L 已完成 channel-layer 第一轮收口；没有下一项 channel 删除授权。后续减法必须重新排序并单项评审其它模块。',
       forbiddenScope: ['MCP send_message 工具本身', 'AgentDock 生产消息能力', '真实 Feishu/Telegram IM 投递链路'],
     },
-    physicalRemoval: {
-      candidate: 'packages/cli/src/gateway.ts',
-      status: 'physically-removed',
-      removedBy: 'FEAT-081E',
-      rollbackPlan: 'git revert FEAT-081E commit 可恢复 gateway 源码、legacy env 注册路径和旧 gateway 测试。',
-      note: '仅 gateway 旧 CLI daemon/control-plane 入口被删除；provider/memory/skills/Web/scenario-router 未获物理删除批准。',
-    },
     physicalRemovals: [
+      {
+        candidate: 'packages/cli/src/gateway.ts',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081E',
+        rollbackPlan: 'git revert FEAT-081E commit 可恢复 gateway 源码、legacy env 注册路径和旧 gateway 测试。',
+        note: '仅 gateway 旧 CLI daemon/control-plane 入口被删除；provider/memory/skills/Web/scenario-router 未获物理删除批准。',
+      },
       {
         candidate: 'packages/cli/src/index.ts#channel-setup-onboarding-stub',
         status: 'physically-removed',
@@ -483,13 +482,15 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       reason: '第 4 项按用户边界 deferred；先删其它，等 AgentDock 定时任务能稳定触发 Haro 提案生成并进入 Review Board 后再评估。',
       blockedUntil: ['AgentDock 定时任务稳定触发 Haro 生成提案', 'Haro 创建待审请求', 'Review Board 可审', '证明不依赖旧 haro run/chat/team/scenario'],
     },
-    physicalRemoval: {
-      candidate: 'packages/core/src/team-orchestrator.ts',
-      status: 'physically-removed',
-      removedBy: 'FEAT-081D',
-      rollbackPlan: 'git revert FEAT-081D commit 可恢复 team-orchestrator 源码、legacy export、CLI 兼容路径与旧测试。',
-      note: '仅 TeamOrchestrator 旧兼容入口被删除；gateway/provider/channel/memory/skills/Web/scenario-router 未获物理删除批准。',
-    },
+    physicalRemovals: [
+      {
+        candidate: 'packages/core/src/team-orchestrator.ts',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081D',
+        rollbackPlan: 'git revert FEAT-081D commit 可恢复 team-orchestrator 源码、legacy export、CLI 兼容路径与旧测试。',
+        note: '仅 TeamOrchestrator 旧兼容入口被删除；gateway/provider/channel/memory/skills/Web/scenario-router 未获物理删除批准。',
+      },
+    ],
     evidence: [
       { path: 'packages/core/src/scenario-router.ts', kind: 'exists', description: 'scenario router 文件仍存在，不在 081D 删除范围' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'ScenarioRouter', description: 'CLI bootstrap 仍构造/引用 scenario router' },
@@ -645,19 +646,18 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081P',
-      lastCompletedStage: 'FEAT-081P',
-      lastUpdatedBy: 'FEAT-081P',
+      stage: 'FEAT-081Q',
+      lastCompletedStage: 'FEAT-081Q',
+      lastUpdatedBy: 'FEAT-081Q',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
       forbiddenCandidateIds: items.filter((item) => item.candidatePriority.status === 'forbidden').map((item) => item.id),
       blockedCandidateIds: items.filter((item) => item.candidatePriority.status === 'blocked').map((item) => item.id),
       deferredCandidateIds: items.filter((item) => item.candidatePriority.status === 'defer').map((item) => item.id),
-      completedPhysicalRemovals: items.flatMap((item) => [
-        ...(item.physicalRemoval ? [{ id: item.id, candidate: item.physicalRemoval.candidate, removedBy: item.physicalRemoval.removedBy, rollbackPlan: item.physicalRemoval.rollbackPlan }] : []),
-        ...(item.physicalRemovals ?? []).map((removal) => ({ id: item.id, candidate: removal.candidate, removedBy: removal.removedBy, rollbackPlan: removal.rollbackPlan })),
-      ]),
+      completedPhysicalRemovals: items.flatMap((item) =>
+        (item.physicalRemovals ?? []).map((removal) => ({ id: item.id, candidate: removal.candidate, removedBy: removal.removedBy, rollbackPlan: removal.rollbackPlan })),
+      ),
     },
     items,
     nextActions: [
@@ -670,6 +670,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       'FEAT-081N 已将 haro provider setup/onboarding CLI 入口 retired/fail-closed；provider-codex package/runtime 与 provider doctor/list/models/select/env 继续保留且不获删除批准。',
       'FEAT-081O 已删除 setup-only provider-codex wizard dead file，并将 diagnostics/provider remediation 改为 OPENAI_API_KEY / 外部 codex login / provider doctor 口径；不批准 provider runtime 删除。',
       'FEAT-081P 已删除旧 provider setup --write-env-file writer helper；ProviderEnvFileSummary/readProviderEnvFileSummary 与 provider env 只读 summary 继续保留。',
+      'FEAT-081Q 已将 guard physicalRemoval singleton schema 统一迁移为 physicalRemovals[]；不改任何 runtime payload 或删除批准。',
       'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };
@@ -700,17 +701,14 @@ export function formatLegacyRemovalGuardHuman(report: LegacyRemovalGuardReport):
       const pilot = item.pilotUnbind
         ? ` pilotUnbind=${item.pilotUnbind.status}:${item.pilotUnbind.candidate}`
         : '';
-      const removal = item.physicalRemoval
-        ? ` physicalRemoval=${item.physicalRemoval.status}:${item.physicalRemoval.candidate}:${item.physicalRemoval.removedBy}`
-        : '';
-      const extraRemovals = item.physicalRemovals && item.physicalRemovals.length > 0
+      const removals = item.physicalRemovals && item.physicalRemovals.length > 0
         ? ` physicalRemovals=${item.physicalRemovals.map((entry) => `${entry.status}:${entry.candidate}:${entry.removedBy}`).join(',')}`
         : '';
       const absent = item.verifiedAbsent.length > 0
         ? ` verifiedAbsent=${item.verifiedAbsent.filter((entry) => entry.absent).length}/${item.verifiedAbsent.length}`
         : '';
       const priority = ` priority=${item.candidatePriority.status}${item.candidatePriority.rank ? `#${item.candidatePriority.rank}` : ''}`;
-      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${absent}${priority}${pilot}${removal}${extraRemovals} decision=${item.decision}`;
+      return `- ${item.id} [${item.state}] deleteAllowed=false evidence=${present}/${item.evidence.length}${absent}${priority}${pilot}${removals} decision=${item.decision}`;
     }),
     'next actions:',
     ...report.nextActions.map((action) => `- ${action}`),

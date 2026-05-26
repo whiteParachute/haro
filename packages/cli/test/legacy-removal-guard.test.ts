@@ -160,7 +160,6 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
           forbiddenScope?: string[];
         };
         pilotUnbind?: { candidate: string; status: string; note: string };
-        physicalRemoval?: { candidate: string; status: string; removedBy: string; rollbackPlan: string; note: string };
         physicalRemovals?: Array<{ candidate: string; status: string; removedBy: string; rollbackPlan: string; note: string }>;
         evidence: Array<{ path: string; present: boolean; description?: string }>;
         verifiedAbsent: Array<{ path: string; present: boolean; absent: boolean; description?: string }>;
@@ -187,9 +186,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
     expect(payload.data.planning).toMatchObject({
-      stage: 'FEAT-081P',
-      lastCompletedStage: 'FEAT-081P',
-      lastUpdatedBy: 'FEAT-081P',
+      stage: 'FEAT-081Q',
+      lastCompletedStage: 'FEAT-081Q',
+      lastUpdatedBy: 'FEAT-081Q',
     });
     expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -243,6 +242,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/provider-onboarding.ts#writeProviderEnvFile', removedBy: 'FEAT-081P' }),
     ]));
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
+    expect(payload.data.items.every((item) => !('physicalRemoval' in item))).toBe(true);
     const providerCodex = byId.get('provider-codex');
     expect(providerCodex).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     expect(providerCodex?.candidatePriority.status).toBe('blocked');
@@ -279,12 +279,12 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     });
     expect(channelLayer?.candidatePriority.forbiddenScope).toContain('MCP send_message 工具本身');
     expect(channelLayer?.pilotUnbind).toBeUndefined();
-    expect(channelLayer?.physicalRemoval).toMatchObject({
-      candidate: 'packages/cli/src/gateway.ts',
-      status: 'physically-removed',
-      removedBy: 'FEAT-081E',
-    });
     expect(channelLayer?.physicalRemovals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidate: 'packages/cli/src/gateway.ts',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081E',
+      }),
       expect.objectContaining({
         candidate: 'packages/cli/src/index.ts#channel-setup-onboarding-stub',
         status: 'physically-removed',
@@ -321,7 +321,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
         removedBy: 'FEAT-081L',
       }),
     ]));
-    expect(channelLayer?.physicalRemoval?.note).toContain('gateway 旧 CLI daemon');
+    expect(channelLayer?.physicalRemovals?.find((entry) => entry.candidate === 'packages/cli/src/gateway.ts')?.note).toContain('gateway 旧 CLI daemon');
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.path === 'packages/cli/src/gateway.ts')).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('legacy env'))).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('removed stub code'))).toMatchObject({ present: false, absent: true });
@@ -358,12 +358,14 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       nextScope: 'deferred until AgentDock scheduled proposal chain is stable',
     });
     expect(agentRuntime?.candidatePriority.reason).toContain('第 4 项按用户边界 deferred');
-    expect(agentRuntime?.physicalRemoval).toMatchObject({
-      candidate: 'packages/core/src/team-orchestrator.ts',
-      status: 'physically-removed',
-      removedBy: 'FEAT-081D',
-    });
-    expect(agentRuntime?.physicalRemoval?.note).toContain('未获物理删除批准');
+    expect(agentRuntime?.physicalRemovals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidate: 'packages/core/src/team-orchestrator.ts',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081D',
+      }),
+    ]));
+    expect(agentRuntime?.physicalRemovals?.find((entry) => entry.candidate === 'packages/core/src/team-orchestrator.ts')?.note).toContain('未获物理删除批准');
     const evidenceByPath = new Map(agentRuntime?.evidence.map((entry) => [entry.path, entry.present]));
     const absentByPath = new Map(agentRuntime?.verifiedAbsent.map((entry) => [entry.path, entry.absent]));
     expect(absentByPath.get('packages/core/src/team-orchestrator.ts')).toBe(true);
@@ -393,7 +395,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081P lastCompleted=FEAT-081P');
+    expect(text).toContain('planning stage: FEAT-081Q lastCompleted=FEAT-081Q');
     expect(text).toContain('next deletion candidate (candidate only, not approval): none');
     expect(text).toContain('next review candidate: none');
     expect(text).toContain('forbidden now: none');
@@ -417,13 +419,15 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('FEAT-081N');
     expect(text).toContain('FEAT-081O');
     expect(text).toContain('FEAT-081P');
+    expect(text).toContain('FEAT-081Q');
     expect(text).toContain('provider setup/onboarding CLI 入口 retired/fail-closed');
     expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/index.ts#provider-setup-onboarding-command');
     expect(text).toContain('AgentDock IPC 消息 contract');
     expect(text).toContain('packages/channel、packages/channel-feishu、packages/channel-telegram');
-    expect(text).toContain('physicalRemoval=physically-removed:packages/core/src/team-orchestrator.ts:FEAT-081D');
-    expect(text).toContain('physicalRemoval=physically-removed:packages/cli/src/gateway.ts:FEAT-081E');
-    expect(text).toContain('physicalRemovals=physically-removed:packages/cli/src/index.ts#channel-setup-onboarding-stub:FEAT-081H');
+    expect(text).not.toContain('physicalRemoval=');
+    expect(text).toContain('physicalRemovals=physically-removed:packages/core/src/team-orchestrator.ts:FEAT-081D');
+    expect(text).toContain('physicalRemovals=physically-removed:packages/cli/src/gateway.ts:FEAT-081E');
+    expect(text).toContain('physically-removed:packages/cli/src/index.ts#channel-setup-onboarding-stub:FEAT-081H');
     expect(text).toContain('physically-removed:packages/cli/src/index.ts#channel-config-management-commands:FEAT-081J');
     expect(text).toContain('physically-removed:packages/channel*/src#setup-contract:FEAT-081J');
     expect(text).toContain('physically-removed:packages/channel:FEAT-081L');

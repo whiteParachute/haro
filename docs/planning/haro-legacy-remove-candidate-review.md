@@ -530,8 +530,8 @@ guard 报告在 `channel-layer` 下新增 `pilotUnbind`。
 
 守卫状态：
 
-- `agent-runtime-router` 记录 `physicalRemoval.status=physically-removed`。
-- `physicalRemoval.removedBy=FEAT-081D`。
+- `agent-runtime-router` 的 FEAT-081D 删除记录统一保留在 `physicalRemovals[]`，状态为 `physically-removed`。
+- `physicalRemovals[].removedBy=FEAT-081D`。
 - `deleteAllowed` 仍固定为 `false`。
 - `physicalDeleteApproved` 仍为 `false`，表示 guard 报告本身不是后续删除批准。
 
@@ -584,8 +584,8 @@ CLI 行为：
 
 守卫状态：
 
-- `channel-layer` 记录 `physicalRemoval.status=physically-removed`。
-- `physicalRemoval.removedBy=FEAT-081E`。
+- `channel-layer` 的 FEAT-081E 删除记录统一保留在 `physicalRemovals[]`，状态为 `physically-removed`。
+- `physicalRemovals[].removedBy=FEAT-081E`。
 - `deleteAllowed` 仍固定为 `false`。
 - `physicalDeleteApproved` 仍为 `false`，表示 guard 报告本身不是后续删除批准。
 
@@ -744,7 +744,7 @@ haro channel onboarding <id>
 - `deleteAllowed=false`。
 - `physicalDeleteApproved=false`。
 - `wouldDelete=false`。
-- gateway 的 `physicalRemoval=FEAT-081E` 继续保留。
+- gateway 的 FEAT-081E 物理删除记录继续保留，但 guard schema 已在 FEAT-081Q 统一为 `physicalRemovals[]`。
 - channel package 和 MCP send_message 仍显示为 present，表示未删除、未批准删除。
 
 ### 14.4 回滚方式
@@ -862,7 +862,7 @@ pnpm test:sidecar
 
 `channel-layer` 继续保留 gateway 的 FEAT-081E 删除记录，并新增 FEAT-081H 删除记录：
 
-- `physicalRemoval=packages/cli/src/gateway.ts:FEAT-081E`。
+- `physicalRemovals[]=packages/cli/src/gateway.ts:FEAT-081E`。
 - `physicalRemovals[]=packages/cli/src/index.ts#channel-setup-onboarding-stub:FEAT-081H`。
 
 当前 report 必须保持：
@@ -1323,3 +1323,22 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
 后续风险：provider runtime、diagnostics provider stage、run/chat/LLM path、provider doctor/list/models/select/env 仍有业务引用；不得把 081P 解读为 provider runtime/package 删除批准。
+
+## 25. FEAT-081Q guard physicalRemovals schema 收口（2026-05-26）
+
+081Q 只清理 legacy-removal guard 内部历史 schema，不做 runtime 删除，不放宽任何 candidate 状态。
+
+本轮统一内容：
+
+- 删除 guard definition 中的 singleton `physicalRemoval?` 字段。
+- 将 `agent-runtime-router` 的 FEAT-081D `packages/core/src/team-orchestrator.ts` 记录迁移到 `physicalRemovals[]`。
+- 将 `channel-layer` 的 FEAT-081E `packages/cli/src/gateway.ts` 记录迁移到 `physicalRemovals[]`。
+- `completedPhysicalRemovals` report builder 只读取 `item.physicalRemovals ?? []`。
+- 人读输出只打印 `physicalRemovals=`，不再打印 `physicalRemoval=`。
+
+明确不变：
+
+- 不修改 `packages/cli/src/index.ts` 的 gateway removed runtime payload；其中的 `physicalRemoval` 是 CLI runtime/API contract，不是 guard schema。
+- 不修改 provider runtime、channel/MCP send_message、memory、skills、Web、runtime/scenario-router 或 AgentDock host。
+- `completedPhysicalRemovals` 的历史记录不丢失：FEAT-081D、FEAT-081E、FEAT-081H、FEAT-081J、FEAT-081L、FEAT-081O、FEAT-081P 记录仍在。
+- Guard 继续 fail-closed：`deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null`。
