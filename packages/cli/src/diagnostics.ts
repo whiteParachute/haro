@@ -344,7 +344,7 @@ async function checkProvider(ctx: { providerRegistry: ProviderRegistry; provider
       fixable: false,
     });
   }
-  return stage('provider', issues, issues.length > 0 ? ['haro provider setup codex'] : [], { providers: checks, secret: checks.some((check) => check.secret === 'present') ? 'present' : 'missing' });
+  return stage('provider', issues, issues.length > 0 ? ['export OPENAI_API_KEY=<your-key>', 'codex login --device-auth', 'haro provider doctor codex'] : [], { providers: checks, secret: checks.some((check) => check.secret === 'present') ? 'present' : 'missing' });
 }
 
 function checkDatabase(ctx: { root?: string; paths: HaroPaths }): SetupStageResult {
@@ -435,10 +435,10 @@ function checkSmokeTest(providerStage: SetupStageResult): SetupStageResult {
         severity: 'warning',
         component: 'provider',
         evidence: 'Offline dry-run passed for CLI/config/database readiness; provider call skipped because OPENAI_API_KEY is missing.',
-        remediation: 'Run haro provider setup codex, then rerun haro setup --check or haro doctor.',
+        remediation: 'Export OPENAI_API_KEY=<your-key> or run external codex login --device-auth, then rerun haro provider doctor codex and haro setup --check.',
         fixable: false,
       },
-    ], ['haro provider setup codex', `haro run "${DEFAULT_TASK}"`], { offlineDryRun: 'passed', providerCall: 'skipped-provider-missing' });
+    ], ['export OPENAI_API_KEY=<your-key>', 'codex login --device-auth', 'haro provider doctor codex', `haro run "${DEFAULT_TASK}"`], { offlineDryRun: 'passed', providerCall: 'skipped-provider-missing' });
   }
   if (providerFailed) {
     return stage('smoke-test', [

@@ -750,7 +750,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
             renderJsonDiagnostic(report, { stdout: app.stdout, stderr: app.stderr }, {
               code: 'PROVIDER_DOCTOR_FAILED',
               message: `provider doctor ${id} found issues`,
-              remediation: `Run \`haro provider setup ${id}\` and rerun \`haro provider doctor ${id}\`.`,
+              remediation: `Export OPENAI_API_KEY, load the provider env file, or run external codex login --device-auth, then rerun \`haro provider doctor ${id}\`.`,
             });
           } else {
             writeLegacySurfaceWarningForMode(app, mode);
@@ -783,7 +783,7 @@ function registerProviderCommands(program: Command, app: AppContext): void {
               severity: 'error',
               component: 'provider',
               evidence: error instanceof Error ? error.message : String(error),
-              remediation: `Run haro provider setup ${id}, then retry haro provider models ${id}.`,
+              remediation: `Verify OPENAI_API_KEY, provider baseUrl/network access, or external codex login state, then retry haro provider models ${id}.`,
               fixable: false,
             };
             app.stdout.write(mode === 'json' ? `${JSON.stringify({ provider: id, ok: false, issues: [issue] }, null, 2)}\n` : `PROVIDER_MODEL_LIST_FAILED: ${issue.evidence}\nRemediation: ${issue.remediation}\n`);

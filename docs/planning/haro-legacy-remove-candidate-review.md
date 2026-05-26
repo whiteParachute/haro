@@ -65,13 +65,13 @@
 | 字段 | 内容 |
 | --- | --- |
 | current_state | deprecate |
-| still_imported_by | `packages/cli/src/index.ts` 默认 provider 注册；provider doctor/list/models/select/env；`@haro/provider-codex` package tests；081N 后 setup/onboarding CLI 已 retired/fail-closed |
+| still_imported_by | `packages/cli/src/index.ts` 默认 provider 注册；provider doctor/list/models/select/env；`@haro/provider-codex` package tests；081N 后 setup/onboarding CLI 已 retired/fail-closed；081O 已删除 setup-only wizard dead file |
 | replacement | AgentDock 统一 provider / ModelHub；Haro 只通过 sidecar contract 读取运行结果 |
 | blocking_dependencies | provider runtime 仍被 CLI bootstrap/run/chat/LLM path 引用；provider doctor/list/models/select/env 与 diagnostics provider stage 仍需保留；删除 runtime 前需单项评审 |
 | risk_if_removed | `haro run/chat`、provider doctor/list/models/select/env、LLM draft/rewrite provider path 与 legacy tests 失效 |
 | rollback_plan | git revert 删除 PR；恢复 package 与 workspace dependency |
 | required_verification | `pnpm test:sidecar`；`pnpm -F @haro/provider-codex test`；`pnpm -F @haro/cli test:legacy` |
-| decision | FEAT-081N 只退役 `haro provider setup ...`；保持 deprecate，不删除 provider-codex package/runtime |
+| decision | FEAT-081N 只退役 `haro provider setup ...`；FEAT-081O 只删除 setup-only wizard dead file 并清理 remediation；保持 deprecate，不删除 provider-codex package/runtime |
 
 ### 3.2 packages/channel / channel-feishu / channel-telegram
 
@@ -1270,4 +1270,30 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `deletionCandidateAllowed=false`、`physicalDeleteApproved=false`、`wouldDelete=false`、`deleteAllowedCount=0` 保持不变。
 - 可记录 scoped `pilotUnbind=packages/cli/src/index.ts#provider-setup-onboarding-command`，但不得把整个 `packages/provider-codex` 标成 done。
 
-后续风险：`provider-codex-wizard.ts` 可能成为 setup-only 历史文件，但删除它仍需单独评审和测试；diagnostics remediation 中的 provider setup 文案若要改，也应独立处理，不能在 081N 扩大到 provider diagnostics 业务逻辑。
+081N 后续风险记录：`provider-codex-wizard.ts` 可能成为 setup-only 历史文件，diagnostics remediation 中仍有 provider setup 文案；这些事项不能在 081N 扩大处理。FEAT-081O 已单独评审并处理该最小清理面。
+
+## 23. FEAT-081O provider setup-only wizard 清理（2026-05-26）
+
+081O 的只读盘点结论：
+
+- `provider-codex-wizard.ts` 相关符号（`runCodexAuthWizard` / `runProviderSetupWizard` / `runChatGptLogin` / `summarizeAuth`）已无 CLI/runtime 业务入口。
+- 剩余引用只来自该文件自身、旧 wizard 单元测试、planning/guard/docs 历史说明与旧 Phase spec。
+- `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、provider doctor/list/models/select/env、diagnostics provider stage 与 run/chat/LLM provider path 仍需保护。
+
+本阶段完成的最小安全代码清理：
+
+- 物理删除 `packages/cli/src/provider-codex-wizard.ts`。
+- 删除只服务该 wizard 的 `packages/cli/test/provider-codex-wizard.test.ts`，并从 `packages/cli/package.json` `test:legacy` 移除该测试入口。
+- 保留 `haro provider setup ...` retired/fail-closed 行为与 `PROVIDER_SETUP_RETIRED` 输出。
+- 将 provider doctor/models/diagnostics 中仍指向 `haro provider setup codex` 的 remediation 改为 `OPENAI_API_KEY`、外部 `codex login --device-auth` 与 `haro provider doctor codex` 口径。
+
+081O guard 口径：
+
+- `planning.stage=FEAT-081O`。
+- `planning.lastCompletedStage=FEAT-081O`。
+- `planning.lastUpdatedBy=FEAT-081O`。
+- `provider-codex` 仍是 `blocked`，`deleteAllowed=false`，`stillReferenced=true`。
+- `deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false` 保持不变。
+- 仅记录 scoped physical removal：`packages/cli/src/provider-codex-wizard.ts` removed by FEAT-081O；不得把整个 `packages/provider-codex` 标成 done。
+
+后续风险：provider runtime、diagnostics provider stage 与 run/chat/LLM path 仍有业务引用；若继续 provider 减法，必须单独证明 runtime 无引用且有 AgentDock/ModelHub 替代证据。

@@ -187,9 +187,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
     expect(payload.data.planning).toMatchObject({
-      stage: 'FEAT-081N',
-      lastCompletedStage: 'FEAT-081N',
-      lastUpdatedBy: 'FEAT-081N',
+      stage: 'FEAT-081O',
+      lastCompletedStage: 'FEAT-081O',
+      lastUpdatedBy: 'FEAT-081O',
     });
     expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -239,6 +239,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'channel-layer', candidate: 'packages/channel', removedBy: 'FEAT-081L' }),
       expect.objectContaining({ id: 'channel-layer', candidate: 'packages/channel-feishu', removedBy: 'FEAT-081L' }),
       expect.objectContaining({ id: 'channel-layer', candidate: 'packages/channel-telegram', removedBy: 'FEAT-081L' }),
+      expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/provider-codex-wizard.ts', removedBy: 'FEAT-081O' }),
     ]));
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     const providerCodex = byId.get('provider-codex');
@@ -252,6 +253,16 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('Codex auth wizard'))).toMatchObject({ present: false, absent: true });
     expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('provider env file'))).toMatchObject({ present: false, absent: true });
     expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('成功输出路径'))).toMatchObject({ present: false, absent: true });
+    expect(providerCodex?.physicalRemovals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidate: 'packages/cli/src/provider-codex-wizard.ts',
+        removedBy: 'FEAT-081O',
+      }),
+    ]));
+    expect(providerCodex?.verifiedAbsent.find((entry) => entry.path === 'packages/cli/src/provider-codex-wizard.ts' && entry.kind === 'exists')).toMatchObject({ present: false, absent: true });
+    expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('runProviderSetupWizard'))).toMatchObject({ present: false, absent: true });
+    expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('runChatGptLogin'))).toMatchObject({ present: false, absent: true });
+    expect(providerCodex?.verifiedAbsent.find((entry) => entry.description?.includes('wizard 测试'))).toMatchObject({ present: false, absent: true });
     const channelLayer = byId.get('channel-layer');
     expect(channelLayer).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: false });
     expect(channelLayer?.candidatePriority).toMatchObject({
@@ -374,7 +385,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081N lastCompleted=FEAT-081N');
+    expect(text).toContain('planning stage: FEAT-081O lastCompleted=FEAT-081O');
     expect(text).toContain('next deletion candidate (candidate only, not approval): none');
     expect(text).toContain('next review candidate: none');
     expect(text).toContain('forbidden now: none');
@@ -396,6 +407,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('FEAT-081L');
     expect(text).toContain('FEAT-081M');
     expect(text).toContain('FEAT-081N');
+    expect(text).toContain('FEAT-081O');
     expect(text).toContain('provider setup/onboarding CLI 入口 retired/fail-closed');
     expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/index.ts#provider-setup-onboarding-command');
     expect(text).toContain('AgentDock IPC 消息 contract');
@@ -408,6 +420,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physically-removed:packages/channel:FEAT-081L');
     expect(text).toContain('physically-removed:packages/channel-feishu:FEAT-081L');
     expect(text).toContain('physically-removed:packages/channel-telegram:FEAT-081L');
+    expect(text).toContain('physically-removed:packages/cli/src/provider-codex-wizard.ts:FEAT-081O');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

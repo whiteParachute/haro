@@ -176,7 +176,7 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
           severity: 'error',
           component: 'provider',
           evidence: `authMode=chatgpt but no ChatGPT login was found at ${localAuth?.authFilePath ?? '~/.codex/auth.json'}.`,
-          remediation: 'Run `haro provider setup codex` (or `codex login`) to sign in with ChatGPT.',
+          remediation: 'Run external `codex login --device-auth` (or `codex login` on a browser-capable machine), then rerun `haro provider doctor codex`.',
           fixable: false,
         });
       }
@@ -192,7 +192,7 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
       severity: 'error',
       component: 'provider',
       evidence: `${envFile.path} exists but is not readable by the current user/process.`,
-      remediation: `Fix permissions or rerun haro provider setup ${input.entry.id} --write-env-file with a safe secret source.`,
+      remediation: `Fix permissions on the provider env file, or provide ${envVar} through external environment management before rerunning haro provider doctor ${input.entry.id}.`,
       fixable: false,
     });
   }
@@ -206,7 +206,7 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
       severity: 'error',
       component: 'provider',
       evidence,
-      remediation: `Run haro provider setup ${input.entry.id}, export ${envVar}=<your-key>, or load ${envFile.path} before running Haro commands.`,
+      remediation: `Export ${envVar}=<your-key>, load ${envFile.path}, or run external codex login --device-auth for ChatGPT auth before running Haro commands.`,
       fixable: false,
     });
   }
@@ -222,7 +222,7 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
       severity: 'info',
       component: 'provider',
       evidence: `Project scope inherits ${input.entry.id}.secretRef from global config (${sources.globalPath}).`,
-      remediation: `To make inheritance explicit, run haro provider setup ${input.entry.id} --scope project --secret-ref ${secretRef} --non-interactive.`,
+      remediation: `To make inheritance explicit, set providers.${input.entry.id}.secretRef=${secretRef} in project config without storing the secret value, then rerun haro provider doctor ${input.entry.id}.`,
       fixable: false,
     });
   }
@@ -287,7 +287,7 @@ export async function runProviderDoctor(input: ProviderDoctorInput): Promise<Pro
           severity: 'error',
           component: 'provider',
           evidence: `${input.entry.id}: ${error instanceof Error ? error.message : String(error)}`,
-          remediation: `Run haro provider setup ${input.entry.id} and verify ${envVar} before listing models.`,
+          remediation: `Verify ${envVar}, provider baseUrl/network access, or external codex login state before rerunning haro provider models ${input.entry.id}.`,
           fixable: false,
         });
       }
@@ -472,9 +472,9 @@ export function formatProviderEnvHuman(result: ProviderDoctorResult): string {
     'Template (do not paste secrets into YAML):',
     `${template}=<your-provider-secret>`,
     '',
-    'Safe setup:',
+    'Safe environment setup:',
     `1. Export ${template} in the shell before running Haro, or put it in ${result.secret.envFile.path} with mode 0600.`,
-    `2. Run haro provider setup ${result.provider} --secret-ref ${result.secret.secretRef} --non-interactive.`,
+    `2. Rerun haro provider doctor ${result.provider} to verify the external environment/auth state.`,
     `3. For user systemd services, include EnvironmentFile=${result.secret.envFile.systemdReference}.`,
   ];
   return `${lines.join('\n')}\n`;

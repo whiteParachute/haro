@@ -206,13 +206,13 @@ haro model codex <live-model-id>
 
 > 当前仅支持位置参数直接写入默认 Provider / Model；交互式 `--select` 选择器在 Phase 1.5 规划。
 
-### `haro provider`（FEAT-026 / FEAT-029）
+### `haro provider`（FEAT-026 / FEAT-029 / FEAT-081O）
 
 Provider 配置与诊断命令族。`haro model` 保留为快速查看 / 切换默认模型；复杂 provider 首配、secretRef、model discovery 和 remediation 统一归入 `haro provider`。
 
 ```bash
 haro provider list
-# haro provider setup ... 已在 FEAT-081N 退役并 fail-closed
+# haro provider setup ... 已在 FEAT-081N 退役并 fail-closed；FEAT-081O 已删除旧 setup wizard
 haro provider doctor codex
 haro provider models codex
 haro provider select codex <live-model-id>
@@ -222,22 +222,22 @@ haro provider env codex
 **设计边界**：
 - YAML 只保存 `enabled`、`baseUrl`、`defaultModel`、`secretRef` 等非敏感配置，不保存真实 API key
 - 默认通过环境变量或外部 codex CLI auth 读取 secret；Haro provider setup 不再写受保护 env file
-- `haro provider doctor` 输出 `PROVIDER_SECRET_MISSING`、`PROVIDER_HEALTHCHECK_FAILED`、`PROVIDER_MODEL_LIST_FAILED` 等 issue code 和下一条可执行修复命令
+- `haro provider doctor` 输出 `PROVIDER_SECRET_MISSING`、`PROVIDER_HEALTHCHECK_FAILED`、`PROVIDER_MODEL_LIST_FAILED` 等 issue code；remediation 指向 `OPENAI_API_KEY`、外部 `codex login --device-auth` 与 `haro provider doctor`
 - provider 配置元数据来自 provider catalog/schema，避免命令层散落 `providerId === 'codex'` 分支
 
-> FEAT-081N 后 `haro provider setup <id>` 已退役；新增 provider 只能保留 runtime/doctor/models/select/env 等非 onboarding 面，setup/onboarding 需由 AgentDock 或外部工具承担。
+> FEAT-081N 后 `haro provider setup <id>` 已退役；FEAT-081O 已删除旧 Codex setup wizard 文件。新增 provider 只能保留 runtime/doctor/models/select/env 等非 onboarding 面，setup/onboarding 需由 AgentDock 或外部工具承担。
 
 #### Codex ChatGPT subscription auth（FEAT-029）
 
-FEAT-081N 前，TTY 下运行 `haro provider setup codex` 会先选择认证方式；该入口现已退役：
+FEAT-081N 前，TTY 下运行 `haro provider setup codex` 会启动 Haro-owned setup wizard；FEAT-081O 已删除该 setup-only wizard 文件。当前 ChatGPT 登录必须由外部 codex CLI 完成：
 
-```
-? Choose authentication method for Codex
-  ▸ Sign in with ChatGPT (recommended for Plus / Pro / Team)
-    Use OPENAI_API_KEY (developer / org accounts)
+```bash
+codex login --device-auth   # headless/devbox 推荐
+# 或在带浏览器的本机运行：
+codex login
 ```
 
-选择 ChatGPT 后，Haro 默认会在当前终端执行官方 `codex login --device-auth`；用户可在任意有浏览器的设备打开 URL 并输入用户码完成授权。成功后只写入非敏感配置：
+Haro provider runtime 只读检测 codex CLI 维护的 auth 文件；如需固定非敏感配置，可手动维护：
 
 ```yaml
 providers:
@@ -247,33 +247,7 @@ providers:
     authMode: chatgpt
 ```
 
-示例输出（account_id 已脱敏）：
-
-```
-Launching `codex login --device-auth` — open the URL printed below in any browser, enter the code, then return here.
-
-Open this URL in any browser:
-https://auth.openai.com/device
-Enter code: ABCD-EFGH
-
-✓ ChatGPT login detected (account: user_2…XaxL, refreshed 2026-04-27T11:30:00Z)
-Provider setup: codex
-Auth mode: chatgpt
-ChatGPT auth.json: /home/user/.codex/auth.json (present)
-Codex binary: /home/user/.local/bin/codex
-```
-
-本机有浏览器且希望使用 localhost callback 时，可显式回退：
-
-```bash
-codex login
-```
-
-非交互 ChatGPT 模式不会 spawn 登录流程，只校验本机已经完成 `codex login --device-auth`（或浏览器回退模式的 `codex login`）：
-
-```bash
-codex login --device-auth
-```
+非交互 Haro 命令不会 spawn 登录流程，只校验本机已经完成 `codex login --device-auth`（或浏览器回退模式的 `codex login`）。
 
 `haro provider env codex` 在 ChatGPT 模式下输出：
 

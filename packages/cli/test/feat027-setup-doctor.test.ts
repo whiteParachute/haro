@@ -114,7 +114,7 @@ describe('guided setup and doctor remediation [FEAT-027]', () => {
       'smoke-test',
     ]);
     expect(json.issues[0]).toEqual(expect.objectContaining({ code: expect.any(String), severity: expect.any(String), component: expect.any(String), evidence: expect.any(String), remediation: expect.any(String), fixable: expect.any(Boolean) }));
-    expect(json.nextActions).toEqual(expect.arrayContaining(['haro doctor', 'haro provider setup codex']));
+    expect(json.nextActions).toEqual(expect.arrayContaining(['haro doctor', 'export OPENAI_API_KEY=<your-key>', 'codex login --device-auth', 'haro provider doctor codex']));
     expect(existsSync(join(root, 'setup-state.json'))).toBe(false);
   });
 
@@ -225,7 +225,7 @@ describe('guided setup and doctor remediation [FEAT-027]', () => {
     expect(smoke.status).toBe('warning');
     expect(smoke.evidence.offlineDryRun).toBe('passed');
     expect(smoke.evidence.providerCall).toBe('skipped-provider-missing');
-    expect(smoke.nextActions).toContain('haro provider setup codex');
+    expect(smoke.nextActions).toEqual(expect.arrayContaining(['export OPENAI_API_KEY=<your-key>', 'codex login --device-auth', 'haro provider doctor codex']));
   });
 
   it('smoke-test reports provider call failure as an error when provider is configured but unhealthy', async () => {

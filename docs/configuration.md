@@ -151,7 +151,7 @@ haro run "分析当前代码"
 
 ### Provider 引导配置（FEAT-026）
 
-`haro provider` 命令族用于解释 `OPENAI_API_KEY`、`config.yaml`、provider env file 与 systemd/user service 的关系。FEAT-081N 后 `haro provider setup ...` 已退役并 fail-closed；Haro 不再初始化 provider config，只保留 list/doctor/models/select/env：
+`haro provider` 命令族用于解释 `OPENAI_API_KEY`、`config.yaml`、provider env file 与 systemd/user service 的关系。FEAT-081N 后 `haro provider setup ...` 已退役并 fail-closed；FEAT-081O 已删除旧 setup wizard；Haro 不再初始化 provider config，只保留 list/doctor/models/select/env：
 
 ```bash
 haro provider list
@@ -159,7 +159,7 @@ haro provider doctor codex
 haro provider models codex
 haro provider select codex <live-model-id>
 haro provider env codex
-# haro provider setup ... 已在 FEAT-081N 退役并 fail-closed
+# haro provider setup ... 已在 FEAT-081N 退役并 fail-closed；FEAT-081O 已删除旧 setup wizard
 ```
 
 配置示例：
@@ -176,7 +176,7 @@ providers:
 原则：
 
 - `config.yaml` 只写入 `defaultModel`、`baseUrl`、`enabled`、`secretRef` 等非敏感字段。
-- FEAT-081N 后 `haro provider setup --write-env-file` 已退役；如需 env file，请由外部部署/AgentDock 环境管理写入，并用 `haro provider env codex` 只读检查。
+- FEAT-081N 后 `haro provider setup --write-env-file` 已退役，FEAT-081O 已删除旧 setup wizard；如需 env file，请由外部部署/AgentDock 环境管理写入，并用 `haro provider env codex` 只读检查。
 - `haro provider env codex` 只展示模板、来源摘要和 masked 状态，不回显真实 key。
 - `haro doctor` 与 Web Dashboard 只展示脱敏后的 provider 配置状态和 remediation。
 - systemd 用户服务与 CLI 前台运行必须能解释各自读取到的 env 来源，避免“命令行可用但服务不可用”。
