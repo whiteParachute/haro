@@ -17,7 +17,7 @@ Haro 是一个自进化多 Agent 中间件平台。它的目标不是只让 Agen
 - **Node.js >= 22**
 - **Codex Provider 认证**（任选其一，FEAT-029）：
   - 开发者 / 组织账号：导出 `OPENAI_API_KEY`
-  - ChatGPT Plus/Pro 订阅用户：通过 `haro provider setup codex` 走官方 `codex login` OAuth，无需 API key
+  - ChatGPT Plus/Pro 订阅用户：先运行外部 `codex login --device-auth` / `codex login`，Haro 只读取 codex CLI 维护的 auth
 
 > 如果你没有 Node.js 22+，可以参考 [install.md](install.md) 中的环境准备章节。
 
@@ -47,7 +47,7 @@ pnpm add -g @haro/cli@latest
 #    A. 开发者 / 组织账号
 export OPENAI_API_KEY=<your-key>
 #    B. ChatGPT 订阅用户（推荐）
-haro provider setup codex   # 选 "Sign in with ChatGPT"，走官方 codex login OAuth
+codex login --device-auth   # ChatGPT 订阅用户先完成外部 codex CLI auth
 
 # 2. 跑首次引导
 haro setup
@@ -75,7 +75,7 @@ haro
 
 如果 `haro doctor` 中 `providers.codex.healthy` 为 `false`，优先排查：
 
-1. 当前 `authMode`：env 模式确认 `OPENAI_API_KEY` 已导出；chatgpt 模式确认 `~/.codex/auth.json` 存在 `tokens.access_token`（必要时重跑 `haro provider setup codex`）
+1. 当前 `authMode`：env 模式确认 `OPENAI_API_KEY` 已导出；chatgpt 模式确认 `~/.codex/auth.json` 存在 `tokens.access_token`（必要时重跑外部 `codex login`）
 2. 当前 shell 是否与执行 `haro` 的 shell 是同一个会话
 3. 网络是否可访问 Codex 所需接口
 

@@ -105,9 +105,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081M';
-    lastCompletedStage: 'FEAT-081L';
-    lastUpdatedBy: 'FEAT-081M';
+    stage: 'FEAT-081N';
+    lastCompletedStage: 'FEAT-081N';
+    lastUpdatedBy: 'FEAT-081N';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -177,9 +177,9 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     status: 'retire-candidate',
     owner: 'AgentDock / ModelHub',
     haroRetireScope: ['packages/provider-codex', 'Haro provider bootstrap/onboarding'],
-    protectedScope: ['后续 LLM draft 所需的 AgentDock provider bridge', '新用户 Codex/ChatGPT 登录/凭据初始化等价路径'],
-    decision: 'AgentDock/ModelHub 可承接模型运行能力，但 Haro provider-codex 与 provider setup/onboarding 仍缺少等价登录/凭据初始化证据；081M 不批准删除。',
-    nextAction: '先补 AgentDock/ModelHub 新用户登录、凭据初始化、doctor/list/models 等价证据；081N 最多评审 provider setup/onboarding 子面。',
+    protectedScope: ['packages/provider-codex runtime', 'createCodexProvider / readLocalCodexAuth', 'provider doctor/list/models/select/env 与 run/chat/LLM provider path'],
+    decision: '用户产品决策已确认 Haro 新产品不再提供 provider setup/onboarding；FEAT-081N 只退役 CLI setup 入口，不批准删除 provider-codex runtime。',
+    nextAction: '后续若继续 provider 减法，只能在证明 provider runtime 无业务引用后另开单项评审；当前保持 provider-codex package/runtime fail-closed protected。',
     deletionCandidateAllowed: false,
   },
   {
@@ -239,23 +239,35 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     candidatePaths: ['packages/provider-codex', 'packages/cli/src/provider-onboarding.ts'],
     replacement: 'AgentDock / ModelHub provider bridge',
     blockingDependencies: [
-      '证明 AgentDock/ModelHub provider bridge 已覆盖默认模型运行能力',
-      '证明新用户 Codex/ChatGPT 登录/凭据初始化等价路径',
-      '保留或替代 provider doctor/list/models 诊断能力',
-      '移除 CLI 默认 createCodexProvider 构造前需完成替代验证',
+      'FEAT-081N 已退役 provider setup/onboarding CLI 入口',
+      'provider-codex runtime 仍被 CLI bootstrap/run/chat/LLM path 引用',
+      'provider doctor/list/models/select/env 与 diagnostics provider stage 保持现状',
+      '删除 provider runtime 前仍需证明 createCodexProvider/readLocalCodexAuth/import 影响面清零',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/provider-codex test', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'AgentDock/ModelHub 可承接模型运行能力，但 Haro provider-codex、provider setup/onboarding、doctor/list/models 仍缺等价替代证据；081M 只记录 blocker，不删除。',
+    decision: 'FEAT-081N 只退役 Haro CLI provider setup/onboarding 初始化入口；provider-codex package/runtime、doctor/list/models/select/env、diagnostics provider stage 和 run/chat/LLM provider path 继续保留且不获删除批准。',
     candidatePriority: {
       status: 'blocked',
       rank: 4,
-      reason: '081M ranking 认为 provider-codex 仍承担 Codex/ChatGPT 登录、默认 provider、doctor/list/models 与 CLI bootstrap；081N 只有补齐 AgentDock 等价证据后，才可考虑 setup/onboarding 子面。',
-      blockedUntil: ['AgentDock/ModelHub provider bridge 接管默认 provider', '证明新用户 Codex/ChatGPT 登录/凭据初始化等价路径', '保留或替代 provider doctor/list/models', 'LLM draft provider path 完成替代验证'],
+      reason: 'provider setup/onboarding 子面已摘线，但 provider-codex runtime 仍承担默认 provider、doctor/list/models 与 CLI bootstrap；不得把 081N 解读为 package/runtime 删除完成。',
+      blockedUntil: ['证明 provider-codex runtime 无业务引用', '替代或保留 provider doctor/list/models/select/env', 'LLM draft provider path 完成替代验证', '确认 diagnostics provider stage 不依赖待删 runtime'],
+    },
+    pilotUnbind: {
+      candidate: 'packages/cli/src/index.ts#provider-setup-onboarding-command',
+      status: 'default-path-unbound',
+      note: 'FEAT-081N 将 haro provider setup ... 改为 retired/fail-closed；不调用 runCodexAuthWizard、writeProviderConfig、writeProviderEnvFile 或 runProviderDoctor setup flow。',
     },
     evidence: [
       { path: 'packages/provider-codex/package.json', kind: 'exists', description: 'provider package 仍存在' },
-      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'createCodexProvider', description: 'CLI bootstrap 仍引用 Codex provider' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'createCodexProvider', description: 'CLI bootstrap 仍引用 Codex provider runtime' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'PROVIDER_SETUP_RETIRED', description: 'provider setup/onboarding CLI 入口已由 FEAT-081N fail-closed' },
       { path: 'packages/cli/package.json', kind: 'contains', pattern: '@haro/provider-codex', description: 'CLI package dependency 仍存在' },
+    ],
+    verifiedAbsent: [
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'runCodexAuthWizard', description: 'provider setup 不再调用 Codex auth wizard' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'writeProviderEnvFile', description: 'provider setup 不再写 provider env file' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'formatProviderSetupHuman', description: 'provider setup 成功输出路径已退役' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'provider setup ${id} found blockers', description: 'provider setup 不再进入 doctor/blocker 流程' },
     ],
   },
   {
@@ -605,9 +617,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081M',
-      lastCompletedStage: 'FEAT-081L',
-      lastUpdatedBy: 'FEAT-081M',
+      stage: 'FEAT-081N',
+      lastCompletedStage: 'FEAT-081N',
+      lastUpdatedBy: 'FEAT-081N',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -627,6 +639,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       'FEAT-081K 已让 mcp-tools send_message 改用 AgentDock IPC 消息 contract，并移除 mcp-tools 对 @haro/channel 的依赖。',
       'FEAT-081L 已删除 packages/channel、packages/channel-feishu、packages/channel-telegram、CLI channel list/doctor 和 diagnostics channel stage。',
       'FEAT-081M 只刷新 docs/guard 与 AgentDock takeover evidence；不做物理删除，也不把任何候选升级为删除批准。',
+      'FEAT-081N 已将 haro provider setup/onboarding CLI 入口 retired/fail-closed；provider-codex package/runtime 与 provider doctor/list/models/select/env 继续保留且不获删除批准。',
       'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };

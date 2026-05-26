@@ -112,7 +112,7 @@ haro onboard
 - 支持 `--profile dev|global|systemd`：`dev` 面向源码 `pnpm haro`，`global` 要求 `haro` 在 PATH，`systemd` 额外检查 user-level web service
 - 支持 `--check` 只检查、`--repair` 执行安全修复、`--json` 输出机器可读 report
 - setup 只写非敏感默认配置；不会写入 provider secret、修改 shell profile、安装 Node/pnpm、创建系统级 systemd unit 或调整防火墙
-- provider 缺失时，provider/smoke stage 会提示 `haro provider setup codex`，并用 offline dry-run 证明 CLI/config/database 基础链路可用
+- provider 缺失时，provider/smoke stage 会提示配置 `OPENAI_API_KEY` 或外部 `codex login`；offline dry-run 仍证明 CLI/config/database 基础链路可用
 
 ### `haro doctor`
 
@@ -212,11 +212,7 @@ Provider 配置与诊断命令族。`haro model` 保留为快速查看 / 切换�
 
 ```bash
 haro provider list
-haro provider setup codex
-haro provider setup codex --auth-mode chatgpt --non-interactive
-haro provider setup codex --auth-mode env --secret-ref env:OPENAI_API_KEY --non-interactive
-haro provider setup codex --scope global --model <live-model-id>
-haro provider setup codex --scope project --base-url https://api.example/v1 --non-interactive
+# haro provider setup ... 已在 FEAT-081N 退役并 fail-closed
 haro provider doctor codex
 haro provider models codex
 haro provider select codex <live-model-id>
@@ -225,15 +221,15 @@ haro provider env codex
 
 **设计边界**：
 - YAML 只保存 `enabled`、`baseUrl`、`defaultModel`、`secretRef` 等非敏感配置，不保存真实 API key
-- 默认通过环境变量读取 secret；只有显式 `--write-env-file` 才会把当前进程 secret 写入受保护 env file（0600，输出脱敏）
+- 默认通过环境变量或外部 codex CLI auth 读取 secret；Haro provider setup 不再写受保护 env file
 - `haro provider doctor` 输出 `PROVIDER_SECRET_MISSING`、`PROVIDER_HEALTHCHECK_FAILED`、`PROVIDER_MODEL_LIST_FAILED` 等 issue code 和下一条可执行修复命令
 - provider 配置元数据来自 provider catalog/schema，避免命令层散落 `providerId === 'codex'` 分支
 
-> Phase 1.5 后续将接入 `xiaomi-token-plan` / `kimi-token-plan` 等 provider；`haro provider setup <new-id>` 自动通过 catalog 驱动，无需新增 CLI 分支。
+> FEAT-081N 后 `haro provider setup <id>` 已退役；新增 provider 只能保留 runtime/doctor/models/select/env 等非 onboarding 面，setup/onboarding 需由 AgentDock 或外部工具承担。
 
 #### Codex ChatGPT subscription auth（FEAT-029）
 
-TTY 下运行 `haro provider setup codex` 会先选择认证方式：
+FEAT-081N 前，TTY 下运行 `haro provider setup codex` 会先选择认证方式；该入口现已退役：
 
 ```
 ? Choose authentication method for Codex
@@ -270,13 +266,13 @@ Codex binary: /home/user/.local/bin/codex
 本机有浏览器且希望使用 localhost callback 时，可显式回退：
 
 ```bash
-HARO_CODEX_LOGIN_MODE=browser haro provider setup codex
+codex login
 ```
 
 非交互 ChatGPT 模式不会 spawn 登录流程，只校验本机已经完成 `codex login --device-auth`（或浏览器回退模式的 `codex login`）：
 
 ```bash
-haro provider setup codex --auth-mode chatgpt --non-interactive
+codex login --device-auth
 ```
 
 `haro provider env codex` 在 ChatGPT 模式下输出：

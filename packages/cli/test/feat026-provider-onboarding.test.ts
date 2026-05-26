@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -137,22 +137,25 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     expect(output).toContain('fields=tenant');
   });
 
-  it('AC1: setup without OPENAI_API_KEY explains the safe secret path and never writes apiKey to YAML/output', async () => {
-    const root = tempRoot('haro-feat026-missing-secret-');
-    const { result, output } = await runWithOutput({
+  it('FEAT-081N: provider setup is retired fail-closed and never writes provider config', async () => {
+    const root = tempRoot('haro-feat081n-setup-retired-');
+    const { result, output, stderr } = await runWithOutput({
       argv: ['provider', 'setup', 'codex', '--non-interactive'],
       root,
       setupDeps: { env: {}, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
     });
 
+    const text = `${output}
+${stderr}`;
+    expect(result.action).toBe('provider');
     expect(result.exitCode).toBe(1);
-    expect(output).toContain('PROVIDER_SECRET_MISSING');
-    expect(output).toContain('haro provider setup codex');
-    const configText = readFileSync(join(root, 'config.yaml'), 'utf8');
-    expect(configText).toContain('secretRef: env:OPENAI_API_KEY');
-    expect(configText).not.toContain('apiKey');
-    expect(output).not.toContain('sk-test');
+    expect(text).toContain('provider setup/onboarding has been retired in FEAT-081N');
+    expect(text).toContain('AgentDock Codex runner');
+    expect(text).toContain('external codex CLI/auth');
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+    expect(text).not.toContain('PROVIDER_SECRET_MISSING');
+    expect(text).not.toContain('apiKey');
   });
 
   it('AC2/R5/R6: models use live listModels, select persists defaults, doctor is healthy, and haro model shows the same model', async () => {
@@ -222,56 +225,50 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     expect(output).toContain('model=codex-secondary');
   });
 
-  it('AC3/AC4: non-interactive project setup writes only non-sensitive config and is idempotent', async () => {
-    const root = tempRoot('haro-feat026-project-root-');
-    const projectRoot = tempRoot('haro-feat026-project-');
+  it('FEAT-081N: project-scoped provider setup is retired and does not mutate project config', async () => {
+    const root = tempRoot('haro-feat081n-project-root-');
+    const projectRoot = tempRoot('haro-feat081n-project-');
     mkdirSync(join(projectRoot, '.haro'), { recursive: true });
-    writeFileSync(join(projectRoot, '.haro', 'config.yaml'), 'providers:\n  codex:\n    defaultModel: codex-keep\n');
+    const configPath = join(projectRoot, '.haro', 'config.yaml');
+    writeFileSync(configPath, 'providers:\n  codex:\n    defaultModel: codex-keep\n');
+    const before = readFileSync(configPath, 'utf8');
     const env = { OPENAI_API_KEY: 'test-provider-secret-123', HOME: root };
-    const common = {
+
+    const result = await runWithOutput({
       argv: ['provider', 'setup', 'codex', '--scope', 'project', '--base-url', 'https://api.example.test/v1', '--non-interactive'],
       root,
       projectRoot,
       setupDeps: { env, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider({ models: [{ id: 'codex-keep' }] })),
-    } satisfies RunCliOptions & { root: string };
-
-    const first = await runWithOutput(common);
-    const afterFirst = readFileSync(join(projectRoot, '.haro', 'config.yaml'), 'utf8');
-    const second = await runWithOutput(common);
-    const afterSecond = readFileSync(join(projectRoot, '.haro', 'config.yaml'), 'utf8');
-
-    expect(first.result.exitCode).toBe(0);
-    expect(second.result.exitCode).toBe(0);
-    expect(afterSecond).toBe(afterFirst);
-    const config = parseYaml(afterSecond) as { providers?: { codex?: Record<string, unknown> } };
-    expect(config.providers?.codex).toMatchObject({
-      defaultModel: 'codex-keep',
-      baseUrl: 'https://api.example.test/v1',
-      enabled: true,
-      secretRef: 'env:OPENAI_API_KEY',
     });
-    expect(afterSecond).not.toContain('test-provider-secret-123');
-    expect(afterSecond).not.toContain('apiKey');
+
+    expect(result.result.exitCode).toBe(1);
+    expect(`${result.output}
+${result.stderr}`).toContain('PROVIDER_SETUP_RETIRED');
+    expect(readFileSync(configPath, 'utf8')).toBe(before);
+    expect(readFileSync(configPath, 'utf8')).not.toContain('https://api.example.test/v1');
+    expect(readFileSync(configPath, 'utf8')).not.toContain('test-provider-secret-123');
+    expect(readFileSync(configPath, 'utf8')).not.toContain('apiKey');
   });
 
-  it('D1: --write-env-file is explicit, atomic-safe, chmods 0600, and redacts terminal output', async () => {
-    const root = tempRoot('haro-feat026-envfile-root-');
+  it('FEAT-081N: retired setup ignores --write-env-file and does not write secrets', async () => {
+    const root = tempRoot('haro-feat081n-envfile-root-');
     const envFile = join(root, 'providers.env');
     const secret = 'test-provider-secret-123';
-    const { result, output } = await runWithOutput({
+    const { result, output, stderr } = await runWithOutput({
       argv: ['provider', 'setup', 'codex', '--non-interactive', '--write-env-file', '--env-file', envFile],
       root,
       setupDeps: { env: { OPENAI_API_KEY: secret, HOME: root }, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(existsSync(envFile)).toBe(true);
-    expect((statSync(envFile).mode & 0o777).toString(8).padStart(4, '0')).toBe('0600');
-    expect(readFileSync(envFile, 'utf8')).toContain('OPENAI_API_KEY=');
-    expect(output).toContain('values masked');
-    expect(output).not.toContain(secret);
+    expect(result.exitCode).toBe(1);
+    expect(`${output}
+${stderr}`).toContain('Haro no longer initializes provider config');
+    expect(existsSync(envFile)).toBe(false);
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+    expect(`${output}
+${stderr}`).not.toContain(secret);
   });
 
   it('AC5: doctor distinguishes current shell missing secret from a readable provider env file for systemd/service loading', async () => {
@@ -337,8 +334,8 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     expect(output).not.toContain(secret);
   });
 
-  it('FEAT-029: TTY wizard completes ChatGPT path, writes only authMode, and never echoes tokens', async () => {
-    const root = tempRoot('haro-feat029-tty-root-');
+  it('FEAT-081N: retired interactive setup does not run the ChatGPT wizard or codex login', async () => {
+    const root = tempRoot('haro-feat081n-tty-root-');
     const codexHome = join(root, 'codex-home');
     const binDir = join(root, 'bin');
     mkdirSync(binDir, { recursive: true });
@@ -346,12 +343,18 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     const fakeCodex = join(binDir, 'codex');
     writeFileSync(
       fakeCodex,
-      `#!/usr/bin/env node\n` +
-        `const fs = require('node:fs');\n` +
-        `const path = require('node:path');\n` +
-        `if (process.argv[2] !== 'login') process.exit(2);\n` +
-        `fs.mkdirSync(process.env.CODEX_HOME, { recursive: true });\n` +
-        `fs.writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', last_refresh: '2026-04-27T11:30:00Z', tokens: { access_token: 'access-token-raw', refresh_token: 'refresh-token-raw', account_id: 'user_2NfXabcdefghXaxL' } }));\n`,
+      `#!/usr/bin/env node
+` +
+        `const fs = require('node:fs');
+` +
+        `const path = require('node:path');
+` +
+        `if (process.argv[2] !== 'login') process.exit(2);
+` +
+        `fs.mkdirSync(process.env.CODEX_HOME, { recursive: true });
+` +
+        `fs.writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), JSON.stringify({ tokens: { access_token: 'access-token-raw', refresh_token: 'refresh-token-raw' } }));
+`,
       { mode: 0o755 },
     );
     chmodSync(fakeCodex, 0o755);
@@ -361,7 +364,7 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     const stdin = new PassThrough() as PassThrough & { isTTY?: boolean };
     stdin.isTTY = true;
 
-    const { result, output } = await runWithOutput({
+    const { result, output, stderr } = await runWithOutput({
       argv: ['provider', 'setup', 'codex'],
       root,
       stdin,
@@ -369,73 +372,46 @@ describe('provider onboarding wizard [FEAT-026]', () => {
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(output).toContain('Auth mode: chatgpt');
-    expect(output).toContain('ChatGPT login detected');
-    expect(output).toContain('user_2…XaxL');
-    expect(output).not.toContain('access-token-raw');
-    expect(output).not.toContain('refresh-token-raw');
-    const configText = readFileSync(join(root, 'config.yaml'), 'utf8');
-    const config = parseYaml(configText) as { providers?: { codex?: Record<string, unknown> } };
-    expect(config.providers?.codex).toMatchObject({ enabled: true, secretRef: 'env:OPENAI_API_KEY', authMode: 'chatgpt' });
-    expect(config.providers?.codex).not.toHaveProperty('tokens');
-    expect(configText).not.toContain('access-token-raw');
-    expect(configText).not.toContain('refresh-token-raw');
-
-    const envReport = await runWithOutput({
-      argv: ['provider', 'env', 'codex', '--human'],
-      root,
-      setupDeps: { env, runCommand: okCommand },
-      createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
-    });
-    expect(envReport.result.exitCode).toBe(0);
-    expect(envReport.output).toContain('ChatGPT subscription auth via ~/.codex/auth.json');
-    expect(envReport.output).not.toContain('OPENAI_API_KEY=<your-provider-secret>');
-    expect(envReport.output).not.toContain('access-token-raw');
-
-    const doctor = await runWithOutput({
-      argv: ['provider', 'doctor', 'codex', '--human'],
-      root,
-      setupDeps: { env, runCommand: okCommand },
-      createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
-    });
-    expect(doctor.result.exitCode).toBe(0);
-    expect(doctor.output).toContain('ChatGPT auth.json');
-    expect(doctor.output).toContain('Codex binary:');
-    expect(doctor.output).not.toContain('refresh-token-raw');
+    const text = `${output}
+${stderr}`;
+    expect(result.exitCode).toBe(1);
+    expect(text).toContain('provider setup/onboarding has been retired in FEAT-081N');
+    expect(existsSync(join(codexHome, 'auth.json'))).toBe(false);
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+    expect(text).not.toContain('access-token-raw');
+    expect(text).not.toContain('refresh-token-raw');
   });
 
-  it('FEAT-029: non-interactive --auth-mode chatgpt validates existing codex auth without spawning', async () => {
-    const root = tempRoot('haro-feat029-noninteractive-root-');
+  it('FEAT-081N: retired --auth-mode chatgpt setup does not read or persist codex auth', async () => {
+    const root = tempRoot('haro-feat081n-noninteractive-root-');
     const codexHome = join(root, 'codex-home');
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(
       join(codexHome, 'auth.json'),
       JSON.stringify({
         auth_mode: 'chatgpt',
-        last_refresh: '2026-04-27T11:30:00Z',
         tokens: {
           access_token: 'access-token-raw',
           refresh_token: 'refresh-token-raw',
-          account_id: 'user_2NfXabcdefghXaxL',
         },
       }),
     );
     const env = { HOME: root, CODEX_HOME: codexHome };
     vi.stubEnv('CODEX_HOME', codexHome);
 
-    const { result, output } = await runWithOutput({
+    const { result, output, stderr } = await runWithOutput({
       argv: ['provider', 'setup', 'codex', '--auth-mode', 'chatgpt', '--non-interactive'],
       root,
       setupDeps: { env, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(output).toContain('Auth mode: chatgpt');
-    const configText = readFileSync(join(root, 'config.yaml'), 'utf8');
-    expect(configText).toContain('authMode: chatgpt');
-    expect(configText).not.toContain('access-token-raw');
-    expect(output).not.toContain('refresh-token-raw');
+    const text = `${output}
+${stderr}`;
+    expect(result.exitCode).toBe(1);
+    expect(text).toContain('PROVIDER_SETUP_RETIRED');
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+    expect(text).not.toContain('access-token-raw');
+    expect(text).not.toContain('refresh-token-raw');
   });
 });

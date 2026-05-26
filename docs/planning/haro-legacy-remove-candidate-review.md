@@ -65,13 +65,13 @@
 | 字段 | 内容 |
 | --- | --- |
 | current_state | deprecate |
-| still_imported_by | `packages/cli/src/index.ts` 默认 provider 注册；provider onboarding；`@haro/provider-codex` package tests |
+| still_imported_by | `packages/cli/src/index.ts` 默认 provider 注册；provider doctor/list/models/select/env；`@haro/provider-codex` package tests；081N 后 setup/onboarding CLI 已 retired/fail-closed |
 | replacement | AgentDock 统一 provider / ModelHub；Haro 只通过 sidecar contract 读取运行结果 |
-| blocking_dependencies | AgentDock provider bridge 明确；CLI `provider setup` 迁移提示稳定；移除默认 provider 注册 |
-| risk_if_removed | `haro run/chat`、旧 provider doctor、旧 setup 测试失败；部分 legacy tests 失效 |
+| blocking_dependencies | provider runtime 仍被 CLI bootstrap/run/chat/LLM path 引用；provider doctor/list/models/select/env 与 diagnostics provider stage 仍需保留；删除 runtime 前需单项评审 |
+| risk_if_removed | `haro run/chat`、provider doctor/list/models/select/env、LLM draft/rewrite provider path 与 legacy tests 失效 |
 | rollback_plan | git revert 删除 PR；恢复 package 与 workspace dependency |
 | required_verification | `pnpm test:sidecar`；`pnpm -F @haro/provider-codex test`；`pnpm -F @haro/cli test:legacy` |
-| decision | 保持 deprecate，不删除；先由 AgentDock 承接 provider 能力 |
+| decision | FEAT-081N 只退役 `haro provider setup ...`；保持 deprecate，不删除 provider-codex package/runtime |
 
 ### 3.2 packages/channel / channel-feishu / channel-telegram
 
@@ -1241,10 +1241,33 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 
 081M ranking 结论：当前不应进入任何新的物理删除。剩余候选缺少“窄面 + AgentDock 替代证据齐全”的条件：
 
-1. `provider-codex`：AgentDock/ModelHub 可承接模型运行能力，但未证明新用户 Codex/ChatGPT 登录、凭据初始化、doctor/list/models 的等价路径；081N 如继续，只能先评审 setup/onboarding 子面，且必须先补证据。
+1. `provider-codex`：081M 当时认为 setup/onboarding 只能先评审；081N 用户产品决策已改为接受外部 codex CLI/auth 作为前置，因此本轮只退役 `haro provider setup ...`，不删除 provider runtime。
 2. `memory-fabric`：真实 `~/.haro` 数据、aria-memory-vault、MCP `memory_query` / `memory_remember` 默认注册仍是 blocker。
 3. `skills-marketplace`：`haro skills install/enable/disable`、`SkillsManager`、eat/shit 兼容资产仍是 blocker。
 4. `web-dashboard-non-review`：非 review dashboard 已基本自然收口为 Review Board + auth/bootstrap；继续 freeze/allowlist，不做物理删除。
 5. `agent-runtime-router`：继续 deferred；等 AgentDock 定时任务 -> Haro 提案 -> approval request -> Review Board 可审并证明不依赖旧 `haro run/chat/team/scenario` 后再评。
 
 081M 明确未做：不修改 provider/memory/skills/runtime/Web/MCP 业务代码；不删除文件；不触碰真实 `~/.haro/evolution`、真实 `~/.haro` 或 aria-memory-vault；不 approve/apply/rollback/confirm。
+
+## 22. FEAT-081N provider setup/onboarding 摘线（2026-05-26）
+
+用户最新产品决策：Haro 新产品定位不再需要等价 `haro provider setup codex` 功能；AgentDock 已支持 Codex runner，产品可接受外部 codex CLI/auth 作为前置。
+
+本阶段只处理窄面：
+
+- `haro provider setup ...` 注册入口保留为 retired/fail-closed，避免落入 commander unknown、REPL 或默认 handler。
+- 输出 `PROVIDER_SETUP_RETIRED`，说明 Haro provider setup/onboarding 已退役；新产品使用 AgentDock Codex runner / 外部 `codex login` 前置。
+- 不再调用 `runCodexAuthWizard`、`writeProviderConfig`、`writeProviderEnvFile`、`runProviderDoctor` 等 setup 写入/检查流程。
+- 保留 `haro provider list`、`doctor`、`models`、`select`、`env`。
+- 不修改 `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、provider runtime、diagnostics provider stage、run/chat/LLM provider path。
+
+081N guard 口径：
+
+- `planning.stage=FEAT-081N`。
+- `planning.lastCompletedStage=FEAT-081N`。
+- `planning.lastUpdatedBy=FEAT-081N`。
+- `provider-codex` 仍是 `blocked`，`deleteAllowed=false`。
+- `deletionCandidateAllowed=false`、`physicalDeleteApproved=false`、`wouldDelete=false`、`deleteAllowedCount=0` 保持不变。
+- 可记录 scoped `pilotUnbind=packages/cli/src/index.ts#provider-setup-onboarding-command`，但不得把整个 `packages/provider-codex` 标成 done。
+
+后续风险：`provider-codex-wizard.ts` 可能成为 setup-only 历史文件，但删除它仍需单独评审和测试；diagnostics remediation 中的 provider setup 文案若要改，也应独立处理，不能在 081N 扩大到 provider diagnostics 业务逻辑。

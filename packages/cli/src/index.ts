@@ -104,9 +104,6 @@ import {
   parseProviderScope,
   runProviderDoctor,
   writeProviderConfig,
-  writeProviderEnvFile,
-  type ProviderDoctorResult,
-  type ProviderEnvFileWriteResult,
   type ProviderScope,
 } from './provider-onboarding.js';
 
@@ -704,140 +701,34 @@ function registerProviderCommands(program: Command, app: AppContext): void {
 
       cmd
         .command('setup')
-        .argument('<id>', 'provider id')
-        .option('--scope <scope>', 'config scope: global or project', 'global')
-        .option('--model <id>', 'live model id to set as default')
-        .option('--base-url <url>', 'provider API base URL override')
-        .option('--secret-ref <ref>', 'secret reference, for example env:OPENAI_API_KEY')
-        .option('--auth-mode <mode>', 'auth mode: env, chatgpt, or auto (FEAT-029, codex provider only)')
-        .option('--non-interactive', 'do not prompt; use flags/current environment only')
-        .option('--write-env-file', 'explicitly write current process secret to the protected provider env file')
-        .option('--env-file <path>', 'override provider env file path for --write-env-file')
-        .option('--json', 'print machine-readable setup result')
-        .action(
-          async (
-            id: string,
-            options: {
-              scope: string;
-              model?: string;
-              baseUrl?: string;
-              secretRef?: string;
-              authMode?: string;
-              nonInteractive?: boolean;
-              writeEnvFile?: boolean;
-              envFile?: string;
-              json?: boolean;
-            },
-          ) => {
-            if (options.json !== true) {
-              writeLegacySurfaceWarning(app);
-            }
-            const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
-            const scope = parseProviderScope(options.scope);
-            if (options.model) {
-              await assertProviderModelExists(app.providerRegistry, id, options.model);
-            }
-
-            let resolvedAuthMode: 'env' | 'chatgpt' | 'auto' | undefined;
-            if (options.authMode) {
-              if (options.authMode !== 'env' && options.authMode !== 'chatgpt' && options.authMode !== 'auto') {
-                throw new CommanderExit(1, `--auth-mode must be one of env|chatgpt|auto (got '${options.authMode}')`);
-              }
-              resolvedAuthMode = options.authMode;
-            }
-
-            // FEAT-029 — codex-only ChatGPT subscription wizard. Only triggers
-            // when interactive (TTY) AND no explicit auth flags were given.
-            const stdinForTty = app.stdin as NodeJS.ReadableStream & { isTTY?: boolean };
-            const isTTY = !!(stdinForTty?.isTTY ?? process.stdin.isTTY);
-            const wantWizard =
-              id === 'codex' &&
-              isTTY &&
-              options.nonInteractive !== true &&
-              options.json !== true &&
-              !options.authMode &&
-              !options.secretRef &&
-              !options.writeEnvFile;
-            if (wantWizard) {
-              const { runCodexAuthWizard } = await import('./provider-codex-wizard.js');
-              const result = await runCodexAuthWizard(entry, { write: (chunk) => app.stdout.write(chunk) });
-              if (result.choice === 'cancelled') {
-                throw new CommanderExit(1, 'provider setup cancelled');
-              }
-              if (result.choice === 'chatgpt') {
-                resolvedAuthMode = 'chatgpt';
-              } else {
-                resolvedAuthMode = 'env';
-              }
-            }
-
-            // FEAT-029 — non-interactive --auth-mode chatgpt: validate auth file is ready.
-            if (resolvedAuthMode === 'chatgpt' && !wantWizard) {
-              const { readLocalCodexAuth } = await import('@haro/provider-codex');
-              const auth = readLocalCodexAuth();
-              if (!auth.hasAuth) {
-                throw new CommanderExit(
-                  1,
-                  `--auth-mode=chatgpt requires a completed \`codex login\` (no token at ${auth.authFilePath}). Run \`codex login --device-auth\` (or \`codex login\` on a machine with a local browser) first or rerun without --non-interactive.`,
-                );
-              }
-            }
-
-            const configWrite = writeProviderConfig({
-              scope,
-              root: app.opts.root,
-              projectRoot: providerProjectRoot(app),
-              entry,
-              patch: buildProviderPatch({
-                entry,
-                model: options.model,
-                baseUrl: options.baseUrl,
-                secretRef: options.secretRef,
-                ...(resolvedAuthMode ? { authMode: resolvedAuthMode } : {}),
-              }),
-            });
-            reloadLoadedConfig(app, scope);
-
-            const env = providerCommandEnv(app);
-            const envWrite = options.writeEnvFile
-              ? writeProviderEnvFile({ entry, env, envFile: options.envFile })
-              : undefined;
-            if (options.model) {
-              app.writeCliState({ ...app.cliState, defaultProvider: id, defaultModel: options.model });
-            }
-            const doctor = await runProviderDoctor({
-              entry,
-              providerRegistry: app.providerRegistry,
-              root: app.opts.root,
-              projectRoot: providerProjectRoot(app),
-              env,
-              checkModels: false,
-            });
-            const payload = {
-              provider: id,
-              scope,
-              nonInteractive: options.nonInteractive === true,
-              configPath: configWrite.path,
-              ...(resolvedAuthMode ? { authMode: resolvedAuthMode } : {}),
-              ...(envWrite ? { envFile: envWrite } : {}),
-              doctor,
-            };
-            if (options.json) {
-              app.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-            } else {
-              app.stdout.write(formatProviderSetupHuman(payload));
-            }
-            // FEAT-029: in chatgpt mode the env-API-key doctor stage will
-            // still report "secret missing" because OPENAI_API_KEY is not
-            // set. That is expected — gate on authMode and don't fail.
-            const blockingForChatGpt =
-              resolvedAuthMode === 'chatgpt' &&
-              doctor.issues.every((issue) => issue.code === 'PROVIDER_SECRET_MISSING');
-            if (!doctor.ok && !blockingForChatGpt) {
-              throw new CommanderExit(1, `provider setup ${id} found blockers`);
-            }
-          },
-        );
+        .argument('[id]', 'retired provider id')
+        .option('--scope <scope>', 'retired; provider setup/onboarding is no longer handled by Haro')
+        .option('--model <id>', 'retired; configure models through AgentDock/Codex runner or existing config')
+        .option('--base-url <url>', 'retired; provider setup/onboarding is no longer handled by Haro')
+        .option('--secret-ref <ref>', 'retired; use external codex CLI/auth or existing env configuration')
+        .option('--auth-mode <mode>', 'retired; use external codex CLI/auth')
+        .option('--non-interactive', 'retired; provider setup/onboarding is no longer handled by Haro')
+        .option('--write-env-file', 'retired; Haro no longer writes provider env files from setup')
+        .option('--env-file <path>', 'retired; Haro no longer writes provider env files from setup')
+        .option('--json', 'print machine-readable retired result')
+        .action((id: string | undefined, options: { json?: boolean }) => {
+          const message = 'Haro provider setup/onboarding has been retired in FEAT-081N.';
+          const remediation = 'Use the AgentDock Codex runner and external codex CLI/auth as the product-level prerequisite; Haro no longer initializes provider config via `haro provider setup`. Provider runtime, doctor/list/models/select/env remain available.';
+          if (options.json) {
+            app.stderr.write(`${JSON.stringify({
+              ok: false,
+              error: {
+                code: 'PROVIDER_SETUP_RETIRED',
+                message,
+                remediation,
+                details: { provider: id ?? null },
+              },
+            }, null, 2)}\n`);
+          } else {
+            app.stderr.write(`PROVIDER_SETUP_RETIRED: ${message}\n${remediation}\n`);
+          }
+          throw new CommanderExit(1, message);
+        });
 
       cmd
         .command('doctor')
@@ -964,26 +855,6 @@ function reloadLoadedConfig(app: AppContext, scope: ProviderScope): void {
     globalRoot: app.opts.root,
     projectRoot: scope === 'project' ? providerProjectRoot(app) : app.opts.projectRoot,
   });
-}
-
-function formatProviderSetupHuman(input: {
-  provider: string;
-  scope: ProviderScope;
-  nonInteractive: boolean;
-  configPath: string;
-  envFile?: ProviderEnvFileWriteResult;
-  doctor: ProviderDoctorResult;
-}): string {
-  const lines = [
-    `Provider setup: ${input.provider}`,
-    `Scope: ${input.scope}${input.nonInteractive ? ' (non-interactive)' : ''}`,
-    `Config: ${input.configPath}`,
-  ];
-  if (input.envFile) {
-    lines.push(`Env file: ${input.envFile.path} (mode ${input.envFile.mode}, values masked)`);
-  }
-  lines.push('', formatProviderDoctorHuman(input.doctor).trimEnd());
-  return `${lines.join('\n')}\n`;
 }
 
 function formatProviderModels(provider: string, models: readonly { id: string; maxContextTokens?: number }[]): string {

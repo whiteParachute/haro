@@ -91,7 +91,7 @@ defaultAgent: code-reviewer
 |--------|------|------|
 | `OPENAI_API_KEY` | Codex Provider 在 `authMode=env` 时使用的 API key；ChatGPT 订阅用户走 `codex login` 路径，不需要这个变量 | `sk-...` |
 | `HARO_HOME` | 覆盖全局数据目录路径 | `/data/haro` |
-| `HARO_CODEX_LOGIN_MODE` | `haro provider setup codex` ChatGPT 登录模式：默认 `device-auth`（适配 devbox/SSH/headless）；本机带浏览器者设为 `browser` 走 localhost callback | `browser` |
+| `HARO_CODEX_LOGIN_MODE` | 历史 Haro provider setup 向导变量；FEAT-081N 后 `haro provider setup` 已退役。ChatGPT 订阅用户请直接使用外部 `codex login` / `codex login --device-auth`。 | legacy |
 | `NPM_CONFIG_REGISTRY` | `haro update` 使用的 registry | `https://registry.npmmirror.com` |
 
 ### Channel 凭证环境变量
@@ -122,8 +122,8 @@ channels:
 当前正式实现的 Provider 只有 **Codex**，支持两种认证模式（FEAT-029）。其凭证注入遵循以下规则：
 
 1. **`authMode=env`（开发者 / 组织账号）**：从 `process.env.OPENAI_API_KEY` 读取；`config.yaml` 禁止写入 `providers.codex.apiKey`，校验会拒绝加载
-2. **`authMode=chatgpt`（ChatGPT Plus/Pro 订阅）**：通过 `haro provider setup codex` → 内部 `spawn('codex', ['login', '--device-auth'])` 走 OAuth，凭证由 codex CLI 写入并刷新 `~/.codex/auth.json`；Haro **不**复制 token，YAML 只写 `authMode: chatgpt`
-3. **`authMode=auto`（默认）**：env 优先，否则若 `~/.codex/auth.json` 存在 access_token 则走 chatgpt，再否则报错并提示运行 `haro provider setup codex`
+2. **`authMode=chatgpt`（ChatGPT Plus/Pro 订阅）**：由用户预先通过外部 `codex login` / `codex login --device-auth` 完成 OAuth，凭证由 codex CLI 写入并刷新 `~/.codex/auth.json`；Haro **不**复制 token，也不再通过 `haro provider setup` 写 `authMode`
+3. **`authMode=auto`（默认）**：env 优先，否则若 `~/.codex/auth.json` 存在 access_token 则走 chatgpt，再否则报错并提示配置 `OPENAI_API_KEY` 或先运行外部 `codex login`
 4. **YAML 只保存引用与非敏感字段**：`providers.codex.secretRef: env:OPENAI_API_KEY`、`authMode`、`enabled`、`baseUrl`、`defaultModel` 可写入配置；schema 显式拒绝任何 `tokens.*` 字段
 5. **Live model 列表**：env 模式从 `${baseUrl}/models` 拉取；chatgpt 模式从 codex CLI 维护的 `~/.codex/models_cache.json` 读取（无硬编码 slug）
 
@@ -134,12 +134,12 @@ channels:
 ```bash
 # A. env 模式（developer / org accounts）
 export OPENAI_API_KEY=<your-key>
-haro provider setup codex --auth-mode env --non-interactive
+haro provider doctor codex
 haro run "分析当前代码"
 
 # B. ChatGPT subscription 模式（推荐订阅用户）
-haro provider setup codex
-# → 选 "Sign in with ChatGPT"，spawn 官方 codex login 完成 device-auth OAuth
+codex login --device-auth
+haro provider doctor codex
 haro run "分析当前代码"
 
 # 错误：试图在 config.yaml 中写入 apiKey 或 tokens
@@ -151,17 +151,15 @@ haro run "分析当前代码"
 
 ### Provider 引导配置（FEAT-026）
 
-`haro provider` 命令族用于解释 `OPENAI_API_KEY`、`config.yaml`、provider env file 与 systemd/user service 的关系，并提供可执行修复入口：
+`haro provider` 命令族用于解释 `OPENAI_API_KEY`、`config.yaml`、provider env file 与 systemd/user service 的关系。FEAT-081N 后 `haro provider setup ...` 已退役并 fail-closed；Haro 不再初始化 provider config，只保留 list/doctor/models/select/env：
 
 ```bash
 haro provider list
-haro provider setup codex
-haro provider setup codex --scope global --model <live-model-id>
-haro provider setup codex --scope project --base-url https://api.example/v1 --non-interactive
 haro provider doctor codex
 haro provider models codex
 haro provider select codex <live-model-id>
 haro provider env codex
+# haro provider setup ... 已在 FEAT-081N 退役并 fail-closed
 ```
 
 配置示例：
@@ -178,7 +176,7 @@ providers:
 原则：
 
 - `config.yaml` 只写入 `defaultModel`、`baseUrl`、`enabled`、`secretRef` 等非敏感字段。
-- 默认不写 env file；只有显式 `--write-env-file` 才会把当前进程中的 secret 原子写入 `~/.config/haro/providers.env`（或 XDG 等价路径），并强制 0600 权限。
+- FEAT-081N 后 `haro provider setup --write-env-file` 已退役；如需 env file，请由外部部署/AgentDock 环境管理写入，并用 `haro provider env codex` 只读检查。
 - `haro provider env codex` 只展示模板、来源摘要和 masked 状态，不回显真实 key。
 - `haro doctor` 与 Web Dashboard 只展示脱敏后的 provider 配置状态和 remediation。
 - systemd 用户服务与 CLI 前台运行必须能解释各自读取到的 env 来源，避免“命令行可用但服务不可用”。

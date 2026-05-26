@@ -1,10 +1,10 @@
-# AgentDock takeover evidence 盘点（FEAT-081M）
+# AgentDock takeover evidence 盘点（FEAT-081M / FEAT-081N）
 
 > 日期：2026-05-26
 >
-> 范围：081M 只做文档、guard 状态说明与替代证据盘点。本文不是删除批准，不触发物理删除，不修改 provider/memory/skills/runtime/Web/MCP 业务代码，不触碰真实 `~/.haro`、`~/.haro/evolution` 或 aria-memory-vault。
+> 范围：081M 只做文档、guard 状态说明与替代证据盘点；081N 只退役 Haro CLI `provider setup/onboarding` 入口。本文不是 provider runtime/package 删除批准，不触发真实数据迁移，不修改 memory/skills/runtime/Web/MCP 业务代码，不触碰真实 `~/.haro`、`~/.haro/evolution` 或 aria-memory-vault。
 >
-> 当前结论：channel-layer 已在 FEAT-081K/081L 后完成 Haro-owned package 退役；剩余 provider、memory、skills、web、runtime 均缺少“窄面 + AgentDock 替代证据齐全”的删除条件，继续 fail-closed。
+> 当前结论：channel-layer 已在 FEAT-081K/081L 后完成 Haro-owned package 退役；FEAT-081N 已按用户产品决策退役 `haro provider setup ...` 初始化入口；provider-codex package/runtime、provider doctor/list/models/select/env、diagnostics provider stage 与 run/chat/LLM provider path 继续保留且 fail-closed。
 
 ## 0. 081M guard 口径
 
@@ -18,7 +18,7 @@
 
 | 候选 | AgentDock / 共享能力替代证据 | Haro 当前 blocker | 081M 判断 | 推荐下一步 |
 | --- | --- | --- | --- | --- |
-| `provider-codex` | AgentDock/ModelHub 已承担 runner/model 能力方向 | 新用户 Codex/ChatGPT 登录、凭据初始化、doctor/list/models、CLI bootstrap 仍在 Haro | blocked | 先补 AgentDock 等价登录/凭据初始化证据；081N 最多只评审 setup/onboarding 子面 |
+| `provider-codex` | AgentDock/ModelHub 已承担 runner/model 能力方向；用户产品决策接受外部 codex CLI/auth 作为前置 | `haro provider setup ...` 已由 FEAT-081N retired/fail-closed；provider-codex runtime、doctor/list/models/select/env、CLI bootstrap 仍在 Haro | setup/onboarding done；runtime blocked | 不再恢复 Haro provider setup；provider runtime 删除必须另行证明无业务引用 |
 | `memory-fabric` | AgentDock memory 与共享 aria-memory-vault 是目标 owner | 真实 `~/.haro` 数据、aria-memory-vault、MCP `memory_query` / `memory_remember` 默认注册仍有风险 | blocked | 先做只读数据/owner 边界证明与 MCP memory tool 隔离方案 |
 | `skills-marketplace` | AgentDock skills 是目标 owner | `haro skills install/enable/disable`、`SkillsManager`、eat/shit 兼容资产仍存在 | deferred | 先拆 marketplace 扩展面与保留兼容资产边界 |
 | `web-dashboard-non-review` | AgentDock 是平台 Web/API host；Haro Web 主线已收敛为 review board | Review Board、approval conversation、auth/bootstrap 不能误删 | blocked / freeze | 固化 Review Board endpoint allowlist，再逐路由评审非 review surface |
@@ -30,26 +30,28 @@
 
 - AgentDock / ModelHub 方向已经承担 runner/model/provider runtime 能力。
 - 081M 只确认方向，不确认 Haro provider package 可删。
+- 081N 用户产品决策确认：新产品不需要等价 Haro `provider setup codex`，可以把外部 `codex login` / AgentDock Codex runner 作为前置。
 
 ### 仍在 Haro 的证据
 
 - `packages/provider-codex/package.json` 仍存在。
 - `packages/cli/package.json` 仍依赖 `@haro/provider-codex`。
 - `packages/cli/src/index.ts` 仍引用 `createCodexProvider` 进行默认 provider bootstrap。
-- `packages/cli/src/provider-onboarding.ts` 与 `packages/cli/src/provider-codex-wizard.ts` 仍读取 `readLocalCodexAuth`，承载 `haro provider setup codex` / ChatGPT 登录与本地凭据检查。
-- `packages/cli/src/diagnostics.ts` 仍给出 `haro provider setup codex`、`haro provider doctor codex` remediation。
+- `packages/cli/src/index.ts` 的 `haro provider setup ...` 已改为 `PROVIDER_SETUP_RETIRED` fail-closed，不再调用 setup wizard/config/env/doctor 写入流程。
+- `packages/cli/src/provider-onboarding.ts` 仍承载 doctor/list/models/select/env 共享 helper；`provider-codex-wizard.ts` 作为 setup-only 历史文件保留，后续可单独评审是否删除。
+- `packages/cli/src/diagnostics.ts` provider stage 未在 081N 修改，diagnostics provider stage 仍属保护范围。
 - `packages/provider-codex/test/*` 仍覆盖 auth、capability、models、health 等 provider 行为。
 
 ### Blockers
 
-1. 未证明 AgentDock/ModelHub 对新用户 Codex/ChatGPT 登录与凭据初始化有等价路径。
-2. 未替代 `haro provider doctor/list/models` 的诊断与自助修复体验。
+1. `haro provider setup/onboarding` 子面已摘线，但不能扩展为 provider-codex package/runtime 删除。
+2. `haro provider doctor/list/models/select/env`、diagnostics provider stage 和 run/chat/LLM provider path 仍需保护。
 3. CLI 默认 provider bootstrap 仍依赖 `createCodexProvider`。
 4. 082A/082B 的 LLM draft / feedback rewrite 仍需要 provider path 或等价 bridge。
 
-### 081N 建议
+### FEAT-081N 完成记录
 
-081N 不能直接删除 `packages/provider-codex` 或 provider runtime。若继续减法，建议只做只读评审：`haro provider setup/onboarding` 子面是否可先转为 legacy warning，并以“AgentDock 等价登录/凭据初始化证据齐全”为前置条件。
+081N 已完成窄面摘线：`haro provider setup ...` 退役并 fail-closed。该结论不代表 `packages/provider-codex`、`createCodexProvider`、`readLocalCodexAuth`、provider doctor/list/models/select/env、diagnostics provider stage 或 run/chat/LLM provider path 可删。若继续 provider 减法，下一步只能做 setup-only dead file / docs / diagnostics remediation 的只读评审，不能直接删除 provider runtime。
 
 ## 3. `memory-fabric`
 

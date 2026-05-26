@@ -32,7 +32,7 @@ Invalid Haro config (/home/user/.haro/config.yaml):
 haro doctor --component provider --json
 haro provider doctor codex --json
 haro provider env codex
-haro provider setup codex
+# haro provider setup ... 已在 FEAT-081N 退役；如需 ChatGPT auth，请运行外部 codex login --device-auth
 ```
 
 常见分支：
@@ -47,13 +47,13 @@ haro provider setup codex
 **症状 B**：`PROVIDER_ENV_FILE_UNREADABLE`
 
 - 检查 `~/.config/haro/providers.env` 或 XDG 等价路径是否归当前用户所有
-- 推荐权限为 `0600`；可通过 `haro provider setup codex --write-env-file` 重新写入受保护 env file
+- 推荐权限为 `0600`；可通过 `外部环境管理/部署脚本` 重新写入受保护 env file
 
 **症状 C**：`PROVIDER_HEALTHCHECK_FAILED` / `PROVIDER_MODEL_LIST_FAILED`
 
 - 检查当前网络是否可访问 OpenAI API
 - 如果使用了代理，确认代理环境变量（`HTTPS_PROXY` 等）已正确设置
-- 部分企业网络可能需要配置 `providers.codex.baseUrl` 指向内部网关：`haro provider setup codex --base-url <url> --non-interactive`
+- 部分企业网络可能需要配置 `providers.codex.baseUrl` 指向内部网关：`在 config/env 中配置 providers.codex.baseUrl 后重跑 doctor`
 - 重新运行 `haro provider models codex` 验证 live model discovery
 
 ### 3. 数据目录、SQLite 与安全修复
@@ -111,12 +111,12 @@ FEAT-081L 后 Haro 不再提供 `haro channel doctor`。真实 Feishu / Telegram
 
 ### ChatGPT subscription 模式
 
-#### 症状：`haro provider setup codex` 选了 ChatGPT 但向导报错 / yaml 没更新
+#### 症状：外部 `codex login` 后 Haro 仍未检测到 ChatGPT auth
 
 - 默认实参是 `codex login --device-auth`，需要本机 PATH 中能找到 `codex` 二进制。`which codex` 失败 → 先安装 OpenAI codex CLI。
 - 退出码非 0（包括 ctrl-C 提前退出）→ 向导**不会**更新 yaml；按提示重跑即可。
 - 成功后向导会再读一次 `~/.codex/auth.json` 校验 `tokens.access_token` 存在；缺失同样不会写 yaml。
-- 本机带浏览器、希望走 localhost callback：设置 `HARO_CODEX_LOGIN_MODE=browser` 后重跑向导。
+- 本机带浏览器、希望走 localhost callback：在本机运行 `codex login`，或在 headless 环境运行 `codex login --device-auth`。
 
 #### 症状：`haro provider doctor codex` 报 "no auth available"，但已经 `codex login` 过
 

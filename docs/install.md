@@ -39,16 +39,15 @@ curl -fsSL https://raw.githubusercontent.com/haro-ai/haro/main/scripts/install.s
 # 1. 预检：只读检查，不写 provider secret
 haro setup --check --json
 
-# 2. 配置 Codex 认证（任选其一）
+# 2. 配置 Codex 认证（任选其一；FEAT-081N 后 Haro 不再提供 provider setup/onboarding）
 #    A. 开发者 / 组织账号：导出 OPENAI_API_KEY（Haro 不会把 key 写入 YAML）
 export OPENAI_API_KEY=<your-key>
-haro provider setup codex --scope global --non-interactive
-#    B. ChatGPT 订阅用户：交互向导走官方 codex login（device-auth OAuth）
-haro provider setup codex     # 选 "Sign in with ChatGPT"
-# devbox / SSH / headless 默认就走 device-auth；本机带浏览器者可设
-# HARO_CODEX_LOGIN_MODE=browser 回退到 localhost callback。
+#    B. ChatGPT 订阅用户：先使用外部 codex CLI 完成登录
+codex login --device-auth
 
-# 3. 选择默认模型并验证 provider 健康
+# 3. 验证 provider runtime，并按需选择默认模型
+haro provider list
+haro provider doctor codex
 haro provider models codex
 haro provider select codex <live-model-id>
 
