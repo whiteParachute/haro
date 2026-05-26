@@ -349,6 +349,20 @@ export async function runCli(opts: RunCliOptions = {}): Promise<RunCliResult> {
     return { exitCode: result.exitCode, action: 'update', paths, createdDirs: [] };
   }
 
+  if (argv[0] === 'channel') {
+    const error = new Error(
+      "Command 'haro channel' has been retired in FEAT-081L; use AgentDock IM/workspace messaging and MCP send_message instead.",
+    );
+    stderr.write(`${error.message}\n`);
+    return {
+      exitCode: 1,
+      action: 'channel',
+      paths,
+      createdDirs: [],
+      error,
+    };
+  }
+
   const bootstrap = await bootstrapApp({ ...opts, argv, stdout, stderr, stdin });
   if ('error' in bootstrap) {
     stderr.write(`${bootstrap.error.message}\n`);

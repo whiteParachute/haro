@@ -73,18 +73,24 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
     expect(lastLine).toBe('0.1.0');
   });
 
-  it('shipped binary no longer exposes the removed channel list command', () => {
+  it('shipped binary fail-closes the removed channel command surface', () => {
     const home = mkdtempSync(join(tmpdir(), 'haro-bin-channel-list-removed-'));
     try {
-      const res = spawnSync(process.execPath, [bin, 'channel', 'list', '--human'], {
-        env: { ...process.env, HARO_HOME: home },
-        encoding: 'utf8',
-      });
-      expect(res.status).not.toBe(0);
-      expect(res.stderr).toContain('unknown');
-      expect(res.stdout).not.toContain('feishu');
-      expect(res.stdout).not.toContain('telegram');
-      expect(res.stderr).not.toContain('Created default Agent');
+      for (const args of [
+        ['channel', 'list'],
+        ['channel', 'doctor', 'feishu'],
+        ['channel', 'list', '--human'],
+      ]) {
+        const res = spawnSync(process.execPath, [bin, ...args], {
+          env: { ...process.env, HARO_HOME: home },
+          encoding: 'utf8',
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain("Command 'haro channel' has been retired");
+        expect(res.stdout).not.toContain('feishu');
+        expect(res.stdout).not.toContain('telegram');
+        expect(res.stderr).not.toContain('Created default Agent');
+      }
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

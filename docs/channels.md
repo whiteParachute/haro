@@ -10,13 +10,13 @@
 
 ## 当前边界
 
-保留的历史 channel adapter 只用于兼容、调试和迁移经验：
+Haro-owned channel adapter 已退役；真实 IM / workspace 消息由 AgentDock 承接：
 
 | Channel | 状态 | 说明 |
 | --- | --- | --- |
 | `cli` | 保留 | 本地 REPL / `haro run` 调试入口。 |
-| `feishu` | 保留兼容 | 历史 IM adapter；新的审批主路径优先通过 AgentDock 已有 Feishu/IM 能力呈现。 |
-| `telegram` | 保留兼容 | 历史 IM adapter；不是 sidecar 主路径。 |
+| `feishu` | 已退役 | 历史 Haro-owned adapter 已删除；由 AgentDock host / IM manager 承接。 |
+| `telegram` | 已退役 | 历史 Haro-owned adapter 已删除；由 AgentDock host / IM manager 承接。 |
 | `web` | 已移除 | 旧 Dashboard Chat / Web Channel / WebSocket streaming 不再属于 Haro Web。Haro Web 只保留 proposal review 工作台。 |
 
 ## 推荐接入方式
