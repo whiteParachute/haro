@@ -93,17 +93,8 @@ haro config
 # 查看已安装 skills
 haro skills list
 
-# 查看 channel 状态
-haro channel list
-
-# 启动 gateway（前台运行所有 enabled channels）
-haro gateway start
-
-# 后台运行 gateway
-haro gateway start --daemon
-
-# 查看 gateway 状态
-haro gateway status
+# 消息投递由 AgentDock 管理；Haro 侧使用 MCP send_message
+# Haro 不再提供 haro channel/gateway 管理面
 ```
 
 完整 CLI 能力列表见 [CLI 设计](cli-design.md)。

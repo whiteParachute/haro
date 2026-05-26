@@ -31,7 +31,6 @@ import {
 } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
-import type { ChannelRegistration } from '../src/channel.js';
 
 class StubProvider implements AgentProvider {
   readonly id = 'codex';
@@ -72,51 +71,7 @@ describe('FEAT-039 batch 3 — Codex adversarial fixes', () => {
     roots.length = 0;
   });
 
-  it('failing channel doctor --json: stdout is empty, stderr carries CliErrorEnvelope, exit 1', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-fix-doctor-fail-'));
-    roots.push(root);
-    const stdout = captureStream();
-    const stderr = captureStream();
 
-    const failingChannel: ChannelRegistration = {
-      channel: {
-        id: 'feishu',
-        capabilities() { return { streaming: false, attachments: false } as const; },
-        async healthCheck() { return false; },
-        async start() { return; },
-        async stop() { return; },
-        async send() { return; },
-        async doctor() {
-          return { ok: false, code: '401', message: 'Unauthorized' };
-        },
-      },
-      enabled: true,
-      removable: true,
-      source: 'package',
-      displayName: 'Feishu',
-    };
-
-    const result = await runCli({
-      argv: ['channel', 'doctor', 'feishu', '--json'],
-      root,
-      stdout: stdout.stream,
-      stderr: stderr.stream,
-      createProviderRegistry: async () => createProviderRegistry(),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [failingChannel],
-    });
-
-    expect(result.exitCode).toBe(1);
-    expect(stdout.read().trim()).toBe('');
-    const lastErrLine = stderr.read().trim().split('\n').filter(Boolean).at(-1)!;
-    const envelope = JSON.parse(lastErrLine) as {
-      ok: boolean;
-      error: { code: string; message: string; details?: { report?: { ok: boolean } } };
-    };
-    expect(envelope.ok).toBe(false);
-    expect(envelope.error.code).toBe('CHANNEL_DOCTOR_FAILED');
-    expect(envelope.error.details?.report?.ok).toBe(false);
-  });
 
   it('successful provider doctor --json still emits ok:true record envelope on stdout', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-fix-doctor-ok-'));

@@ -6,7 +6,6 @@ import { homedir } from 'node:os';
 import { stringify as stringifyYaml } from 'yaml';
 import { db as haroDb, fs as haroFs, type HaroPaths, type ProviderRegistry } from '@haro/core';
 import type { HaroConfig, LoadedConfig } from '@haro/core/config';
-import type { ChannelRegistry } from './channel.js';
 import { DEFAULT_PROVIDER_CATALOG, type ProviderCatalogEntry } from './provider-catalog.js';
 import { runProviderDoctor } from './provider-onboarding.js';
 
@@ -19,12 +18,11 @@ export type SetupStageId =
   | 'database'
   | 'sidecar'
   | 'web-service'
-  | 'channels'
   | 'smoke-test';
 
 export type StageStatus = 'ok' | 'warning' | 'error' | 'skipped' | 'fixed';
 export type DoctorSeverity = 'info' | 'warning' | 'error';
-export type DoctorComponent = 'cli' | 'config' | 'provider' | 'database' | 'sidecar' | 'web' | 'channel' | 'systemd';
+export type DoctorComponent = 'cli' | 'config' | 'provider' | 'database' | 'sidecar' | 'web' | 'systemd';
 export type SetupProfile = 'dev' | 'global' | 'systemd';
 
 export interface DoctorIssue {
@@ -55,7 +53,6 @@ export interface DiagnosticsReport {
   nextActions: string[];
   config: { ok: boolean; sources: string[]; path: string };
   providers: Array<{ id: string; healthy: boolean; error?: string }>;
-  channels: Array<{ id: string; displayName: string; source: string; healthy: boolean; error?: string }>;
   dataDir: { root: string; checks: Array<{ name: string; path: string; exists: boolean; writable: boolean }> };
   sqlite: { ok: boolean; dbFile: string; error?: string };
   web?: WebDiagnosticSummary;
@@ -83,7 +80,6 @@ export interface DiagnosticsInput {
   loaded: LoadedConfig;
   providerRegistry: ProviderRegistry;
   providerCatalog?: readonly ProviderCatalogEntry[];
-  channelRegistry: ChannelRegistry;
   deps?: SetupRunDeps;
 }
 
@@ -118,7 +114,6 @@ export async function runDiagnostics(input: DiagnosticsInput): Promise<Diagnosti
     ...(input.mode === 'setup' ? ['haro doctor'] : []),
   ]);
   const providerStage = allStages.find((stage) => stage.id === 'provider');
-  const channelStage = allStages.find((stage) => stage.id === 'channels');
   const dataStage = allStages.find((stage) => stage.id === 'data-directory');
   const dbStage = allStages.find((stage) => stage.id === 'database');
   const webStage = allStages.find((stage) => stage.id === 'web-service');
@@ -137,7 +132,6 @@ export async function runDiagnostics(input: DiagnosticsInput): Promise<Diagnosti
       path: input.paths.configFile,
     },
     providers: ((providerStage?.evidence.providers as DiagnosticsReport['providers'] | undefined) ?? []),
-    channels: ((channelStage?.evidence.channels as DiagnosticsReport['channels'] | undefined) ?? []),
     dataDir: {
       root: input.paths.root,
       checks: ((dataStage?.evidence.checks as DiagnosticsReport['dataDir']['checks'] | undefined) ?? []),
@@ -161,7 +155,6 @@ async function buildStages(ctx: DiagnosticsInput & { profile: SetupProfile; deps
     provider,
     checkDatabase(ctx),
     await checkWebService(ctx),
-    await checkChannels(ctx),
     checkSmokeTest(provider),
   ];
 }
@@ -432,32 +425,6 @@ async function checkWebService(ctx: { paths: HaroPaths; profile: SetupProfile; d
   return stage('web-service', issues, issues.some((issue) => issue.fixable) ? ['haro doctor --component web --fix'] : [], { web });
 }
 
-async function checkChannels(ctx: { channelRegistry: ChannelRegistry }): Promise<SetupStageResult> {
-  const checks = await Promise.all(
-    ctx.channelRegistry
-      .listEnabled()
-      .filter((entry) => entry.source === 'package')
-      .map(async (entry) => {
-        try {
-          return { id: entry.id, displayName: entry.displayName, source: entry.source, healthy: await entry.channel.healthCheck() };
-        } catch (err) {
-          return { id: entry.id, displayName: entry.displayName, source: entry.source, healthy: false, error: err instanceof Error ? err.message : String(err) };
-        }
-      }),
-  );
-  const issues: DoctorIssue[] = checks
-    .filter((check) => !check.healthy)
-    .map((check) => ({
-      code: 'CHANNEL_HEALTHCHECK_FAILED',
-      severity: 'warning',
-      component: 'channel' as const,
-      evidence: check.error ? `${check.id}: ${check.error}` : `${check.id}: healthCheck() returned false`,
-      remediation: `Run haro channel doctor ${check.id}; legacy haro channel setup/onboarding is removed.`,
-      fixable: false,
-    }));
-  return stage('channels', issues, issues.length > 0 ? unique(checks.filter((check) => !check.healthy).map((check) => `haro channel doctor ${check.id}`)) : [], { channels: checks });
-}
-
 function checkSmokeTest(providerStage: SetupStageResult): SetupStageResult {
   const missingSecret = providerStage.issues.some((issue) => issue.code === 'PROVIDER_SECRET_MISSING');
   const providerFailed = providerStage.issues.some((issue) => issue.code === 'PROVIDER_HEALTHCHECK_FAILED');
@@ -599,8 +566,6 @@ function componentStageIds(component: DoctorComponent): SetupStageId[] {
     case 'web':
     case 'systemd':
       return ['web-service'];
-    case 'channel':
-      return ['channels'];
   }
 }
 
@@ -707,6 +672,6 @@ export function parseSetupProfile(value: unknown): SetupProfile {
 
 export function parseDoctorComponent(value: unknown): DoctorComponent | undefined {
   if (value === undefined) return undefined;
-  if (value === 'provider' || value === 'web' || value === 'database' || value === 'sidecar' || value === 'channel' || value === 'config' || value === 'cli' || value === 'systemd') return value;
+  if (value === 'provider' || value === 'web' || value === 'database' || value === 'sidecar' || value === 'config' || value === 'cli' || value === 'systemd') return value;
   throw new Error(`Invalid doctor component: ${String(value)}`);
 }

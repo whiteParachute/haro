@@ -73,21 +73,17 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
     expect(lastLine).toBe('0.1.0');
   });
 
-  it('shipped binary channel list does not load optional adapters on a clean home', () => {
-    const home = mkdtempSync(join(tmpdir(), 'haro-bin-channel-list-'));
+  it('shipped binary no longer exposes the removed channel list command', () => {
+    const home = mkdtempSync(join(tmpdir(), 'haro-bin-channel-list-removed-'));
     try {
-      // FEAT-039 R11: piped (non-TTY) stdout defaults to JSON envelope.
-      // Force --human so the assertion can match the legacy text rows.
       const res = spawnSync(process.execPath, [bin, 'channel', 'list', '--human'], {
         env: { ...process.env, HARO_HOME: home },
         encoding: 'utf8',
       });
-      expect(res.status).toBe(0);
-      expect(res.stdout).toContain('cli\tenabled\tbuiltin');
-      expect(res.stdout).not.toContain('feishu\tdisabled\tpackage');
-      expect(res.stdout).not.toContain('telegram\tdisabled\tpackage');
-      expect(res.stdout).not.toContain('web\tenabled\tbuiltin');
-      expect(res.stdout).not.toContain('Created default Agent');
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain('unknown');
+      expect(res.stdout).not.toContain('feishu');
+      expect(res.stdout).not.toContain('telegram');
       expect(res.stderr).not.toContain('Created default Agent');
     } finally {
       rmSync(home, { recursive: true, force: true });

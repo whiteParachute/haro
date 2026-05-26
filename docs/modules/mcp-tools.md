@@ -74,7 +74,7 @@ HTTP source 只依赖 AgentDock API 契约，不 import AgentDock 内部 `src/*`
 ## 已知缺口（2026-05-06 实现交付）
 
 - **Provider 端工具调用尚未接通**：`@haro/mcp-tools` 的 server / 4 工具 / 守门 / audit 层都已就位；AgentRunner 的 `mcpSessionFactory` 也会在 session 启动时 spawn 子进程并在 finally 5 s 内 graceful shutdown。但 provider SDK（如 Codex / Claude）侧的 `mcpServers` 配置尚未把 spawn 的子进程 stdio 接入，因此 agent 暂时**不会**真的去调用这些工具。本 FEAT 交付的是 "infra 就位 + lifecycle 严格符合 spec"，provider 接入留作后续 FEAT。`McpSessionHandle.child` 已暴露原始 `ChildProcess` 句柄，未来 wiring 直接读它的 stdio 即可。
-- **subprocess 内部 ChannelRegistry 为空**：`server-entry.ts` 的子进程目前没有从父进程 IPC 拿到 channel 注册信息（这需要序列化 channel adapter，复杂度高）。短期里 production 路径仍以 in-process 嵌入 `McpServer` 为主：父进程把现成的 `ChannelRegistry` / 历史 `MemoryFabric` / cron `ServiceContext` 通过 `ToolDependencies` 直接传给 `createDefaultRegistry({ audit })`。sidecar 新路径应改为 AgentDock-owned memory deps。
+- **消息工具不再依赖 Haro ChannelRegistry**：FEAT-081K/081L 后 `send_message` 通过 AgentDock IPC messages contract 投递，子进程缺少 IPC env 时 fail-closed，不回退 Haro-owned channel registry/adapters。
 - **AbortSignal 是协作式取消**：`ToolExecutionContext.signal` 在 timeout 时被 `abort()`；honor 该 signal 的工具会及时停下，否则后台仍会跑完。当前 4 个 builtin 内部不发外部网络调用，超时影响有限；调用方仍以 `TOOL_TIMEOUT` 为准（spec R9 / AC5）。
 
 ## per-session 子进程生命周期
@@ -110,7 +110,7 @@ CLI / Web 通过 `import { mcp } from '@haro/core/services'; mcp.listInvocations
 
 ## 与其他模块的接合点
 
-- `send_message` → `@haro/channel`（`ChannelRegistry.get(channelId).send(channelSessionId, OutboundMessage)`），FEAT-031 web channel 含 channelSessionId 语义统一。
+- `send_message` → AgentDock IPC messages contract（`AgentDockMessageGateway.sendMessage`）；Haro 不再依赖 `@haro/channel` / `ChannelRegistry`。
 - `memory_query` / `memory_remember` → 历史 `@haro/core/memory` 兼容层；sidecar baseline 通过 AgentDock memory MCP/API 获取记忆。
 - `memory_remember` 不再写 `kind=memory` 的 Haro EvolutionAsset。
 - `schedule_task` → `@haro/core/services` cron 命名空间（`services.cron.createJob`，FEAT-033）。

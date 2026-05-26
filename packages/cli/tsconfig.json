@@ -14,15 +14,6 @@
       "commander": [
         "../../node_modules/commander/typings/index.d.ts"
       ],
-      "@haro/channel": [
-        "../channel/dist/index.d.ts"
-      ],
-      "@haro/channel-feishu": [
-        "../channel-feishu/dist/index.d.ts"
-      ],
-      "@haro/channel-telegram": [
-        "../channel-telegram/dist/index.d.ts"
-      ],
       "@haro/mcp-tools": [
         "../mcp-tools/dist/index.d.ts"
       ],
@@ -40,15 +31,6 @@
   "references": [
     {
       "path": "../core"
-    },
-    {
-      "path": "../channel"
-    },
-    {
-      "path": "../channel-feishu"
-    },
-    {
-      "path": "../channel-telegram"
     },
     {
       "path": "../mcp-tools"

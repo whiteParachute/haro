@@ -1166,11 +1166,46 @@ pnpm test:sidecar
 
 - 保留 MCP `send_message` 工具本身。
 - 保留 AgentDock 生产消息能力与真实 Feishu/Telegram 投递链路。
-- 保留 `packages/channel*`，因为 CLI `haro channel list/doctor` 和 enabled adapter runtime 仍有引用；后续删除必须单项评审。
-- 第 4 项 run/router/runtime/scenario-router 仍为 deferred，不因 081K 获得删除资格。
+- FEAT-081L 后不再保留 `packages/channel*`；它们已与 CLI `haro channel list/doctor`、enabled adapter runtime 一起删除。
+- 第 4 项 run/router/runtime/scenario-router 仍为 deferred，不因 081K/081L 获得删除资格。
 
 ### 19.5 下一步候选
 
-下一步仍是 channel-layer，但范围变为：先评审是否继续保留 `haro channel list/doctor` 与 enabled adapter runtime；只有这些剩余引用被替换或删除后，才能单项评审 `packages/channel*` 物理删除。
+FEAT-081K 的下一候选已由 FEAT-081L 完成处理。channel-layer 当前没有下一项删除授权；如果继续减法，必须重新排序其它模块并单项评审。
 
-081K 不是删除批准。guard 仍必须保持：`deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`。
+081K/081L 均不是泛化删除批准。guard 仍必须保持：`deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`。
+
+
+## 20. FEAT-081L channel-layer packages 与 list/doctor 收口（2026-05-26）
+
+结论：本阶段真实删除 Haro-owned channel 剩余面，但严格保护 MCP `send_message` 与 AgentDock 生产消息链路。
+
+### 20.1 删除内容
+
+- 删除 `packages/channel`、`packages/channel-feishu`、`packages/channel-telegram` 三个 Haro-owned channel package。
+- 删除 `packages/cli/src/channel.ts` 旧 package re-export；CLI REPL 所需的本地 `CliChannel` 被收敛到 `packages/cli/src/cli-channel.ts`，不再依赖 channel registry。
+- 移除 `haro channel list` / `haro channel doctor` 注册、enabled adapter autoload、diagnostics channel stage、CLI package dependencies 与 tsconfig/root references。
+- 更新 root `test:legacy`，不再运行已删除 channel package tests。
+
+### 20.2 保留与保护
+
+- 保留 `packages/mcp-tools/src/tools/send-message.ts` 工具名、schema、安全语义；底层继续走 AgentDock IPC messages contract。
+- 不修改 AgentDock host、AgentDock IM manager、真实 Feishu/Telegram/IM 投递链路。
+- 不触碰真实 `~/.haro/evolution`、真实 `~/.haro` 数据、aria-memory-vault。
+- 不触碰 provider/memory/skills/Web/API，也不触碰第 4 项 run/router/runtime/scenario-router；第 4 项仍 deferred，等待 AgentDock 定时任务 -> Haro 生成提案 -> Review Board 可审链路稳定后再评估。
+
+### 20.3 验收与 guard 状态
+
+必须验证：
+
+```bash
+git diff --check
+pnpm -F @haro/cli build
+pnpm -F @haro/mcp-tools build
+pnpm -F @haro/mcp-tools test -- test/tools/send-message.test.ts
+pnpm -F @haro/cli test -- test/legacy-removal-guard.test.ts
+pnpm test:sidecar
+pnpm test:legacy
+```
+
+guard 应保持：`stage=FEAT-081L`、`deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`verifiedAbsentFailedCount=0`；`nextDeletionCandidate=null`，channel-layer 只记录已完成删除，不构成其它模块删除批准。

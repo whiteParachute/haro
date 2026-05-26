@@ -95,19 +95,15 @@ haro setup --profile systemd --repair
 - 运行 `haro doctor --fix` 重新初始化 schema
 - 谨慎删除 `haro.db` 让它重新初始化（会丢失本地 session 历史）
 
-### 5. Channel 健康状态
+### 5. 消息投递健康状态
 
-`haro doctor --json` 会包含 Channel 摘要。要做 Channel 专项排查，应直接使用 Channel 级诊断命令：
+FEAT-081L 后 Haro 不再提供 `haro channel doctor`。真实 Feishu / Telegram / IM 投递由 AgentDock host 负责；Haro 侧只保留 MCP `send_message` 工具，并通过 AgentDock IPC messages contract 输出待发送消息。
 
-```bash
-haro channel doctor feishu
-haro channel doctor telegram
-```
+排查方向：
 
-常见错误码：
-
-- `missing_credentials` → 环境变量未设置，或 `config.yaml` 中的 `${...}` 引用语法错误
-- 网络超时 → 检查当前网络是否可到达飞书/Telegram 服务端
+- 确认 AgentDock workspace IPC 环境变量（如 `HAPPYCLAW_WORKSPACE_IPC` / `HAPPYCLAW_CHAT_JID`）存在。
+- 用 MCP `send_message` 或 AgentDock `agentdock-tool send-message` 做只读/测试环境验证。
+- 不要恢复 Haro-owned `packages/channel*` 或旧 `haro channel doctor`。
 
 ## Codex 认证常见问题
 

@@ -111,7 +111,6 @@ describe('guided setup and doctor remediation [FEAT-027]', () => {
       'provider',
       'database',
       'web-service',
-      'channels',
       'smoke-test',
     ]);
     expect(json.issues[0]).toEqual(expect.objectContaining({ code: expect.any(String), severity: expect.any(String), component: expect.any(String), evidence: expect.any(String), remediation: expect.any(String), fixable: expect.any(Boolean) }));

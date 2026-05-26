@@ -37,21 +37,15 @@ haro run "任务描述"      # 单次调试运行
 
 CLI channel 仍可用于本地诊断，但不应被设计成新的常驻 workbench。
 
-## 飞书 / Telegram Channel（历史兼容）
+## 飞书 / Telegram Channel（已由 AgentDock 接管）
 
-历史命令仍保留：
+FEAT-081L 后 Haro-owned `packages/channel`、`packages/channel-feishu`、`packages/channel-telegram` 与 `haro channel list/doctor/setup/onboarding/enable/disable/remove` 均已退役或删除。
 
-```bash
-haro channel setup feishu
-haro channel enable feishu
-haro channel doctor feishu
+当前边界：
 
-haro channel setup telegram
-haro channel enable telegram
-haro channel doctor telegram
-```
-
-这些 adapter 的存在不改变 sidecar 新基线：日用消息入口由 AgentDock 负责，Haro 通过 AgentDock 暴露的稳定 contract 与 MCP 工具参与。
+- 真实 Feishu / Telegram / IM 投递链路由 AgentDock host / IM manager 负责。
+- Haro 保留 MCP `send_message` 工具；该工具写入 AgentDock IPC messages contract。
+- 不要恢复 Haro-owned channel registry、adapter setup/onboarding 或 channel doctor。
 
 ## 已删除：Web Channel
 

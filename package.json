@@ -20,7 +20,7 @@
     "setup": "node packages/cli/bin/haro.js setup",
     "dev:web": "concurrently -k -n web,api \"pnpm -F @haro/web dev --host 127.0.0.1\" \"pnpm -F @haro/cli build && pnpm -F @haro/cli exec node ./bin/haro.js web --port 3456 --host 127.0.0.1\"",
     "test:sidecar": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" pnpm -F @haro/agentdock-contract test && pnpm -F @haro/mcp-tools test && pnpm -F @haro/core test:sidecar && pnpm -F @haro/cli test:sidecar && pnpm -F @haro/web-api test",
-    "test:legacy": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" pnpm -F @haro/core test:legacy && pnpm -F @haro/cli test:legacy && pnpm -F @haro/provider-codex test && pnpm -F @haro/channel test && pnpm -F @haro/channel-feishu test && pnpm -F @haro/channel-telegram test && pnpm -F @haro/skills test"
+    "test:legacy": "HARO_LOG_ROLLING=0 NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0040\" pnpm -F @haro/core test:legacy && pnpm -F @haro/cli test:legacy && pnpm -F @haro/provider-codex test && pnpm -F @haro/skills test"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

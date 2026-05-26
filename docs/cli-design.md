@@ -293,16 +293,11 @@ No OPENAI_API_KEY export is required for this provider mode.
 
 `haro provider doctor codex` 在 ChatGPT 模式下额外显示 `auth.json` 路径、`authMode`、脱敏 `account_id`、`last_refresh` 与 `codex` binary 是否在 PATH。任何 `access_token` / `refresh_token` / `id_token` 都不会出现在 stdout、日志或 YAML 中。
 
-### `haro channel`
+### `haro channel`（已退役）
 
-历史消息渠道管理入口。FEAT-081J 后仅保留只读/诊断子命令；真实 Feishu / Telegram / channel 管理由 AgentDock 提供，Haro 只保留 MCP `send_message` 这类对外工具。
+历史消息渠道管理入口已在 FEAT-081L 完成 Haro-owned channel-layer 收口：`haro channel list` / `haro channel doctor` 与 `packages/channel*` 均已删除。真实 Feishu / Telegram / channel 管理由 AgentDock 提供；Haro 只保留 MCP `send_message` 这类对外工具，底层走 AgentDock IPC messages contract。
 
-```bash
-haro channel list
-haro channel doctor <id>
-```
-
-> `enable` / `disable` / `remove` / `setup` / `onboarding` 均已从 Haro CLI 旧管理面移除；不要据此新增 Haro-owned channel onboarding。
+> 不要新增 Haro-owned channel onboarding、registry、doctor 或 adapter 管理面；如需消息投递，请走 AgentDock/MCP `send_message`。
 
 ### `haro gateway`
 

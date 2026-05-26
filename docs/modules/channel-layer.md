@@ -26,7 +26,7 @@
 
 ## Agent 主动出站（历史兼容）
 
-`@haro/mcp-tools` 的 `send_message` 仍通过 `ChannelRegistry.get(channelId).send(channelSessionId, OutboundMessage)` 调用已启用 channel。该能力是历史兼容层，不是 sidecar 新主线。
+FEAT-081L 后 Haro-owned channel packages 与 CLI 管理面已删除；`@haro/mcp-tools` 的 `send_message` 保留，但底层调用 AgentDock IPC messages contract，不再经过 Haro `ChannelRegistry`。
 
 ## 配置示例
 

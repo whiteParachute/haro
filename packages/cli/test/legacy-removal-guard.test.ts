@@ -183,20 +183,20 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.stillReferencedCount).toBeGreaterThan(0);
     expect(payload.data.summary.verifiedAbsentCount).toBeGreaterThanOrEqual(7);
     expect(payload.data.summary.verifiedAbsentFailedCount).toBe(0);
-    expect(payload.data.summary.nextSafeCandidateCount).toBe(1);
+    expect(payload.data.summary.nextSafeCandidateCount).toBe(0);
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
     expect(payload.data.planning).toMatchObject({
-      stage: 'FEAT-081K',
-      lastCompletedStage: 'FEAT-081K',
-      lastUpdatedBy: 'FEAT-081K',
+      stage: 'FEAT-081L',
+      lastCompletedStage: 'FEAT-081L',
+      lastUpdatedBy: 'FEAT-081L',
     });
     expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
         module: 'channel-message',
         status: 'retire-candidate',
         owner: 'AgentDock',
-        deletionCandidateAllowed: true,
+        deletionCandidateAllowed: false,
       }),
       expect.objectContaining({
         module: 'run-router-runtime-scenario',
@@ -215,21 +215,8 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       'Review Board 可审',
       '证明链路不依赖旧 haro run/chat/team/scenario',
     ]));
-    expect(payload.data.planning.nextDeletionCandidate).toMatchObject({
-      id: 'channel-layer',
-      nextScope: expect.stringContaining('remaining CLI channel list/doctor'),
-      forbiddenScope: expect.arrayContaining([
-        'MCP send_message 工具本身',
-        'AgentDock 生产消息能力',
-      ]),
-    });
-    expect(payload.data.planning.nextReviewCandidate).toMatchObject({
-      id: 'channel-layer',
-      reviewScope: expect.stringContaining('remaining CLI channel list/doctor'),
-      notApproval: true,
-      forbiddenScope: expect.arrayContaining(['MCP send_message 工具本身']),
-    });
-    expect(payload.data.planning.nextReviewCandidate?.reason).toContain('不是删除授权');
+    expect(payload.data.planning.nextDeletionCandidate).toBeNull();
+    expect(payload.data.planning.nextReviewCandidate).toBeNull();
     expect(payload.data.planning.forbiddenCandidateIds).toEqual([]);
     expect(payload.data.planning.blockedCandidateIds).toEqual(expect.arrayContaining([
       'provider-codex',
@@ -247,15 +234,18 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'channel-layer', candidate: 'packages/cli/src/index.ts#channel-setup-onboarding-stub', removedBy: 'FEAT-081H' }),
       expect.objectContaining({ id: 'channel-layer', candidate: 'packages/cli/src/index.ts#channel-config-management-commands', removedBy: 'FEAT-081J' }),
       expect.objectContaining({ id: 'channel-layer', candidate: 'packages/channel*/src#setup-contract', removedBy: 'FEAT-081J' }),
+      expect.objectContaining({ id: 'channel-layer', candidate: 'packages/cli/src/index.ts#channel-list-doctor-runtime', removedBy: 'FEAT-081L' }),
+      expect.objectContaining({ id: 'channel-layer', candidate: 'packages/channel', removedBy: 'FEAT-081L' }),
+      expect.objectContaining({ id: 'channel-layer', candidate: 'packages/channel-feishu', removedBy: 'FEAT-081L' }),
+      expect.objectContaining({ id: 'channel-layer', candidate: 'packages/channel-telegram', removedBy: 'FEAT-081L' }),
     ]));
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     expect(byId.get('provider-codex')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     const channelLayer = byId.get('channel-layer');
-    expect(channelLayer).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
+    expect(channelLayer).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: false });
     expect(channelLayer?.candidatePriority).toMatchObject({
-      status: 'next-safe-candidate',
+      status: 'done',
       rank: 1,
-      nextScope: expect.stringContaining('remaining CLI channel list/doctor'),
     });
     expect(channelLayer?.candidatePriority.forbiddenScope).toContain('MCP send_message 工具本身');
     expect(channelLayer?.pilotUnbind).toBeUndefined();
@@ -280,8 +270,28 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
         status: 'physically-removed',
         removedBy: 'FEAT-081J',
       }),
+      expect.objectContaining({
+        candidate: 'packages/cli/src/index.ts#channel-list-doctor-runtime',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081L',
+      }),
+      expect.objectContaining({
+        candidate: 'packages/channel',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081L',
+      }),
+      expect.objectContaining({
+        candidate: 'packages/channel-feishu',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081L',
+      }),
+      expect.objectContaining({
+        candidate: 'packages/channel-telegram',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081L',
+      }),
     ]));
-    expect(channelLayer?.physicalRemoval?.note).toContain('未获物理删除批准');
+    expect(channelLayer?.physicalRemoval?.note).toContain('gateway 旧 CLI daemon');
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.path === 'packages/cli/src/gateway.ts')).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('legacy env'))).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('removed stub code'))).toMatchObject({ present: false, absent: true });
@@ -302,9 +312,13 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('ToolDependencies 不再要求'))).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('server-entry 不再创建空'))).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('tests 不再使用 Haro channel'))).toMatchObject({ present: false, absent: true });
-    expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/channel/package.json')?.present).toBe(true);
-    expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/mcp-tools/src/tools/send-message.ts')?.present).toBe(true);
-    expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/mcp-tools/src/agentdock-messaging.ts')?.present).toBe(true);
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('CLI channel list/doctor 注册'))).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('CLI channel registry runtime'))).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('packages/channel 已由 FEAT-081L'))).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('packages/channel-feishu 已由 FEAT-081L'))).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('packages/channel-telegram 已由 FEAT-081L'))).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('CLI package dependency 已由 FEAT-081L'))).toMatchObject({ present: false, absent: true });
+    expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/channel/package.json')?.present).toBe(false);
     expect(byId.get('memory-fabric')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
     const agentRuntime = byId.get('agent-runtime-router');
     expect(agentRuntime?.evidence.some((entry) => entry.present)).toBe(true);
@@ -349,10 +363,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081K lastCompleted=FEAT-081K');
-    expect(text).toContain('next deletion candidate (candidate only, not approval): channel-layer');
-    expect(text).toContain('next review candidate: channel-layer');
-    expect(text).toContain('notApproval=true');
+    expect(text).toContain('planning stage: FEAT-081L lastCompleted=FEAT-081L');
+    expect(text).toContain('next deletion candidate (candidate only, not approval): none');
+    expect(text).toContain('next review candidate: none');
     expect(text).toContain('forbidden now: none');
     expect(text).toContain('deferred now: agent-runtime-router,skills-marketplace');
     expect(text).toContain('module retirement boundaries:');
@@ -360,18 +373,23 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('run-router-runtime-scenario status=deferred');
     expect(text).toContain('verifiedAbsent: total=');
     expect(text).toContain('failed=0');
-    expect(text).toContain('priority=next-safe-candidate#1');
+    expect(text).toContain('priority=done#1');
     expect(text).toContain('FEAT-081D');
     expect(text).toContain('FEAT-081E');
     expect(text).toContain('FEAT-081H');
     expect(text).toContain('FEAT-081J');
     expect(text).toContain('FEAT-081K');
+    expect(text).toContain('FEAT-081L');
     expect(text).toContain('AgentDock IPC 消息 contract');
+    expect(text).toContain('packages/channel、packages/channel-feishu、packages/channel-telegram');
     expect(text).toContain('physicalRemoval=physically-removed:packages/core/src/team-orchestrator.ts:FEAT-081D');
     expect(text).toContain('physicalRemoval=physically-removed:packages/cli/src/gateway.ts:FEAT-081E');
     expect(text).toContain('physicalRemovals=physically-removed:packages/cli/src/index.ts#channel-setup-onboarding-stub:FEAT-081H');
     expect(text).toContain('physically-removed:packages/cli/src/index.ts#channel-config-management-commands:FEAT-081J');
     expect(text).toContain('physically-removed:packages/channel*/src#setup-contract:FEAT-081J');
+    expect(text).toContain('physically-removed:packages/channel:FEAT-081L');
+    expect(text).toContain('physically-removed:packages/channel-feishu:FEAT-081L');
+    expect(text).toContain('physically-removed:packages/channel-telegram:FEAT-081L');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

@@ -7,7 +7,6 @@ import { parse as parseYaml } from 'yaml';
 import { AgentRegistry, AgentRunner, ProviderRegistry, createMemoryFabric, db as haroDb } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
-import type { ChannelRegistration, ManagedChannel } from '../src/channel.js';
 
 class StubProvider implements AgentProvider {
   readonly id = 'codex';
@@ -302,12 +301,7 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        createTestChannelRegistration({
-          id: 'feishu',
-          enabled: false,
-        }),
-      ],
+      createAdditionalChannels: async () => [],
     });
 
     stdin.write('/help\n');
@@ -387,61 +381,12 @@ describe('runCli [FEAT-006]', () => {
     const report = JSON.parse(chunks.join('')) as Record<string, unknown>;
     expect(report).toHaveProperty('config');
     expect(report).toHaveProperty('providers');
-    expect(report).toHaveProperty('channels');
+    expect(report).not.toHaveProperty('channels');
     expect(report).toHaveProperty('dataDir');
     expect(report).toHaveProperty('sqlite');
   });
 
-  it('doctor reports enabled external channel healthCheck() status and ignores disabled channels', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-doctor-channels-'));
-    roots.push(root);
-    const stdout = new PassThrough();
-    const chunks: string[] = [];
-    stdout.on('data', (chunk) => chunks.push(String(chunk)));
-    const feishuHealthCheck = vi.fn(async () => true);
-    const telegramHealthCheck = vi.fn(async () => false);
-    const disabledHealthCheck = vi.fn(async () => true);
 
-    const result = await runCli({
-      argv: ['doctor', '--json'],
-      root,
-      stdout,
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        createTestChannelRegistration({ id: 'feishu', enabled: true, healthCheck: feishuHealthCheck }),
-        createTestChannelRegistration({
-          id: 'telegram',
-          enabled: true,
-          healthCheck: telegramHealthCheck,
-        }),
-        createTestChannelRegistration({ id: 'disabled-channel', enabled: false, healthCheck: disabledHealthCheck }),
-      ],
-    });
-
-    expect(result.exitCode).toBe(1);
-    expect(feishuHealthCheck).toHaveBeenCalledTimes(1);
-    expect(telegramHealthCheck).toHaveBeenCalledTimes(1);
-    expect(disabledHealthCheck).not.toHaveBeenCalled();
-
-    const report = JSON.parse(chunks.join('')) as {
-      channels: Array<{ id: string; healthy: boolean; source: string }>;
-    };
-    expect(report.channels).toHaveLength(2);
-    expect(report.channels).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'feishu', healthy: true, source: 'package' }),
-        expect.objectContaining({ id: 'telegram', healthy: false, source: 'package' }),
-      ]),
-    );
-  });
 
   it('FEAT-015 R5: haro web --help exposes port and host options without starting the dashboard', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-web-help-'));
@@ -590,44 +535,7 @@ describe('runCli [FEAT-006]', () => {
     expect(configText).not.toContain('test-key');
   });
 
-  it('FEAT-008 AC1: channel list shows cli + feishu with enablement state', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-list-'));
-    roots.push(root);
-    const stdout = new PassThrough();
-    const chunks: string[] = [];
-    stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
-    const result = await runCli({
-      argv: ['channel', 'list', '--human'],
-      root,
-      stdout,
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        createTestChannelRegistration({
-          id: 'feishu',
-          enabled: false,
-        }),
-        createTestChannelRegistration({
-          id: 'telegram',
-          enabled: false,
-        }),
-      ],
-    });
-
-    expect(result.exitCode).toBe(0);
-    const output = chunks.join('');
-    expect(output).toContain('cli\tenabled\tbuiltin');
-    expect(output).toContain('feishu\tdisabled\tpackage');
-    expect(output).toContain('telegram\tdisabled\tpackage');
-  });
 
   it('FEAT-081E: gateway daemon commands are removed on the default CLI path', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-gateway-removed-'));
@@ -707,115 +615,11 @@ describe('runCli [FEAT-006]', () => {
     });
   });
 
-  it('FEAT-081H: channel setup feishu command is physically removed and does not call legacy onboarding', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-setup-removed-'));
-    roots.push(root);
-    const stdout = new PassThrough();
 
-    const result = await runCli({
-      argv: ['channel', 'setup', 'feishu'],
-      root,
-      stdout,
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        createTestChannelRegistration({
-          id: 'feishu',
-          enabled: false,
-        }),
-      ],
-    });
 
-    expect(result.exitCode).not.toBe(0);
-    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
-  });
 
-  it('FEAT-081J: channel enable/disable/remove config management commands are physically removed', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-config-removed-'));
-    roots.push(root);
 
-    for (const argv of [
-      ['channel', 'enable', 'feishu'],
-      ['channel', 'disable', 'feishu'],
-      ['channel', 'remove', 'feishu'],
-    ]) {
-      const stdout = new PassThrough();
-      const result = await runCli({
-        argv,
-        root,
-        stdout,
-        createProviderRegistry: async () =>
-          createProviderRegistry(
-            new StubProvider({
-              query: async function* () {
-                yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-              },
-            }),
-          ),
-        loadAgentRegistry: async () => createAgentRegistry(),
-        createAdditionalChannels: async () => [
-          createTestChannelRegistration({
-            id: 'feishu',
-            enabled: false,
-          }),
-        ],
-      });
-      expect(result.exitCode).not.toBe(0);
-    }
 
-    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
-    expect(existsSync(join(root, 'channels', 'feishu'))).toBe(false);
-  });
-
-  it('FEAT-008 AC8: channel doctor feishu exits non-zero and prints reason on credential failure', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-doctor-'));
-    roots.push(root);
-    const stdout = new PassThrough();
-    const stderr = new PassThrough();
-    const outChunks: string[] = [];
-    const errChunks: string[] = [];
-    stdout.on('data', (chunk) => outChunks.push(String(chunk)));
-    stderr.on('data', (chunk) => errChunks.push(String(chunk)));
-
-    const result = await runCli({
-      // --human keeps the stdout reason text the assertion below checks; the
-      // failing-doctor JSON path is covered separately and goes to stderr.
-      argv: ['channel', 'doctor', 'feishu', '--human'],
-      root,
-      stdout,
-      stderr,
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        createTestChannelRegistration({
-          id: 'feishu',
-          enabled: true,
-          doctor: async () => ({
-            ok: false,
-            code: '401',
-            message: 'Unauthorized',
-          }),
-        }),
-      ],
-    });
-
-    expect(result.exitCode).toBe(1);
-    expect(outChunks.join('')).toContain('Unauthorized');
-  });
 
   it('FEAT-008 AC7: cli runtime still works when no external channel package is registered', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-no-feishu-'));
@@ -844,105 +648,11 @@ describe('runCli [FEAT-006]', () => {
     expect(chunks.join('')).toContain('still works');
   });
 
-  it('FEAT-081H: channel onboarding telegram alias is physically removed and does not write config', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-onboarding-removed-'));
-    roots.push(root);
-    const stdout = new PassThrough();
 
-    const result = await runCli({
-      argv: ['channel', 'onboarding', 'telegram'],
-      root,
-      stdout,
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        createTestChannelRegistration({
-          id: 'telegram',
-          enabled: false,
-        }),
-      ],
-    });
 
-    expect(result.exitCode).not.toBe(0);
-    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
-  });
 
-  it('FEAT-009 AC5: channel doctor telegram exits non-zero and prints Unauthorized on bad token', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-telegram-doctor-'));
-    roots.push(root);
-    const stdout = new PassThrough();
-    const chunks: string[] = [];
-    stdout.on('data', (chunk) => chunks.push(String(chunk)));
 
-    const result = await runCli({
-      argv: ['channel', 'doctor', 'telegram', '--human'],
-      root,
-      stdout,
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        createTestChannelRegistration({
-          id: 'telegram',
-          enabled: true,
-          doctor: async () => ({
-            ok: false,
-            code: '401',
-            message: 'Unauthorized',
-          }),
-        }),
-      ],
-    });
 
-    expect(result.exitCode).toBe(1);
-    expect(chunks.join('')).toContain('Unauthorized');
-  });
-
-  it('FEAT-009 AC7: cli still works when telegram package is absent but feishu remains registered', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-telegram-plug-'));
-    roots.push(root);
-    const stdout = new PassThrough();
-    const chunks: string[] = [];
-    stdout.on('data', (chunk) => chunks.push(String(chunk)));
-
-    const result = await runCli({
-      argv: ['channel', 'list', '--human'],
-      root,
-      stdout,
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        createTestChannelRegistration({
-          id: 'feishu',
-          enabled: true,
-        }),
-      ],
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(chunks.join('')).toContain('feishu\tenabled\tpackage');
-    expect(chunks.join('')).not.toContain('telegram');
-  });
 
   it('FEAT-010 AC1/AC3: skills list shows sidecar-era preinstalled skills and protects them from uninstall', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-skills-'));
@@ -1272,107 +982,7 @@ describe('runCli [FEAT-006]', () => {
     expect(existsSync(join(root, 'skills', 'user', 'custom-skill', 'SKILL.md'))).toBe(true);
   });
 
-  it('FEAT-023 AC8 blocks external channel writes and audits the permission decision', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-external-guard-'));
-    roots.push(root);
-    const stdout = new PassThrough();
-    const stdin = new PassThrough();
-    const sendCalls: unknown[] = [];
-    const externalChannel: ManagedChannel = {
-      id: 'feishu',
-      async start(ctx) {
-        await ctx.onInbound({
-          sessionId: 'feishu-session-1',
-          userId: 'user-1',
-          channelId: 'feishu',
-          type: 'text',
-          content: '请快速总结',
-          timestamp: '2026-04-26T06:00:00.000Z',
-        });
-      },
-      async stop() {
-        return undefined;
-      },
-      async send(_sessionId, msg) {
-        sendCalls.push(msg);
-      },
-      capabilities() {
-        return {
-          streaming: false,
-          richText: false,
-          attachments: true,
-          threading: false,
-          requiresWebhook: false,
-        } as const;
-      },
-      async healthCheck() {
-        return true;
-      },
-    };
 
-    const runPromise = runCli({
-      argv: [],
-      root,
-      stdin,
-      stdout,
-      createSessionId: createIdFactory(['workflow-external-1', 'leaf-external-1']),
-      createConversationId: createIdFactory(['cli-session-1']),
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield {
-                type: 'result',
-                content: 'external response',
-                responseId: 'resp-external-1',
-              };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [
-        {
-          channel: externalChannel,
-          enabled: true,
-          removable: true,
-          source: 'package',
-          displayName: 'Feishu',
-        },
-      ],
-    });
-    stdin.end();
-    const result = await runPromise;
-
-    expect(result.exitCode).toBe(0);
-    expect(sendCalls).toHaveLength(0);
-    const db = openDatabase(root);
-    try {
-      const audit = db
-        .prepare(
-          `SELECT event_type, operation_class, policy, outcome, target_ref
-             FROM operation_audit_log
-            WHERE workflow_id = ?`,
-        )
-        .all('workflow-external-1') as Array<{
-        event_type: string;
-        operation_class: string;
-        policy: string;
-        outcome: string;
-        target_ref: string;
-      }>;
-      expect(audit).toEqual([
-        {
-          event_type: 'permission-decision',
-          operation_class: 'external-service',
-          policy: 'needs-approval',
-          outcome: 'needs-approval',
-          target_ref: 'feishu',
-        },
-      ]);
-    } finally {
-      db.close();
-    }
-  });
 
   it('/new clears the current continuation so the next task starts a fresh session context', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-new-'));
@@ -1882,44 +1492,6 @@ describe('runCli [FEAT-006]', () => {
     expect(output).not.toContain('未检测到可用的包管理器');
   });
 });
-
-function createTestChannelRegistration(input: {
-  id: string;
-  enabled: boolean;
-  doctor?: ManagedChannel['doctor'];
-  healthCheck?: ManagedChannel['healthCheck'];
-}): ChannelRegistration {
-  const channel: ManagedChannel = {
-    id: input.id,
-    async start() {
-      return undefined;
-    },
-    async stop() {
-      return undefined;
-    },
-    async send() {
-      return undefined;
-    },
-    capabilities() {
-      return {
-        streaming: false,
-        richText: false,
-        attachments: true,
-        threading: false,
-        requiresWebhook: false,
-      } as const;
-    },
-    healthCheck: input.healthCheck ?? (async () => true),
-    ...(input.doctor ? { doctor: input.doctor } : {}),
-  };
-  return {
-    channel,
-    enabled: input.enabled,
-    removable: true,
-    source: 'package',
-    displayName: input.id,
-  };
-}
 
 function createIdFactory(ids: string[]): () => string {
   let index = 0;

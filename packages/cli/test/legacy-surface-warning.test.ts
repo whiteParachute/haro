@@ -128,16 +128,12 @@ describe('legacy workbench surface warnings', () => {
     expectJsonLines(json.stdout.read());
   });
 
-  it('prints a legacy warning for human provider and channel surfaces', async () => {
+  it('prints a legacy warning for human provider surfaces', async () => {
     const root = tempRoot('haro-legacy-provider-');
     const provider = runWithCapturedOutput(root, ['provider', 'list', '--human']);
 
     await expect(provider.result).resolves.toMatchObject({ exitCode: 0 });
     expect(provider.stdout.read()).toContain(LEGACY_SURFACE_WARNING);
-
-    const channel = runWithCapturedOutput(root, ['channel', 'list', '--human']);
-    await expect(channel.result).resolves.toMatchObject({ exitCode: 0 });
-    expect(channel.stdout.read()).toContain(LEGACY_SURFACE_WARNING);
   });
 
   it('does not pollute JSON provider output', async () => {

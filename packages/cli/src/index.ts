@@ -46,14 +46,11 @@ import type { HaroConfig, LoadedConfig } from '@haro/core/config';
 import type { AgentEvent, AgentProvider } from '@haro/core/provider';
 import { agentEventToStream, type StreamEvent } from '@haro/core/stream';
 import {
-  ChannelRegistry,
   CliChannel,
-  type ChannelRegistration,
-  type ChannelSetupContext,
   type InboundMessage,
   type MessageChannel,
   type OutboundMessage,
-} from './channel.js';
+} from './cli-channel.js';
 import {
   formatDiagnosticsHuman,
   parseDoctorComponent,
@@ -160,13 +157,6 @@ export interface RunCliOptions {
     createConversationId?: () => string;
     onLocalCommand?: (line: string, channel: CliChannel) => Promise<boolean>;
   }) => CliChannel;
-  createAdditionalChannels?: (input: {
-    root: string;
-    loadedConfig: LoadedConfig['config'];
-    logger: CliLogger;
-    createSessionId?: () => string;
-    argv?: readonly string[];
-  }) => Promise<readonly ChannelRegistration[]>;
   setupDeps?: SetupRunDeps;
   doctorDeps?: SetupRunDeps;
   providerCatalog?: readonly ProviderCatalogEntry[];
@@ -287,7 +277,6 @@ export interface AppContext {
   now: () => Date;
   paths: HaroPaths;
   logger: CliLogger;
-  channelRegistry: ChannelRegistry;
   cliState: CliState;
   writeCliState(next: CliState): void;
   loaded: LoadedConfig;
@@ -377,12 +366,12 @@ export async function runCli(opts: RunCliOptions = {}): Promise<RunCliResult> {
 
   try {
     await program.parseAsync(['node', 'haro', ...argv], { from: 'node' });
-    await app.channelRegistry.stop();
+    await app.cliChannel.stop();
     app.checkpointStore.close();
     app.skills.close();
     return commandResult(app, inferAction(argv), 0);
   } catch (err) {
-    await app.channelRegistry.stop();
+    await app.cliChannel.stop();
     app.checkpointStore.close();
     app.skills.close();
     if (err instanceof CommanderExit) {
@@ -481,7 +470,6 @@ function buildProgram(app: AppContext): Command {
             loaded: app.loaded,
             providerRegistry: app.providerRegistry,
             providerCatalog: app.providerCatalog,
-            channelRegistry: app.channelRegistry,
             deps: app.opts.setupDeps,
           });
           app.stdout.write(options.json ? `${JSON.stringify({ command: 'setup', check: options.check === true, repair: options.repair === true, ...report }, null, 2)}\n` : formatDiagnosticsHuman(report));
@@ -555,7 +543,7 @@ function buildProgram(app: AppContext): Command {
     'doctor',
     (cmd) => {
       cmd
-        .option('--component <component>', 'component: provider, web, database, sidecar, channel, config, cli, or systemd')
+        .option('--component <component>', 'component: provider, web, database, sidecar, config, cli, or systemd')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
         .option('--fix', 'apply safe fixes')
@@ -577,7 +565,6 @@ function buildProgram(app: AppContext): Command {
             loaded: app.loaded,
             providerRegistry: app.providerRegistry,
             providerCatalog: app.providerCatalog,
-            channelRegistry: app.channelRegistry,
             deps: app.opts.doctorDeps ?? app.opts.setupDeps,
           });
           if (component === undefined || component === 'sidecar') {
@@ -626,7 +613,6 @@ function buildProgram(app: AppContext): Command {
     program,
   );
 
-  registerChannelCommands(program, app);
   registerProviderCommands(program, app);
   registerSkillsCommands(program, app);
   registerMetabolismCommands(program, app);
@@ -990,77 +976,6 @@ function formatProviderModels(provider: string, models: readonly { id: string; m
   if (models.length === 0) return `Provider models: ${provider}\n<none>\n`;
   const lines = [`Provider models: ${provider}`, ...models.map((model) => [model.id, model.maxContextTokens ? `context=${model.maxContextTokens}` : undefined].filter(Boolean).join('\t'))];
   return `${lines.join('\n')}\n`;
-}
-
-function registerChannelCommands(program: Command, app: AppContext): void {
-  registerCommand(
-    'channel',
-    (cmd) => {
-      cmd.description('Manage registered channels');
-
-      cmd
-        .command('list')
-        .option('--json', 'force JSON output (default for non-TTY)')
-        .option('--human', 'force human output')
-        .action(async (options: { json?: boolean; human?: boolean }) => {
-          const entries = app.channelRegistry.list().map((entry) => {
-            const caps = entry.channel.capabilities();
-            return {
-              id: entry.id,
-              enabled: entry.enabled,
-              source: entry.source,
-              streaming: caps.streaming,
-              attachments: caps.attachments,
-            };
-          });
-          const mode = resolveOutputMode(options, app.stdout);
-          if (mode === 'json') {
-            renderListJson({ items: entries, total: entries.length }, { stdout: app.stdout });
-            return;
-          }
-          writeLegacySurfaceWarningForMode(app, mode);
-          const lines = entries.map((entry) =>
-            [
-              entry.id,
-              entry.enabled ? 'enabled' : 'disabled',
-              entry.source,
-              `streaming=${entry.streaming}`,
-              `attachments=${entry.attachments}`,
-            ].join('\t'),
-          );
-          app.stdout.write(`${lines.join('\n')}\n`);
-        });
-
-      cmd
-        .command('doctor')
-        .argument('<id>', 'channel id')
-        .option('--json', 'force JSON output (default for non-TTY)')
-        .option('--human', 'force human output')
-        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
-          const entry = app.channelRegistry.getEntry(id);
-          const context = createChannelSetupContext(app, id);
-          const report =
-            typeof entry.channel.doctor === 'function'
-              ? await entry.channel.doctor(context)
-              : await fallbackChannelDoctor(entry.channel);
-          const mode = resolveOutputMode(options, app.stdout);
-          if (mode === 'json') {
-            renderJsonDiagnostic(report, { stdout: app.stdout, stderr: app.stderr }, {
-              code: 'CHANNEL_DOCTOR_FAILED',
-              message: `channel doctor ${id} found issues: ${report.message}`,
-              remediation: `Fix the channel configuration outside the removed Haro-owned onboarding path, then rerun \`haro channel doctor ${id}\`.`,
-            });
-          } else {
-            writeLegacySurfaceWarningForMode(app, mode);
-            app.stdout.write(`${report.ok ? 'OK' : 'FAIL'}: ${report.message}\n`);
-          }
-          if (!report.ok) {
-            throw new CommanderExit(1, report.message);
-          }
-        });
-    },
-    program,
-  );
 }
 
 function registerSkillsCommands(program: Command, app: AppContext): void {
@@ -1810,7 +1725,6 @@ async function bootstrapApp(
     now,
     paths,
     logger,
-    channelRegistry: new ChannelRegistry(),
     cliState: readCliState(paths.root),
     writeCliState: (next: CliState) => {
       writeCliChannelState(paths.root, next);
@@ -1843,33 +1757,6 @@ async function bootstrapApp(
       return handleSlashCommand(app, app.replState, channel, line);
     },
   });
-  app.channelRegistry.register({
-    channel: app.cliChannel,
-    enabled: loaded.config.channels?.cli?.enabled !== false,
-    removable: false,
-    source: 'builtin',
-    displayName: 'CLI',
-  });
-
-  const additionalChannels = input.createAdditionalChannels
-    ? await input.createAdditionalChannels({
-        root: paths.root,
-        loadedConfig: loaded.config,
-        logger,
-        createSessionId: input.createSessionId,
-        argv: input.argv,
-      })
-    : await createDefaultAdditionalChannels({
-        root: paths.root,
-        loadedConfig: loaded.config,
-        logger,
-        createSessionId: input.createSessionId,
-        argv: input.argv,
-      });
-  for (const registration of additionalChannels) {
-    app.channelRegistry.register(registration);
-  }
-
   return app;
 }
 
@@ -1885,8 +1772,6 @@ async function runRepl(app: AppContext): Promise<void> {
     continueLatestSession: true,
   };
   app.replState = replState;
-  await startEnabledBackgroundChannels(app);
-
   const route = await resolveRouteSummary(
     app,
     replState.agentId,
@@ -1929,43 +1814,6 @@ async function handleCliInbound(app: AppContext, msg: InboundMessage): Promise<v
   // One-shot resume pin: clear after the first turn so follow-ups continue
   // from the freshly-minted session (now the latest completed one).
   delete replState.resumeFromSessionId;
-}
-
-async function handleExternalInbound(app: AppContext, channel: MessageChannel, msg: InboundMessage): Promise<void> {
-  const task = typeof msg.content === 'string' ? msg.content : String(msg.content ?? '');
-  // FEAT-031 — channels (notably Web) carry per-message agent/provider/model
-  // overrides in `meta`. Honor them so channel-specific selectors actually
-  // route to the chosen agent instead of always using the CLI defaults.
-  const meta = (msg.meta ?? {}) as Record<string, unknown>;
-  const overrideAgentId = typeof meta.agentId === 'string' ? meta.agentId : undefined;
-  const overrideProvider =
-    typeof meta.providerId === 'string'
-      ? meta.providerId
-      : typeof meta.provider === 'string'
-        ? meta.provider
-        : undefined;
-  const overrideModel =
-    typeof meta.modelId === 'string'
-      ? meta.modelId
-      : typeof meta.model === 'string'
-        ? meta.model
-        : undefined;
-  await executeTask(
-    app,
-    {
-      task,
-      agentId:
-        overrideAgentId ??
-        app.cliState.defaultAgentId ??
-        app.loaded.config.defaultAgent ??
-        DEFAULT_AGENT_ID,
-      provider: overrideProvider ?? app.cliState.defaultProvider,
-      model: overrideModel ?? app.cliState.defaultModel,
-      channelSessionId: msg.sessionId,
-      channelId: msg.channelId,
-    },
-    channel,
-  );
 }
 
 async function executeTask(
@@ -2685,104 +2533,6 @@ async function assertProviderAndModel(
   }
 }
 
-async function startEnabledBackgroundChannels(app: AppContext): Promise<void> {
-  for (const entry of app.channelRegistry.listEnabled()) {
-    if (entry.id === 'cli') continue;
-    await entry.channel.start({
-      config: readChannelConfig(app.loaded.config, entry.id),
-      logger: app.logger,
-      onInbound: async (msg) => handleExternalInbound(app, entry.channel, msg),
-    });
-  }
-}
-
-async function createDefaultAdditionalChannels(input: {
-  root: string;
-  loadedConfig: LoadedConfig['config'];
-  logger: CliLogger;
-  createSessionId?: () => string;
-  argv?: readonly string[];
-}): Promise<readonly ChannelRegistration[]> {
-  const registrations: ChannelRegistration[] = [];
-
-  const feishuConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'feishu');
-  if (feishuConfig.enabled === true) {
-    try {
-      const { FeishuChannel } = await import('@haro/channel-feishu');
-      registrations.push({
-        channel: new FeishuChannel({
-          root: input.root,
-          logger: input.logger,
-          config: feishuConfig,
-          createSessionId: input.createSessionId,
-        }),
-        enabled: feishuConfig.enabled === true,
-        removable: true,
-        source: 'package',
-        displayName: 'Feishu',
-      });
-    } catch (error) {
-      input.logger.warn(
-        { error: error instanceof Error ? error.message : String(error) },
-        'Optional channel package @haro/channel-feishu is unavailable; continuing without Feishu',
-      );
-    }
-  }
-
-  const telegramConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'telegram');
-  if (telegramConfig.enabled === true) {
-    try {
-      const { TelegramChannel } = await import('@haro/channel-telegram');
-      registrations.push({
-        channel: new TelegramChannel({
-          root: input.root,
-          logger: input.logger,
-          config: telegramConfig,
-          createSessionId: input.createSessionId,
-        }),
-        enabled: telegramConfig.enabled === true,
-        removable: true,
-        source: 'package',
-        displayName: 'Telegram',
-      });
-    } catch (error) {
-      input.logger.warn(
-        { error: error instanceof Error ? error.message : String(error) },
-        'Optional channel package @haro/channel-telegram is unavailable; continuing without Telegram',
-      );
-    }
-  }
-
-  return registrations;
-}
-
-function readChannelConfig(config: { channels?: HaroConfig['channels'] }, id: string): Record<string, unknown> {
-  const channels = (config.channels ?? {}) as Record<string, unknown>;
-  const value = channels[id];
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? { ...(value as Record<string, unknown>) }
-    : {};
-}
-
-function createChannelSetupContext(app: AppContext, id: string): ChannelSetupContext {
-  return {
-    root: app.paths.root,
-    config: readChannelConfig(app.loaded.config, id),
-    stdin: app.stdin,
-    stdout: app.stdout,
-    stderr: app.stderr,
-    logger: app.logger,
-  };
-}
-
-async function fallbackChannelDoctor(channel: MessageChannel): Promise<{
-  ok: boolean;
-  message: string;
-}> {
-  const ok = await channel.healthCheck();
-  return { ok, message: ok ? 'healthy' : 'unhealthy' };
-}
-
 function readCliState(root: string): CliState {
   const file = join(root, 'channels', 'cli', CLI_CHANNEL_STATE_FILE);
   if (!existsSync(file)) return {};
@@ -3188,11 +2938,8 @@ if (require.main === module) {
 }
 
 export {
-  ChannelRegistry,
   CliChannel,
   type CliState,
   type InboundMessage,
   type MessageChannel,
-  handleExternalInbound,
-  readChannelConfig,
 };

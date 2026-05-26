@@ -25,7 +25,7 @@ export interface LegacyRemovalEvidenceDefinition {
 export interface LegacyPhysicalRemovalRecord {
   candidate: string;
   status: 'physically-removed';
-  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J';
+  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L';
   rollbackPlan: string;
   note: string;
 }
@@ -105,9 +105,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081K';
-    lastCompletedStage: 'FEAT-081K';
-    lastUpdatedBy: 'FEAT-081K';
+    stage: 'FEAT-081L';
+    lastCompletedStage: 'FEAT-081L';
+    lastUpdatedBy: 'FEAT-081L';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -130,7 +130,7 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
     deferredCandidateIds: string[];
-    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J'; rollbackPlan: string }>;
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -169,8 +169,8 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
       '真实 Feishu/Telegram IM 投递链路',
     ],
     decision: 'Haro 只保留 MCP send_message 这类对外工具；真实 channel 管理由 AgentDock 提供。',
-    nextAction: '优先把 channel-layer 继续作为下一单项评审候选，但评审范围必须排除 MCP send_message 与 AgentDock 生产消息。',
-    deletionCandidateAllowed: true,
+    nextAction: 'FEAT-081L 已删除 Haro-owned channel packages 与 CLI list/doctor；后续如继续减法需重新排序其它模块，仍不得触碰 MCP send_message 与 AgentDock 生产消息。',
+    deletionCandidateAllowed: false,
   },
   {
     module: 'provider',
@@ -269,16 +269,20 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       'FEAT-081H 已物理删除 CLI channel setup/onboarding removed stub',
       'FEAT-081J 已物理删除 CLI channel config 管理命令与 adapter setup contract',
       'FEAT-081K 已替换 mcp-tools 对 @haro/channel/ChannelRegistry 的依赖',
+      'FEAT-081L 已删除 CLI channel list/doctor 与 packages/channel* package 面',
       '确认 AgentDock IM 已承接生产消息通道',
     ],
-    requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/mcp-tools test -- test/tools/send-message.test.ts', 'pnpm -F @haro/channel test', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'channel/消息边界已固化：真实 Feishu/Telegram/channel 管理由 AgentDock 提供，Haro 只保留 MCP send_message 工具；FEAT-081K 已让 mcp-tools send_message 改走 AgentDock IPC 消息 contract，不再依赖 @haro/channel。剩余 channel package 删除仍需后续单项评审。',
+    requiredVerification: [
+      'pnpm test:sidecar',
+      'pnpm -F @haro/mcp-tools test -- test/tools/send-message.test.ts',
+      'pnpm -F @haro/cli test -- test/legacy-removal-guard.test.ts',
+      'pnpm -F @haro/cli test:legacy',
+    ],
+    decision: 'channel/消息边界已固化：真实 Feishu/Telegram/channel 管理由 AgentDock 提供，Haro 只保留 MCP send_message 工具；FEAT-081L 已删除 Haro-owned channel packages 与 CLI list/doctor/diagnostics runtime。',
     candidatePriority: {
-      status: 'next-safe-candidate',
+      status: 'done',
       rank: 1,
-      nextScope: 'channel-layer / review remaining CLI channel list/doctor dependency, then packages/channel* removal',
-      reason: 'FEAT-081K 已移除 mcp-tools 对 @haro/channel/ChannelRegistry 的依赖；剩余 packages/channel* 删除仍被 CLI channel list/doctor 与 enabled adapter runtime 阻塞，下一步必须单项评审这些剩余入口。',
-      blockedUntil: ['确认是否继续保留 haro channel list/doctor', '移除或替换 CLI 对 @haro/channel 与 channel-feishu/telegram runtime 的依赖', '证明 MCP send_message 与 AgentDock 生产消息路径不受影响'],
+      reason: 'FEAT-081L 已完成 channel-layer 第一轮收口；没有下一项 channel 删除授权。后续减法必须重新排序并单项评审其它模块。',
       forbiddenScope: ['MCP send_message 工具本身', 'AgentDock 生产消息能力', '真实 Feishu/Telegram IM 投递链路'],
     },
     physicalRemoval: {
@@ -286,7 +290,7 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       status: 'physically-removed',
       removedBy: 'FEAT-081E',
       rollbackPlan: 'git revert FEAT-081E commit 可恢复 gateway 源码、legacy env 注册路径和旧 gateway 测试。',
-      note: '仅 gateway 旧 CLI daemon/control-plane 入口被删除；channel/provider/memory/skills/Web/scenario-router 未获物理删除批准。',
+      note: '仅 gateway 旧 CLI daemon/control-plane 入口被删除；provider/memory/skills/Web/scenario-router 未获物理删除批准。',
     },
     physicalRemovals: [
       {
@@ -294,28 +298,57 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
         status: 'physically-removed',
         removedBy: 'FEAT-081H',
         rollbackPlan: 'git revert FEAT-081H commit 可恢复 channel setup/onboarding removed stub 与对应测试。',
-        note: '仅删除 081G removed/fail-closed stub 与 onboarding alias；packages/channel、Feishu/Telegram channel、MCP send_message 未获物理删除批准。',
+        note: '仅删除 081G removed/fail-closed stub 与 onboarding alias；MCP send_message 未获物理删除批准。',
       },
       {
         candidate: 'packages/cli/src/index.ts#channel-config-management-commands',
         status: 'physically-removed',
         removedBy: 'FEAT-081J',
         rollbackPlan: 'git revert FEAT-081J commit 可恢复 channel enable/disable/remove config mutation commands、disabled adapter autoload 与相关测试。',
-        note: '仅删除 Haro-owned channel CLI config 管理路径；channel list/doctor、MCP send_message 和 enabled channel runtime 仍保留。',
+        note: '仅删除 Haro-owned channel CLI config 管理路径；MCP send_message 和 AgentDock 生产消息能力仍保留。',
       },
       {
         candidate: 'packages/channel*/src#setup-contract',
         status: 'physically-removed',
         removedBy: 'FEAT-081J',
         rollbackPlan: 'git revert FEAT-081J commit 可恢复 ChannelSetupResult、ManagedChannel.setup 和 Feishu/Telegram setup 方法。',
-        note: '仅删除旧 onboarding/setup contract；Feishu/Telegram start/send/doctor 与 @haro/channel registry 仍保留。',
+        note: '仅删除旧 onboarding/setup contract；MCP send_message 和 AgentDock 生产消息能力仍保留。',
+      },
+      {
+        candidate: 'packages/cli/src/index.ts#channel-list-doctor-runtime',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081L',
+        rollbackPlan: 'git revert FEAT-081L commit 可恢复 CLI channel list/doctor 与 diagnostics channel stage。',
+        note: '只删除 Haro-owned channel list/doctor 与 enabled adapter runtime；不删除 MCP send_message 工具。',
+      },
+      {
+        candidate: 'packages/channel',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081L',
+        rollbackPlan: 'git revert FEAT-081L commit 可恢复 @haro/channel package 与 package references。',
+        note: 'Haro-owned channel protocol/registry package 已删除；AgentDock messaging contract 继续承接生产消息。',
+      },
+      {
+        candidate: 'packages/channel-feishu',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081L',
+        rollbackPlan: 'git revert FEAT-081L commit 可恢复 @haro/channel-feishu package 与 tests。',
+        note: 'Haro-owned Feishu adapter package 已删除；真实 Feishu 投递由 AgentDock host/IM manager 承接。',
+      },
+      {
+        candidate: 'packages/channel-telegram',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081L',
+        rollbackPlan: 'git revert FEAT-081L commit 可恢复 @haro/channel-telegram package 与 tests。',
+        note: 'Haro-owned Telegram adapter package 已删除；真实 Telegram/IM 投递由 AgentDock host/IM manager 承接。',
       },
     ],
     evidence: [
-      { path: 'packages/channel/package.json', kind: 'exists', description: 'channel package 仍存在，不在 081E 删除范围' },
-      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'registerChannelCommands', description: 'CLI 仍注册 channel 入口' },
-      { path: 'packages/mcp-tools/src/tools/send-message.ts', kind: 'contains', pattern: 'AgentDock messaging gateway', description: 'MCP send_message 仍存在，但已改走 AgentDock messaging gateway' },
-      { path: 'packages/mcp-tools/src/agentdock-messaging.ts', kind: 'exists', description: 'AgentDock IPC messaging bridge 已由 FEAT-081K 添加' },
+      { path: 'packages/channel/package.json', kind: 'exists', description: 'channel package 已由 FEAT-081L 删除' },
+      { path: 'packages/channel-feishu/package.json', kind: 'exists', description: 'channel-feishu package 已由 FEAT-081L 删除' },
+      { path: 'packages/channel-telegram/package.json', kind: 'exists', description: 'channel-telegram package 已由 FEAT-081L 删除' },
+      { path: 'packages/cli/src/channel.ts', kind: 'exists', description: 'CLI channel package re-export 已由 FEAT-081L 删除' },
+      { path: 'packages/cli/package.json', kind: 'contains', pattern: '@haro/channel', description: 'CLI 不再依赖 @haro/channel* packages' },
     ],
     verifiedAbsent: [
       { path: 'packages/cli/src/gateway.ts', kind: 'exists', description: 'gateway 旧 CLI daemon 源文件已由 FEAT-081E 删除' },
@@ -335,6 +368,19 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       { path: 'packages/channel/src/protocol.ts', kind: 'contains', pattern: 'setup?(ctx', description: 'ManagedChannel.setup contract 已由 FEAT-081J 删除' },
       { path: 'packages/channel-feishu/src/feishu-channel.ts', kind: 'contains', pattern: 'async setup(ctx', description: 'Feishu setup/onboarding 方法已由 FEAT-081J 删除' },
       { path: 'packages/channel-telegram/src/telegram-channel.ts', kind: 'contains', pattern: 'async setup(ctx', description: 'Telegram setup/onboarding 方法已由 FEAT-081J 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'registerChannelCommands', description: 'CLI channel list/doctor 注册已由 FEAT-081L 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'channelRegistry', description: 'CLI channel registry runtime 已由 FEAT-081L 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'createDefaultAdditionalChannels', description: 'enabled adapter autoload runtime 已由 FEAT-081L 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: '@haro/channel-feishu', description: 'CLI 不再动态加载 Haro Feishu adapter' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: '@haro/channel-telegram', description: 'CLI 不再动态加载 Haro Telegram adapter' },
+      { path: 'packages/cli/src/diagnostics.ts', kind: 'contains', pattern: 'checkChannels', description: 'diagnostics channel stage 已由 FEAT-081L 删除' },
+      { path: 'packages/channel', kind: 'exists', description: 'packages/channel 已由 FEAT-081L 删除' },
+      { path: 'packages/channel-feishu', kind: 'exists', description: 'packages/channel-feishu 已由 FEAT-081L 删除' },
+      { path: 'packages/channel-telegram', kind: 'exists', description: 'packages/channel-telegram 已由 FEAT-081L 删除' },
+      { path: 'package.json', kind: 'contains', pattern: '@haro/channel', description: 'root test scripts 不再引用 channel packages' },
+      { path: 'packages/cli/package.json', kind: 'contains', pattern: '@haro/channel', description: 'CLI package dependency 已由 FEAT-081L 移除' },
+      { path: 'packages/cli/tsconfig.json', kind: 'contains', pattern: '@haro/channel', description: 'CLI tsconfig path/reference 已由 FEAT-081L 移除' },
+      { path: 'tsconfig.json', kind: 'contains', pattern: './packages/channel', description: 'root tsconfig references 已由 FEAT-081L 移除' },
       { path: 'packages/mcp-tools/package.json', kind: 'contains', pattern: '@haro/channel', description: 'mcp-tools package dependency 已由 FEAT-081K 移除' },
       { path: 'packages/mcp-tools/tsconfig.json', kind: 'contains', pattern: '@haro/channel', description: 'mcp-tools tsconfig path/reference 已由 FEAT-081K 移除' },
       { path: 'packages/mcp-tools/src/types.ts', kind: 'contains', pattern: 'ChannelRegistry', description: 'mcp-tools ToolDependencies 不再要求 Haro ChannelRegistry' },
@@ -516,9 +562,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
         forbiddenScope: nextDeletion.candidatePriority.forbiddenScope ?? [],
       }
     : null;
-  const reviewCandidate = nextDeletion ?? items
-    .filter((item) => item.candidatePriority.status === 'defer' && item.candidatePriority.nextScope)
-    .sort((a, b) => (a.candidatePriority.rank ?? Number.MAX_SAFE_INTEGER) - (b.candidatePriority.rank ?? Number.MAX_SAFE_INTEGER))[0];
+  const reviewCandidate = nextDeletion;
   const nextReviewCandidate = reviewCandidate?.candidatePriority.nextScope
     ? {
         id: reviewCandidate.id,
@@ -558,9 +602,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081K',
-      lastCompletedStage: 'FEAT-081K',
-      lastUpdatedBy: 'FEAT-081K',
+      stage: 'FEAT-081L',
+      lastCompletedStage: 'FEAT-081L',
+      lastUpdatedBy: 'FEAT-081L',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -577,9 +621,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       '本报告只读，不批准物理删除。',
       '081I 固化模块级退役边界：channel/provider/memory/skills/Web 非主线面由 AgentDock 或共享能力承接；run/router/runtime/scenario 本轮 deferred。',
       '081J 已删除 Haro-owned channel CLI config 管理命令、disabled adapter autoload 和 adapter setup contract。',
-      '081K 已让 mcp-tools send_message 改用 AgentDock IPC 消息 contract，并移除 mcp-tools 对 @haro/channel 的依赖。',
-      '下一项评审候选仍是 channel-layer；必须先评审剩余 CLI channel list/doctor 与 packages/channel* 依赖，且排除 MCP send_message 工具本身和 AgentDock 生产消息能力。',
-      '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
+      'FEAT-081K 已让 mcp-tools send_message 改用 AgentDock IPC 消息 contract，并移除 mcp-tools 对 @haro/channel 的依赖。',
+      'FEAT-081L 已删除 packages/channel、packages/channel-feishu、packages/channel-telegram、CLI channel list/doctor 和 diagnostics channel stage。',
+      'channel-layer 当前没有下一项删除授权；如继续减法，需重新排序并单项评审其它模块。',
     ],
   };
 }
