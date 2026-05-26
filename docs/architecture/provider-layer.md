@@ -131,15 +131,15 @@ ChatGPT 登录由外部 codex CLI 完成。devbox、SSH 远端和 headless 环�
 
 ### Provider CLI 边界（FEAT-026 / FEAT-081N / FEAT-081O）
 
-FEAT-026 曾提供 Haro-owned provider onboarding。FEAT-081N 后，根据产品定位，Haro 新产品不再初始化 provider config；`haro provider setup ...` 已退役并 fail-closed。FEAT-081O 已删除旧 setup-only Codex wizard 文件并清理 diagnostics/provider remediation。保留范围：
+FEAT-026 曾提供 Haro-owned provider onboarding。FEAT-081N 后，根据产品定位，Haro 新产品不再初始化 provider config；`haro provider setup ...` 已退役并 fail-closed。FEAT-081O 已删除旧 setup-only Codex wizard 文件并清理 diagnostics/provider remediation；FEAT-081P 已删除旧 `--write-env-file` writer helper。保留范围：
 
 - 保留 `haro provider doctor/models/select/env`，把 provider 健康检查、模型发现、默认模型切换和 env 模板集中到一个命令族。
 - 保留 provider runtime、`createCodexProvider`、`readLocalCodexAuth`、run/chat/LLM provider path。
 - 配置文件只保存 `baseUrl`、`defaultModel`、`enabled`、`secretRef` 等非敏感字段。
-- Secret 默认来自环境变量或外部 codex CLI auth；Haro provider setup 不再写 env file。
+- Secret 默认来自环境变量或外部 codex CLI auth；Haro provider setup 不再写 env file，旧 env-file writer helper 已由 FEAT-081P 删除。
 - CLI 前台运行与 systemd/web 服务运行时必须能解释各自读取到的 provider 配置来源。
 
-后续不得把 081N/081O 解读为 provider runtime/package 删除批准；若继续减法，必须另做 provider runtime 影响面评审。
+后续不得把 081N/081O/081P 解读为 provider runtime/package 删除批准；若继续减法，必须另做 provider runtime 影响面评审。
 
 ## Provider/Model 智能选择
 

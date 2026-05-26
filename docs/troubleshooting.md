@@ -47,7 +47,7 @@ haro provider env codex
 **症状 B**：`PROVIDER_ENV_FILE_UNREADABLE`
 
 - 检查 `~/.config/haro/providers.env` 或 XDG 等价路径是否归当前用户所有
-- 推荐权限为 `0600`；可通过 `外部环境管理/部署脚本` 重新写入受保护 env file
+- 推荐权限为 `0600`；FEAT-081P 后 Haro 不再提供旧 setup env-file writer，可通过 `外部环境管理/部署脚本` 重新写入受保护 env file
 
 **症状 C**：`PROVIDER_HEALTHCHECK_FAILED` / `PROVIDER_MODEL_LIST_FAILED`
 

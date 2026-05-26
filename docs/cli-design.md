@@ -221,7 +221,7 @@ haro provider env codex
 
 **设计边界**：
 - YAML 只保存 `enabled`、`baseUrl`、`defaultModel`、`secretRef` 等非敏感配置，不保存真实 API key
-- 默认通过环境变量或外部 codex CLI auth 读取 secret；Haro provider setup 不再写受保护 env file
+- 默认通过环境变量或外部 codex CLI auth 读取 secret；Haro provider setup 不再写受保护 env file，旧 `--write-env-file` writer helper 已由 FEAT-081P 删除
 - `haro provider doctor` 输出 `PROVIDER_SECRET_MISSING`、`PROVIDER_HEALTHCHECK_FAILED`、`PROVIDER_MODEL_LIST_FAILED` 等 issue code；remediation 指向 `OPENAI_API_KEY`、外部 `codex login --device-auth` 与 `haro provider doctor`
 - provider 配置元数据来自 provider catalog/schema，避免命令层散落 `providerId === 'codex'` 分支
 

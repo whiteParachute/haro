@@ -65,13 +65,13 @@
 | 字段 | 内容 |
 | --- | --- |
 | current_state | deprecate |
-| still_imported_by | `packages/cli/src/index.ts` 默认 provider 注册；provider doctor/list/models/select/env；`@haro/provider-codex` package tests；081N 后 setup/onboarding CLI 已 retired/fail-closed；081O 已删除 setup-only wizard dead file |
+| still_imported_by | `packages/cli/src/index.ts` 默认 provider 注册；provider doctor/list/models/select/env；`@haro/provider-codex` package tests；081N 后 setup/onboarding CLI 已 retired/fail-closed；081O 已删除 setup-only wizard dead file；081P 已删除旧 setup env-file writer helper |
 | replacement | AgentDock 统一 provider / ModelHub；Haro 只通过 sidecar contract 读取运行结果 |
 | blocking_dependencies | provider runtime 仍被 CLI bootstrap/run/chat/LLM path 引用；provider doctor/list/models/select/env 与 diagnostics provider stage 仍需保留；删除 runtime 前需单项评审 |
 | risk_if_removed | `haro run/chat`、provider doctor/list/models/select/env、LLM draft/rewrite provider path 与 legacy tests 失效 |
 | rollback_plan | git revert 删除 PR；恢复 package 与 workspace dependency |
 | required_verification | `pnpm test:sidecar`；`pnpm -F @haro/provider-codex test`；`pnpm -F @haro/cli test:legacy` |
-| decision | FEAT-081N 只退役 `haro provider setup ...`；FEAT-081O 只删除 setup-only wizard dead file 并清理 remediation；保持 deprecate，不删除 provider-codex package/runtime |
+| decision | FEAT-081N 只退役 `haro provider setup ...`；FEAT-081O 只删除 setup-only wizard dead file并清理 remediation；FEAT-081P 只删除旧 env-file writer helper；保持 deprecate，不删除 provider-codex package/runtime |
 
 ### 3.2 packages/channel / channel-feishu / channel-telegram
 
@@ -1297,3 +1297,29 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - 仅记录 scoped physical removal：`packages/cli/src/provider-codex-wizard.ts` removed by FEAT-081O；不得把整个 `packages/provider-codex` 标成 done。
 
 后续风险：provider runtime、diagnostics provider stage 与 run/chat/LLM path 仍有业务引用；若继续 provider 减法，必须单独证明 runtime 无引用且有 AgentDock/ModelHub 替代证据。
+
+## 24. FEAT-081P provider setup env-file writer 清理（2026-05-26）
+
+081P 的只读盘点结论：
+
+- `writeProviderEnvFile` / `ProviderEnvFileWriteResult` 已无 CLI/runtime 业务入口；081N 后 `haro provider setup --write-env-file` 已 retired/fail-closed，不再调用该 writer。
+- `ProviderEnvFileSummary`、`readProviderEnvFileSummary`、`resolveProviderEnvFile`、`ProviderSecretSummary.envFile` 仍服务 `runProviderDoctor`、`haro provider env` 与 diagnostics provider stage 的只读 summary，必须保留。
+- `writeProviderConfig` / `parseProviderScope` 仍服务 `haro provider select`，必须保留。
+
+本阶段完成的最小安全代码清理：
+
+- 删除 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile`。
+- 删除 `ProviderEnvFileWriteResult`。
+- 删除随 writer 变 dead 的 `renameSync` / `chmodSync` import 和 env-file merge/quote helper。
+- 保留 `haro provider setup ...` retired/fail-closed stub、`provider env` 只读 summary、`provider select` 与 provider runtime。
+
+081P guard 口径：
+
+- `planning.stage=FEAT-081P`。
+- `planning.lastCompletedStage=FEAT-081P`。
+- `planning.lastUpdatedBy=FEAT-081P`。
+- scoped removal 只记录 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile`。
+- `provider-codex` 仍是 `blocked`，`deleteAllowed=false`，`stillReferenced=true`。
+- `deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
+
+后续风险：provider runtime、diagnostics provider stage、run/chat/LLM path、provider doctor/list/models/select/env 仍有业务引用；不得把 081P 解读为 provider runtime/package 删除批准。

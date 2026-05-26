@@ -1,10 +1,10 @@
-# AgentDock takeover evidence 盘点（FEAT-081M / FEAT-081N / FEAT-081O）
+# AgentDock takeover evidence 盘点（FEAT-081M / FEAT-081N / FEAT-081O / FEAT-081P）
 
 > 日期：2026-05-26
 >
-> 范围：081M 只做文档、guard 状态说明与替代证据盘点；081N 只退役 Haro CLI `provider setup/onboarding` 入口；081O 只删除 setup-only Codex wizard dead file 并清理旧 provider setup remediation。本文不是 provider runtime/package 删除批准，不触发真实数据迁移，不修改 memory/skills/runtime/Web/MCP 业务代码，不触碰真实 `~/.haro`、`~/.haro/evolution` 或 aria-memory-vault。
+> 范围：081M 只做文档、guard 状态说明与替代证据盘点；081N 只退役 Haro CLI `provider setup/onboarding` 入口；081O 只删除 setup-only Codex wizard dead file 并清理旧 provider setup remediation；081P 只删除旧 setup env-file writer helper。本文不是 provider runtime/package 删除批准，不触发真实数据迁移，不修改 memory/skills/runtime/Web/MCP 业务代码，不触碰真实 `~/.haro`、`~/.haro/evolution` 或 aria-memory-vault。
 >
-> 当前结论：channel-layer 已在 FEAT-081K/081L 后完成 Haro-owned package 退役；FEAT-081N 已按用户产品决策退役 `haro provider setup ...` 初始化入口；FEAT-081O 已删除 `packages/cli/src/provider-codex-wizard.ts` setup-only dead file；provider-codex package/runtime、provider doctor/list/models/select/env、diagnostics provider stage 与 run/chat/LLM provider path 继续保留且 fail-closed。
+> 当前结论：channel-layer 已在 FEAT-081K/081L 后完成 Haro-owned package 退役；FEAT-081N 已按用户产品决策退役 `haro provider setup ...` 初始化入口；FEAT-081O 已删除 `packages/cli/src/provider-codex-wizard.ts` setup-only dead file；FEAT-081P 已删除 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile` 写入 helper；provider-codex package/runtime、provider doctor/list/models/select/env、diagnostics provider stage 与 run/chat/LLM provider path 继续保留且 fail-closed。
 
 ## 0. 081M guard 口径
 
@@ -18,7 +18,7 @@
 
 | 候选 | AgentDock / 共享能力替代证据 | Haro 当前 blocker | 081M 判断 | 推荐下一步 |
 | --- | --- | --- | --- | --- |
-| `provider-codex` | AgentDock/ModelHub 已承担 runner/model 能力方向；用户产品决策接受外部 codex CLI/auth 作为前置 | `haro provider setup ...` 已由 FEAT-081N retired/fail-closed；FEAT-081O 删除 setup-only wizard dead file；provider-codex runtime、doctor/list/models/select/env、CLI bootstrap 仍在 Haro | setup/onboarding + wizard cleanup done；runtime blocked | 不再恢复 Haro provider setup/wizard；provider runtime 删除必须另行证明无业务引用 |
+| `provider-codex` | AgentDock/ModelHub 已承担 runner/model 能力方向；用户产品决策接受外部 codex CLI/auth 作为前置 | `haro provider setup ...` 已由 FEAT-081N retired/fail-closed；FEAT-081O 删除 setup-only wizard dead file；FEAT-081P 删除 setup env-file writer helper；provider-codex runtime、doctor/list/models/select/env、CLI bootstrap 仍在 Haro | setup/onboarding + wizard/env-writer cleanup done；runtime blocked | 不再恢复 Haro provider setup/wizard/env-file writer；provider runtime 删除必须另行证明无业务引用 |
 | `memory-fabric` | AgentDock memory 与共享 aria-memory-vault 是目标 owner | 真实 `~/.haro` 数据、aria-memory-vault、MCP `memory_query` / `memory_remember` 默认注册仍有风险 | blocked | 先做只读数据/owner 边界证明与 MCP memory tool 隔离方案 |
 | `skills-marketplace` | AgentDock skills 是目标 owner | `haro skills install/enable/disable`、`SkillsManager`、eat/shit 兼容资产仍存在 | deferred | 先拆 marketplace 扩展面与保留兼容资产边界 |
 | `web-dashboard-non-review` | AgentDock 是平台 Web/API host；Haro Web 主线已收敛为 review board | Review Board、approval conversation、auth/bootstrap 不能误删 | blocked / freeze | 固化 Review Board endpoint allowlist，再逐路由评审非 review surface |
@@ -32,6 +32,7 @@
 - 081M 只确认方向，不确认 Haro provider package 可删。
 - 081N 用户产品决策确认：新产品不需要等价 Haro `provider setup codex`，可以把外部 `codex login` / AgentDock Codex runner 作为前置。
 - 081O 只读盘点确认 `provider-codex-wizard.ts` 已无 runtime/CLI 业务入口，仅剩自身、测试与历史文档/guard 引用，因此删除 setup-only wizard 文件和旧 wizard 测试。
+- 081P 只读盘点确认 `writeProviderEnvFile` / `ProviderEnvFileWriteResult` 仅剩定义与 guard/docs 说明引用；`ProviderEnvFileSummary`、`readProviderEnvFileSummary`、`resolveProviderEnvFile` 仍服务 provider env/doctor 只读 summary，因此只删除 writer，不删除 summary。
 
 ### 仍在 Haro 的证据
 
@@ -39,7 +40,7 @@
 - `packages/cli/package.json` 仍依赖 `@haro/provider-codex`。
 - `packages/cli/src/index.ts` 仍引用 `createCodexProvider` 进行默认 provider bootstrap。
 - `packages/cli/src/index.ts` 的 `haro provider setup ...` 已改为 `PROVIDER_SETUP_RETIRED` fail-closed，不再调用 setup wizard/config/env/doctor 写入流程。
-- `packages/cli/src/provider-onboarding.ts` 仍承载 doctor/list/models/select/env 共享 helper；旧 `provider-codex-wizard.ts` 已由 FEAT-081O 删除。
+- `packages/cli/src/provider-onboarding.ts` 仍承载 doctor/list/models/select/env 共享 helper；旧 `provider-codex-wizard.ts` 已由 FEAT-081O 删除，旧 `writeProviderEnvFile` writer 已由 FEAT-081P 删除。
 - `packages/cli/src/diagnostics.ts` provider stage 保留；081O 只把 remediation 从 `haro provider setup codex` 改为 `OPENAI_API_KEY`、外部 `codex login --device-auth` 和 `haro provider doctor codex` 口径。
 - `packages/provider-codex/test/*` 仍覆盖 auth、capability、models、health 等 provider 行为。
 
@@ -54,7 +55,7 @@
 
 081N 已完成窄面摘线：`haro provider setup ...` 退役并 fail-closed。该结论不代表 `packages/provider-codex`、`createCodexProvider`、`readLocalCodexAuth`、provider doctor/list/models/select/env、diagnostics provider stage 或 run/chat/LLM provider path 可删。若继续 provider 减法，下一步只能做 setup-only dead file / docs / diagnostics remediation 的只读评审，不能直接删除 provider runtime。
 
-081O 已完成上述下一步中的最小安全项：删除 `packages/cli/src/provider-codex-wizard.ts` 与只服务该 wizard 的测试，并清理 provider diagnostics/remediation 旧 setup 文案。该结论仍不代表 provider-codex runtime/package 删除批准。
+081O 已完成上述下一步中的最小安全项：删除 `packages/cli/src/provider-codex-wizard.ts` 与只服务该 wizard 的测试，并清理 provider diagnostics/remediation 旧 setup 文案。081P 继续删除无业务入口的 `writeProviderEnvFile` / `ProviderEnvFileWriteResult` 旧 setup env-file writer 残留，同时保留 env file 只读 summary。该结论仍不代表 provider-codex runtime/package 删除批准。
 
 ## 3. `memory-fabric`
 

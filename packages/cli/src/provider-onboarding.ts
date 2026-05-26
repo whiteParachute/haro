@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { access, constants } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -103,11 +103,6 @@ export interface ProviderConfigWriteResult {
   config: haroConfig.HaroConfig;
 }
 
-export interface ProviderEnvFileWriteResult {
-  path: string;
-  envVars: readonly string[];
-  mode: string;
-}
 
 type ProviderWithModels = AgentProvider & {
   listModels?: () => Promise<readonly { id: string; maxContextTokens?: number }[]>;
@@ -381,28 +376,6 @@ export function writeProviderConfig(input: {
   return { path: targetPath, config: parsed };
 }
 
-export function writeProviderEnvFile(input: {
-  entry: ProviderCatalogEntry;
-  env?: NodeJS.ProcessEnv;
-  envFile?: string;
-}): ProviderEnvFileWriteResult {
-  const env = input.env ?? process.env;
-  const envFile = input.envFile ?? resolveProviderEnvFile(env);
-  const missing = input.entry.auth.envVars.filter((name) => !env[name]?.trim());
-  if (missing.length > 0) {
-    throw new Error(`Cannot write provider env file: missing ${missing.join(', ')} in the current process.`);
-  }
-  mkdirSync(dirname(envFile), { recursive: true });
-  const existing = existsSync(envFile) ? readFileSync(envFile, 'utf8') : '';
-  const next = mergeEnvFile(existing, input.entry.auth.envVars, env);
-  const tmp = `${envFile}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tmp, next, { encoding: 'utf8', mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, envFile);
-  chmodSync(envFile, 0o600);
-  return { path: envFile, envVars: input.entry.auth.envVars, mode: '0600' };
-}
-
 export function formatProviderDoctorHuman(result: ProviderDoctorResult): string {
   const lines = [
     `Provider doctor: ${result.provider} (${result.displayName})`,
@@ -577,29 +550,6 @@ function envFileContainsVar(text: string, name: string): boolean {
   return text
     .split(/\r?\n/)
     .some((line) => new RegExp(`^\\s*(?:export\\s+)?${escapeRegExp(name)}\\s*=`).test(line));
-}
-
-function mergeEnvFile(text: string, names: readonly string[], env: NodeJS.ProcessEnv): string {
-  const pending = new Set(names);
-  const lines = text.length > 0 ? text.replace(/\r\n/g, '\n').split('\n') : [];
-  const next = lines.map((line) => {
-    for (const name of names) {
-      if (new RegExp(`^\\s*(?:export\\s+)?${escapeRegExp(name)}\\s*=`).test(line)) {
-        pending.delete(name);
-        return `${name}=${quoteEnvValue(env[name] ?? '')}`;
-      }
-    }
-    return line;
-  });
-  for (const name of pending) {
-    next.push(`${name}=${quoteEnvValue(env[name] ?? '')}`);
-  }
-  const normalized = next.join('\n').replace(/\n*$/, '\n');
-  return normalized;
-}
-
-function quoteEnvValue(value: string): string {
-  return JSON.stringify(value);
 }
 
 function escapeRegExp(value: string): string {

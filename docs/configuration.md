@@ -176,7 +176,7 @@ providers:
 原则：
 
 - `config.yaml` 只写入 `defaultModel`、`baseUrl`、`enabled`、`secretRef` 等非敏感字段。
-- FEAT-081N 后 `haro provider setup --write-env-file` 已退役，FEAT-081O 已删除旧 setup wizard；如需 env file，请由外部部署/AgentDock 环境管理写入，并用 `haro provider env codex` 只读检查。
+- FEAT-081N 后 `haro provider setup --write-env-file` 已退役，FEAT-081O 已删除旧 setup wizard，FEAT-081P 已删除旧 env-file writer helper；如需 env file，请由外部部署/AgentDock 环境管理写入，并用 `haro provider env codex` 只读检查。
 - `haro provider env codex` 只展示模板、来源摘要和 masked 状态，不回显真实 key。
 - `haro doctor` 与 Web Dashboard 只展示脱敏后的 provider 配置状态和 remediation。
 - systemd 用户服务与 CLI 前台运行必须能解释各自读取到的 env 来源，避免“命令行可用但服务不可用”。
