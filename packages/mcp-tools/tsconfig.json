@@ -5,21 +5,43 @@
     "outDir": "./dist",
     "composite": true,
     "paths": {
-      "@haro/agentdock-contract": ["../agentdock-contract/dist/index.d.ts"],
-      "@haro/channel": ["../channel/dist/index.d.ts"],
-      "@haro/core": ["../core/dist/index.d.ts"],
-      "@haro/core/services": ["../core/dist/services/index.d.ts"],
-      "@haro/core/memory": ["../core/dist/memory/index.d.ts"],
-      "@haro/core/cron": ["../core/dist/cron/index.d.ts"],
-      "@haro/core/evolution": ["../core/dist/evolution/index.d.ts"],
-      "@haro/core/paths": ["../core/dist/paths.d.ts"]
+      "@haro/agentdock-contract": [
+        "../agentdock-contract/dist/index.d.ts"
+      ],
+      "@haro/core": [
+        "../core/dist/index.d.ts"
+      ],
+      "@haro/core/services": [
+        "../core/dist/services/index.d.ts"
+      ],
+      "@haro/core/memory": [
+        "../core/dist/memory/index.d.ts"
+      ],
+      "@haro/core/cron": [
+        "../core/dist/cron/index.d.ts"
+      ],
+      "@haro/core/evolution": [
+        "../core/dist/evolution/index.d.ts"
+      ],
+      "@haro/core/paths": [
+        "../core/dist/paths.d.ts"
+      ]
     }
   },
   "references": [
-    { "path": "../agentdock-contract" },
-    { "path": "../channel" },
-    { "path": "../core" }
+    {
+      "path": "../agentdock-contract"
+    },
+    {
+      "path": "../core"
+    }
   ],
-  "include": ["src/**/*.ts"],
-  "exclude": ["test/**/*", "dist", "node_modules"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "test/**/*",
+    "dist",
+    "node_modules"
+  ]
 }

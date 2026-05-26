@@ -1,78 +1,46 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ChannelRegistry } from '@haro/channel';
-import type {
-  ChannelCapabilities,
-  ChannelContext,
-  ChannelDoctorResult,
-  ChannelLogger,
-  ManagedChannel,
-  OutboundMessage,
-} from '@haro/channel';
 import { initHaroDatabase } from '@haro/core/db';
 import { createMemoryFabric, type MemoryFabric } from '@haro/core/memory';
 import { createEvolutionAssetRegistry } from '@haro/core/evolution';
 
 import { ToolInvocationAuditWriter } from '../src/audit.js';
 import { createDefaultRegistry } from '../src/index.js';
-import type { SessionContext, ToolDependencies } from '../src/types.js';
+import type {
+  AgentDockMessageGateway,
+  AgentDockSendMessageInput,
+  AgentDockSendMessageResult,
+  SessionContext,
+  ToolDependencies,
+} from '../src/types.js';
 
 export interface TestEnv {
   root: string;
   dbFile: string;
   memoryDir: string;
   cleanup(): void;
-  channels: ChannelRegistry;
+  messaging: FakeAgentDockMessageGateway;
   audit: ToolInvocationAuditWriter;
   memory: MemoryFabric;
   evolution: ReturnType<typeof createEvolutionAssetRegistry>;
-  fakeChannel: FakeChannel;
   buildDeps(): ToolDependencies;
   buildSession(overrides?: Partial<SessionContext>): SessionContext;
   buildRegistry(): ReturnType<typeof createDefaultRegistry>;
 }
 
-const noopLogger: ChannelLogger = {
-  debug: () => undefined,
-  info: () => undefined,
-  warn: () => undefined,
-  error: () => undefined,
-};
-
-export class FakeChannel implements ManagedChannel {
-  readonly id: string;
-  readonly outbound: Array<{ sessionId: string; msg: OutboundMessage }> = [];
+export class FakeAgentDockMessageGateway implements AgentDockMessageGateway {
+  readonly outbound: AgentDockSendMessageInput[] = [];
   shouldFail = false;
 
-  constructor(id: string) {
-    this.id = id;
-  }
-
-  async start(_ctx: ChannelContext): Promise<void> {
-    /* no-op */
-  }
-  async stop(): Promise<void> {
-    /* no-op */
-  }
-  async send(sessionId: string, msg: OutboundMessage): Promise<void> {
-    if (this.shouldFail) throw new Error(`fake-channel ${this.id} configured to fail`);
-    this.outbound.push({ sessionId, msg });
-  }
-  capabilities(): ChannelCapabilities {
+  async sendMessage(input: AgentDockSendMessageInput): Promise<AgentDockSendMessageResult> {
+    if (this.shouldFail) throw new Error('fake AgentDock messaging gateway configured to fail');
+    this.outbound.push(input);
     return {
-      streaming: true,
-      richText: true,
-      attachments: false,
-      threading: false,
-      requiresWebhook: false,
+      status: 'queued',
+      targetChannel: input.channel,
+      messageId: `fake-agentdock-message-${this.outbound.length}`,
     };
-  }
-  async healthCheck(): Promise<boolean> {
-    return true;
-  }
-  async doctor(): Promise<ChannelDoctorResult> {
-    return { ok: true, message: 'fake' };
   }
 }
 
@@ -82,20 +50,13 @@ export function setupEnv(): TestEnv {
   const memoryDir = join(root, 'memory');
   initHaroDatabase({ dbFile });
   const audit = new ToolInvocationAuditWriter({ dbFile });
-  const channels = new ChannelRegistry();
-  const fakeChannel = new FakeChannel('fake-im');
-  channels.register({
-    channel: fakeChannel,
-    enabled: true,
-    source: 'package',
-    displayName: 'Fake IM',
-  });
+  const messaging = new FakeAgentDockMessageGateway();
   const memory = createMemoryFabric({ root: memoryDir, dbFile });
   const evolution = createEvolutionAssetRegistry({ dbFile });
 
   function buildDeps(): ToolDependencies {
     return {
-      channels,
+      messaging,
       memory,
       evolution,
       serviceContext: { root, dbFile },
@@ -106,7 +67,7 @@ export function setupEnv(): TestEnv {
     return {
       sessionId: 'test-session-1',
       agentId: 'default',
-      channelId: 'fake-im',
+      channelId: 'feishu:oc_fake',
       ...overrides,
     };
   }
@@ -126,15 +87,12 @@ export function setupEnv(): TestEnv {
     dbFile,
     memoryDir,
     cleanup,
-    channels,
+    messaging,
     audit,
     memory,
     evolution,
-    fakeChannel,
     buildDeps,
     buildSession,
     buildRegistry,
   };
 }
-
-export { noopLogger };

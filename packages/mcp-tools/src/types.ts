@@ -8,7 +8,6 @@
  */
 
 import type { z, ZodTypeAny } from 'zod';
-import type { ChannelRegistry } from '@haro/channel';
 import type { EvolutionAssetRegistry, MemoryFabric } from '@haro/core';
 import type { ServiceContext } from '@haro/core/services';
 
@@ -23,8 +22,30 @@ export interface SessionContext {
 }
 
 /** Live integrations the tools depend on. Constructed once per server lifetime. */
+export interface AgentDockSendMessageInput {
+  channel?: string;
+  text: string;
+  urgent?: boolean;
+  replyToMessageId?: string;
+}
+
+export interface AgentDockSendMessageResult {
+  status: 'queued' | 'sent';
+  targetChannel?: string;
+  messageId?: string;
+  ipcFile?: string;
+}
+
+export interface AgentDockMessageGateway {
+  sendMessage(input: AgentDockSendMessageInput): Promise<AgentDockSendMessageResult>;
+}
+
 export interface ToolDependencies {
-  channels: ChannelRegistry;
+  /**
+   * AgentDock-facing message bridge. Haro MCP send_message must use this
+   * external contract instead of Haro-owned channel registry/adapters.
+   */
+  messaging?: AgentDockMessageGateway;
   /**
    * Historical Haro MemoryFabric dependency.
    *

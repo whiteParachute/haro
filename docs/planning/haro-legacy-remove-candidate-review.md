@@ -1116,3 +1116,61 @@ pnpm -F @haro/mcp-tools test -- test/tools/send-message.test.ts
 pnpm test:legacy
 pnpm test:sidecar
 ```
+
+## 19. FEAT-081K mcp-tools 脱离 Haro channel registry（2026-05-26）
+
+结论：本阶段完成 `packages/mcp-tools` 对 Haro channel registry/types 的前置解绑，但不删除 MCP `send_message` 工具，也不删除 `packages/channel*`。
+
+### 19.1 选择的外部消息契约
+
+只读复核 AgentDock 后，本阶段采用 AgentDock 已存在的 IPC 消息契约：
+
+- `agent-dock/bin/agentdock-tool send-message` 会向 `${HAPPYCLAW_WORKSPACE_IPC}/messages` 写入 `{ type: "message", chatJid, text, targetChannel, urgent, replyToMsgId, groupFolder, timestamp }`。
+- `container/agent-runner-core/src/plugins/messaging.ts` 的 `send_message` 工具使用同一类 workspace IPC `messages` 文件。
+- AgentDock host 的 `src/im-manager.ts` / `src/index.ts` 继续负责真实 IM 投递；Haro 本阶段不修改 AgentDock。
+
+因此 Haro MCP `send_message` 只负责调用 AgentDock-facing messaging gateway；真实 Feishu/Telegram/Web 发送仍由 AgentDock 生产链路完成。
+
+### 19.2 已替换/删除的依赖
+
+- `packages/mcp-tools/package.json` 移除 `@haro/channel` dependency。
+- `packages/mcp-tools/tsconfig.json` 移除 `@haro/channel` path/reference。
+- `ToolDependencies.channels: ChannelRegistry` 改为可选 `ToolDependencies.messaging: AgentDockMessageGateway`。
+- `send_message` 不再 `ctx.deps.channels.getEntry(...).channel.send(...)`，改为 `ctx.deps.messaging.sendMessage(...)`。
+- `mcp-tools` tests/helper 不再构造 `ChannelRegistry` / `ManagedChannel` / `OutboundMessage` fake，改为 fake AgentDock messaging gateway。
+- `server-entry` 不再创建空 `ChannelRegistry`；缺少 AgentDock IPC env 时 fail-closed。
+- `haro mcp` embedded wiring 不再传 `app.channelRegistry` 给 mcp-tools；只在 AgentDock IPC env 存在时传 messaging gateway。
+
+### 19.3 兼容字段与新行为
+
+`send_message` 保留旧 MCP 入参别名：
+
+- `channelId` 仍可用，映射为 AgentDock `channel`。
+- `content` 仍可用，映射为 AgentDock `text`。
+- `sessionId` 只作为兼容输出 `channelSessionId`，不再用于 Haro channel registry 路由。
+
+同时支持 AgentDock 风格：
+
+- `channel`：例如 `feishu:oc_xxx`、`telegram:...`、`web:...`。
+- `text`：发送文本。
+- `urgent`、`reply_to_message_id` / `replyToMessageId`。
+
+安全行为：
+
+- cross-channel permission gate 仍保留。
+- `attachments` 仍 fail-closed，不静默丢弃。
+- 未配置 AgentDock messaging gateway 时返回 `TARGET_NOT_FOUND`，不回退 Haro channel registry。
+- AgentDock gateway 写入失败时返回 `INTERNAL_ERROR`。
+
+### 19.4 保留范围
+
+- 保留 MCP `send_message` 工具本身。
+- 保留 AgentDock 生产消息能力与真实 Feishu/Telegram 投递链路。
+- 保留 `packages/channel*`，因为 CLI `haro channel list/doctor` 和 enabled adapter runtime 仍有引用；后续删除必须单项评审。
+- 第 4 项 run/router/runtime/scenario-router 仍为 deferred，不因 081K 获得删除资格。
+
+### 19.5 下一步候选
+
+下一步仍是 channel-layer，但范围变为：先评审是否继续保留 `haro channel list/doctor` 与 enabled adapter runtime；只有这些剩余引用被替换或删除后，才能单项评审 `packages/channel*` 物理删除。
+
+081K 不是删除批准。guard 仍必须保持：`deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`。

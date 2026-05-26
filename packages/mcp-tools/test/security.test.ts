@@ -11,16 +11,16 @@ afterEach(() => {
  * FEAT-032 spec §7 Test Plan: ≥ 5 negative security cases.
  */
 describe('mcp-tools security [FEAT-032 §7]', () => {
-  it('cross-channel send is blocked at the permission layer (no channel.send call)', async () => {
+  it('cross-channel send is blocked at the permission layer (no AgentDock message write)', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
     await registry.invoke({
       name: 'send_message',
-      rawParams: { channelId: 'fake-im', sessionId: 'x', content: 'hi' },
+      rawParams: { channelId: 'feishu:oc_fake', sessionId: 'x', content: 'hi' },
       session: e.buildSession({ channelId: 'web' }),
       deps: e.buildDeps(),
     });
-    expect(e.fakeChannel.outbound).toHaveLength(0);
+    expect(e.messaging.outbound).toHaveLength(0);
   });
 
   it('cross-scope memory write (shared) is blocked at the permission layer', async () => {
@@ -54,14 +54,14 @@ describe('mcp-tools security [FEAT-032 §7]', () => {
     expect(out.result.error.code).toBe('INVALID_PARAMS');
   });
 
-  it('non-existent target channel is rejected as TARGET_NOT_FOUND', async () => {
+  it('missing AgentDock messaging gateway is rejected as TARGET_NOT_FOUND', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
     const out = await registry.invoke({
       name: 'send_message',
-      rawParams: { channelId: 'phantom', sessionId: 'x', content: 'hi' },
-      session: e.buildSession({ channelId: 'phantom' }),
-      deps: e.buildDeps(),
+      rawParams: { channelId: 'feishu:oc_fake', sessionId: 'x', content: 'hi' },
+      session: e.buildSession({ channelId: 'feishu:oc_fake' }),
+      deps: (({ messaging: _messaging, ...rest }) => rest)(e.buildDeps()),
     });
     if (out.result.ok) throw new Error('unreachable');
     expect(out.result.error.code).toBe('TARGET_NOT_FOUND');

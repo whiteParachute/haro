@@ -16,7 +16,7 @@ async function runServerWith(env: TestEnv, requests: JsonRpcMessage[]): Promise<
   const server = new McpServer({
     transport,
     registry,
-    session: env.buildSession({ channelId: 'fake-im' }),
+    session: env.buildSession({ channelId: 'feishu:oc_fake' }),
     deps: env.buildDeps(),
   });
   // Run server, drain responses, then close.
@@ -68,7 +68,7 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
         params: {
           name: 'send_message',
           arguments: {
-            channelId: 'fake-im',
+            channelId: 'feishu:oc_fake',
             sessionId: 'sess-A',
             content: 'hello via mcp',
           },
@@ -93,10 +93,11 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
     ]);
     expect(r.result.isError).toBe(false);
     expect(r.result.decision).toBe('allowed');
-    expect(r.result.structuredContent.channelId).toBe('fake-im');
+    expect(r.result.structuredContent.channelId).toBe('feishu:oc_fake');
     expect(r.result.structuredContent.channelSessionId).toBe('sess-A');
     expect(r.result._meta.haro.decision).toBe('allowed');
-    expect(e.fakeChannel.outbound[0]!.sessionId).toBe('sess-A');
+    expect(e.messaging.outbound[0]!.channel).toBe('feishu:oc_fake');
+    expect(e.messaging.outbound[0]!.text).toBe('hello via mcp');
   });
 
   it('returns isError=true with structured error for cross-channel send', async () => {
@@ -108,7 +109,7 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
       method: 'tools/call',
       params: {
         name: 'send_message',
-        arguments: { channelId: 'fake-im', sessionId: 'x', content: 'hi' },
+        arguments: { channelId: 'feishu:oc_fake', sessionId: 'x', content: 'hi' },
       },
     });
     const registry = e.buildRegistry();

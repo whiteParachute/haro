@@ -43,8 +43,12 @@ export const evaluatePermission: PermissionEvaluator = (input) => {
 };
 
 function evaluateSendMessage(input: PermissionDecisionInput): PermissionDecisionOutput {
-  const params = (input.params ?? {}) as { channelId?: string };
-  const target = typeof params.channelId === 'string' ? params.channelId : undefined;
+  const params = (input.params ?? {}) as { channelId?: string; channel?: string };
+  const target = typeof params.channel === 'string' && params.channel.trim()
+    ? params.channel
+    : typeof params.channelId === 'string' && params.channelId.trim()
+      ? params.channelId
+      : undefined;
   if (!target) {
     return { decision: 'allowed' };
   }

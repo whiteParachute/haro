@@ -1423,6 +1423,7 @@ function registerMcpCommand(program: Command, app: AppContext): void {
             McpServer,
             StdioTransport,
             ToolInvocationAuditWriter,
+            createAgentDockIpcMessageGatewayFromEnv,
             createSidecarRegistry,
           } = await import('@haro/mcp-tools');
           const audit = new ToolInvocationAuditWriter({
@@ -1457,6 +1458,7 @@ function registerMcpCommand(program: Command, app: AppContext): void {
             dbFile: app.paths.dbFile,
             now: app.now,
           });
+          const messaging = createAgentDockIpcMessageGatewayFromEnv({ env: process.env, now: app.now });
           const server = new McpServer({
             transport: new StdioTransport(app.stdin as Readable, app.stdout as Writable),
             registry,
@@ -1465,7 +1467,7 @@ function registerMcpCommand(program: Command, app: AppContext): void {
               agentId: 'haro-sidecar',
             },
             deps: {
-              channels: app.channelRegistry,
+              ...(messaging ? { messaging } : {}),
               evolution,
               serviceContext: { root: app.paths.root, dbFile: app.paths.dbFile },
               now: app.now,

@@ -224,9 +224,6 @@ importers:
       '@haro/agentdock-contract':
         specifier: workspace:*
         version: link:../agentdock-contract
-      '@haro/channel':
-        specifier: workspace:*
-        version: link:../channel
       '@haro/core':
         specifier: workspace:*
         version: link:../core

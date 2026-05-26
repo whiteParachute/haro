@@ -1,4 +1,8 @@
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createAgentDockIpcMessageGateway } from '../../src/agentdock-messaging.js';
 import { setupEnv, type TestEnv } from '../helpers.js';
 
 let env: TestEnv | null = null;
@@ -8,27 +12,63 @@ afterEach(() => {
 });
 
 describe('send_message tool [FEAT-032 R4 / AC1]', () => {
-  it('routes a text message to the registered channel and audits success', async () => {
+  it('routes a text message to AgentDock messaging and audits success', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
     const out = await registry.invoke({
       name: 'send_message',
-      rawParams: { channelId: 'fake-im', sessionId: 'sess-A', content: 'hi' },
-      session: e.buildSession({ channelId: 'fake-im' }),
+      rawParams: { channelId: 'feishu:oc_fake', sessionId: 'sess-A', content: 'hi' },
+      session: e.buildSession({ channelId: 'feishu:oc_fake' }),
       deps: e.buildDeps(),
     });
     expect(out.decision).toBe('allowed');
     if (!out.result.ok) throw new Error('expected success');
-    expect(out.result.value.channelId).toBe('fake-im');
-    expect(e.fakeChannel.outbound).toHaveLength(1);
-    // codex review should-fix: lock down the OutboundMessage payload too —
-    // without these assertions, a silent type-shape drift between MCP and
-    // any concrete channel adapter could pass the routing test but break
-    // delivery in production.
-    const captured = e.fakeChannel.outbound[0]!;
-    expect(captured.sessionId).toBe('sess-A');
-    expect(captured.msg.type).toBe('text');
-    expect(captured.msg.content).toBe('hi');
+    expect(out.result.value.channelId).toBe('feishu:oc_fake');
+    expect(out.result.value.channelSessionId).toBe('sess-A');
+    expect(out.result.value.gateway).toBe('agentdock-messaging');
+    expect(out.result.value.messageId).toBe('fake-agentdock-message-1');
+    expect(e.messaging.outbound).toHaveLength(1);
+    const captured = e.messaging.outbound[0]!;
+    expect(captured.channel).toBe('feishu:oc_fake');
+    expect(captured.text).toBe('hi');
+    expect(captured.urgent).toBe(false);
+  });
+
+
+  it('writes the AgentDock IPC messages contract used by agentdock-tool send-message', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-agentdock-ipc-'));
+    try {
+      const gateway = createAgentDockIpcMessageGateway({
+        ipcDir: root,
+        chatJid: 'web:test-chat',
+        groupFolder: 'flow-test',
+        now: () => new Date('2026-05-26T03:00:00.000Z'),
+        randomSuffix: () => 'fixed',
+      });
+      const result = await gateway.sendMessage({
+        channel: 'feishu:oc_fake',
+        text: 'hello ipc',
+        urgent: true,
+        replyToMessageId: 'msg-1',
+      });
+      expect(result.status).toBe('queued');
+      expect(result.targetChannel).toBe('feishu:oc_fake');
+      const files = readdirSync(join(root, 'messages'));
+      expect(files).toHaveLength(1);
+      const payload = JSON.parse(readFileSync(join(root, 'messages', files[0]!), 'utf8')) as Record<string, unknown>;
+      expect(payload).toEqual({
+        type: 'message',
+        chatJid: 'web:test-chat',
+        text: 'hello ipc',
+        targetChannel: 'feishu:oc_fake',
+        urgent: true,
+        replyToMsgId: 'msg-1',
+        groupFolder: 'flow-test',
+        timestamp: '2026-05-26T03:00:00.000Z',
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('returns NEEDS_APPROVAL on cross-channel send', async () => {
@@ -36,41 +76,51 @@ describe('send_message tool [FEAT-032 R4 / AC1]', () => {
     const registry = e.buildRegistry();
     const out = await registry.invoke({
       name: 'send_message',
-      rawParams: { channelId: 'fake-im', sessionId: 'sess-A', content: 'hi' },
+      rawParams: { channelId: 'feishu:oc_fake', sessionId: 'sess-A', content: 'hi' },
       session: e.buildSession({ channelId: 'web' }),
       deps: e.buildDeps(),
     });
     expect(out.decision).toBe('needs-approval');
     if (out.result.ok) throw new Error('unreachable');
     expect(out.result.error.code).toBe('NEEDS_APPROVAL');
-    expect(e.fakeChannel.outbound).toHaveLength(0);
+    expect(e.messaging.outbound).toHaveLength(0);
   });
 
-  it('returns TARGET_NOT_FOUND when channel is not registered', async () => {
+  it('fails closed when AgentDock messaging gateway is not configured', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
+    const { messaging: _messaging, ...depsWithoutMessaging } = e.buildDeps();
     const out = await registry.invoke({
       name: 'send_message',
-      rawParams: { channelId: 'ghost', sessionId: 'sess-A', content: 'hi' },
-      session: e.buildSession({ channelId: 'ghost' }),
-      deps: e.buildDeps(),
+      rawParams: { channelId: 'feishu:oc_fake', sessionId: 'sess-A', content: 'hi' },
+      session: e.buildSession({ channelId: 'feishu:oc_fake' }),
+      deps: depsWithoutMessaging,
     });
     if (out.result.ok) throw new Error('unreachable');
     expect(out.result.error.code).toBe('TARGET_NOT_FOUND');
+    expect(out.result.error.message).toContain('AgentDock messaging gateway is not configured');
+    expect(out.result.error.remediation).toContain('HAPPYCLAW_WORKSPACE_IPC');
+    expect(e.messaging.outbound).toHaveLength(0);
   });
 
-  it('returns TARGET_DISABLED when channel is registered but disabled', async () => {
+  it('accepts AgentDock-style channel/text aliases', async () => {
     const e = (env = setupEnv());
-    e.channels.disable('fake-im');
     const registry = e.buildRegistry();
     const out = await registry.invoke({
       name: 'send_message',
-      rawParams: { channelId: 'fake-im', sessionId: 'sess-A', content: 'hi' },
-      session: e.buildSession({ channelId: 'fake-im' }),
+      rawParams: { channel: 'telegram:123', text: 'hello', urgent: true, reply_to_message_id: 'msg-1' },
+      session: e.buildSession({ channelId: 'telegram:123' }),
       deps: e.buildDeps(),
     });
-    if (out.result.ok) throw new Error('unreachable');
-    expect(out.result.error.code).toBe('TARGET_DISABLED');
+    expect(out.result.ok).toBe(true);
+    expect(e.messaging.outbound).toEqual([
+      expect.objectContaining({
+        channel: 'telegram:123',
+        text: 'hello',
+        urgent: true,
+        replyToMessageId: 'msg-1',
+      }),
+    ]);
   });
 
   it('returns INVALID_PARAMS on empty content', async () => {
@@ -78,8 +128,8 @@ describe('send_message tool [FEAT-032 R4 / AC1]', () => {
     const registry = e.buildRegistry();
     const out = await registry.invoke({
       name: 'send_message',
-      rawParams: { channelId: 'fake-im', sessionId: 'sess-A', content: '' },
-      session: e.buildSession({ channelId: 'fake-im' }),
+      rawParams: { channelId: 'feishu:oc_fake', sessionId: 'sess-A', content: '' },
+      session: e.buildSession({ channelId: 'feishu:oc_fake' }),
       deps: e.buildDeps(),
     });
     if (out.result.ok) throw new Error('unreachable');
@@ -92,30 +142,31 @@ describe('send_message tool [FEAT-032 R4 / AC1]', () => {
     const out = await registry.invoke({
       name: 'send_message',
       rawParams: {
-        channelId: 'fake-im',
+        channelId: 'feishu:oc_fake',
         sessionId: 'sess-A',
         content: 'see file',
         attachments: [{ url: 'https://example.com/x.png' }],
       },
-      session: e.buildSession({ channelId: 'fake-im' }),
+      session: e.buildSession({ channelId: 'feishu:oc_fake' }),
       deps: e.buildDeps(),
     });
     if (out.result.ok) throw new Error('unreachable');
     expect(out.result.error.code).toBe('INVALID_PARAMS');
   });
 
-  it('maps channel.send failure to INTERNAL_ERROR', async () => {
+  it('maps AgentDock gateway failure to INTERNAL_ERROR', async () => {
     const e = (env = setupEnv());
-    e.fakeChannel.shouldFail = true;
+    e.messaging.shouldFail = true;
     const registry = e.buildRegistry();
     const out = await registry.invoke({
       name: 'send_message',
-      rawParams: { channelId: 'fake-im', sessionId: 'sess-A', content: 'hi' },
-      session: e.buildSession({ channelId: 'fake-im' }),
+      rawParams: { channelId: 'feishu:oc_fake', sessionId: 'sess-A', content: 'hi' },
+      session: e.buildSession({ channelId: 'feishu:oc_fake' }),
       deps: e.buildDeps(),
     });
     if (out.result.ok) throw new Error('unreachable');
     expect(out.result.error.code).toBe('INTERNAL_ERROR');
+    expect(out.result.error.message).toContain('AgentDock messaging gateway failed');
     expect(out.result.error.retryable).toBe(true);
   });
 });

@@ -27,7 +27,6 @@
   },
   "dependencies": {
     "@haro/agentdock-contract": "workspace:*",
-    "@haro/channel": "workspace:*",
     "@haro/core": "workspace:*",
     "better-sqlite3": "^11.7.0",
     "cron-parser": "^5.5.0",

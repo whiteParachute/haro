@@ -17,6 +17,12 @@ export {
   type JsonRpcMessage,
 } from './transport.js';
 export { McpToolError, isMcpToolError, toErrorPayload } from './error.js';
+export {
+  createAgentDockIpcMessageGateway,
+  createAgentDockIpcMessageGatewayFromEnv,
+  type AgentDockIpcMessageGatewayEnvOptions,
+  type AgentDockIpcMessageGatewayOptions,
+} from './agentdock-messaging.js';
 export { evaluatePermission, type PermissionEvaluator } from './permission.js';
 export { zodToJsonSchema, type JsonSchema } from './json-schema.js';
 
@@ -91,6 +97,9 @@ export {
 export type {
   SessionContext,
   ToolDependencies,
+  AgentDockMessageGateway,
+  AgentDockSendMessageInput,
+  AgentDockSendMessageResult,
   ToolDescriptor,
   ToolDecision,
   ToolResultStatus,

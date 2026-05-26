@@ -8,27 +8,20 @@
  * config (root / dbFile so the subprocess can open its historical MemoryFabric /
  * EvolutionAssetRegistry / cron service-context view).
  *
- * **Subprocess scaffolding caveat (Codex review BLOCKER #1 / #3)**: A
- * subprocess spawned this way has its own empty ChannelRegistry — it cannot
- * deliver `send_message` to the parent process's live channels because IPC
- * marshaling of channel adapters is not implemented in this FEAT. The
- * subprocess will return TARGET_NOT_FOUND for any channelId. For the
- * production "agent uses MCP tools" path Haro currently embeds McpServer
- * in-process via `createDefaultRegistry({ audit })` and passes the parent's
- * deps directly. The subprocess entry exists so AgentRunner can satisfy the
- * spec-mandated per-session lifecycle (R10 / AC6) and so future provider
- * wiring can plug a real client onto it; the lifecycle test in
- * `packages/core/test/mcp-session.test.ts` already verifies SIGTERM →
- * SIGKILL behaviour with a real subprocess.
+ * FEAT-081K: send_message uses AgentDock's external messaging IPC contract
+ * instead of Haro-owned ChannelRegistry/adapters. When the subprocess is not
+ * launched under AgentDock (missing HAPPYCLAW_WORKSPACE_IPC /
+ * HAPPYCLAW_CHAT_JID), send_message fails closed with TARGET_NOT_FOUND rather
+ * than silently falling back to Haro channel packages.
  */
 
 import process from 'node:process';
 import { createMemoryFabric } from '@haro/core/memory';
-import { ChannelRegistry } from '@haro/channel';
 import { createEvolutionAssetRegistry } from '@haro/core/evolution';
 import { buildHaroPaths } from '@haro/core/paths';
 
 import { ToolInvocationAuditWriter } from '../audit.js';
+import { createAgentDockIpcMessageGatewayFromEnv } from '../agentdock-messaging.js';
 import { createDefaultRegistry } from '../index.js';
 import { McpServer } from '../server.js';
 import { StdioTransport } from '../transport.js';
@@ -69,11 +62,13 @@ async function main(): Promise<void> {
     ...(parsed.root ? { root: parsed.root } : {}),
     ...(dbFile ? { dbFile } : {}),
   });
-  const channels = new ChannelRegistry();
-  process.stderr.write(
-    `[mcp-tools] server-entry: ChannelRegistry is empty in this subprocess (FEAT-032 scaffolding). ` +
-      `'send_message' will return TARGET_NOT_FOUND until provider wiring lands.\n`,
-  );
+  const messaging = createAgentDockIpcMessageGatewayFromEnv();
+  if (!messaging) {
+    process.stderr.write(
+      `[mcp-tools] server-entry: AgentDock messaging IPC is not configured; ` +
+        `'send_message' will fail closed until HAPPYCLAW_WORKSPACE_IPC and HAPPYCLAW_CHAT_JID are provided.\n`,
+    );
+  }
 
   const audit = new ToolInvocationAuditWriter({
     ...(parsed.root ? { root: parsed.root } : {}),
@@ -82,7 +77,7 @@ async function main(): Promise<void> {
   const registry = createDefaultRegistry({ audit });
   const transport = new StdioTransport();
   const deps: ToolDependencies = {
-    channels,
+    ...(messaging ? { messaging } : {}),
     memory,
     evolution,
     serviceContext: {
