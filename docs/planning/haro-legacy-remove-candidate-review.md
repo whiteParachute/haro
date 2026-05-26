@@ -20,9 +20,10 @@
 
 - docs/spec 可以先进入 archive 评审。
 - CLI legacy 入口继续 freeze。
-- provider、channel、memory、runtime 暂不删除。
-- 先做 bridge 和 export 解绑。
-- 最后才考虑物理删除 package。
+- channel-layer 已在 FEAT-081K/081L 后收口；MCP `send_message` 继续保留。
+- provider、memory、skills、Web/API、runtime 暂不删除。
+- 先补 AgentDock takeover evidence、bridge 和 export 解绑证明。
+- 最后才考虑新的物理删除 package。
 
 ## 1. 评审原则
 
@@ -76,14 +77,14 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| current_state | deprecate；gateway CLI daemon 入口已由 FEAT-081E 单项删除 |
-| still_imported_by | `packages/cli/src/channel.ts`；`haro channel`；channel package tests；gateway 概念仅作为 removed CLI stub 保留 |
-| replacement | AgentDock IM / channel layer；Haro 只接收 sidecar observation 与 approval feedback |
-| blocking_dependencies | AgentDock channel contract 明确；旧 `haro channel setup` 入口降级；gateway 移除依赖 |
-| risk_if_removed | Feishu/Telegram 旧入口不可用；gateway 已删除后不再作为阻塞项 |
-| rollback_plan | git revert；恢复 packages 与 workspace dependencies |
-| required_verification | `pnpm test:sidecar`；`pnpm -F @haro/channel test`；`pnpm -F @haro/channel-feishu test`；`pnpm -F @haro/channel-telegram test`；`pnpm -F @haro/cli test:legacy` |
-| decision | 保持 deprecate，不删除 channel packages；FEAT-081E 只删除 gateway 旧 CLI daemon 入口 |
+| current_state | done；FEAT-081L 已删除 Haro-owned `packages/channel*` 与 CLI `haro channel list/doctor` |
+| still_imported_by | 无当前 Haro package 依赖；MCP `send_message` 保留，但 FEAT-081K 后已走 AgentDock IPC messages contract，不再依赖 `@haro/channel` / `ChannelRegistry` |
+| replacement | AgentDock IM / channel layer；Haro 只保留 MCP `send_message` 对外工具和 sidecar approval feedback |
+| blocking_dependencies | 当前无下一项 channel 删除授权；继续保护 MCP `send_message`、AgentDock 生产消息能力、真实 Feishu/Telegram/IM 投递链路 |
+| risk_if_removed | 已删除 package 可通过 revert FEAT-081L 恢复；误删 MCP `send_message` 或 AgentDock IM 链路仍是禁止范围 |
+| rollback_plan | git revert FEAT-081K/081L/hotfix；恢复 packages、workspace dependencies、CLI list/doctor 或 fail-closed 行为 |
+| required_verification | `pnpm -F @haro/mcp-tools test -- test/tools/send-message.test.ts`；`pnpm -F @haro/cli test -- test/legacy-removal-guard.test.ts`；`pnpm test:sidecar`；`pnpm test:legacy` |
+| decision | channel-layer 当前已完成本轮收口；不产生 provider/memory/skills/Web/runtime 的删除批准 |
 
 ### 3.3 packages/skills
 
@@ -765,7 +766,7 @@ pnpm test:sidecar
 
 - `haro channel setup feishu --json` 返回 removed/fail-closed，不调用旧 setup callback。
 - `haro channel onboarding telegram --json` 返回 removed/fail-closed，不写配置。
-- `haro channel list`、`haro channel doctor` 等非 onboarding 路径继续可用。
+- 当时 `haro channel list`、`haro channel doctor` 等非 onboarding 路径继续可用；FEAT-081L 后这些路径已删除，hotfix `03c35cb` / `c3ae19b` 要求退役 `haro channel ...` fail-closed。
 - guard JSON/human 展示 081G 摘线状态。
 - `deleteAllowedCount=0`。
 - `physicalDeleteApproved=false`。
@@ -1103,7 +1104,7 @@ channel-layer 当前分为三类：
 
 ### 18.4 回滚方式
 
-如需恢复 081J 删除内容，可 revert FEAT-081J commit。
+如需恢复 081J 删除内容，可 revert FEAT-081J commit。注意：FEAT-081L 之后 `packages/channel*` 已删除；只有完整恢复 channel packages 后，下列 081J 当时的 channel package build 命令才适用。
 
 回滚后必须重新运行：
 
@@ -1208,4 +1209,42 @@ pnpm test:sidecar
 pnpm test:legacy
 ```
 
-guard 应保持：`stage=FEAT-081L`、`deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`verifiedAbsentFailedCount=0`；`nextDeletionCandidate=null`，channel-layer 只记录已完成删除，不构成其它模块删除批准。
+guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`verifiedAbsentFailedCount=0`；`nextDeletionCandidate=null`，channel-layer 只记录已完成删除，不构成其它模块删除批准。
+
+### 20.4 FEAT-081L fail-closed hotfix（2026-05-26）
+
+081L 之后补充 hotfix：
+
+- haro-side：`03c35cb`
+- haro：`c3ae19b`
+
+目的：退役后的 `haro channel ...` 命令必须 `exit!=0` fail-closed，不允许因为 channel subcommand 不再注册而落入默认 REPL / handler。该 hotfix 只修退役命令行为，不恢复任何 Haro-owned channel package，不修改 MCP `send_message`，不修改 AgentDock 生产消息链路。
+
+## 21. FEAT-081M evidence refresh（2026-05-26）
+
+081M 不做物理删除，只做 docs/guard 清理和 AgentDock takeover evidence 盘点。新增/更新证据文档：
+
+- `docs/planning/agentdock-takeover-evidence.md`
+
+081M 后 guard 口径：
+
+- `planning.stage=FEAT-081M`。
+- `planning.lastCompletedStage=FEAT-081L`。
+- `planning.lastUpdatedBy=FEAT-081M`。
+- `nextDeletionCandidate=null`。
+- `nextReviewCandidate=null`。
+- `deleteAllowedCount=0`。
+- `physicalDeleteApproved=false`。
+- `wouldDelete=false`。
+- 所有 item 的 `deleteAllowed=false`。
+- provider/memory/skills/web/runtime 只记录 blocker 和替代证据缺口，不表达物理删除批准。
+
+081M ranking 结论：当前不应进入任何新的物理删除。剩余候选缺少“窄面 + AgentDock 替代证据齐全”的条件：
+
+1. `provider-codex`：AgentDock/ModelHub 可承接模型运行能力，但未证明新用户 Codex/ChatGPT 登录、凭据初始化、doctor/list/models 的等价路径；081N 如继续，只能先评审 setup/onboarding 子面，且必须先补证据。
+2. `memory-fabric`：真实 `~/.haro` 数据、aria-memory-vault、MCP `memory_query` / `memory_remember` 默认注册仍是 blocker。
+3. `skills-marketplace`：`haro skills install/enable/disable`、`SkillsManager`、eat/shit 兼容资产仍是 blocker。
+4. `web-dashboard-non-review`：非 review dashboard 已基本自然收口为 Review Board + auth/bootstrap；继续 freeze/allowlist，不做物理删除。
+5. `agent-runtime-router`：继续 deferred；等 AgentDock 定时任务 -> Haro 提案 -> approval request -> Review Board 可审并证明不依赖旧 `haro run/chat/team/scenario` 后再评。
+
+081M 明确未做：不修改 provider/memory/skills/runtime/Web/MCP 业务代码；不删除文件；不触碰真实 `~/.haro/evolution`、真实 `~/.haro` 或 aria-memory-vault；不 approve/apply/rollback/confirm。

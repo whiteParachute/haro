@@ -6,7 +6,7 @@
 > 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
 
 
-> **2026-05-15 状态**：Haro 不再继续扩展自建 channel/workbench 主链路。AgentDock 负责日用 IM / workspace / runtime；Haro 作为 sidecar 通过已注册的 `haro mcp` 与 AgentDock workspace/agent 编排交互。
+> **2026-05-26 状态（FEAT-081M evidence refresh）**：Haro 不再继续扩展自建 channel/workbench 主链路。FEAT-081K 已让 MCP `send_message` 改走 AgentDock IPC messages contract；FEAT-081L 已删除 Haro-owned `packages/channel*` 与 `haro channel list/doctor`。AgentDock 负责日用 IM / workspace / runtime；Haro 作为 sidecar 通过已注册的 `haro mcp` 与 AgentDock workspace/agent 编排交互。
 
 ## 当前边界
 

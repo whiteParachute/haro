@@ -187,9 +187,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
     expect(payload.data.planning).toMatchObject({
-      stage: 'FEAT-081L',
+      stage: 'FEAT-081M',
       lastCompletedStage: 'FEAT-081L',
-      lastUpdatedBy: 'FEAT-081L',
+      lastUpdatedBy: 'FEAT-081M',
     });
     expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -206,6 +206,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({
         module: 'memory',
         protectedScope: expect.arrayContaining(['aria-memory vault']),
+        deletionCandidateAllowed: false,
       }),
     ]));
     const runtimeBoundary = payload.data.planning.moduleRetirementBoundaries.find((boundary) => boundary.module === 'run-router-runtime-scenario');
@@ -363,13 +364,16 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081L lastCompleted=FEAT-081L');
+    expect(text).toContain('planning stage: FEAT-081M lastCompleted=FEAT-081L');
     expect(text).toContain('next deletion candidate (candidate only, not approval): none');
     expect(text).toContain('next review candidate: none');
     expect(text).toContain('forbidden now: none');
     expect(text).toContain('deferred now: agent-runtime-router,skills-marketplace');
     expect(text).toContain('module retirement boundaries:');
     expect(text).toContain('channel-message status=retire-candidate owner=AgentDock');
+    expect(text).toContain('provider status=retire-candidate owner=AgentDock / ModelHub deletionCandidateAllowed=false');
+    expect(text).toContain('skills status=retire-candidate owner=AgentDock skills deletionCandidateAllowed=false');
+    expect(text).toContain('web-api status=retire-candidate owner=Haro Review Board + AgentDock Web deletionCandidateAllowed=false');
     expect(text).toContain('run-router-runtime-scenario status=deferred');
     expect(text).toContain('verifiedAbsent: total=');
     expect(text).toContain('failed=0');
@@ -380,6 +384,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('FEAT-081J');
     expect(text).toContain('FEAT-081K');
     expect(text).toContain('FEAT-081L');
+    expect(text).toContain('FEAT-081M');
     expect(text).toContain('AgentDock IPC 消息 contract');
     expect(text).toContain('packages/channel、packages/channel-feishu、packages/channel-telegram');
     expect(text).toContain('physicalRemoval=physically-removed:packages/core/src/team-orchestrator.ts:FEAT-081D');

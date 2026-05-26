@@ -105,9 +105,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081L';
+    stage: 'FEAT-081M';
     lastCompletedStage: 'FEAT-081L';
-    lastUpdatedBy: 'FEAT-081L';
+    lastUpdatedBy: 'FEAT-081M';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -177,10 +177,10 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     status: 'retire-candidate',
     owner: 'AgentDock / ModelHub',
     haroRetireScope: ['packages/provider-codex', 'Haro provider bootstrap/onboarding'],
-    protectedScope: ['后续 LLM draft 所需的 AgentDock provider bridge'],
-    decision: 'provider 由 AgentDock 提供；Haro 自带 provider-codex/provider bootstrap 进入退役候选。',
-    nextAction: '先补 AgentDock/ModelHub provider bridge 证据，再单项评审 Haro provider-codex 删除。',
-    deletionCandidateAllowed: true,
+    protectedScope: ['后续 LLM draft 所需的 AgentDock provider bridge', '新用户 Codex/ChatGPT 登录/凭据初始化等价路径'],
+    decision: 'AgentDock/ModelHub 可承接模型运行能力，但 Haro provider-codex 与 provider setup/onboarding 仍缺少等价登录/凭据初始化证据；081M 不批准删除。',
+    nextAction: '先补 AgentDock/ModelHub 新用户登录、凭据初始化、doctor/list/models 等价证据；081N 最多评审 provider setup/onboarding 子面。',
+    deletionCandidateAllowed: false,
   },
   {
     module: 'memory',
@@ -188,9 +188,9 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     owner: 'aria-memory-vault / AgentDock memory',
     haroRetireScope: ['packages/core/src/memory', 'packages/cli/src/commands/memory.ts', 'Haro-owned MemoryFabric'],
     protectedScope: ['真实 ~/.haro 数据', 'aria-memory vault', 'AgentDock/aria-memory 共享记忆'],
-    decision: 'memory 统一走共享 aria-memory-vault；Haro 自有 MemoryFabric 进入退役候选。',
-    nextAction: '删除前必须先证明不会误删真实 ~/.haro 或 aria-memory vault 数据。',
-    deletionCandidateAllowed: true,
+    decision: 'memory 方向应收口到共享 aria-memory-vault / AgentDock memory，但真实 ~/.haro 数据、aria-memory vault 与 MCP memory_* 默认注册仍是 blocker；081M 不批准删除。',
+    nextAction: '先证明 sidecar 主链路不读写 Haro-owned memory，并隔离 memory_query/memory_remember 默认注册与真实数据边界。',
+    deletionCandidateAllowed: false,
   },
   {
     module: 'run-router-runtime-scenario',
@@ -214,9 +214,9 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     owner: 'AgentDock skills',
     haroRetireScope: ['packages/skills', 'skills marketplace/manager legacy surface'],
     protectedScope: ['必要 eat/shit 兼容语义', '已落 Haro sidecar artifact 的资产引用'],
-    decision: 'skills 由 AgentDock 提供；Haro 旧 skills marketplace/legacy skills 进入退役候选，但要保留必要兼容说明。',
-    nextAction: '先拆清 marketplace 与必要兼容资产，再做单项删除评审。',
-    deletionCandidateAllowed: true,
+    decision: 'skills 由 AgentDock 提供，但 haro skills install/enable/disable、SkillsManager 与 eat/shit 兼容资产仍是 blocker；081M 不批准删除。',
+    nextAction: '先拆清 marketplace 扩展面与必要兼容资产，证明 sidecar 主链路不依赖 packages/skills。',
+    deletionCandidateAllowed: false,
   },
   {
     module: 'web-api',
@@ -224,9 +224,9 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     owner: 'Haro Review Board + AgentDock Web',
     haroRetireScope: ['Review Board 之外的旧 dashboard/API'],
     protectedScope: ['approval review board routes', 'packages/web-api/src/routes/approval-requests.ts'],
-    decision: 'Web/API 仅保留 Review Board/审批看板；看板外旧 dashboard/API 进入退役候选。',
-    nextAction: '只允许逐路由评审非 Review Board surface；不得包级删除 Web/API。',
-    deletionCandidateAllowed: true,
+    decision: 'Web/API 仅保留 Review Board/审批看板；非 review dashboard 已基本自然收口为 review board + auth/bootstrap，但 081M 只做 freeze/allowlist，不批准物理删除。',
+    nextAction: '先固化 Review Board endpoint allowlist；之后只能逐路由评审非 review surface，不得包级删除 Web/API。',
+    deletionCandidateAllowed: false,
   },
 ];
 
@@ -239,17 +239,18 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     candidatePaths: ['packages/provider-codex', 'packages/cli/src/provider-onboarding.ts'],
     replacement: 'AgentDock / ModelHub provider bridge',
     blockingDependencies: [
-      '移除 CLI 默认 createCodexProvider 构造',
-      '稳定 provider setup legacy warning',
-      '确认 AgentDock provider bridge 已覆盖 run/chat 旧能力',
+      '证明 AgentDock/ModelHub provider bridge 已覆盖默认模型运行能力',
+      '证明新用户 Codex/ChatGPT 登录/凭据初始化等价路径',
+      '保留或替代 provider doctor/list/models 诊断能力',
+      '移除 CLI 默认 createCodexProvider 构造前需完成替代验证',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/provider-codex test', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'provider 由 AgentDock 提供；Haro provider-codex/provider bootstrap 进入退役候选，但本轮不删除。',
+    decision: 'AgentDock/ModelHub 可承接模型运行能力，但 Haro provider-codex、provider setup/onboarding、doctor/list/models 仍缺等价替代证据；081M 只记录 blocker，不删除。',
     candidatePriority: {
       status: 'blocked',
       rank: 4,
-      reason: 'provider-codex 的退役方向已明确，但仍被 CLI bootstrap 与后续 LLM draft/provider 能力引用。',
-      blockedUntil: ['AgentDock/ModelHub provider bridge 接管默认 provider', '移除 CLI 默认 createCodexProvider 构造', 'LLM draft provider path 完成替代验证'],
+      reason: '081M ranking 认为 provider-codex 仍承担 Codex/ChatGPT 登录、默认 provider、doctor/list/models 与 CLI bootstrap；081N 只有补齐 AgentDock 等价证据后，才可考虑 setup/onboarding 子面。',
+      blockedUntil: ['AgentDock/ModelHub provider bridge 接管默认 provider', '证明新用户 Codex/ChatGPT 登录/凭据初始化等价路径', '保留或替代 provider doctor/list/models', 'LLM draft provider path 完成替代验证'],
     },
     evidence: [
       { path: 'packages/provider-codex/package.json', kind: 'exists', description: 'provider package 仍存在' },
@@ -396,17 +397,18 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     candidatePaths: ['packages/core/src/memory', 'packages/cli/src/commands/memory.ts'],
     replacement: '共享 aria-memory-vault / AgentDock memory',
     blockingDependencies: [
-      '移除 core barrel MemoryFabric export',
-      '确认 mcp-tools memory_* legacy registry 已隔离',
+      '移除 core barrel MemoryFabric export 前需证明下游 import 清零',
+      '确认 mcp-tools memory_query / memory_remember 默认 registry 已隔离或替代',
       '确认 sidecar 主链路不读写 Haro-owned memory',
+      '确认真实 ~/.haro 数据与 aria-memory-vault 不被迁移/删除',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'memory 统一走共享 aria-memory-vault；Haro MemoryFabric 进入退役候选，但真实 memory 数据不在删除范围。',
+    decision: 'memory 统一方向是共享 aria-memory-vault / AgentDock memory，但真实 ~/.haro 数据、aria-memory-vault 与 MCP memory_* 默认注册仍阻塞；081M 只记录证据，不删除。',
     candidatePriority: {
       status: 'blocked',
       rank: 5,
       reason: 'Haro-owned memory 退役方向已明确，但牵涉真实 ~/.haro 数据、aria-memory vault 和 MCP memory tools，删除前必须先完成数据/owner 边界验证。',
-      blockedUntil: ['确认真实 ~/.haro memory 数据迁移/保留策略', '隔离 MCP memory_* 默认 registry', '证明 sidecar 主链路不读写 Haro-owned memory'],
+      blockedUntil: ['确认真实 ~/.haro memory 数据迁移/保留策略', '隔离 MCP memory_* 默认 registry', '证明 sidecar 主链路不读写 Haro-owned memory', '确认 aria-memory-vault 不在 Haro 删除范围'],
       forbiddenScope: ['真实 ~/.haro 数据', 'aria-memory vault'],
     },
     evidence: [
@@ -467,16 +469,17 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     replacement: 'AgentDock skills / Haro sidecar artifacts',
     blockingDependencies: [
       '确认 sidecar 主链路不依赖 packages/skills',
-      '保留或迁移 eat/shit 资产语义',
+      '保留或迁移 eat/shit 兼容资产语义',
+      '证明 haro skills install/enable/disable 用户入口已由 AgentDock 等价承接或明确退役',
       'legacy tests 分类稳定',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/skills test', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'skills 由 AgentDock 提供；Haro 旧 skills marketplace/legacy skills 进入退役候选，但需要保留必要兼容说明。',
+    decision: 'skills 由 AgentDock 提供，但 haro skills install/enable/disable、SkillsManager 与 eat/shit 兼容资产仍是 blocker；081M 只记录证据，不删除。',
     candidatePriority: {
       status: 'defer',
       rank: 3,
-      reason: 'packages/skills 仍承载 eat/shit 兼容流程；可后续先评审 marketplace 扩展面，但不应删除必要兼容资产。',
-      blockedUntil: ['确认 eat/shit 资产语义由 sidecar artifacts 或 AgentDock skills 承接', '拆分 marketplace 与保留技能资产边界'],
+      reason: 'packages/skills 仍承载 haro skills 用户入口、SkillsManager 与 eat/shit 兼容流程；可后续先评审 marketplace 扩展面，但不应删除必要兼容资产。',
+      blockedUntil: ['确认 eat/shit 资产语义由 sidecar artifacts 或 AgentDock skills 承接', '拆分 marketplace 与保留技能资产边界', '证明 haro skills install/enable/disable 已被等价替代或明确退役'],
     },
     evidence: [
       { path: 'packages/skills/package.json', kind: 'exists', description: 'skills package 仍存在' },
@@ -496,12 +499,12 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       'Web/API 路由删除需单独批准',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/web-api test', 'pnpm -F @haro/web build'],
-    decision: 'Web/API 仅保留 Review Board/审批看板；看板外旧 dashboard/API 可进入退役候选，但不得包级删除 Web/API。',
+    decision: 'Web/API 非 review 面已基本自然收口为 Review Board + auth/bootstrap；081M 仅记录 freeze/allowlist，不删除任何 Web/API 路由或包。',
     candidatePriority: {
       status: 'blocked',
       rank: 5,
-      reason: 'Review Board 是 Haro sidecar 主链路看板，Web/API 包级删除被禁止；看板外旧 dashboard/API 只能逐路由评审。',
-      blockedUntil: ['列出 Review Board endpoint allowlist', '列出非 review dashboard/API 路由', '逐路由证明删除不影响审批看板'],
+      reason: 'Review Board 是 Haro sidecar 主链路看板；非 review dashboard 继续 freeze/allowlist，包级删除被禁止。',
+      blockedUntil: ['列出 Review Board endpoint allowlist', '列出非 review dashboard/API 路由', '逐路由证明删除不影响审批看板与 auth/bootstrap'],
       forbiddenScope: ['packages/web', 'packages/web-api', 'approval review board routes'],
     },
     evidence: [
@@ -602,9 +605,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081L',
+      stage: 'FEAT-081M',
       lastCompletedStage: 'FEAT-081L',
-      lastUpdatedBy: 'FEAT-081L',
+      lastUpdatedBy: 'FEAT-081M',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -623,7 +626,8 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       '081J 已删除 Haro-owned channel CLI config 管理命令、disabled adapter autoload 和 adapter setup contract。',
       'FEAT-081K 已让 mcp-tools send_message 改用 AgentDock IPC 消息 contract，并移除 mcp-tools 对 @haro/channel 的依赖。',
       'FEAT-081L 已删除 packages/channel、packages/channel-feishu、packages/channel-telegram、CLI channel list/doctor 和 diagnostics channel stage。',
-      'channel-layer 当前没有下一项删除授权；如继续减法，需重新排序并单项评审其它模块。',
+      'FEAT-081M 只刷新 docs/guard 与 AgentDock takeover evidence；不做物理删除，也不把任何候选升级为删除批准。',
+      'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };
 }

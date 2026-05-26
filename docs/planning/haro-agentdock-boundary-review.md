@@ -37,15 +37,15 @@
 这些能力方向已被 AgentDock 承接或不再发展，但当前代码和测试仍有依赖，不能直接删：
 
 - `packages/provider-codex`
-- `packages/channel*`
 - `packages/skills`
 - `packages/core/src/memory/*`
-- `packages/core/src/team-orchestrator.ts`
 - `packages/core/src/scenario-router.ts`
-- legacy CLI 的 provider/channel/memory/team/runtime 入口
+- legacy CLI 的 provider/memory/skills/team/runtime 入口
 - 非 review-board 的旧 dashboard/control-plane 页面或 API（若后续发现仍存在）
 
-物理删除前必须补齐：影响面、替代方案、export/import 解绑、回滚方案、`test:sidecar` + `test:legacy` 验证，以及 owner/supervisor 明确批准。
+FEAT-081K/081L 已完成 channel-layer 解绑与物理删除：`packages/channel`、`packages/channel-feishu`、`packages/channel-telegram` 不再是当前 blocker；MCP `send_message` 保留并走 AgentDock IPC messages contract。
+
+物理删除前必须补齐：影响面、替代方案、export/import 解绑、回滚方案、`test:sidecar` + `test:legacy` 验证，以及 owner/supervisor 明确批准。081M 只刷新证据，不新增删除批准。
 
 ## 1. AgentDock 已承接能力：证据表
 
@@ -54,7 +54,7 @@
 | session / runtime | AgentDock `src/session-runtime-manager.ts:5-12` 明确是 session/runtime facade；`src/routes/sessions.ts:139-164` 处理 session alias 与 session record 解析 | AgentDock 是会话与 runtime host | Haro-owned workbench/runtime/control-plane 不再发展，只保留迁移/兼容所需代码 |
 | runner / model | AgentDock `src/runner-registry.ts:7-17` 注册 runner，`src/runner-registry.ts:28-57` 根据 model 推断 runner，`src/routes/runners.ts:13-37` 提供 runner list/health/models/profile-schema API | AgentDock 管 runner/model/catalog/profile | Haro `provider-codex` / ChatGPT auth onboarding 只应作为 legacy；删除前要清 CLI 依赖 |
 | memory runner | AgentDock `src/runner-registry.ts:87-120` 判断 memory runner；`src/routes/memory.ts:138-168` 返回 memory session 和 runner 能力；`src/routes/memory.ts:835-903` 管 memory config | AgentDock 管 memory 会话与 memory runner 选择 | Haro MemoryFabric 不再是主线 memory owner，但因为 mcp-tools legacy memory 仍依赖，不能直接删 |
-| IM / channel | AgentDock `src/im-manager.ts:1-18` 统一创建 Feishu/Telegram/QQ/WeChat channel；`src/im-manager.ts:84-105` 连接 channel；`src/im-manager.ts:119-146` 按 JID 自动路由发送消息 | AgentDock 管 IM/channel | Haro-owned channel packages 冻结/deprecated；删除前清 CLI/mcp-tools 依赖 |
+| IM / channel | AgentDock `src/im-manager.ts:1-18` 统一创建 Feishu/Telegram/QQ/WeChat channel；`src/im-manager.ts:84-105` 连接 channel；`src/im-manager.ts:119-146` 按 JID 自动路由发送消息；FEAT-081K/081L 后 Haro MCP `send_message` 已改走 AgentDock IPC，`packages/channel*` 已删除 | AgentDock 管 IM/channel | channel-layer 已完成本轮收口；继续保护 MCP `send_message` 与 AgentDock 生产消息链路 |
 | scheduler / task | AgentDock `src/task-scheduler.ts:28-41` 定义 scheduler deps；`src/task-scheduler.ts:64-117` 把 agent task 注入 chat；`src/task-scheduler.ts:153-193` 执行 script task；`src/routes/tasks.ts:156-220` 创建 task API | AgentDock 管定时任务与 host task lifecycle | Haro 不再扩通用 cron/scheduler；Haro daily 只能作为被 AgentDock/MCP 触发的 sidecar workflow |
 | workspace delegation | AgentDock `src/workspace-delegation-dedupe.ts:68-92` 分类 exact_text / similar_title 重复委托；AgentDock commit `24f5894` 已修短窗口重复 workspace 委托 | AgentDock host 管跨 workspace dispatch 与重复抑制 | Haro 不自建多 workspace supervisor/runtime；L2/L3 只产出 execution plan，由 AgentDock 派 workspace |
 | Haro approval bridge | AgentDock `src/routes/haro-approvals.ts:39-54` 读取 approval requests；`src/routes/haro-approvals.ts:66-100` 写 decision；`src/routes/haro-approvals.ts:103-173` 通过 IM 通知 request/decision；`src/haro-approval.ts:24-75` 复刻 approval schemas，`src/haro-approval.ts:157-167` 原子写 JSON | AgentDock 已有 Haro approval 桥接层，但只是桥接，不是 Haro artifact owner | Haro Web review board 和 contract 不能删；AgentDock route 是外部操作入口/通知桥 |
@@ -75,8 +75,8 @@
 
 | 模块 / 方向 | AgentDock 替代或归属 | 当前 Haro 依赖证据 | 当前结论 | 物理删除前置条件 |
 | --- | --- | --- | --- | --- |
-| `packages/provider-codex` | AgentDock runner/model | `packages/cli/package.json:28-37` 仍依赖 `@haro/provider-codex`；`packages/cli/src/index.ts`、provider wizard、diagnostics 仍引用 provider-codex | deprecated/freeze；不能删 | 移除/隐藏 CLI provider onboarding；删除 package 依赖；legacy 测试迁移或归档；`pnpm test:sidecar` 与 `pnpm test:legacy` 通过 |
-| `packages/channel`, `channel-feishu`, `channel-telegram` | AgentDock IM manager/channel | `packages/cli/package.json:32-34` 仍依赖 channel packages；`packages/mcp-tools/package.json:29-31` 仍依赖 `@haro/channel` | deprecated/freeze；不能删 | 移除 CLI channel legacy 入口与 mcp-tools 依赖；确认 Haro approval notify 全走 AgentDock bridge 或 Haro Web 配置；测试通过 |
+| `packages/provider-codex` | AgentDock runner/model / ModelHub | `packages/cli/package.json` 仍依赖 `@haro/provider-codex`；`packages/cli/src/index.ts`、provider wizard、diagnostics 仍引用 provider-codex；新用户 Codex/ChatGPT 登录与凭据初始化尚未被 AgentDock 等价证明 | deprecated/freeze；不能删 | 先补 AgentDock/ModelHub provider bridge、登录/凭据初始化、doctor/list/models 等价证据；081N 最多评审 setup/onboarding 子面 |
+| `packages/channel`, `channel-feishu`, `channel-telegram` | AgentDock IM manager/channel | 历史 blocker 已在 FEAT-081K/081L 处理：mcp-tools 不再依赖 `@haro/channel`，CLI `haro channel list/doctor` 与 `packages/channel*` 已删除；081L hotfix `03c35cb` / `c3ae19b` 要求退役 `haro channel ...` fail-closed | done；无下一项 channel 删除授权 | 继续保护 MCP `send_message`、AgentDock 生产消息与真实 Feishu/Telegram/IM 投递链路 |
 | `packages/skills` / skills marketplace | AgentDock skills/agent runtime | `packages/cli/package.json:36` 仍依赖 `@haro/skills`；旧 docs/spec 已打 legacy | freeze；不能直接删 | 移除 CLI legacy skills 入口与测试；确认 sidecar MCP 不依赖 skills package |
 | Haro MemoryFabric | AgentDock memory / aria-memory-vault | `packages/mcp-tools/src/tools/memory-query.ts:1-6` 和 `memory-remember.ts:1-7` 都标注为 historical compatibility；`packages/core/src/memory/memory-fabric.ts:139-142` 明确 sidecar baseline 消费 AgentDock-owned memory refs；`packages/core/package.json:83-84` legacy tests 仍覆盖 memory-fabric | deprecated compatibility；不能删 | 移除或替换 `memory_query`/`memory_remember` legacy tool；清 `createMemoryFabric` exports；保留观察引用；legacy tests 更新 |
 | `team-orchestrator.ts` | AgentDock workspace/multi-agent execution | `packages/core/src/team-orchestrator.ts:35-46` 仍定义 legacy team 状态；`packages/core/src/index.ts:173-210` 仍导出；`packages/core/package.json:84` legacy tests 含 `team-orchestrator.test.ts` | freeze；不能直接删 | 先取消 public exports；迁移 workflows service；确认 no import；保留或归档 tests |
@@ -87,7 +87,7 @@
 ## 4. Unknown / 需要后续确认
 
 1. **AgentDock 是否已覆盖所有旧 Haro Web dashboard 页面**：当前 Haro Web 源码显示 review-board 边界很窄，但仍需在物理删除前逐 route/page 列表确认。
-2. **provider/channel/memory package 的发布面**：删除 package 前还要查 `pnpm-workspace.yaml`、package exports、dist、发布脚本、外部部署是否引用。
+2. **provider/memory/skills package 的发布面**：删除 package 前还要查 `pnpm-workspace.yaml`、package exports、dist、发布脚本、外部部署是否引用；channel package 发布面已在 FEAT-081L 收口。
 3. **feedback/revision contract 仍不完整**：当前 `FeedbackContextSchema` 是基础，但还不能完整表达“修订自哪个 proposal、吸收/未吸收哪些意见、替代哪些旧 proposal”。删除与 feedback 相关的旧能力前，必须先补第 3 阶段。
 4. **L2/L3 workspace dispatch contract 未定义**：AgentDock 能派 workspace，但 Haro 到 AgentDock 的 patch/execution plan contract 还未落正式 schema；因此不能把 team/scenario 物理删除当作已经完成 L2/L3。
 5. **Web review board endpoint allowlist 未固化**：后续删除 Web/API 旧 dashboard 前，应列出 approval-request / conversation / decision / auto-apply lifecycle 必需 endpoint，避免误删 review board。
@@ -177,8 +177,8 @@ Otherway 额外确认以下能力也是 keep 范围：
 | --- | --- | --- |
 | core barrel exports | `packages/core/src/index.ts:26-55` 仍导出 agent；`:56-81` 仍导出 MemoryFabric；`:141-180` 仍导出 scenario/team；`:211-219` 仍导出 runtime runner | 删除前先解除 `packages/core/src/index.ts` public export，并确认下游 import 清零 |
 | CLI bootstrap | `packages/cli/src/index.ts:1757-1808` 仍初始化 skills/agent/runtime；`:1980-2121` 仍有旧 run/chat execution path | 删除前先让 CLI run/chat 完全 legacy 化、隐藏或迁移 |
-| MCP legacy default registry | `packages/mcp-tools/src/index.ts:104-121` 仍注册 legacy `send_message`、`memory_*`、`schedule_task`；`packages/mcp-tools/src/bin/server-entry.ts:82-92` 仍使用 default registry | 必须区分 sidecar registry 与 legacy registry；确认 `haro mcp` 主链路只暴露 sidecar tools |
-| channel legacy tools | `packages/mcp-tools/src/tools/send-message.ts:41-79` 仍用 ChannelRegistry；`packages/mcp-tools/package.json:29-31` 仍依赖 `@haro/channel` | 移除 channel package 前先移除/隔离 legacy send-message tool |
+| MCP legacy default registry | `packages/mcp-tools/src/index.ts` 仍注册 legacy `send_message`、`memory_*`、`schedule_task`；FEAT-081K 已让 `send_message` 改走 AgentDock IPC，但 `memory_*` 与 `schedule_task` 仍需分别评审 | 必须区分 sidecar registry 与 legacy registry；确认 `haro mcp` 主链路只暴露 sidecar tools |
+| channel legacy tools | FEAT-081K 已移除 `mcp-tools` 对 `@haro/channel` / `ChannelRegistry` 的依赖；FEAT-081L 已删除 `packages/channel*`；081L hotfix 要求退役 `haro channel ...` 不落入 REPL fallback | 当前无下一项 channel 删除授权；继续保护 MCP `send_message` 与 AgentDock 生产消息链路 |
 | provider-codex CLI 依赖 | `packages/cli/src/index.ts:2895-2898` 仍调用 `createCodexProvider` | 删除 provider-codex 前先迁移 provider bridge 或改为 legacy-only warning |
 | skills CLI 依赖 | `packages/cli/src/index.ts:1757-1762` 初始化 `SkillsManager`；`:1985-1987` 仍执行 `prepareTask` | 删除 skills 前先确认 sidecar 不依赖 old skills，保留 eat/shit 资产语义的迁移路径 |
 | scenario/team execution path | `packages/cli/src/index.ts:2006-2011` 仍 classify/route/createWorkflow；`:2087-2103` 仍有旧 team execution path | 删除 scenario/team 前先移除旧执行路径和 legacy tests |
@@ -192,7 +192,7 @@ Otherway 额外确认以下能力也是 keep 范围：
 1. archive 旧 docs/spec；
 2. 固化 CLI legacy warning；
 3. 切断 `packages/core/src/index.ts` barrel exports；
-4. 分离 `@haro/mcp-tools` legacy default registry 与 sidecar registry；
+4. 分离 `@haro/mcp-tools` legacy default registry 与 sidecar registry（channel 依赖已由 FEAT-081K/081L 收口，剩余重点是 memory_* / schedule_task 边界）；
 5. 移除 CLI 对 provider/channel/agent/runtime/memory/skills/router/budget 的默认构造；
 6. 再评审单文件删除，优先 `team-orchestrator.ts`、`scenario-router.ts`；
 7. 最后才考虑 provider/channel/memory/runtime package 物理删除。
