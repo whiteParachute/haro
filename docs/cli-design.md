@@ -295,19 +295,14 @@ No OPENAI_API_KEY export is required for this provider mode.
 
 ### `haro channel`
 
-消息渠道管理。详见 [Channel Layer 设计](./modules/channel-layer.md) 与 [Channels 用户指南](./channels.md)。
+历史消息渠道管理入口。FEAT-081J 后仅保留只读/诊断子命令；真实 Feishu / Telegram / channel 管理由 AgentDock 提供，Haro 只保留 MCP `send_message` 这类对外工具。
 
 ```bash
 haro channel list
-haro channel enable <id>
-haro channel disable <id>
-haro channel remove <id>
 haro channel doctor <id>
-haro channel setup feishu
-haro channel setup telegram
 ```
 
-> Web Channel 已在 2026-05-14 sidecar cleanup 中移除；Haro Web 不再作为 IM channel。
+> `enable` / `disable` / `remove` / `setup` / `onboarding` 均已从 Haro CLI 旧管理面移除；不要据此新增 Haro-owned channel onboarding。
 
 ### `haro gateway`
 

@@ -25,7 +25,7 @@ export interface LegacyRemovalEvidenceDefinition {
 export interface LegacyPhysicalRemovalRecord {
   candidate: string;
   status: 'physically-removed';
-  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H';
+  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J';
   rollbackPlan: string;
   note: string;
 }
@@ -105,9 +105,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081I';
-    lastCompletedStage: 'FEAT-081I';
-    lastUpdatedBy: 'FEAT-081I';
+    stage: 'FEAT-081J';
+    lastCompletedStage: 'FEAT-081J';
+    lastUpdatedBy: 'FEAT-081J';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -130,7 +130,7 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
     deferredCandidateIds: string[];
-    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H'; rollbackPlan: string }>;
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -267,16 +267,17 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     blockingDependencies: [
       '确认 MCP send_message 是保留工具而不是 channel package 删除范围',
       'FEAT-081H 已物理删除 CLI channel setup/onboarding removed stub',
+      'FEAT-081J 已物理删除 CLI channel config 管理命令与 adapter setup contract',
       '确认 AgentDock IM 已承接生产消息通道',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/channel test', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'channel/消息边界已固化：真实 Feishu/Telegram/channel 管理由 AgentDock 提供，Haro 只保留 MCP send_message；下一步可单项评审 Haro-owned channel packages/CLI/registry，但本轮不删除。',
+    decision: 'channel/消息边界已固化：真实 Feishu/Telegram/channel 管理由 AgentDock 提供，Haro 只保留 MCP send_message；FEAT-081J 已删除 CLI config 管理和 adapter setup contract，剩余 channel package 删除仍需后续单项评审。',
     candidatePriority: {
       status: 'next-safe-candidate',
       rank: 1,
-      nextScope: 'channel-layer / Haro-owned channel packages + CLI registry review（exclude MCP send_message and AgentDock production messaging）',
-      reason: '用户已确认 channel/消息由 AgentDock 承接，且 081G/081H 已完成 setup/onboarding 摘线和 stub 删除；下一步最小候选继续从 channel-layer 评审，但必须保护 MCP send_message 与生产消息。',
-      blockedUntil: ['提交 channel package/CLI/registry 影响面列表与回滚方案', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '确认 AgentDock IM 已承接相关 channel 管理/onboarding 流程'],
+      nextScope: 'channel-layer / replace @haro/channel dependency for MCP send_message, then review packages/channel* removal',
+      reason: 'FEAT-081J 已删除 CLI config 管理、disabled adapter autoload 与 adapter setup contract；剩余 channel packages 仍被 MCP send_message/types 引用，下一步只能先替换该依赖后再评审删除。',
+      blockedUntil: ['提交 @haro/channel 在 mcp-tools 中的替代方案', '证明 MCP send_message 与 Feishu/Telegram 生产消息路径不受影响', '确认 AgentDock IM 已承接相关 channel 管理/onboarding 流程'],
       forbiddenScope: ['packages/mcp-tools/src/tools/send-message.ts', 'AgentDock 生产消息能力', '真实 Feishu/Telegram IM 投递链路'],
     },
     physicalRemoval: {
@@ -294,6 +295,20 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
         rollbackPlan: 'git revert FEAT-081H commit 可恢复 channel setup/onboarding removed stub 与对应测试。',
         note: '仅删除 081G removed/fail-closed stub 与 onboarding alias；packages/channel、Feishu/Telegram channel、MCP send_message 未获物理删除批准。',
       },
+      {
+        candidate: 'packages/cli/src/index.ts#channel-config-management-commands',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081J',
+        rollbackPlan: 'git revert FEAT-081J commit 可恢复 channel enable/disable/remove config mutation commands、disabled adapter autoload 与相关测试。',
+        note: '仅删除 Haro-owned channel CLI config 管理路径；channel list/doctor、MCP send_message 和 enabled channel runtime 仍保留。',
+      },
+      {
+        candidate: 'packages/channel*/src#setup-contract',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081J',
+        rollbackPlan: 'git revert FEAT-081J commit 可恢复 ChannelSetupResult、ManagedChannel.setup 和 Feishu/Telegram setup 方法。',
+        note: '仅删除旧 onboarding/setup contract；Feishu/Telegram start/send/doctor 与 @haro/channel registry 仍保留。',
+      },
     ],
     evidence: [
       { path: 'packages/channel/package.json', kind: 'exists', description: 'channel package 仍存在，不在 081E 删除范围' },
@@ -308,6 +323,16 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: ".command('onboarding')", description: 'channel onboarding alias 已由 FEAT-081H 删除' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'entry.channel.setup(createChannelSetupContext', description: 'channel setup/onboarding 不再调用旧 channel.setup 实现' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'updateChannelConfig(app, id, { ...result.config, enabled: true })', description: 'channel setup/onboarding 不再写入 channel config' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "Channel '${entry.id}' enabled", description: 'channel enable config 管理命令已由 FEAT-081J 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "Channel '${entry.id}' disabled", description: 'channel disable config 管理命令已由 FEAT-081J 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "Channel '${entry.id}' removed", description: 'channel remove config 管理命令已由 FEAT-081J 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'updateChannelConfig', description: 'channel config 写入 helper 已由 FEAT-081J 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'removeChannelConfig', description: 'channel config 删除 helper 已由 FEAT-081J 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: "firstArg === 'channel'", description: 'haro channel 命令触发 disabled adapter autoload 已由 FEAT-081J 删除' },
+      { path: 'packages/channel/src/protocol.ts', kind: 'contains', pattern: 'ChannelSetupResult', description: 'channel setup result contract 已由 FEAT-081J 删除' },
+      { path: 'packages/channel/src/protocol.ts', kind: 'contains', pattern: 'setup?(ctx', description: 'ManagedChannel.setup contract 已由 FEAT-081J 删除' },
+      { path: 'packages/channel-feishu/src/feishu-channel.ts', kind: 'contains', pattern: 'async setup(ctx', description: 'Feishu setup/onboarding 方法已由 FEAT-081J 删除' },
+      { path: 'packages/channel-telegram/src/telegram-channel.ts', kind: 'contains', pattern: 'async setup(ctx', description: 'Telegram setup/onboarding 方法已由 FEAT-081J 删除' },
     ],
   },
   {
@@ -526,9 +551,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081I',
-      lastCompletedStage: 'FEAT-081I',
-      lastUpdatedBy: 'FEAT-081I',
+      stage: 'FEAT-081J',
+      lastCompletedStage: 'FEAT-081J',
+      lastUpdatedBy: 'FEAT-081J',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -544,7 +569,8 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
     nextActions: [
       '本报告只读，不批准物理删除。',
       '081I 固化模块级退役边界：channel/provider/memory/skills/Web 非主线面由 AgentDock 或共享能力承接；run/router/runtime/scenario 本轮 deferred。',
-      '下一项评审候选是 channel-layer，但评审和后续删除必须排除 MCP send_message 与 AgentDock 生产消息能力。',
+      '081J 已删除 Haro-owned channel CLI config 管理命令、disabled adapter autoload 和 adapter setup contract。',
+      '下一项评审候选仍是 channel-layer；必须先替换 @haro/channel 在 MCP send_message/types 中的依赖，且排除 AgentDock 生产消息能力。',
       '删除前先处理 stillReferenced evidence，并提交影响面、回滚方案和验证结果。',
     ],
   };

@@ -10,7 +10,6 @@ export type {
   ChannelRegistration,
   ChannelRegistryEntry,
   ChannelSetupContext,
-  ChannelSetupResult,
   InboundMessage,
   ManagedChannel,
   MessageChannel,

@@ -514,7 +514,7 @@ describe('runCli [FEAT-006]', () => {
     expect(output).toContain('Haro setup / onboard');
     expect(output).toContain('haro doctor');
     expect(output).toContain('haro run "列出当前目录下的 TypeScript 文件"');
-    expect(output).toContain('haro channel doctor feishu');
+    expect(output).not.toContain('haro channel doctor feishu');
     expect(output).not.toContain('haro channel setup feishu');
   });
 
@@ -711,7 +711,6 @@ describe('runCli [FEAT-006]', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-setup-removed-'));
     roots.push(root);
     const stdout = new PassThrough();
-    let setupCalled = false;
 
     const result = await runCli({
       argv: ['channel', 'setup', 'feishu'],
@@ -730,17 +729,49 @@ describe('runCli [FEAT-006]', () => {
         createTestChannelRegistration({
           id: 'feishu',
           enabled: false,
-          setup: async () => {
-            setupCalled = true;
-            return { ok: true, config: { enabled: true }, message: 'legacy setup must not run' };
-          },
         }),
       ],
     });
 
     expect(result.exitCode).not.toBe(0);
-    expect(setupCalled).toBe(false);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+  });
+
+  it('FEAT-081J: channel enable/disable/remove config management commands are physically removed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-config-removed-'));
+    roots.push(root);
+
+    for (const argv of [
+      ['channel', 'enable', 'feishu'],
+      ['channel', 'disable', 'feishu'],
+      ['channel', 'remove', 'feishu'],
+    ]) {
+      const stdout = new PassThrough();
+      const result = await runCli({
+        argv,
+        root,
+        stdout,
+        createProviderRegistry: async () =>
+          createProviderRegistry(
+            new StubProvider({
+              query: async function* () {
+                yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+              },
+            }),
+          ),
+        loadAgentRegistry: async () => createAgentRegistry(),
+        createAdditionalChannels: async () => [
+          createTestChannelRegistration({
+            id: 'feishu',
+            enabled: false,
+          }),
+        ],
+      });
+      expect(result.exitCode).not.toBe(0);
+    }
+
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+    expect(existsSync(join(root, 'channels', 'feishu'))).toBe(false);
   });
 
   it('FEAT-008 AC8: channel doctor feishu exits non-zero and prints reason on credential failure', async () => {
@@ -817,7 +848,6 @@ describe('runCli [FEAT-006]', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-channel-onboarding-removed-'));
     roots.push(root);
     const stdout = new PassThrough();
-    let setupCalled = false;
 
     const result = await runCli({
       argv: ['channel', 'onboarding', 'telegram'],
@@ -836,16 +866,11 @@ describe('runCli [FEAT-006]', () => {
         createTestChannelRegistration({
           id: 'telegram',
           enabled: false,
-          setup: async () => {
-            setupCalled = true;
-            return { ok: true, config: { enabled: true }, message: 'legacy setup must not run' };
-          },
         }),
       ],
     });
 
     expect(result.exitCode).not.toBe(0);
-    expect(setupCalled).toBe(false);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
   });
 
@@ -1861,7 +1886,6 @@ describe('runCli [FEAT-006]', () => {
 function createTestChannelRegistration(input: {
   id: string;
   enabled: boolean;
-  setup?: ManagedChannel['setup'];
   doctor?: ManagedChannel['doctor'];
   healthCheck?: ManagedChannel['healthCheck'];
 }): ChannelRegistration {
@@ -1886,7 +1910,6 @@ function createTestChannelRegistration(input: {
       } as const;
     },
     healthCheck: input.healthCheck ?? (async () => true),
-    ...(input.setup ? { setup: input.setup } : {}),
     ...(input.doctor ? { doctor: input.doctor } : {}),
   };
   return {

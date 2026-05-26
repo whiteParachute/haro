@@ -115,7 +115,7 @@ export async function runDiagnostics(input: DiagnosticsInput): Promise<Diagnosti
   const issues = stages.flatMap((stage) => stage.issues);
   const nextActions = unique([
     ...stages.flatMap((stage) => stage.nextActions),
-    ...(input.mode === 'setup' ? ['haro doctor', 'haro channel doctor feishu'] : []),
+    ...(input.mode === 'setup' ? ['haro doctor'] : []),
   ]);
   const providerStage = allStages.find((stage) => stage.id === 'provider');
   const channelStage = allStages.find((stage) => stage.id === 'channels');

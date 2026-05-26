@@ -1,4 +1,3 @@
-import { createInterface } from 'node:readline/promises';
 import { join } from 'node:path';
 import {
   ChannelSessionStore,
@@ -8,7 +7,6 @@ import {
   type ChannelDoctorResult,
   type ChannelLogger,
   type ChannelSetupContext,
-  type ChannelSetupResult,
   type ManagedChannel,
   type OutboundMessage,
 } from '@haro/channel';
@@ -81,36 +79,6 @@ export class FeishuChannel implements ManagedChannel {
     return this.runDoctor(config);
   }
 
-  async setup(ctx: ChannelSetupContext): Promise<ChannelSetupResult> {
-    const initial = resolveFeishuConfig({ ...this.baseConfig, ...ctx.config });
-    const rl = createInterface({ input: ctx.stdin, output: ctx.stdout, terminal: false });
-    const lines = rl[Symbol.asyncIterator]();
-    try {
-      const appId =
-        (await readPromptLine(lines, ctx.stdout, `Feishu App ID [${initial.appId || ''}]: `)).trim() ||
-        initial.appId;
-      const appSecret =
-        (await readPromptLine(lines, ctx.stdout, `Feishu App Secret [${initial.appSecret ? '***' : ''}]: `)).trim() ||
-        initial.appSecret;
-      const sessionScopeInput =
-        (await readPromptLine(lines, ctx.stdout, `Session scope (per-chat/per-user) [${initial.sessionScope}]: `)).trim() ||
-        initial.sessionScope;
-      const nextConfig = {
-        enabled: true,
-        appId,
-        appSecret,
-        transport: 'websocket',
-        sessionScope: sessionScopeInput === 'per-user' ? 'per-user' : 'per-chat',
-      } as const;
-      return {
-        ok: true,
-        config: nextConfig,
-        message: `Feishu channel configured with ${nextConfig.sessionScope} session scope.`,
-      };
-    } finally {
-      rl.close();
-    }
-  }
 
   async start(ctx: ChannelContext): Promise<void> {
     this.resolvedConfig = resolveFeishuConfig({ ...this.baseConfig, ...ctx.config });
@@ -251,14 +219,4 @@ function inferInboundType(
 
 function defaultSessionId(): string {
   return `feishu-${Math.random().toString(16).slice(2)}`;
-}
-
-async function readPromptLine(
-  iterator: AsyncIterableIterator<string>,
-  stdout: NodeJS.WritableStream,
-  prompt: string,
-): Promise<string> {
-  stdout.write(prompt);
-  const next = await iterator.next();
-  return next.done ? '' : next.value;
 }

@@ -73,7 +73,7 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
     expect(lastLine).toBe('0.1.0');
   });
 
-  it('shipped binary channel list includes optional adapters on a clean home', () => {
+  it('shipped binary channel list does not load optional adapters on a clean home', () => {
     const home = mkdtempSync(join(tmpdir(), 'haro-bin-channel-list-'));
     try {
       // FEAT-039 R11: piped (non-TTY) stdout defaults to JSON envelope.
@@ -84,8 +84,8 @@ describe.skipIf(!existsSync(dist))('bin/haro.js [FEAT-006]', () => {
       });
       expect(res.status).toBe(0);
       expect(res.stdout).toContain('cli\tenabled\tbuiltin');
-      expect(res.stdout).toContain('feishu\tdisabled\tpackage');
-      expect(res.stdout).toContain('telegram\tdisabled\tpackage');
+      expect(res.stdout).not.toContain('feishu\tdisabled\tpackage');
+      expect(res.stdout).not.toContain('telegram\tdisabled\tpackage');
       expect(res.stdout).not.toContain('web\tenabled\tbuiltin');
       expect(res.stdout).not.toContain('Created default Agent');
       expect(res.stderr).not.toContain('Created default Agent');

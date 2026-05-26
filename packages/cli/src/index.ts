@@ -1,10 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { Command } from 'commander';
-import { stringify as stringifyYaml } from 'yaml';
 import {
   AgentRegistry,
   AgentRunner,
@@ -1030,40 +1029,6 @@ function registerChannelCommands(program: Command, app: AppContext): void {
             ].join('\t'),
           );
           app.stdout.write(`${lines.join('\n')}\n`);
-        });
-
-      cmd
-        .command('enable')
-        .argument('<id>', 'channel id')
-        .action(async (id: string) => {
-          writeLegacySurfaceWarning(app);
-          const entry = app.channelRegistry.enable(id);
-          updateChannelConfig(app, id, { enabled: true });
-          app.stdout.write(`Channel '${entry.id}' enabled\n`);
-        });
-
-      cmd
-        .command('disable')
-        .argument('<id>', 'channel id')
-        .action(async (id: string) => {
-          writeLegacySurfaceWarning(app);
-          const entry = app.channelRegistry.disable(id);
-          await entry.channel.stop();
-          updateChannelConfig(app, id, { enabled: false });
-          app.stdout.write(`Channel '${entry.id}' disabled\n`);
-        });
-
-      cmd
-        .command('remove')
-        .argument('<id>', 'channel id')
-        .action(async (id: string) => {
-          writeLegacySurfaceWarning(app);
-          const entry = app.channelRegistry.getEntry(id);
-          await entry.channel.stop();
-          app.channelRegistry.remove(id);
-          removeChannelConfig(app, id);
-          rmSync(join(app.paths.dirs.channels, id), { recursive: true, force: true });
-          app.stdout.write(`Channel '${entry.id}' removed\n`);
         });
 
       cmd
@@ -2736,11 +2701,10 @@ async function createDefaultAdditionalChannels(input: {
   createSessionId?: () => string;
   argv?: readonly string[];
 }): Promise<readonly ChannelRegistration[]> {
-  const firstArg = input.argv?.[0];
   const registrations: ChannelRegistration[] = [];
 
   const feishuConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'feishu');
-  if (firstArg === 'channel' || feishuConfig.enabled === true) {
+  if (feishuConfig.enabled === true) {
     try {
       const { FeishuChannel } = await import('@haro/channel-feishu');
       registrations.push({
@@ -2764,7 +2728,7 @@ async function createDefaultAdditionalChannels(input: {
   }
 
   const telegramConfig = readChannelConfig({ channels: input.loadedConfig.channels }, 'telegram');
-  if (firstArg === 'channel' || telegramConfig.enabled === true) {
+  if (telegramConfig.enabled === true) {
     try {
       const { TelegramChannel } = await import('@haro/channel-telegram');
       registrations.push({
@@ -2796,28 +2760,6 @@ function readChannelConfig(config: { channels?: HaroConfig['channels'] }, id: st
   return value && typeof value === 'object' && !Array.isArray(value)
     ? { ...(value as Record<string, unknown>) }
     : {};
-}
-
-function updateChannelConfig(app: AppContext, id: string, patch: Record<string, unknown>): void {
-  const channels = ((app.loaded.config.channels ??= {}) as Record<string, unknown>);
-  const current = readChannelConfig(app.loaded.config, id);
-  channels[id] = { ...current, ...patch };
-  persistLoadedConfig(app);
-}
-
-function removeChannelConfig(app: AppContext, id: string): void {
-  const channels = app.loaded.config.channels as Record<string, unknown> | undefined;
-  if (channels && id in channels) {
-    delete channels[id];
-  }
-  persistLoadedConfig(app);
-}
-
-function persistLoadedConfig(app: AppContext): void {
-  writeFileSync(app.paths.configFile, stringifyYaml(app.loaded.config), 'utf8');
-  if (!app.loaded.sources.includes(app.paths.configFile)) {
-    app.loaded.sources.push(app.paths.configFile);
-  }
 }
 
 function createChannelSetupContext(app: AppContext, id: string): ChannelSetupContext {

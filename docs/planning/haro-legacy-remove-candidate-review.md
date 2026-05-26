@@ -1014,3 +1014,105 @@ pnpm test:sidecar
 ```
 
 081I 不要求、也不允许物理删除任何新文件。
+
+## 18. FEAT-081J channel-layer 第一块真实代码删除（2026-05-26）
+
+081J 开始真实删代码，但只处理 channel-layer 中已经与主链路摘开的旧 Haro-owned 管理面。
+
+本轮删除范围：
+
+- `haro channel enable <id>` / `disable <id>` / `remove <id>` 旧 config 管理命令。
+- `packages/cli/src/index.ts` 中对应的 channel config 写入/删除 helper。
+- `haro channel ...` 命令触发 disabled Feishu/Telegram adapter 自动加载的旧 registry 行为。
+- `@haro/channel` 的 `ChannelSetupResult` 与 `ManagedChannel.setup` 旧 onboarding contract。
+- `packages/channel-feishu`、`packages/channel-telegram` 中仅用于旧 onboarding 的 `setup(...)` 方法和 prompt 读取 helper。
+- 相关旧测试断言。
+
+本轮保留范围：
+
+- MCP `packages/mcp-tools/src/tools/send-message.ts`。
+- `@haro/channel` 的 `ChannelRegistry`、`MessageChannel`、`OutboundMessage` 等 send_message 仍需的类型/运行时。
+- `packages/channel-feishu` / `packages/channel-telegram` 的 `start`、`send`、`doctor` 和真实消息处理代码。
+- AgentDock 生产消息能力。
+- 真实 Feishu / Telegram 投递链路。
+- run / router / runtime / scenario-router（第 4 项仍 deferred）。
+- provider、memory、skills、Web/API。
+
+### 18.1 只读盘点结论
+
+channel-layer 当前分为三类：
+
+1. MCP `send_message` 仍依赖的部分
+   - `packages/mcp-tools/src/tools/send-message.ts`。
+   - `packages/mcp-tools/src/types.ts` 中的 `ChannelRegistry` dependency。
+   - `packages/channel/src/registry.ts`、`packages/channel/src/protocol.ts` 中的 registry/message 类型。
+   - 这些本轮不删。
+
+2. 生产消息或 adapter runtime 仍可能使用的部分
+   - `packages/channel-feishu/src/feishu-channel.ts` 的 `start/send/doctor`。
+   - `packages/channel-telegram/src/telegram-channel.ts` 的 `start/send/doctor`。
+   - 这些本轮不删。
+
+3. 只服务旧 Haro channel 管理/setup/onboarding 的部分
+   - CLI `enable/disable/remove` config mutation。
+   - disabled adapter autoload for `haro channel ...`。
+   - adapter `setup(...)` onboarding methods。
+   - 这些是 081J 删除对象。
+
+### 18.2 guard 当前表达
+
+081J 后 guard/report 必须表达：
+
+- `planning.stage=FEAT-081J`。
+- `planning.lastCompletedStage=FEAT-081J`。
+- `physicalRemovals[]` 包含：
+  - `packages/cli/src/index.ts#channel-config-management-commands:FEAT-081J`。
+  - `packages/channel*/src#setup-contract:FEAT-081J`。
+- `verifiedAbsent` 证明以下内容缺席：
+  - `.command('enable')`。
+  - `.command('disable')`。
+  - `.command('remove')`。
+  - `updateChannelConfig`。
+  - `removeChannelConfig`。
+  - `firstArg === 'channel'` disabled adapter autoload。
+  - `ChannelSetupResult`。
+  - `ManagedChannel.setup`。
+  - Feishu / Telegram adapter `setup(...)`。
+
+安全字段继续保持：
+
+- `deleteAllowed=false`。
+- `physicalDeleteApproved=false`。
+- `wouldDelete=false`。
+- `summary.deleteAllowedCount=0`。
+
+### 18.3 下一步候选
+
+下一项仍是 channel-layer，但范围已经变窄：
+
+- 先替换 `@haro/channel` 在 MCP `send_message` / `mcp-tools` 类型中的依赖。
+- 再评审是否删除剩余 `packages/channel*`。
+
+这不是删除授权。
+
+下一阶段必须继续保护：
+
+- MCP `send_message`。
+- AgentDock 生产消息能力。
+- 真实 Feishu / Telegram 投递链路。
+
+### 18.4 回滚方式
+
+如需恢复 081J 删除内容，可 revert FEAT-081J commit。
+
+回滚后必须重新运行：
+
+```bash
+pnpm -F @haro/cli build
+pnpm -F @haro/channel build
+pnpm -F @haro/channel-feishu build
+pnpm -F @haro/channel-telegram build
+pnpm -F @haro/mcp-tools test -- test/tools/send-message.test.ts
+pnpm test:legacy
+pnpm test:sidecar
+```

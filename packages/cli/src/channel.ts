@@ -7,7 +7,6 @@ export {
   type ChannelRegistration,
   type ChannelRegistryEntry,
   type ChannelSetupContext,
-  type ChannelSetupResult,
   type CliChannelOptions,
   type InboundMessage,
   type ManagedChannel,

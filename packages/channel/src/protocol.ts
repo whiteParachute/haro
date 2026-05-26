@@ -53,11 +53,6 @@ export interface ChannelDoctorResult {
   details?: Record<string, unknown>;
 }
 
-export interface ChannelSetupResult {
-  ok: boolean;
-  config: Record<string, unknown>;
-  message: string;
-}
 
 export interface ChannelSetupContext {
   root: string;
@@ -70,7 +65,6 @@ export interface ChannelSetupContext {
 
 export interface ManagedChannel extends MessageChannel {
   doctor?(ctx: ChannelSetupContext): Promise<ChannelDoctorResult>;
-  setup?(ctx: ChannelSetupContext): Promise<ChannelSetupResult>;
 }
 
 export interface ChannelRegistration {
