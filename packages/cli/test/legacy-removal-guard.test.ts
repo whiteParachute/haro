@@ -186,9 +186,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
       expect(payload.data.planning).toMatchObject({
-        stage: 'FEAT-081S',
-        lastCompletedStage: 'FEAT-081S',
-        lastUpdatedBy: 'FEAT-081S',
+        stage: 'FEAT-081T',
+        lastCompletedStage: 'FEAT-081T',
+        lastUpdatedBy: 'FEAT-081T',
       });
     expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -215,15 +215,22 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       'Review Board 可审',
       '证明链路不依赖旧 haro run/chat/team/scenario',
     ]));
+    const webBoundary = payload.data.planning.moduleRetirementBoundaries.find((boundary) => boundary.module === 'web-api');
+    expect(webBoundary).toMatchObject({
+      deletionCandidateAllowed: false,
+      protectedScope: expect.arrayContaining(['approval review board routes', 'packages/web-api/src/routes/approval-requests.ts']),
+    });
+    expect(webBoundary?.decision).toContain('FEAT-081T');
+    expect(webBoundary?.decision).toContain('不批准 runtime/Web/API 删除');
     expect(payload.data.planning.nextDeletionCandidate).toBeNull();
     expect(payload.data.planning.nextReviewCandidate).toBeNull();
     expect(payload.data.planning.forbiddenCandidateIds).toEqual([]);
     expect(payload.data.planning.blockedCandidateIds).toEqual(expect.arrayContaining([
       'provider-codex',
       'memory-fabric',
-      'web-dashboard-non-review',
       'agent-runtime-router',
     ]));
+    expect(payload.data.planning.blockedCandidateIds).not.toContain('web-dashboard-non-review');
     expect(payload.data.planning.deferredCandidateIds).toEqual(expect.arrayContaining([
       'skills-marketplace',
     ]));
@@ -243,6 +250,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/provider-onboarding.ts#writeProviderEnvFile', removedBy: 'FEAT-081P' }),
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/index.ts#provider-setup-retired-stub', removedBy: 'FEAT-081R' }),
     ]));
+    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(13);
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     expect(payload.data.items.every((item) => !('physicalRemoval' in item))).toBe(true);
     const providerCodex = byId.get('provider-codex');
@@ -387,8 +395,19 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(agentRuntime?.verifiedAbsent.find((entry) => entry.description?.includes('专用 payload'))).toMatchObject({ present: false, absent: true });
     expect(evidenceByPath.get('packages/core/src/scenario-router.ts')).toBe(true);
     expect(agentRuntime?.deleteAllowed).toBe(false);
-    expect(byId.get('web-dashboard-non-review')?.candidatePriority.status).toBe('blocked');
-    expect(byId.get('web-dashboard-non-review')?.candidatePriority.forbiddenScope).toContain('approval review board routes');
+    const webDashboard = byId.get('web-dashboard-non-review');
+    expect(webDashboard).toMatchObject({ state: 'freeze', deleteAllowed: false, stillReferenced: true });
+    expect(webDashboard?.candidatePriority).toMatchObject({
+      status: 'done',
+      rank: 5,
+    });
+    expect(webDashboard?.candidatePriority.reason).toContain('非 review Web/API surface 为空');
+    expect(webDashboard?.candidatePriority.forbiddenScope).toEqual(expect.arrayContaining([
+      'packages/web',
+      'packages/web-api',
+      'approval review board routes',
+    ]));
+    expect(webDashboard?.physicalRemovals).toBeUndefined();
     const workspaceRoot = resolve(process.cwd(), '../..');
     expect(existsSync(join(workspaceRoot, 'packages/core/src/team-orchestrator.ts'))).toBe(false);
     expect(existsSync(join(workspaceRoot, 'packages/core/src/legacy/team-orchestrator.ts'))).toBe(false);
@@ -409,7 +428,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081S lastCompleted=FEAT-081S');
+    expect(text).toContain('planning stage: FEAT-081T lastCompleted=FEAT-081T');
     expect(text).toContain('next deletion candidate (candidate only, not approval): none');
     expect(text).toContain('next review candidate: none');
     expect(text).toContain('forbidden now: none');
@@ -435,6 +454,8 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('FEAT-081P');
     expect(text).toContain('FEAT-081R');
     expect(text).toContain('FEAT-081S');
+    expect(text).toContain('FEAT-081T');
+    expect(text).toContain('非 review Web/API surface 为空');
     expect(text).toContain('provider setup/onboarding CLI 入口 retired/fail-closed');
     expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/index.ts#provider-setup-onboarding-command');
     expect(text).toContain('AgentDock IPC 消息 contract');

@@ -104,9 +104,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081S';
-    lastCompletedStage: 'FEAT-081S';
-    lastUpdatedBy: 'FEAT-081S';
+    stage: 'FEAT-081T';
+    lastCompletedStage: 'FEAT-081T';
+    lastUpdatedBy: 'FEAT-081T';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -223,8 +223,8 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     owner: 'Haro Review Board + AgentDock Web',
     haroRetireScope: ['Review Board 之外的旧 dashboard/API'],
     protectedScope: ['approval review board routes', 'packages/web-api/src/routes/approval-requests.ts'],
-    decision: 'Web/API 仅保留 Review Board/审批看板；非 review dashboard 已基本自然收口为 review board + auth/bootstrap，但 081M 只做 freeze/allowlist，不批准物理删除。',
-    nextAction: '先固化 Review Board endpoint allowlist；之后只能逐路由评审非 review surface，不得包级删除 Web/API。',
+    decision: 'FEAT-081T 已完成 Review Board allowlist 与非 review Web/API 路由枚举：非 review surface 为空；Web/API 只保留 Review Board + auth/bootstrap + health/fallback/infrastructure，不批准 runtime/Web/API 删除。',
+    nextAction: '继续保持 Web/API freeze/allowlist；不得从 081T 推导 packages/web 或 packages/web-api 包级删除批准，后续如出现新路由需单项评审。',
     deletionCandidateAllowed: false,
   },
 ];
@@ -552,17 +552,16 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     candidatePaths: ['packages/web', 'packages/web-api'],
     replacement: 'Haro Web 只保留 proposal review board；通用 dashboard/API 由 AgentDock 承接',
     blockingDependencies: [
-      '列出 review board endpoint allowlist',
-      '确认 provider/channel/runtime 页面不在主入口',
-      'Web/API 路由删除需单独批准',
+      'FEAT-081T 已枚举 Review Board allowlist 与非 review Web/API 路由',
+      '非 review Web/API surface 当前为空',
+      'Web/API 包级删除仍需单独批准且当前禁止',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/web-api test', 'pnpm -F @haro/web build'],
-    decision: 'Web/API 非 review 面已基本自然收口为 Review Board + auth/bootstrap；081M 仅记录 freeze/allowlist，不删除任何 Web/API 路由或包。',
+    decision: 'FEAT-081T/B-1 只做 guard/docs schema closure：Review Board allowlist 与非 review Web/API 路由枚举已完成，非 review surface 为空；不删除任何 Web/API 路由或包。',
     candidatePriority: {
-      status: 'blocked',
+      status: 'done',
       rank: 5,
-      reason: 'Review Board 是 Haro sidecar 主链路看板；非 review dashboard 继续 freeze/allowlist，包级删除被禁止。',
-      blockedUntil: ['列出 Review Board endpoint allowlist', '列出非 review dashboard/API 路由', '逐路由证明删除不影响审批看板与 auth/bootstrap'],
+      reason: '081T 已确认非 review Web/API surface 为空；Web/API 当前只保留 Review Board + auth/bootstrap + health/fallback/infrastructure。done 仅表示枚举闭环，不是 runtime 或包级删除批准。',
       forbiddenScope: ['packages/web', 'packages/web-api', 'approval review board routes'],
     },
     evidence: [
@@ -663,9 +662,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081S',
-      lastCompletedStage: 'FEAT-081S',
-      lastUpdatedBy: 'FEAT-081S',
+      stage: 'FEAT-081T',
+      lastCompletedStage: 'FEAT-081T',
+      lastUpdatedBy: 'FEAT-081T',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -690,6 +689,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       'FEAT-081Q 已将 guard physicalRemoval singleton schema 统一迁移为 physicalRemovals[]；不改任何 runtime payload 或删除批准。',
       'FEAT-081R 已删除 provider setup retired 子命令 stub；haro provider setup ... 现在由 provider command unknown-command fail-closed，provider runtime 与其它 provider 子命令继续保留。',
       'FEAT-081S 已删除 TeamOrchestrator removed-result 兼容 payload；team-routing 无 skill directOutput 时走普通 single-agent fallback，scenario-router/runtime/provider path 继续保留。',
+      'FEAT-081T/B-1 只做 Web/API guard/docs schema closure：非 review Web/API surface 为空，Review Board + auth/bootstrap + health/fallback/infrastructure 继续保留，不新增物理删除。',
       'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };

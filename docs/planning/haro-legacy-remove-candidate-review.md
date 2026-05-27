@@ -1397,3 +1397,27 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
 后续风险：普通 single-agent fallback 仍依赖 provider runtime 与 runner；scenario-router/runtime 是否继续退役必须另起单项评审，不得由 081S 推导。
+
+
+## 28. FEAT-081T / B-1 Web/API 非 review surface schema closure（2026-05-27）
+
+081T/B-1 只做 guard/tests/docs schema closure，不做任何 Web/API runtime 删除。
+
+只读枚举结论：
+
+- `packages/web` / `packages/web-api` 的非 review dashboard/API surface 当前为空。
+- Haro Web/API 当前只保留 Review Board、approval request/decision/conversation 相关能力，以及 auth/bootstrap、`/api/health`、SPA fallback、404 fail-closed 与共享基础设施。
+- `packages/web` 与 `packages/web-api` 包级能力仍在保护范围；081T 不修改 runtime/test/e2e，也不批准后续包级删除。
+
+081T guard 口径：
+
+- `planning.stage=FEAT-081T`。
+- `planning.lastCompletedStage=FEAT-081T`。
+- `planning.lastUpdatedBy=FEAT-081T`。
+- `web-dashboard-non-review.candidatePriority.status=done`，其中 done 仅表示 Review Board allowlist 与非 review 路由枚举闭环；`state=freeze` 继续表示 Web/API 保持冻结/保护。
+- `web-dashboard-non-review` 从 `blockedCandidateIds` 移除，但 `deleteAllowed=false`，`stillReferenced=true`，`candidatePriority.forbiddenScope` 仍包含 `packages/web`、`packages/web-api`、approval review board routes。
+- `LEGACY_MODULE_RETIREMENT_BOUNDARIES.web-api.deletionCandidateAllowed=false` 保持不变。
+- B-1 没有物理删除，不新增 `physicalRemovals`，`completedPhysicalRemovals` 保持 13；FEAT-081S TeamOrchestrator removed-result 记录仍归属 `removedBy=FEAT-081S`。
+- `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
+
+后续风险：Review Board/auth/bootstrap/health/fallback/infrastructure 是 Haro sidecar 人审链路基础设施；不得从 081T 推导 `packages/web` / `packages/web-api` runtime 或包级删除批准。未来如出现新的非 review Web/API surface，必须逐路由单项评审。
