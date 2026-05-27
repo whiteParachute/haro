@@ -29,9 +29,6 @@ import {
   type HaroPaths,
   type OperationClass,
   type OperationPolicy,
-  type RoutingDecision,
-  type RunAgentResult,
-  type ScenarioWorkflow,
 } from '@haro/core';
 import { createCodexProvider } from '@haro/provider-codex';
 import type { ReviewConversationReplyInput, ReviewConversationReplyResult } from '@haro/web-api';
@@ -1778,29 +1775,11 @@ async function executeTask(
     );
   };
   try {
-    if (decision.executionMode === 'team') {
-      if (prepared.matchedSkillId) {
-        app.logger.warn?.({
-          skillId: prepared.matchedSkillId,
-          workflowId: workflow.workflowId,
-        }, 'legacy team orchestrator removed; executing skill-prepared task as single-agent fallback');
-      } else {
-        const teamResult = legacyTeamOrchestratorRemovedResult(input, workflow, decision);
-        const disabledContent = teamResult.finalEvent.type === 'error'
-          ? `ERROR [${teamResult.finalEvent.code}] ${teamResult.finalEvent.message}`
-          : teamResult.finalEvent.content;
-        await sendWithPermissionGuard(app, budgetStore, {
-          workflowId: workflow.workflowId,
-          agentId: input.agentId,
-          channel: outputChannel,
-          sessionId: channelSessionId,
-          message: {
-            type: 'text',
-            content: disabledContent,
-          },
-        });
-        return { ...teamResult, workflowId: workflow.workflowId };
-      }
+    if (decision.executionMode === 'team' && prepared.matchedSkillId) {
+      app.logger.warn?.({
+        skillId: prepared.matchedSkillId,
+        workflowId: workflow.workflowId,
+      }, 'legacy team orchestrator removed; executing skill-prepared task as single-agent fallback');
     }
     const checkpointNodeId = workflow.leafSessionRefs[0]?.nodeId ?? 'leaf-1';
     const leafSessionId =
@@ -1959,34 +1938,6 @@ function publishStreamEventsForChannel(
       // Best-effort fan-out — never break the executor on subscriber errors.
     }
   }
-}
-
-function legacyTeamOrchestratorRemovedResult(
-  input: ExecutionOptions,
-  workflow: ScenarioWorkflow,
-  decision: RoutingDecision,
-): RunAgentResult {
-  const message = [
-    'legacy_team_orchestrator_removed：TeamOrchestrator 属于历史 Haro-owned workbench/runtime 路径，已在 FEAT-081D 物理删除。',
-    '当前主线是 AgentDock self-evolution sidecar；多 agent/workspace orchestration 应由 AgentDock 承接。',
-    '本删除只覆盖 TeamOrchestrator，未批准删除 gateway/provider/channel/memory/skills/Web/scenario-router。',
-  ].join(' ');
-  return {
-    sessionId: workflow.workflowId,
-    ruleId: decision.matchedRuleId ?? decision.workflowTemplateId,
-    provider: input.provider ?? 'legacy-team-orchestrator-removed',
-    model: input.model ?? workflow.workflowTemplateId,
-    events: [{
-      type: 'result',
-      content: message,
-      responseId: 'legacy_team_orchestrator_removed',
-    }],
-    finalEvent: {
-      type: 'result',
-      content: message,
-      responseId: 'legacy_team_orchestrator_removed',
-    },
-  };
 }
 
 async function sendWithPermissionGuard(

@@ -243,8 +243,8 @@ describe('runCli [FEAT-006]', () => {
     }
   });
 
-  it('FEAT-081D: team orchestrator remains removed even when the legacy env is set', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-team-disabled-'));
+  it('FEAT-081S: team-mode request ignores legacy TeamOrchestrator env and falls back to single-agent runner', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-router-team-single-agent-fallback-'));
     roots.push(root);
     const stdout = new PassThrough();
     const stderr = new PassThrough();
@@ -256,14 +256,14 @@ describe('runCli [FEAT-006]', () => {
       root,
       stdout,
       stderr,
-      createSessionId: createIdFactory(['workflow-team-disabled-1']),
-      createConversationId: createIdFactory(['cli-bootstrap-team-disabled-1', 'channel-team-disabled-1']),
+      createSessionId: createIdFactory(['workflow-team-fallback-1', 'leaf-team-fallback-1']),
+      createConversationId: createIdFactory(['cli-bootstrap-team-fallback-1', 'channel-team-fallback-1']),
       setupDeps: { env: { ...process.env, HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR: '1' } },
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
             query: async function* () {
-              yield { type: 'result', content: 'should-not-run-team-branch', responseId: 'resp-disabled' };
+              yield { type: 'result', content: 'single-agent-fallback-result', responseId: 'resp-fallback' };
             },
           }),
         ),
@@ -272,11 +272,10 @@ describe('runCli [FEAT-006]', () => {
 
     expect(result.exitCode).toBe(0);
     const text = outputChunks.join('');
-    expect(text).toContain('legacy_team_orchestrator_removed');
-    expect(text).toContain('物理删除');
-    expect(text).toContain('FEAT-081D');
+    expect(text).toContain('single-agent-fallback-result');
+    expect(text).not.toContain('legacy_team_orchestrator_removed');
+    expect(text).not.toContain('TeamOrchestrator');
     expect(text).not.toContain('"mergeEnvelope"');
-    expect(text).not.toContain('should-not-run-team-branch');
   });
 
   it('AC2/AC6: repl /help lists slash commands and /compress reports unsupported for codex', async () => {

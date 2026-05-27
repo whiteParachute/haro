@@ -25,7 +25,7 @@ export interface LegacyRemovalEvidenceDefinition {
 export interface LegacyPhysicalRemovalRecord {
   candidate: string;
   status: 'physically-removed';
-  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R';
+  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S';
   rollbackPlan: string;
   note: string;
 }
@@ -104,9 +104,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081R';
-    lastCompletedStage: 'FEAT-081R';
-    lastUpdatedBy: 'FEAT-081R';
+    stage: 'FEAT-081S';
+    lastCompletedStage: 'FEAT-081S';
+    lastUpdatedBy: 'FEAT-081S';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -129,7 +129,7 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
     deferredCandidateIds: string[];
-    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R'; rollbackPlan: string }>;
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -483,13 +483,12 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       'Review Board 可审且不依赖旧 haro run/chat/team/scenario',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'FEAT-081D 已物理删除 TeamOrchestrator 旧兼容路径；run/router/runtime/scenario-router 本轮 deferred，未批准删除，也不得作为下一删除候选。',
+    decision: 'FEAT-081S 仅删除 TeamOrchestrator removed-result 兼容 payload；scenario-router、runtime、run/chat/LLM provider path 仍保留且不获删除批准。',
     candidatePriority: {
-      status: 'defer',
+      status: 'blocked',
       rank: 6,
-      nextScope: 'deferred until AgentDock scheduled proposal chain is stable',
-      reason: '第 4 项按用户边界 deferred；先删其它，等 AgentDock 定时任务能稳定触发 Haro 提案生成并进入 Review Board 后再评估。',
-      blockedUntil: ['AgentDock 定时任务稳定触发 Haro 生成提案', 'Haro 创建待审请求', 'Review Board 可审', '证明不依赖旧 haro run/chat/team/scenario'],
+      reason: '081S 只解除 TeamOrchestrator removed-result 兼容 payload 的本轮 defer 边界；scenario-router/runtime/run/chat/LLM provider path 仍有业务引用，不得作为 runtime 删除批准。',
+      blockedUntil: ['证明 scenario-router/runtime/run/chat/LLM provider path 可替代或必须保留', '确认普通 single-agent fallback 不依赖 TeamOrchestrator removed payload', 'Review Board 可审且不依赖旧 haro team runtime'],
     },
     physicalRemovals: [
       {
@@ -498,6 +497,13 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
         removedBy: 'FEAT-081D',
         rollbackPlan: 'git revert FEAT-081D commit 可恢复 team-orchestrator 源码、legacy export、CLI 兼容路径与旧测试。',
         note: '仅 TeamOrchestrator 旧兼容入口被删除；gateway/provider/channel/memory/skills/Web/scenario-router 未获物理删除批准。',
+      },
+      {
+        candidate: 'packages/cli/src/index.ts#legacy-team-orchestrator-removed-result',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081S',
+        rollbackPlan: 'git revert FEAT-081S commit 可恢复 legacy_team_orchestrator_removed 兼容 payload 与专用返回函数。',
+        note: '仅删除 TeamOrchestrator 已删除后遗留的 CLI removed-result 兼容入口；team-mode 无 directOutput 时改走普通 single-agent runner/fallback，scenario-router/runtime/provider path 均保留。',
       },
     ],
     evidence: [
@@ -508,6 +514,8 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       { path: 'packages/core/src/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator 源文件已由 FEAT-081D 删除' },
       { path: 'packages/core/src/legacy/team-orchestrator.ts', kind: 'exists', description: 'team orchestrator legacy re-export 已由 FEAT-081D 删除' },
       { path: 'packages/core/package.json', kind: 'contains', pattern: './legacy/team-orchestrator', description: 'legacy package export 已由 FEAT-081D 移除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'legacyTeamOrchestratorRemovedResult', description: 'TeamOrchestrator removed-result 兼容函数已由 FEAT-081S 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'legacy_team_orchestrator_removed', description: 'TeamOrchestrator removed-result 专用 payload 已由 FEAT-081S 删除' },
     ],
   },
   {
@@ -655,9 +663,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081R',
-      lastCompletedStage: 'FEAT-081R',
-      lastUpdatedBy: 'FEAT-081R',
+      stage: 'FEAT-081S',
+      lastCompletedStage: 'FEAT-081S',
+      lastUpdatedBy: 'FEAT-081S',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -681,6 +689,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       'FEAT-081P 已删除旧 provider setup --write-env-file writer helper；ProviderEnvFileSummary/readProviderEnvFileSummary 与 provider env 只读 summary 继续保留。',
       'FEAT-081Q 已将 guard physicalRemoval singleton schema 统一迁移为 physicalRemovals[]；不改任何 runtime payload 或删除批准。',
       'FEAT-081R 已删除 provider setup retired 子命令 stub；haro provider setup ... 现在由 provider command unknown-command fail-closed，provider runtime 与其它 provider 子命令继续保留。',
+      'FEAT-081S 已删除 TeamOrchestrator removed-result 兼容 payload；team-routing 无 skill directOutput 时走普通 single-agent fallback，scenario-router/runtime/provider path 继续保留。',
       'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };

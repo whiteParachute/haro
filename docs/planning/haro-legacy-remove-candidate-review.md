@@ -1370,3 +1370,30 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
 后续风险：provider runtime、diagnostics provider stage、run/chat/LLM path、provider doctor/list/models/select/env 仍有业务引用；不得把 081R 解读为 provider runtime/package 删除批准。
+
+
+## 27. FEAT-081S TeamOrchestrator removed-result 兼容 payload 删除（2026-05-27）
+
+081S 按用户选择 A 只解除 `agent-runtime-router` 的一个窄面 defer 边界：处理 TeamOrchestrator 已删除后遗留的 CLI removed-result 兼容入口。
+
+本阶段完成的最小安全代码清理：
+
+- 删除 `packages/cli/src/index.ts#legacy-team-orchestrator-removed-result`。
+- 删除 `legacyTeamOrchestratorRemovedResult(...)` 函数与 `legacy_team_orchestrator_removed` 专用返回 payload。
+- team-mode 命中但无 skill `directOutput` 时走普通 single-agent runner/fallback；`HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1` 不会恢复 TeamOrchestrator。
+
+明确不变：
+
+- 不删除、不修改 `packages/core/src/scenario-router.ts`、runtime、run/chat/LLM provider path。
+- 不恢复 TeamOrchestrator，不新增依赖，不修改 AgentDock host、MCP send_message/channel/memory、provider/memory/skills/Web。
+- `agent-runtime-router` 仍 `deleteAllowed=false`，`stillReferenced=true`，不得变成 next-safe candidate。
+
+081S guard 口径：
+
+- `planning.stage=FEAT-081S`。
+- `planning.lastCompletedStage=FEAT-081S`。
+- `planning.lastUpdatedBy=FEAT-081S`。
+- scoped removal 只记录 `packages/cli/src/index.ts#legacy-team-orchestrator-removed-result`。
+- `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
+
+后续风险：普通 single-agent fallback 仍依赖 provider runtime 与 runner；scenario-router/runtime 是否继续退役必须另起单项评审，不得由 081S 推导。

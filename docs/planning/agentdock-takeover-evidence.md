@@ -138,6 +138,7 @@
 
 - AgentDock scheduler / workspace / runner 是通用执行 owner。
 - FEAT-081D 已物理删除 `TeamOrchestrator` 旧兼容入口。
+- FEAT-081S 已删除 `packages/cli/src/index.ts#legacy-team-orchestrator-removed-result`，team-mode 无 skill directOutput 时不再返回专用 removed-result payload，而是走普通 single-agent runner/fallback。
 
 ### 仍在 Haro 的证据
 
@@ -148,14 +149,14 @@
 
 ### Blockers
 
-1. 用户已指定 run/router/runtime/scenario-router 为 deferred。
-2. 需要先证明 AgentDock 定时任务能稳定触发 Haro 生成提案。
+1. 081S 只解除 TeamOrchestrator removed-result 兼容 payload 的窄面；不能扩大为 scenario-router/runtime 删除。
+2. `packages/core/src/scenario-router.ts`、runtime、run/chat/LLM provider path 仍有业务引用。
 3. 需要稳定生成 approval request 并在 Review Board 可审。
-4. 需要证明该链路不依赖旧 `haro run/chat/team/scenario`。
+4. 需要证明 AgentDock runner/workspace path 可替代旧 `haro run/chat/team/scenario` 才能继续评估。
 
 ### 下一步
 
-继续 deferred。等 AgentDock 定时任务 → Haro 提案 → approval request → Review Board 可审链路稳定后，再重新评估 runtime/router/scenario 是否有窄面可退役。
+081S 后继续 blocked/fail-closed：只记录 removed-result payload scoped removal。等 AgentDock 定时任务 → Haro 提案 → approval request → Review Board 可审链路稳定后，才能重新评估 runtime/router/scenario 是否还有窄面可退役。
 
 ## 7. 明确未做事项
 
