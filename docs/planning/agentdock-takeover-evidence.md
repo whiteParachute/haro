@@ -184,3 +184,17 @@ FEAT-081X/F-2 退役 Haro-owned memory write surfaces：`haro memory remember` �
 - 未触碰真实 `~/.haro/evolution`、真实 `~/.haro` 或 aria-memory-vault。
 - 未 approve/apply/rollback/confirm。
 - 未把任何候选改为可物理删除批准。
+
+## FEAT-081X/F-3 takeover evidence — legacy MCP `memory_query` read entry retired
+
+FEAT-081X/F-3 retires only the legacy MCP `memory_query` read execution path. This closes the Haro-owned MCP read surface while preserving compatibility and current product-essential Haro sidecar behavior.
+
+Evidence:
+- `memory_query` is still registered in the default MCP registry and tools/list remains stable alongside `send_message`, `memory_remember`, and `schedule_task`.
+- `packages/mcp-tools/src/tools/memory-query.ts` advertises retired `FEAT-081X/F-3` semantics and returns `TARGET_DISABLED` for valid calls.
+- The implementation does not access `ctx.deps.memory` or call `searchMemoryFiles`; no `~/.haro` memory data is read.
+- F-2 remains in force: `memory_remember` write surfaces stay retired/fail-closed.
+
+Boundary:
+- This does not approve deleting MemoryFabric/core runtime, `createMemoryFabric`, read-only/forensic `haro memory query/list/show/export/recover-snapshot`, real `~/.haro*` data, `~/.haro/evolution`, AgentDock memory, or aria-memory-vault.
+- Haro current product shape remains AgentDock self-evolution sidecar proposal/review workflows, Review Board, approval APIs, sidecar artifacts/MCP mainline, and product-essential provider/run/review paths.

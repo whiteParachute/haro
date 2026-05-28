@@ -1599,3 +1599,20 @@ Guard 口径：
 - 未触碰 AgentDock memory、AgentDock host、MCP `send_message`、provider runtime、skills、Web Review Board、runtime/scenario-router/run-chat-LLM 或真实数据。
 
 后续风险：memory-fabric 仍 blocked。继续向下推进前，需要产品/数据 ownership 决策来界定真实 `~/.haro*` 数据、aria-memory-vault、MCP `memory_query` read path 与 core MemoryFabric runtime 的最终 owner。
+
+## FEAT-081X/F-3 — legacy MCP `memory_query` read surface retired
+
+FEAT-081X/F-3 continues the user-directed cleanup target after F-1 provider CLI management retirement and F-2 Haro-owned memory write-surface retirement. The next smallest safe slice is limited to the legacy MCP `memory_query` execution path.
+
+Scope completed:
+- `packages/mcp-tools/src/tools/memory-query.ts` remains registered as `memory_query` with the same input schema/output type and continues to appear in the default MCP tools/list for compatibility.
+- Execution now fails closed with `TARGET_DISABLED` and a retired message referencing `FEAT-081X/F-3`.
+- The tool no longer reads `ctx.deps.memory`, no longer calls `searchMemoryFiles`, and does not read, migrate, delete, or return any `~/.haro` memory data.
+
+Explicitly not approved:
+- No deletion of `packages/core/src/memory/**`, `packages/core/src/services/memory.ts`, `createMemoryFabric`, or MemoryFabric core/runtime.
+- No behavioral change to read-only/forensic CLI commands: `haro memory query/list/show/export/recover-snapshot` remain protected.
+- No migration, deletion, or mutation of real `~/.haro*`, `~/.haro/evolution`, AgentDock memory, or aria-memory-vault data.
+- No change to AgentDock host, MCP `send_message`, Haro Web Review Board, approval/apply/rollback, provider runtime, run/chat/runtime router, or skills package surfaces.
+
+Guard state after F-3 remains intentionally blocked for `memory-fabric`: `deleteAllowed=false`, `stillReferenced=true`, `deleteAllowedCount=0`, `nextDeletionCandidate=null`, `nextReviewCandidate=null`, and `verifiedAbsentFailedCount=0`. The physical-removal ledger increments only by the scoped entry `packages/mcp-tools/src/tools/memory-query.ts#legacy-mcp-read-surface`; this is an entry retirement, not MemoryFabric/core or data deletion.

@@ -56,6 +56,8 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
       'schedule_task',
       'send_message',
     ]);
+    expect(r.result.tools.find((tool) => tool.name === 'memory_query')?.description).toContain('FEAT-081X/F-3');
+    expect(r.result.tools.find((tool) => tool.name === 'memory_query')?.description).toContain('retired');
     expect(r.result.tools.find((tool) => tool.name === 'memory_remember')?.description).toContain('FEAT-081X/F-2');
   });
 
