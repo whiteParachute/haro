@@ -23,6 +23,8 @@ import type {
 const RESOURCE_ROOT = resolve(__dirname, '..', 'resources');
 const PREINSTALLED_ROOT = join(RESOURCE_ROOT, 'preinstalled');
 const PREINSTALLED_MANIFEST = join(RESOURCE_ROOT, 'preinstalled-manifest.json');
+const MARKETPLACE_INSTALL_RETIRED_MESSAGE =
+  'Haro skills marketplace install has been retired; use AgentDock skills for marketplace distribution, or install a local/git skill explicitly.';
 
 export interface SkillsManagerOptions {
   root: string;
@@ -143,7 +145,7 @@ export class SkillsManager {
   install(source: string): SkillManifestEntry {
     this.ensureInitialized();
     if (source.startsWith('marketplace:')) {
-      throw new Error('Phase 0 仅保留 marketplace:<name> 命令框架，尚未接入实际 marketplace 下载');
+      throw new Error(MARKETPLACE_INSTALL_RETIRED_MESSAGE);
     }
     if (looksLikeGitUrl(source)) {
       return this.installFromGit(source);

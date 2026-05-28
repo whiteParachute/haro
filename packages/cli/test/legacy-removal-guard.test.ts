@@ -186,9 +186,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
       expect(payload.data.planning).toMatchObject({
-        stage: 'FEAT-081U',
-        lastCompletedStage: 'FEAT-081U',
-        lastUpdatedBy: 'FEAT-081U',
+        stage: 'FEAT-081V',
+        lastCompletedStage: 'FEAT-081V',
+        lastUpdatedBy: 'FEAT-081V',
       });
     expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -254,8 +254,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/provider-onboarding.ts#writeProviderEnvFile', removedBy: 'FEAT-081P' }),
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/index.ts#provider-setup-retired-stub', removedBy: 'FEAT-081R' }),
       expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/cli/src/index.ts#--legacy-memory-opt-in', removedBy: 'FEAT-081U' }),
+      expect.objectContaining({ id: 'skills-marketplace', candidate: 'packages/skills/src/manager.ts#marketplace-install-placeholder', removedBy: 'FEAT-081V' }),
     ]));
-    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(14);
+    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(15);
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     expect(payload.data.items.every((item) => !('physicalRemoval' in item))).toBe(true);
     const providerCodex = byId.get('provider-codex');
@@ -383,6 +384,31 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     ]));
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('--legacy-memory CLI opt-in'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('createLegacyMemoryFabric'))).toMatchObject({ present: false, absent: true });
+    const skillsMarketplace = byId.get('skills-marketplace');
+    expect(skillsMarketplace).toMatchObject({ state: 'freeze', deleteAllowed: false, stillReferenced: true });
+    expect(skillsMarketplace?.candidatePriority).toMatchObject({
+      status: 'defer',
+      rank: 3,
+    });
+    expect(skillsMarketplace?.decision).toContain('FEAT-081V/D-1');
+    expect(skillsMarketplace?.decision).toContain('不获删除批准');
+    expect(skillsMarketplace?.physicalRemovals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidate: 'packages/skills/src/manager.ts#marketplace-install-placeholder',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081V',
+      }),
+    ]));
+    expect(skillsMarketplace?.physicalRemovals?.find((entry) => entry.candidate === 'packages/skills/src/manager.ts#marketplace-install-placeholder')?.note).toContain('local/git install');
+    expect(skillsMarketplace?.evidence.find((entry) => entry.description?.includes('retired/fail-closed'))).toMatchObject({ present: true });
+    expect(skillsMarketplace?.evidence.find((entry) => entry.description?.includes('local path install'))).toMatchObject({ present: true });
+    expect(skillsMarketplace?.evidence.find((entry) => entry.description?.includes('git install'))).toMatchObject({ present: true });
+    expect(skillsMarketplace?.evidence.find((entry) => entry.description?.includes('eat 兼容资产'))).toMatchObject({ present: true });
+    expect(skillsMarketplace?.evidence.find((entry) => entry.description?.includes('shit 兼容资产'))).toMatchObject({ present: true });
+    expect(skillsMarketplace?.evidence.find((entry) => entry.description?.includes('sync-runtime'))).toMatchObject({ present: true });
+    expect(skillsMarketplace?.evidence.find((entry) => entry.description?.includes('prepareTask'))).toMatchObject({ present: true });
+    expect(skillsMarketplace?.verifiedAbsent.find((entry) => entry.description?.includes('旧 Phase 0 marketplace install'))).toMatchObject({ present: false, absent: true });
+    expect(skillsMarketplace?.verifiedAbsent.find((entry) => entry.description?.includes('下载未接入'))).toMatchObject({ present: false, absent: true });
     const agentRuntime = byId.get('agent-runtime-router');
     expect(agentRuntime?.evidence.some((entry) => entry.present)).toBe(true);
     expect(agentRuntime?.candidatePriority).toMatchObject({
@@ -445,7 +471,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081U lastCompleted=FEAT-081U');
+    expect(text).toContain('planning stage: FEAT-081V lastCompleted=FEAT-081V');
     expect(text).toContain('next deletion candidate (candidate only, not approval): none');
     expect(text).toContain('next review candidate: none');
     expect(text).toContain('forbidden now: none');
@@ -473,8 +499,10 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('FEAT-081S');
     expect(text).toContain('FEAT-081T');
     expect(text).toContain('FEAT-081U');
+    expect(text).toContain('FEAT-081V');
     expect(text).toContain('非 review Web/API surface 为空');
     expect(text).toContain('haro run --legacy-memory CLI opt-in');
+    expect(text).toContain('marketplace:<name> 占位 install surface');
     expect(text).toContain('provider setup/onboarding CLI 入口 retired/fail-closed');
     expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/index.ts#provider-setup-onboarding-command');
     expect(text).toContain('AgentDock IPC 消息 contract');
@@ -493,6 +521,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physically-removed:packages/cli/src/provider-onboarding.ts#writeProviderEnvFile:FEAT-081P');
     expect(text).toContain('physically-removed:packages/cli/src/index.ts#provider-setup-retired-stub:FEAT-081R');
     expect(text).toContain('physicalRemovals=physically-removed:packages/cli/src/index.ts#--legacy-memory-opt-in:FEAT-081U');
+    expect(text).toContain('physicalRemovals=physically-removed:packages/skills/src/manager.ts#marketplace-install-placeholder:FEAT-081V');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

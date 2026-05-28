@@ -25,7 +25,7 @@ export interface LegacyRemovalEvidenceDefinition {
 export interface LegacyPhysicalRemovalRecord {
   candidate: string;
   status: 'physically-removed';
-  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U';
+  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V';
   rollbackPlan: string;
   note: string;
 }
@@ -104,9 +104,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081U';
-    lastCompletedStage: 'FEAT-081U';
-    lastUpdatedBy: 'FEAT-081U';
+    stage: 'FEAT-081V';
+    lastCompletedStage: 'FEAT-081V';
+    lastUpdatedBy: 'FEAT-081V';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -129,7 +129,7 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
     deferredCandidateIds: string[];
-    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U'; rollbackPlan: string }>;
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -213,8 +213,8 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     owner: 'AgentDock skills',
     haroRetireScope: ['packages/skills', 'skills marketplace/manager legacy surface'],
     protectedScope: ['必要 eat/shit 兼容语义', '已落 Haro sidecar artifact 的资产引用'],
-    decision: 'skills 由 AgentDock 提供，但 haro skills install/enable/disable、SkillsManager 与 eat/shit 兼容资产仍是 blocker；081M 不批准删除。',
-    nextAction: '先拆清 marketplace 扩展面与必要兼容资产，证明 sidecar 主链路不依赖 packages/skills。',
+    decision: 'skills 由 AgentDock 提供；FEAT-081V 仅将 marketplace:<name> 占位安装语义 retired/fail-closed，不批准 packages/skills、SkillsManager、local/git install、eat/shit 或 sync-runtime 删除。',
+    nextAction: '继续保持 skills-marketplace freeze/defer；若后续评审 packages/skills 或 SkillsManager，必须先证明 local/git/eat/shit/sync-runtime/prepareTask 与 AgentDock skills owner 边界。',
     deletionCandidateAllowed: false,
   },
   {
@@ -547,16 +547,36 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       'legacy tests 分类稳定',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/skills test', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'skills 由 AgentDock 提供，但 haro skills install/enable/disable、SkillsManager 与 eat/shit 兼容资产仍是 blocker；081M 只记录证据，不删除。',
+    decision: 'FEAT-081V/D-1 仅退役 marketplace:<name> 占位 install surface，让 marketplace install 明确 fail-closed 并指向 AgentDock skills；packages/skills、SkillsManager、local/git install、eat/shit、sync-runtime 与 prepareTask 仍保留，不获删除批准。',
     candidatePriority: {
       status: 'defer',
       rank: 3,
-      reason: 'packages/skills 仍承载 haro skills 用户入口、SkillsManager 与 eat/shit 兼容流程；可后续先评审 marketplace 扩展面，但不应删除必要兼容资产。',
+      reason: '081V 已收口 marketplace:<name> 占位下载语义；packages/skills 仍承载 haro skills 用户入口、SkillsManager、local/git install 与 eat/shit 兼容流程，不能删除必要兼容资产。',
       blockedUntil: ['确认 eat/shit 资产语义由 sidecar artifacts 或 AgentDock skills 承接', '拆分 marketplace 与保留技能资产边界', '证明 haro skills install/enable/disable 已被等价替代或明确退役'],
     },
+    physicalRemovals: [
+      {
+        candidate: 'packages/skills/src/manager.ts#marketplace-install-placeholder',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081V',
+        rollbackPlan: 'git revert FEAT-081V commit 可恢复 marketplace:<name> Phase 0 占位 install 文案。',
+        note: '仅退役 marketplace:<name> 占位下载语义；不代表 packages/skills、SkillsManager、local/git install、eat/shit、sync-runtime 或 prepareTask 获得删除批准。',
+      },
+    ],
     evidence: [
       { path: 'packages/skills/package.json', kind: 'exists', description: 'skills package 仍存在' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'SkillsManager', description: 'CLI bootstrap 仍初始化 SkillsManager' },
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: 'marketplace install has been retired', description: 'marketplace:<name> install 现在明确 retired/fail-closed' },
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: 'installFromPath', description: 'local path install 仍保留' },
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: 'installFromGit', description: 'git install 仍保留' },
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: 'runEat', description: 'eat 兼容资产调用仍保留' },
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: 'runShit', description: 'shit 兼容资产调用仍保留' },
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: 'syncRuntimeSkills', description: 'sync-runtime 能力仍保留' },
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: 'prepareTask', description: 'prepareTask skill matching 仍保留' },
+    ],
+    verifiedAbsent: [
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: 'Phase 0 仅保留 marketplace:<name> 命令框架', description: '旧 Phase 0 marketplace install 占位文案已由 FEAT-081V 删除' },
+      { path: 'packages/skills/src/manager.ts', kind: 'contains', pattern: '尚未接入实际 marketplace 下载', description: '旧 marketplace 下载未接入文案已由 FEAT-081V 删除' },
     ],
   },
   {
@@ -677,9 +697,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081U',
-      lastCompletedStage: 'FEAT-081U',
-      lastUpdatedBy: 'FEAT-081U',
+      stage: 'FEAT-081V',
+      lastCompletedStage: 'FEAT-081V',
+      lastUpdatedBy: 'FEAT-081V',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -706,6 +726,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       'FEAT-081S 已删除 TeamOrchestrator removed-result 兼容 payload；team-routing 无 skill directOutput 时走普通 single-agent fallback，scenario-router/runtime/provider path 继续保留。',
       'FEAT-081T/B-1 只做 Web/API guard/docs schema closure：非 review Web/API surface 为空，Review Board + auth/bootstrap + health/fallback/infrastructure 继续保留，不新增物理删除。',
       'FEAT-081U/C-1 已删除 haro run --legacy-memory CLI opt-in 与 CLI-side MemoryFabric wiring；core memory runtime、haro memory、MCP memory tools、真实 ~/.haro* 与 aria-memory-vault 继续保护。',
+      'FEAT-081V/D-1 已退役 marketplace:<name> 占位 install surface；local/git install、SkillsManager、eat/shit、sync-runtime、prepareTask 与 packages/skills 仍保留且不获删除批准。',
       'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };

@@ -696,6 +696,60 @@ describe('runCli [FEAT-006]', () => {
     expect(uninstall.exitCode).toBe(1);
   });
 
+  it('FEAT-081V: skills install retires marketplace sources while keeping local path install working', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-skills-marketplace-retired-'));
+    const sourceRoot = mkdtempSync(join(tmpdir(), 'haro-cli-local-skill-marketplace-safe-'));
+    roots.push(root, sourceRoot);
+    writeFileSync(join(sourceRoot, 'SKILL.md'), '---\nname: cli-local-marketplace-safe\ndescription: "CLI local marketplace-safe skill"\n---\n\nBody\n', 'utf8');
+
+    const stderr = new PassThrough();
+    const errorChunks: string[] = [];
+    stderr.on('data', (chunk) => errorChunks.push(String(chunk)));
+    const retired = await runCli({
+      argv: ['skills', 'install', 'marketplace:review'],
+      root,
+      stderr,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-1' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(retired.exitCode).toBe(1);
+    expect(retired.error?.message).toContain('marketplace install has been retired');
+    expect(retired.error?.message).toContain('AgentDock skills');
+    expect(errorChunks.join('')).toContain('marketplace install has been retired');
+    expect(errorChunks.join('')).toContain('AgentDock skills');
+    expect(existsSync(join(root, 'skills', 'user', 'marketplace:review'))).toBe(false);
+
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on('data', (chunk) => chunks.push(String(chunk)));
+    const installed = await runCli({
+      argv: ['skills', 'install', sourceRoot],
+      root,
+      stdout,
+      createProviderRegistry: async () =>
+        createProviderRegistry(
+          new StubProvider({
+            query: async function* () {
+              yield { type: 'result', content: 'ok', responseId: 'resp-2' };
+            },
+          }),
+        ),
+      loadAgentRegistry: async () => createAgentRegistry(),
+    });
+
+    expect(installed.exitCode).toBe(0);
+    expect(chunks.join('')).toContain("Installed skill 'cli-local-marketplace-safe'");
+    expect(existsSync(join(root, 'skills', 'user', 'cli-local-marketplace-safe', 'SKILL.md'))).toBe(true);
+  });
+
   it('FEAT-020 AC1a/AC4: skills sync-runtime syncs paired metabolism skills to runtime homes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-cli-runtime-sync-'));
     const codexHome = mkdtempSync(join(tmpdir(), 'haro-codex-home-'));

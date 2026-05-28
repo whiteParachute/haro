@@ -1461,3 +1461,43 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
 后续风险：MCP memory 默认 registry、core MemoryFabric runtime、真实 `~/.haro` 数据和 aria-memory-vault owner 边界仍未解除。后续如继续 memory 减法，必须先完成数据/owner/MCP tool 边界证明；不得从 081U 推导 memory runtime、memory CLI 或 MCP memory tool 删除批准。
+
+## 30. FEAT-081V / D-1 `marketplace:<name>` skills install placeholder 退役（2026-05-28）
+
+081V/D-1 只处理 skills-marketplace 的最小安全切片：退役 `marketplace:<name>` 占位 install surface，让旧 Phase 0 placeholder 不再落入“尚未接入下载”的模糊错误。它不是 `packages/skills`、`SkillsManager`、local/git install、eat/shit、sync-runtime、prepareTask 或 AgentDock skills 的删除批准。
+
+只读盘点结论：
+
+- `packages/skills/src/manager.ts` 中 `SkillsManager.install(source)` 仍是 `haro skills install` 的核心入口。
+- `source.startsWith('marketplace:')` 仅提供旧 Phase 0 placeholder 文案，没有实际 marketplace 下载实现。
+- `installFromPath(source)`、`installFromGit(source)`、`looksLikeGitUrl(source)` 仍服务 local path / git URL 安装，必须保留。
+- `runEat`、`runShit`、`syncRuntimeSkills` 与 `prepareTask` 仍在 `packages/skills` 内承担 eat/shit 兼容资产、runtime sync 与 skill matching 语义，必须保留。
+- 本阶段不修改 AgentDock host、MCP/channel/memory/provider/Web/runtime/scenario-router/run/chat/LLM provider path，也不触碰真实 `~/.haro*` 或 aria-memory-vault。
+
+本阶段完成的最小安全代码清理：
+
+- 将 `marketplace:<name>` install 分支从旧 `Phase 0 仅保留 marketplace:<name> 命令框架，尚未接入实际 marketplace 下载` 改为明确 retired/fail-closed 文案。
+- 文案指向 AgentDock skills 作为 marketplace distribution owner，或要求用户显式安装 local/git skill。
+- 保留显式 `marketplace:` 分支，防止落入 local path 底层错误。
+- 增加 manager/CLI 测试：`marketplace:review` fail-closed，local path install 仍成功。
+
+明确不变：
+
+- 不删除 `packages/skills` 包，不删除或重构 `SkillsManager`。
+- 不删除/修改 local path install、git install、eat/shit 预装技能资产、sync-runtime、prepareTask。
+- 不修改 `haro skills list/info/enable/disable/uninstall`、`haro skill <id>`、AgentDock skills 或 sidecar 主链路。
+- 不修改 MCP/channel/memory/provider/Web/runtime/scenario-router/run/chat/LLM provider path。
+- 不读写、迁移、删除真实 `~/.haro*` 或 aria-memory-vault。
+
+081V guard 口径：
+
+- `planning.stage=FEAT-081V`。
+- `planning.lastCompletedStage=FEAT-081V`。
+- `planning.lastUpdatedBy=FEAT-081V`。
+- `skills-marketplace.physicalRemovals[]` 新增 `packages/skills/src/manager.ts#marketplace-install-placeholder`，`removedBy=FEAT-081V`。
+- `completedPhysicalRemovals=15`。
+- `skills-marketplace` 仍 `state=freeze`、`candidatePriority.status=defer`、`deleteAllowed=false`、`stillReferenced=true`。
+- `LEGACY_MODULE_RETIREMENT_BOUNDARIES.skills.deletionCandidateAllowed=false` 保持不变。
+- `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
+
+后续风险：AgentDock skills owner、Haro local/git install 用户入口、eat/shit 兼容资产、sync-runtime 与 prepareTask 的边界仍未完全拆清。后续如继续 skills 减法，必须先做单项评审并证明不影响 production path；不得从 081V 推导 `packages/skills` 或 `SkillsManager` 删除批准。

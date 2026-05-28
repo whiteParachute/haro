@@ -64,6 +64,24 @@ describe('SkillsManager [FEAT-010]', () => {
     rmSync(linkPath, { force: true, recursive: true });
   });
 
+  it('FEAT-081V: retires marketplace install while keeping local path install working', () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-skills-marketplace-retired-'));
+    roots.push(root);
+    const sourceRoot = mkdtempSync(join(tmpdir(), 'skill-local-marketplace-retired-'));
+    roots.push(sourceRoot);
+    writeFileSync(join(sourceRoot, 'SKILL.md'), '---\nname: local-marketplace-safe\ndescription: "Local marketplace-safe skill"\n---\n\nBody\n', 'utf8');
+
+    const manager = new SkillsManager({ root });
+    expect(() => manager.install('marketplace:review')).toThrow(/marketplace install has been retired/);
+    expect(() => manager.install('marketplace:review')).toThrow(/AgentDock skills/);
+
+    const entry = manager.install(sourceRoot);
+    expect(entry.id).toBe('local-marketplace-safe');
+    expect(entry.originalSource).toBe(sourceRoot);
+    expect(existsSync(join(root, 'skills', 'user', 'local-marketplace-safe', 'SKILL.md'))).toBe(true);
+    manager.close();
+  });
+
   it('FEAT-022 maps installed skills to assets and records enable/disable/uninstall events', () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-skills-asset-map-'));
     roots.push(root);

@@ -1,10 +1,10 @@
-# AgentDock takeover evidence 盘点（FEAT-081M / FEAT-081N / FEAT-081O / FEAT-081P / FEAT-081R / FEAT-081T / FEAT-081U）
+# AgentDock takeover evidence 盘点（FEAT-081M / FEAT-081N / FEAT-081O / FEAT-081P / FEAT-081R / FEAT-081T / FEAT-081U / FEAT-081V）
 
 > 日期：2026-05-28
 >
-> 范围：081M 只做文档、guard 状态说明与替代证据盘点；081N 只退役 Haro CLI `provider setup/onboarding` 入口；081O 只删除 setup-only Codex wizard dead file 并清理旧 provider setup remediation；081P 只删除旧 setup env-file writer helper；081R 只删除 provider setup retired 子命令 stub；081T/B-1 只固化非 review Web/API surface 为空的 guard/docs schema closure；081U/C-1 只删除 `haro run --legacy-memory` CLI opt-in/wiring。本文不是 provider runtime/package、Web/API runtime/package 或 MemoryFabric runtime 删除批准，不触发真实数据迁移，不修改 core memory runtime、MCP memory tools、skills/runtime/Web/MCP 业务代码，不触碰真实 `~/.haro`、`~/.haro/evolution` 或 aria-memory-vault。
+> 范围：081M 只做文档、guard 状态说明与替代证据盘点；081N 只退役 Haro CLI `provider setup/onboarding` 入口；081O 只删除 setup-only Codex wizard dead file 并清理旧 provider setup remediation；081P 只删除旧 setup env-file writer helper；081R 只删除 provider setup retired 子命令 stub；081T/B-1 只固化非 review Web/API surface 为空的 guard/docs schema closure；081U/C-1 只删除 `haro run --legacy-memory` CLI opt-in/wiring；081V/D-1 只退役 `marketplace:<name>` 占位 install surface。本文不是 provider runtime/package、Web/API runtime/package、MemoryFabric runtime 或 packages/skills/SkillsManager 删除批准，不触发真实数据迁移，不修改 core memory runtime、MCP memory tools、Web/MCP/AgentDock host，不触碰真实 `~/.haro`、`~/.haro/evolution` 或 aria-memory-vault。
 >
-> 当前结论：channel-layer 已在 FEAT-081K/081L 后完成 Haro-owned package 退役；FEAT-081N 已按用户产品决策退役 `haro provider setup ...` 初始化入口；FEAT-081O 已删除 `packages/cli/src/provider-codex-wizard.ts` setup-only dead file；FEAT-081P 已删除 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile` 写入 helper；FEAT-081R 已删除 `packages/cli/src/index.ts#provider-setup-retired-stub` 子命令注册 stub；FEAT-081T 已确认非 review Web/API surface 为空并将 `web-dashboard-non-review` guard status 收口为 done；FEAT-081U 已删除 `haro run --legacy-memory` opt-in 和 CLI-side MemoryFabric wiring，但不修改 core memory runtime、`haro memory`、MCP `memory_query`/`memory_remember` 默认 registry、真实 `~/.haro*` 或 aria-memory-vault。
+> 当前结论：channel-layer 已在 FEAT-081K/081L 后完成 Haro-owned package 退役；FEAT-081N 已按用户产品决策退役 `haro provider setup ...` 初始化入口；FEAT-081O 已删除 `packages/cli/src/provider-codex-wizard.ts` setup-only dead file；FEAT-081P 已删除 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile` 写入 helper；FEAT-081R 已删除 `packages/cli/src/index.ts#provider-setup-retired-stub` 子命令注册 stub；FEAT-081T 已确认非 review Web/API surface 为空并将 `web-dashboard-non-review` guard status 收口为 done；FEAT-081U 已删除 `haro run --legacy-memory` opt-in 和 CLI-side MemoryFabric wiring，但不修改 core memory runtime、`haro memory`、MCP `memory_query`/`memory_remember` 默认 registry、真实 `~/.haro*` 或 aria-memory-vault；FEAT-081V 已将 `marketplace:<name>` placeholder install 改为 retired/fail-closed，仍保留 packages/skills、SkillsManager、local/git install、eat/shit、sync-runtime 与 prepareTask。
 
 ## 0. 081M guard 口径
 
@@ -20,7 +20,7 @@
 | --- | --- | --- | --- | --- |
 | `provider-codex` | AgentDock/ModelHub 已承担 runner/model 能力方向；用户产品决策接受外部 codex CLI/auth 作为前置 | `haro provider setup ...` 已由 FEAT-081N retired/fail-closed，FEAT-081R 进一步删除 retired 子命令 stub；FEAT-081O 删除 setup-only wizard dead file；FEAT-081P 删除 setup env-file writer helper；provider-codex runtime、doctor/list/models/select/env、CLI bootstrap 仍在 Haro | setup/onboarding + wizard/env-writer/stub cleanup done；runtime blocked | 不再恢复 Haro provider setup/wizard/env-file writer/retired stub；provider runtime 删除必须另行证明无业务引用 |
 | `memory-fabric` | AgentDock memory 与共享 aria-memory-vault 是目标 owner；FEAT-081U 已移除 `haro run --legacy-memory` CLI opt-in/wiring | 真实 `~/.haro` 数据、aria-memory-vault、MCP `memory_query` / `memory_remember` 默认注册、core MemoryFabric runtime 与 `haro memory` 仍有风险 | C-1 done；memory runtime blocked | 不恢复 CLI opt-in；后续必须先证明 MCP/default registry、真实数据和 core runtime owner 边界 |
-| `skills-marketplace` | AgentDock skills 是目标 owner | `haro skills install/enable/disable`、`SkillsManager`、eat/shit 兼容资产仍存在 | deferred | 先拆 marketplace 扩展面与保留兼容资产边界 |
+| `skills-marketplace` | AgentDock skills 是目标 owner；FEAT-081V 已退役 `marketplace:<name>` 占位 install surface | `haro skills install/enable/disable`、`SkillsManager`、local/git install、eat/shit、sync-runtime、prepareTask 仍存在且受保护 | D-1 done；packages/skills deferred/freeze | 不恢复 marketplace placeholder；后续必须先拆清 AgentDock skills owner 与保留兼容资产边界 |
 | `web-dashboard-non-review` | AgentDock 是平台 Web/API host；FEAT-081T 已枚举 Review Board allowlist 与非 review Web/API 路由，非 review surface 为空 | Review Board、approval conversation、auth/bootstrap、health/fallback/infrastructure 不能误删；包级删除仍禁止 | done / freeze | 保持 allowlist/freeze；不得从 081T 推导 `packages/web` / `packages/web-api` 包级或 runtime 删除批准 |
 | `agent-runtime-router` | AgentDock scheduler / workspace / runner 是目标 owner | 用户指定第 4 项 deferred；仍需证明 AgentDock 定时任务能稳定触发 Haro 提案到 Review Board | deferred | 等 AgentDock 定时任务 → Haro 提案 → approval request → Review Board 可审链路稳定后再评估 |
 
@@ -93,23 +93,25 @@
 
 - AgentDock skills 是目标 owner。
 - Haro 不再发展通用 skills marketplace。
+- FEAT-081V/D-1 已将 `marketplace:<name>` 占位 install surface 改为明确 retired/fail-closed：提示使用 AgentDock skills 做 marketplace 分发，或显式安装 local/git skill。
 
 ### 仍在 Haro 的证据
 
 - `packages/skills/package.json` 仍存在。
 - `packages/cli/src/index.ts` 仍初始化 `SkillsManager`。
 - CLI 仍保留 `haro skills install/enable/disable` 等用户入口。
-- eat/shit 相关兼容语义和历史资产仍在 docs/tests 中被引用。
+- `SkillsManager.install` 仍保留 local path / git URL 安装分支；仅 `marketplace:<name>` placeholder 变为 retired/fail-closed。
+- eat/shit 兼容资产、`syncRuntimeSkills` 与 `prepareTask` 仍保留并有测试覆盖。
 
 ### Blockers
 
-1. marketplace 扩展面与必须保留的 eat/shit 兼容资产尚未拆清。
-2. 未证明 `haro skills install/enable/disable` 已由 AgentDock skills 等价承接或明确退役。
-3. 相关 legacy tests 仍需分类稳定后再考虑删除。
+1. marketplace placeholder 已退役，但必须保留的 local/git install、eat/shit 兼容资产、sync-runtime 与 prepareTask 边界仍需继续保护。
+2. 未证明 `haro skills install/enable/disable` 整体已由 AgentDock skills 等价承接或明确退役。
+3. 相关 legacy tests 仍需分类稳定后再考虑删除 packages/skills 或 SkillsManager。
 
 ### 下一步
 
-先把 marketplace 扩展能力、runtime skill sync、eat/shit 兼容资产分为 keep / freeze / candidate 三类；只允许对明确无主链路依赖的 marketplace 扩展面做后续评审。
+081V 后继续把 skills 保持 freeze/defer：不要恢复 marketplace placeholder；继续把 local/git install、runtime skill sync、eat/shit 兼容资产、prepareTask 分为 keep / freeze / candidate 三类。只有明确无主链路依赖的窄面才能另起单项评审。
 
 ## 5. `web-dashboard-non-review`
 
@@ -167,7 +169,7 @@
 ## 7. 明确未做事项
 
 - 未删除任何文件或 package。
-- 未修改 provider/memory/skills/runtime/Web/MCP 业务代码。
+- 除 FEAT-081V 退役 `marketplace:<name>` placeholder 文案/测试外，未修改 provider/memory/runtime/Web/MCP 业务代码，也未删除 packages/skills、SkillsManager、local/git install、eat/shit、sync-runtime 或 prepareTask。
 - 未修改 AgentDock host。
 - 未触碰真实 `~/.haro/evolution`、真实 `~/.haro` 或 aria-memory-vault。
 - 未 approve/apply/rollback/confirm。

@@ -883,7 +883,9 @@ function registerSkillsCommands(program: Command, app: AppContext): void {
         try {
           entry = app.skills.install(source);
         } catch (error) {
-          throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
+          const message = error instanceof Error ? error.message : String(error);
+          app.stderr.write(`${message}\n`);
+          throw new CommanderExit(1, message);
         }
         app.stdout.write(`Installed skill '${entry.id}' from ${entry.originalSource}\n`);
       });
