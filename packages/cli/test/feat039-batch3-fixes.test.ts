@@ -3,12 +3,13 @@
  *
  * Two regressions Codex caught and we fixed:
  *
- *   1. provider/channel/gateway `doctor --json` previously emitted an
+ *   1. channel/gateway `doctor --json` previously emitted an
  *      `ok:true` record envelope to stdout even when the underlying
  *      diagnostic report had `ok:false`. A consumer reading `.ok` from
  *      stdout would mis-classify the failure as success. Now the failing
  *      branch writes a `CliErrorEnvelope` to **stderr** and stdout stays
  *      empty for `--json` (callers also still get a non-zero exit code).
+ *      FEAT-081X additionally retires the standalone provider doctor surface.
  *
  *   2. REPL `/budget` previously called `listWorkflowBudgets({limit:1})`
  *      which returns the most-recently-touched workflow across the whole
@@ -73,7 +74,7 @@ describe('FEAT-039 batch 3 — Codex adversarial fixes', () => {
 
 
 
-  it('successful provider doctor --json still emits ok:true record envelope on stdout', async () => {
+  it('FEAT-081X: provider doctor --json is retired instead of emitting provider management records', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-fix-doctor-ok-'));
     roots.push(root);
     const stdout = captureStream();
@@ -90,11 +91,12 @@ describe('FEAT-039 batch 3 — Codex adversarial fixes', () => {
       createAdditionalChannels: async () => [],
     });
 
-    expect(result.exitCode).toBe(0);
-    const lastLine = stdout.read().trim().split('\n').filter(Boolean).at(-1)!;
-    const envelope = JSON.parse(lastLine) as { ok: boolean; data: { ok: boolean } };
-    expect(envelope.ok).toBe(true);
-    expect(envelope.data.ok).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(stdout.read()).toBe('');
+    const errorText = stderr.read();
+    expect(errorText).toContain('retired');
+    expect(errorText).toContain('FEAT-081X');
+    expect(errorText).toContain('AgentDock/ModelHub');
   });
 
   it('REPL /budget reports the budget for the workflow created by the current REPL turn, not the global latest', async () => {

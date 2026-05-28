@@ -25,7 +25,7 @@ export interface LegacyRemovalEvidenceDefinition {
 export interface LegacyPhysicalRemovalRecord {
   candidate: string;
   status: 'physically-removed';
-  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V';
+  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V' | 'FEAT-081X';
   rollbackPlan: string;
   note: string;
 }
@@ -104,9 +104,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081V';
-    lastCompletedStage: 'FEAT-081V';
-    lastUpdatedBy: 'FEAT-081V';
+    stage: 'FEAT-081X';
+    lastCompletedStage: 'FEAT-081X';
+    lastUpdatedBy: 'FEAT-081X';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -129,7 +129,7 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
     deferredCandidateIds: string[];
-    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V'; rollbackPlan: string }>;
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V' | 'FEAT-081X'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -175,10 +175,10 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     module: 'provider',
     status: 'retire-candidate',
     owner: 'AgentDock / ModelHub',
-    haroRetireScope: ['packages/provider-codex', 'Haro provider bootstrap/onboarding'],
-    protectedScope: ['packages/provider-codex runtime', 'createCodexProvider / readLocalCodexAuth', 'provider doctor/list/models/select/env 与 run/chat/LLM provider path'],
-    decision: '用户产品决策已确认 Haro 新产品不再提供 provider setup/onboarding；FEAT-081N 退役 CLI setup 入口，FEAT-081O 删除 setup-only wizard 文件并清理旧 remediation，FEAT-081P 删除旧 setup env-file writer 残留，FEAT-081R 删除 provider setup retired 子命令 stub；不批准删除 provider-codex runtime。',
-    nextAction: '后续若继续 provider 减法，只能在证明 provider runtime 无业务引用后另开单项评审；当前保持 provider-codex package/runtime fail-closed protected。',
+    haroRetireScope: ['packages/provider-codex', 'Haro provider bootstrap/onboarding', 'standalone haro provider CLI management surface'],
+    protectedScope: ['packages/provider-codex runtime', 'createCodexProvider / readLocalCodexAuth', 'diagnostics provider stage 与 run/chat/LLM provider path'],
+    decision: '用户 2026-05-28 产品决策要求仅保留当前产品必要基本功能；FEAT-081X 退役 standalone haro provider CLI 管理面，AgentDock/ModelHub 承接 provider 管理 owner；不批准删除 provider-codex runtime。',
+    nextAction: '后续若继续 provider 减法，只能在证明 provider runtime、diagnostics provider stage、Review Board/sidecar LLM 路径均无业务引用后另开单项评审；当前保持 provider-codex package/runtime fail-closed protected。',
     deletionCandidateAllowed: false,
   },
   {
@@ -242,17 +242,18 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       'FEAT-081O 已删除 setup-only provider-codex wizard dead file',
       'FEAT-081P 已删除旧 provider setup --write-env-file 写入 helper',
       'FEAT-081R 已删除 provider setup retired 子命令 stub',
+      'FEAT-081X 已退役 standalone haro provider CLI 管理面',
       'provider-codex runtime 仍被 CLI bootstrap/run/chat/LLM path 引用',
-      'provider doctor/list/models/select/env 与 diagnostics provider stage 保持现状',
+      'diagnostics provider stage 与 sidecar/review/run/chat LLM provider path 仍需保护',
       '删除 provider runtime 前仍需证明 createCodexProvider/readLocalCodexAuth/import 影响面清零',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/provider-codex test', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'FEAT-081R 只删除旧 Haro provider setup retired 子命令 stub；provider-codex package/runtime、doctor/list/models/select/env、diagnostics provider stage 和 run/chat/LLM provider path 继续保留且不获删除批准。',
+    decision: 'FEAT-081X 只退役 standalone haro provider CLI 管理面；provider-codex package/runtime、diagnostics provider stage 和 run/chat/LLM provider path 继续保留且不获删除批准。',
     candidatePriority: {
       status: 'blocked',
       rank: 4,
-      reason: 'provider setup/onboarding 子面已摘线且 retired stub 已删除，但 provider-codex runtime 仍承担默认 provider、doctor/list/models 与 CLI bootstrap；不得把 081N 解读为 package/runtime 删除完成。',
-      blockedUntil: ['证明 provider-codex runtime 无业务引用', '替代或保留 provider doctor/list/models/select/env', 'LLM draft provider path 完成替代验证', '确认 diagnostics provider stage 不依赖待删 runtime'],
+      reason: 'provider setup/onboarding 子面与 standalone provider CLI 管理面已摘线，但 provider-codex runtime 仍承担默认 provider 与 sidecar/review/run/chat/LLM path；不得把 081X 解读为 package/runtime 删除完成。',
+      blockedUntil: ['证明 provider-codex runtime 无业务引用', 'LLM draft/review provider path 完成替代验证', '确认 diagnostics provider stage 不依赖待删 runtime', '确认 createCodexProvider/readLocalCodexAuth/import 影响面清零'],
     },
     pilotUnbind: {
       candidate: 'packages/cli/src/index.ts#provider-setup-onboarding-command',
@@ -272,7 +273,7 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
         status: 'physically-removed',
         removedBy: 'FEAT-081P',
         rollbackPlan: 'git revert FEAT-081P commit 可恢复旧 provider setup --write-env-file helper 与 env-file writer 代码。',
-        note: '仅删除 081N/P 后无业务入口的 setup env-file 写入 helper；ProviderEnvFileSummary/readProviderEnvFileSummary/resolveProviderEnvFile、provider env 只读 summary、provider select/writeProviderConfig 与 runProviderDoctor 均保留。',
+        note: '仅删除 081N/P 后无业务入口的 setup env-file 写入 helper；ProviderEnvFileSummary/readProviderEnvFileSummary/resolveProviderEnvFile 当时继续服务 provider 管理面与 diagnostics，081X 后 standalone CLI 管理面退役但 provider runtime/diagnostics 仍保留。',
       },
       {
         candidate: 'packages/cli/src/index.ts#provider-setup-retired-stub',
@@ -281,10 +282,19 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
         rollbackPlan: 'git revert FEAT-081R commit 可恢复 provider setup fail-closed stub 代码。',
         note: '删除 081N 引入的 provider setup fail-closed stub；移除后 provider setup 变为未注册子命令，仍维持 fail-closed 且不会进入 REPL。',
       },
+      {
+        candidate: 'packages/cli/src/index.ts#provider-cli-management-surface',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081X',
+        rollbackPlan: 'git revert FEAT-081X commit 可恢复 standalone haro provider CLI list/doctor/models/select/env 管理面注册与测试。',
+        note: '仅退役 standalone haro provider CLI 管理 surface；不删除 packages/provider-codex runtime、createCodexProvider/readLocalCodexAuth、diagnostics provider stage 或 sidecar/review/run/chat LLM provider path。',
+      },
     ],
     evidence: [
       { path: 'packages/provider-codex/package.json', kind: 'exists', description: 'provider package 仍存在' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'createCodexProvider', description: 'CLI bootstrap 仍引用 Codex provider runtime' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'PROVIDER_CLI_RETIRED_MESSAGE', description: 'standalone provider CLI management surface 已由 FEAT-081X 统一 fail-closed retired' },
+      { path: 'packages/cli/src/diagnostics.ts', kind: 'contains', pattern: 'runProviderDoctor', description: 'diagnostics provider stage 仍保留 provider runtime 检查入口' },
       { path: 'packages/cli/package.json', kind: 'contains', pattern: '@haro/provider-codex', description: 'CLI package dependency 仍存在' },
     ],
     verifiedAbsent: [
@@ -298,6 +308,13 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       { path: 'packages/cli/src/provider-onboarding.ts', kind: 'contains', pattern: 'chmodSync', description: 'chmodSync 旧 env-file writer chmod import 已由 FEAT-081P 删除' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'formatProviderSetupHuman', description: 'provider setup 成功输出路径已退役' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'provider setup ${id} found blockers', description: 'provider setup 不再进入 doctor/blocker 流程' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'formatProviderList', description: 'standalone provider list formatter 已由 FEAT-081X 从 CLI 管理面摘线' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'formatProviderDoctorHuman', description: 'standalone provider doctor human formatter 已由 FEAT-081X 从 CLI 管理面摘线' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'formatProviderEnvHuman', description: 'standalone provider env formatter 已由 FEAT-081X 从 CLI 管理面摘线' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'listProviderModels', description: 'standalone provider models helper 已由 FEAT-081X 从 CLI 管理面摘线' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'writeProviderConfig', description: 'standalone provider select config writer 已由 FEAT-081X 从 CLI 管理面摘线' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'parseProviderScope', description: 'standalone provider select scope parser 已由 FEAT-081X 从 CLI 管理面摘线' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'runProviderDoctor({', description: 'standalone provider doctor command no longer calls runProviderDoctor from CLI management surface' },
       { path: 'packages/cli/src/provider-codex-wizard.ts', kind: 'exists', description: 'setup-only provider-codex wizard 源文件已由 FEAT-081O 删除' },
       { path: 'packages/cli/test/provider-codex-wizard.test.ts', kind: 'exists', description: 'setup-only provider-codex wizard 单元测试已由 FEAT-081O 删除' },
       { path: 'packages/cli/package.json', kind: 'contains', pattern: 'provider-codex-wizard.test.ts', description: 'CLI legacy test script 不再引用已删除 wizard 测试' },
@@ -697,9 +714,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081V',
-      lastCompletedStage: 'FEAT-081V',
-      lastUpdatedBy: 'FEAT-081V',
+      stage: 'FEAT-081X',
+      lastCompletedStage: 'FEAT-081X',
+      lastUpdatedBy: 'FEAT-081X',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -718,15 +735,16 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       'FEAT-081K 已让 mcp-tools send_message 改用 AgentDock IPC 消息 contract，并移除 mcp-tools 对 @haro/channel 的依赖。',
       'FEAT-081L 已删除 packages/channel、packages/channel-feishu、packages/channel-telegram、CLI channel list/doctor 和 diagnostics channel stage。',
       'FEAT-081M 只刷新 docs/guard 与 AgentDock takeover evidence；不做物理删除，也不把任何候选升级为删除批准。',
-      'FEAT-081N 已将 haro provider setup/onboarding CLI 入口 retired/fail-closed；provider-codex package/runtime 与 provider doctor/list/models/select/env 继续保留且不获删除批准。',
+      'FEAT-081N 已将 haro provider setup/onboarding CLI 入口 retired/fail-closed；081X 后 standalone provider CLI 管理面也已退役，但 provider-codex package/runtime 继续保留且不获删除批准。',
       'FEAT-081O 已删除 setup-only provider-codex wizard dead file，并将 diagnostics/provider remediation 改为 OPENAI_API_KEY / 外部 codex login / provider doctor 口径；不批准 provider runtime 删除。',
       'FEAT-081P 已删除旧 provider setup --write-env-file writer helper；ProviderEnvFileSummary/readProviderEnvFileSummary 与 provider env 只读 summary 继续保留。',
       'FEAT-081Q 已将 guard physicalRemoval singleton schema 统一迁移为 physicalRemovals[]；不改任何 runtime payload 或删除批准。',
-      'FEAT-081R 已删除 provider setup retired 子命令 stub；haro provider setup ... 现在由 provider command unknown-command fail-closed，provider runtime 与其它 provider 子命令继续保留。',
+      'FEAT-081R 已删除 provider setup retired 子命令 stub；haro provider setup ... 现在由 provider command unknown-command fail-closed，provider runtime 继续保留。',
       'FEAT-081S 已删除 TeamOrchestrator removed-result 兼容 payload；team-routing 无 skill directOutput 时走普通 single-agent fallback，scenario-router/runtime/provider path 继续保留。',
       'FEAT-081T/B-1 只做 Web/API guard/docs schema closure：非 review Web/API surface 为空，Review Board + auth/bootstrap + health/fallback/infrastructure 继续保留，不新增物理删除。',
       'FEAT-081U/C-1 已删除 haro run --legacy-memory CLI opt-in 与 CLI-side MemoryFabric wiring；core memory runtime、haro memory、MCP memory tools、真实 ~/.haro* 与 aria-memory-vault 继续保护。',
       'FEAT-081V/D-1 已退役 marketplace:<name> 占位 install surface；local/git install、SkillsManager、eat/shit、sync-runtime、prepareTask 与 packages/skills 仍保留且不获删除批准。',
+      'FEAT-081X/F-1 已退役 standalone haro provider CLI 管理面；AgentDock/ModelHub 承接 provider 管理 owner，provider-codex runtime 与 diagnostics/review/run/chat LLM path 仍保留且不获删除批准。',
       'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };

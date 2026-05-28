@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parse as parseYaml } from 'yaml';
 import { AgentRegistry, ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli, type RunCliOptions } from '../src/index.js';
@@ -114,7 +113,19 @@ describe('provider onboarding wizard [FEAT-026]', () => {
     return root;
   }
 
-  it('AC6/R7: provider list is catalog-driven and exposes configurable fields', async () => {
+  function expectProviderRetired(text: string): void {
+    expect(text).toContain('retired');
+    expect(text).toContain('FEAT-081X');
+    expect(text).toContain('AgentDock/ModelHub');
+    expect(text).toContain('self-evolution sidecar proposal/review workflows');
+  }
+
+  function expectProviderSetupUnavailable(text: string): void {
+    expect(text).toMatch(/retired|Retired|unknown command|unknown option|too many arguments/);
+    expect(text).not.toContain('PROVIDER_SETUP_RETIRED');
+  }
+
+  it('FEAT-081X: provider list is retired and no longer exposes standalone catalog management', async () => {
     const root = tempRoot('haro-feat026-list-');
     const extra: ProviderCatalogEntry = {
       id: 'mockai',
@@ -124,17 +135,19 @@ describe('provider onboarding wizard [FEAT-026]', () => {
       configurableFields: [{ key: 'tenant', label: 'Tenant', type: 'string', description: 'tenant id' }],
       modelDiscovery: 'unsupported',
     };
-    const { result, output } = await runWithOutput({
+    const { result, output, stderr } = await runWithOutput({
       argv: ['provider', 'list', '--human'],
       root,
       providerCatalog: [extra],
       createProviderRegistry: async () => createProviderRegistry(new StubProvider({ id: 'mockai' })),
     });
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
     expect(result.action).toBe('provider');
-    expect(output).toContain('mockai');
-    expect(output).toContain('fields=tenant');
+    expect(output).toBe('');
+    expectProviderRetired(stderr);
+    expect(stderr).not.toContain('mockai');
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
   });
 
   it('FEAT-081R: provider setup is physically removed, unknown command fails closed and never writes config', async () => {
@@ -150,7 +163,7 @@ describe('provider onboarding wizard [FEAT-026]', () => {
 ${stderr}`;
     expect(result.action).toBe('provider');
     expect(result.exitCode).toBe(1);
-    expect(text).toContain("error: unknown command 'setup'");
+    expectProviderSetupUnavailable(text);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(text).not.toContain('PROVIDER_SECRET_MISSING');
     expect(text).not.toContain('apiKey');
@@ -169,62 +182,43 @@ ${stderr}`;
 ${stderr}`;
     expect(result.action).toBe('provider');
     expect(result.exitCode).toBe(1);
-    expect(text).toContain("error: unknown command 'setup'");
+    expectProviderSetupUnavailable(text);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(text).not.toContain('test-provider-secret-123');
     expect(text).not.toContain('PROVIDER_SETUP_RETIRED');
   });
 
-  it('AC2/R5/R6: models use live listModels, select persists defaults, doctor is healthy, and haro model shows the same model', async () => {
+  it('FEAT-081X: provider root/models/doctor/select/env are retired without calling provider management logic', async () => {
     const root = tempRoot('haro-feat026-select-');
     const provider = new StubProvider({ models: [{ id: 'codex-primary' }, { id: 'codex-secondary', maxContextTokens: 200_000 }] });
     const env = { OPENAI_API_KEY: 'test-provider-secret-123', HOME: root };
+    const commands: Array<readonly string[]> = [
+      ['provider'],
+      ['provider', 'models', 'codex'],
+      ['provider', 'models', 'codex', '--json'],
+      ['provider', 'doctor', 'codex'],
+      ['provider', 'doctor', 'codex', '--json'],
+      ['provider', 'select', 'codex', 'codex-secondary', '--scope', 'project'],
+      ['provider', 'env', 'codex'],
+      ['provider', 'env', 'codex', '--json'],
+    ];
 
-    const models = await runWithOutput({
-      argv: ['provider', 'models', 'codex'],
-      root,
-      setupDeps: { env, runCommand: okCommand },
-      createProviderRegistry: async () => createProviderRegistry(provider),
-    });
-    expect(models.result.exitCode).toBe(0);
-    expect(models.output).toContain('codex-secondary');
-    expect(provider.calls.listModels).toBeGreaterThan(0);
+    for (const argv of commands) {
+      const retired = await runWithOutput({
+        argv,
+        root,
+        setupDeps: { env, runCommand: okCommand },
+        createProviderRegistry: async () => createProviderRegistry(provider),
+      });
+      expect(retired.result.exitCode, argv.join(' ')).toBe(1);
+      expect(retired.output, argv.join(' ')).toBe('');
+      expectProviderRetired(retired.stderr);
+      expect(retired.stderr).not.toContain(env.OPENAI_API_KEY);
+      expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+    }
 
-    const select = await runWithOutput({
-      argv: ['provider', 'select', 'codex', 'codex-secondary'],
-      root,
-      setupDeps: { env, runCommand: okCommand },
-      createProviderRegistry: async () => createProviderRegistry(provider),
-    });
-    expect(select.result.exitCode).toBe(0);
-
-    const doctor = await runWithOutput({
-      argv: ['provider', 'doctor', 'codex', '--json'],
-      root,
-      setupDeps: { env, runCommand: okCommand },
-      createProviderRegistry: async () => createProviderRegistry(provider),
-    });
-    // FEAT-039 R11/AC12: --json now wraps in a CliRecordEnvelope.
-    const doctorEnvelope = JSON.parse(doctor.output) as {
-      ok: true;
-      data: { ok: boolean; secret: { currentProcess: string }; issues: unknown[] };
-    };
-    expect(doctor.result.exitCode).toBe(0);
-    expect(doctorEnvelope.data.ok).toBe(true);
-    expect(doctorEnvelope.data.secret.currentProcess).toBe('present');
-
-    const model = await runWithOutput({
-      argv: ['model', '--human'],
-      root,
-      setupDeps: { env, runCommand: okCommand },
-      createProviderRegistry: async () => createProviderRegistry(provider),
-    });
-    expect(model.output).toContain('codex/codex-secondary');
-
-    const config = parseYaml(readFileSync(join(root, 'config.yaml'), 'utf8')) as {
-      providers?: { codex?: { defaultModel?: string; secretRef?: string; enabled?: boolean } };
-    };
-    expect(config.providers?.codex).toMatchObject({ enabled: true, secretRef: 'env:OPENAI_API_KEY', defaultModel: 'codex-secondary' });
+    expect(provider.calls.listModels).toBe(0);
+    expect(provider.calls.healthCheck).toBe(0);
   });
 
   it('R6: AgentRunner selection uses providers.codex.defaultModel from config when no CLI override exists', async () => {
@@ -260,8 +254,8 @@ ${stderr}`;
     });
 
     expect(result.result.exitCode).toBe(1);
-    expect(`${result.output}
-${result.stderr}`).toContain("error: unknown command 'setup'");
+    expectProviderSetupUnavailable(`${result.output}
+${result.stderr}`);
     expect(readFileSync(configPath, 'utf8')).toBe(before);
     expect(readFileSync(configPath, 'utf8')).not.toContain('https://api.example.test/v1');
     expect(readFileSync(configPath, 'utf8')).not.toContain('test-provider-secret-123');
@@ -280,15 +274,15 @@ ${result.stderr}`).toContain("error: unknown command 'setup'");
     });
 
     expect(result.exitCode).toBe(1);
-    expect(`${output}
-${stderr}`).toContain("error: unknown command 'setup'");
+    expectProviderSetupUnavailable(`${output}
+${stderr}`);
     expect(existsSync(envFile)).toBe(false);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(`${output}
 ${stderr}`).not.toContain(secret);
   });
 
-  it('AC5: doctor distinguishes current shell missing secret from a readable provider env file for systemd/service loading', async () => {
+  it('FEAT-081X: provider doctor is retired and does not inspect provider env files', async () => {
     const root = tempRoot('haro-feat026-systemd-root-');
     const configHome = join(root, 'xdg');
     const envDir = join(configHome, 'haro');
@@ -305,50 +299,29 @@ ${stderr}`).not.toContain(secret);
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
     });
 
-    // Codex adversarial review (2026-05-02): a failing doctor must NOT emit an
-    // ok:true record envelope; that lets piped consumers misread the failure.
-    // The renderer now writes a CliErrorEnvelope to stderr instead, and stdout
-    // for --json carries nothing.
     expect(result.exitCode).toBe(1);
     expect(output.trim()).toBe('');
-    const envelope = JSON.parse(stderr.trim().split('\n').filter(Boolean).at(-1)!) as {
-      ok: false;
-      error: {
-        code: string;
-        message: string;
-        details?: { report?: {
-          ok: boolean;
-          secret: { source: string; envFile: { path: string; containsSecret: boolean; readable: boolean } };
-          issues: Array<{ code: string; evidence: string }>;
-        } };
-      };
-    };
-    expect(envelope.ok).toBe(false);
-    expect(envelope.error.code).toBe('PROVIDER_DOCTOR_FAILED');
-    const json = envelope.error.details!.report!;
-    expect(json.ok).toBe(false);
-    expect(json.secret.source).toBe('systemd-env-file');
-    expect(json.secret.envFile).toMatchObject({ path: envFile, containsSecret: true, readable: true });
-    expect(json.issues[0]).toMatchObject({ code: 'PROVIDER_SECRET_MISSING' });
-    expect(json.issues[0].evidence).toContain('current process');
-    expect(json.issues[0].evidence).toContain(envFile);
+    expectProviderRetired(stderr);
+    expect(stderr).not.toContain('systemd-provider-secret-123');
+    expect(stderr).not.toContain(envFile);
     expect(output).not.toContain(secret);
   });
 
-  it('provider env masks current process secrets while showing template and sources', async () => {
+  it('FEAT-081X: provider env is retired and does not reveal current process secrets', async () => {
     const root = tempRoot('haro-feat026-env-');
     const secret = 'visible-nowhere-secret-123';
-    const { result, output } = await runWithOutput({
+    const { result, output, stderr } = await runWithOutput({
       argv: ['provider', 'env', 'codex', '--human'],
       root,
       setupDeps: { env: { OPENAI_API_KEY: secret, HOME: root }, runCommand: okCommand },
       createProviderRegistry: async () => createProviderRegistry(new StubProvider()),
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(output).toContain('OPENAI_API_KEY=<your-provider-secret>');
-    expect(output).toContain('present (masked)');
+    expect(result.exitCode).toBe(1);
+    expect(output).toBe('');
+    expectProviderRetired(stderr);
     expect(output).not.toContain(secret);
+    expect(stderr).not.toContain(secret);
   });
 
   it('FEAT-081R: unknown interactive setup fails and does not run the ChatGPT wizard or codex login', async () => {
@@ -392,7 +365,7 @@ ${stderr}`).not.toContain(secret);
     const text = `${output}
 ${stderr}`;
     expect(result.exitCode).toBe(1);
-    expect(text).toContain("error: unknown command 'setup'");
+    expectProviderSetupUnavailable(text);
     expect(existsSync(join(codexHome, 'auth.json'))).toBe(false);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(text).not.toContain('access-token-raw');
@@ -426,7 +399,7 @@ ${stderr}`;
     const text = `${output}
 ${stderr}`;
     expect(result.exitCode).toBe(1);
-    expect(text).toContain("error: unknown command 'setup'");
+    expectProviderSetupUnavailable(text);
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
     expect(text).not.toContain('access-token-raw');
     expect(text).not.toContain('refresh-token-raw');

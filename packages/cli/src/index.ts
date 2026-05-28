@@ -88,25 +88,14 @@ import {
   buildLegacyRemovalGuardReport,
   formatLegacyRemovalGuardHuman,
 } from './legacy-removal-guard.js';
-import { renderJson, renderJsonDiagnostic, renderListJson, resolveOutputMode } from './output/index.js';
-import {
-  assertProviderModelExists,
-  buildProviderPatch,
-  formatProviderDoctorHuman,
-  formatProviderEnvHuman,
-  formatProviderList,
-  getCatalogEntryOrThrow,
-  listProviderModels,
-  parseProviderScope,
-  runProviderDoctor,
-  writeProviderConfig,
-  type ProviderScope,
-} from './provider-onboarding.js';
+import { renderJson, renderListJson, resolveOutputMode } from './output/index.js';
 
 const VERSION = '0.1.0';
 const CLI_CHANNEL_STATE_FILE = 'state.json';
 const DEFAULT_TASK = '列出当前目录下的 TypeScript 文件';
 const REVIEW_CONVERSATION_AGENT_ID = 'haro-review-conversation';
+const PROVIDER_CLI_RETIRED_MESSAGE =
+  'Haro provider CLI management has been retired in FEAT-081X; AgentDock/ModelHub owns standalone provider management. Haro now keeps only AgentDock self-evolution sidecar proposal/review workflows, with provider runtime preserved internally for those protected workflows.';
 
 type CliLogger = Pick<HaroLogger, 'debug' | 'info' | 'warn' | 'error'>;
 type MemoryWrapupHook = NonNullable<ConstructorParameters<typeof AgentRunner>[0]['memoryWrapupHook']>;
@@ -300,12 +289,6 @@ export const LEGACY_SURFACE_WARNING =
 
 export function writeLegacySurfaceWarning(app: Pick<AppContext, 'stdout'>): void {
   app.stdout.write(`${LEGACY_SURFACE_WARNING}\n`);
-}
-
-function writeLegacySurfaceWarningForMode(app: Pick<AppContext, 'stdout'>, mode: 'json' | 'human'): void {
-  if (mode === 'human') {
-    writeLegacySurfaceWarning(app);
-  }
 }
 
 export function registerCommand(
@@ -671,154 +654,52 @@ function registerProviderCommands(program: Command, app: AppContext): void {
   registerCommand(
     'provider',
     (cmd) => {
-      cmd.description('Manage agent providers, credentials, model discovery, and defaults');
+      cmd
+        .description('Retired provider management surface')
+        .action(() => failProviderCliRetired(app));
 
       cmd
         .command('list')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action((options: { json?: boolean; human?: boolean }) => {
-          const mode = resolveOutputMode(options, app.stdout);
-          if (mode === 'json') {
-            renderListJson({ items: app.providerCatalog, total: app.providerCatalog.length }, { stdout: app.stdout });
-            return;
-          }
-          writeLegacySurfaceWarningForMode(app, mode);
-          app.stdout.write(formatProviderList(app.providerCatalog));
-        });
+        .action(() => failProviderCliRetired(app));
 
 
       cmd
         .command('doctor')
-        .argument('<id>', 'provider id')
+        .argument('[id]', 'provider id')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
-          const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
-          const report = await runProviderDoctor({
-            entry,
-            providerRegistry: app.providerRegistry,
-            root: app.opts.root,
-            projectRoot: providerProjectRoot(app),
-            env: providerCommandEnv(app),
-            checkModels: true,
-          });
-          const mode = resolveOutputMode(options, app.stdout);
-          if (mode === 'json') {
-            renderJsonDiagnostic(report, { stdout: app.stdout, stderr: app.stderr }, {
-              code: 'PROVIDER_DOCTOR_FAILED',
-              message: `provider doctor ${id} found issues`,
-              remediation: `Export OPENAI_API_KEY, load the provider env file, or run external codex login --device-auth, then rerun \`haro provider doctor ${id}\`.`,
-            });
-          } else {
-            writeLegacySurfaceWarningForMode(app, mode);
-            app.stdout.write(formatProviderDoctorHuman(report));
-          }
-          if (!report.ok) {
-            throw new CommanderExit(1, `provider doctor ${id} found issues`);
-          }
-        });
+        .action(() => failProviderCliRetired(app));
 
       cmd
         .command('models')
-        .argument('<id>', 'provider id')
+        .argument('[id]', 'provider id')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
-          getCatalogEntryOrThrow(id, app.providerCatalog);
-          const mode = resolveOutputMode(options, app.stdout);
-          try {
-            const models = await listProviderModels(app.providerRegistry, id);
-            if (mode === 'json') {
-              renderListJson({ items: models, total: models.length }, { stdout: app.stdout });
-            } else {
-              writeLegacySurfaceWarningForMode(app, mode);
-              app.stdout.write(formatProviderModels(id, models));
-            }
-          } catch (error) {
-            const issue = {
-              code: 'PROVIDER_MODEL_LIST_FAILED',
-              severity: 'error',
-              component: 'provider',
-              evidence: error instanceof Error ? error.message : String(error),
-              remediation: `Verify OPENAI_API_KEY, provider baseUrl/network access, or external codex login state, then retry haro provider models ${id}.`,
-              fixable: false,
-            };
-            app.stdout.write(mode === 'json' ? `${JSON.stringify({ provider: id, ok: false, issues: [issue] }, null, 2)}\n` : `PROVIDER_MODEL_LIST_FAILED: ${issue.evidence}\nRemediation: ${issue.remediation}\n`);
-            throw new CommanderExit(1, `provider models ${id} failed`);
-          }
-        });
+        .action(() => failProviderCliRetired(app));
 
       cmd
         .command('select')
-        .argument('<id>', 'provider id')
-        .argument('<model>', 'live model id')
+        .argument('[id]', 'provider id')
+        .argument('[model]', 'live model id')
         .option('--scope <scope>', 'config scope: global or project', 'global')
-        .action(async (id: string, model: string, options: { scope: string }) => {
-          writeLegacySurfaceWarning(app);
-          const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
-          const scope = parseProviderScope(options.scope);
-          await assertProviderModelExists(app.providerRegistry, id, model);
-          const configWrite = writeProviderConfig({
-            scope,
-            root: app.opts.root,
-            projectRoot: providerProjectRoot(app),
-            entry,
-            patch: buildProviderPatch({ entry, model }),
-          });
-          reloadLoadedConfig(app, scope);
-          app.writeCliState({ ...app.cliState, defaultProvider: id, defaultModel: model });
-          app.stdout.write(`Provider default selected: ${id}/${model}\nConfig: ${configWrite.path}\n`);
-        });
+        .action(() => failProviderCliRetired(app));
 
       cmd
         .command('env')
-        .argument('<id>', 'provider id')
+        .argument('[id]', 'provider id')
         .option('--json', 'force JSON output (default for non-TTY)')
         .option('--human', 'force human output')
-        .action(async (id: string, options: { json?: boolean; human?: boolean }) => {
-          const entry = getCatalogEntryOrThrow(id, app.providerCatalog);
-          const report = await runProviderDoctor({
-            entry,
-            providerRegistry: app.providerRegistry,
-            root: app.opts.root,
-            projectRoot: providerProjectRoot(app),
-            env: providerCommandEnv(app),
-            checkHealth: false,
-            checkModels: false,
-          });
-          const mode = resolveOutputMode(options, app.stdout);
-          if (mode === 'json') {
-            renderJson(report, { stdout: app.stdout });
-          } else {
-            writeLegacySurfaceWarningForMode(app, mode);
-            app.stdout.write(formatProviderEnvHuman(report));
-          }
-        });
+        .action(() => failProviderCliRetired(app));
     },
     program,
   );
 }
 
-function providerCommandEnv(app: AppContext): NodeJS.ProcessEnv {
-  return app.opts.doctorDeps?.env ?? app.opts.setupDeps?.env ?? process.env;
-}
-
-function providerProjectRoot(app: AppContext): string {
-  return app.opts.projectRoot ?? process.cwd();
-}
-
-function reloadLoadedConfig(app: AppContext, scope: ProviderScope): void {
-  app.loaded = haroConfig.loadHaroConfig({
-    globalRoot: app.opts.root,
-    projectRoot: scope === 'project' ? providerProjectRoot(app) : app.opts.projectRoot,
-  });
-}
-
-function formatProviderModels(provider: string, models: readonly { id: string; maxContextTokens?: number }[]): string {
-  if (models.length === 0) return `Provider models: ${provider}\n<none>\n`;
-  const lines = [`Provider models: ${provider}`, ...models.map((model) => [model.id, model.maxContextTokens ? `context=${model.maxContextTokens}` : undefined].filter(Boolean).join('\t'))];
-  return `${lines.join('\n')}\n`;
+function failProviderCliRetired(app: Pick<AppContext, 'stderr'>): never {
+  app.stderr.write(`${PROVIDER_CLI_RETIRED_MESSAGE}\n`);
+  throw new CommanderExit(1, PROVIDER_CLI_RETIRED_MESSAGE);
 }
 
 function registerSkillsCommands(program: Command, app: AppContext): void {

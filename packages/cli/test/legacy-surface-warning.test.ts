@@ -128,21 +128,25 @@ describe('legacy workbench surface warnings', () => {
     expectJsonLines(json.stdout.read());
   });
 
-  it('prints a legacy warning for human provider surfaces', async () => {
+  it('retires human provider surfaces without printing the legacy workbench warning', async () => {
     const root = tempRoot('haro-legacy-provider-');
     const provider = runWithCapturedOutput(root, ['provider', 'list', '--human']);
 
-    await expect(provider.result).resolves.toMatchObject({ exitCode: 0 });
-    expect(provider.stdout.read()).toContain(LEGACY_SURFACE_WARNING);
+    await expect(provider.result).resolves.toMatchObject({ exitCode: 1 });
+    expect(provider.stdout.read()).not.toContain(LEGACY_SURFACE_WARNING);
+    expect(provider.stderr.read()).toContain('FEAT-081X');
+    expect(provider.stderr.read()).toContain('AgentDock/ModelHub');
   });
 
-  it('does not pollute JSON provider output', async () => {
+  it('retires JSON provider surfaces without polluting stdout', async () => {
     const root = tempRoot('haro-legacy-provider-json-');
-    const { result, stdout } = runWithCapturedOutput(root, ['provider', 'list', '--json']);
+    const { result, stdout, stderr } = runWithCapturedOutput(root, ['provider', 'list', '--json']);
 
-    await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    await expect(result).resolves.toMatchObject({ exitCode: 1 });
     expect(stdout.read()).not.toContain(LEGACY_SURFACE_WARNING);
-    expectJsonLines(stdout.read());
+    expect(stdout.read()).toBe('');
+    expect(stderr.read()).toContain('FEAT-081X');
+    expect(stderr.read()).toContain('AgentDock/ModelHub');
   });
 
   it('does not print the legacy warning for the AgentDock sidecar observe command', async () => {

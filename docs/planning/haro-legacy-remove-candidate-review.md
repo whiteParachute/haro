@@ -65,13 +65,13 @@
 | 字段 | 内容 |
 | --- | --- |
 | current_state | deprecate |
-| still_imported_by | `packages/cli/src/index.ts` 默认 provider 注册；provider doctor/list/models/select/env；`@haro/provider-codex` package tests；081N 后 setup/onboarding CLI 已 retired/fail-closed；081O 已删除 setup-only wizard dead file；081P 已删除旧 setup env-file writer helper |
+| still_imported_by | `packages/cli/src/index.ts` 默认 provider 注册；`@haro/provider-codex` package tests；081N/R 后 setup/onboarding CLI 已 retired/removed；081O 已删除 setup-only wizard dead file；081P 已删除旧 setup env-file writer helper；081X 已退役 standalone provider CLI 管理面 |
 | replacement | AgentDock 统一 provider / ModelHub；Haro 只通过 sidecar contract 读取运行结果 |
-| blocking_dependencies | provider runtime 仍被 CLI bootstrap/run/chat/LLM path 引用；provider doctor/list/models/select/env 与 diagnostics provider stage 仍需保留；删除 runtime 前需单项评审 |
-| risk_if_removed | `haro run/chat`、provider doctor/list/models/select/env、LLM draft/rewrite provider path 与 legacy tests 失效 |
+| blocking_dependencies | provider runtime 仍被 CLI bootstrap/run/chat/LLM path、diagnostics provider stage 与 sidecar/review LLM 路径引用；删除 runtime 前需单项评审 |
+| risk_if_removed | `haro run/chat`、diagnostics provider stage、LLM draft/rewrite provider path 与 provider runtime tests 失效 |
 | rollback_plan | git revert 删除 PR；恢复 package 与 workspace dependency |
 | required_verification | `pnpm test:sidecar`；`pnpm -F @haro/provider-codex test`；`pnpm -F @haro/cli test:legacy` |
-| decision | FEAT-081N 只退役 `haro provider setup ...`；FEAT-081O 只删除 setup-only wizard dead file并清理 remediation；FEAT-081P 只删除旧 env-file writer helper；FEAT-081R 只删除 provider setup retired stub；保持 deprecate，不删除 provider-codex package/runtime |
+| decision | FEAT-081N 只退役 `haro provider setup ...`；FEAT-081O 只删除 setup-only wizard dead file并清理 remediation；FEAT-081P 只删除旧 env-file writer helper；FEAT-081R 只删除 provider setup retired stub；FEAT-081X 只退役 standalone provider CLI 管理面；保持 deprecate，不删除 provider-codex package/runtime |
 
 ### 3.2 packages/channel / channel-feishu / channel-telegram
 
@@ -1258,7 +1258,7 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `haro provider setup ...` 注册入口在 081N 当时保留为 retired/fail-closed，避免落入 commander unknown、REPL 或默认 handler。
 - 081R 后该 retired 子命令 stub 已删除；当前 `haro provider setup ...` 由 provider command unknown-command fail-closed，新产品使用 AgentDock Codex runner / 外部 `codex login` 前置。
 - 不再调用 `runCodexAuthWizard`、`writeProviderConfig`、`writeProviderEnvFile`、`runProviderDoctor` 等 setup 写入/检查流程。
-- 保留 `haro provider list`、`doctor`、`models`、`select`、`env`。
+- 当时保留 `haro provider list`、`doctor`、`models`、`select`、`env`；FEAT-081X 后这些 standalone CLI 管理面已统一 retired/fail-closed。
 - 不修改 `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、provider runtime、diagnostics provider stage、run/chat/LLM provider path。
 
 081N guard 口径：
@@ -1278,14 +1278,14 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 
 - `provider-codex-wizard.ts` 相关符号（`runCodexAuthWizard` / `runProviderSetupWizard` / `runChatGptLogin` / `summarizeAuth`）已无 CLI/runtime 业务入口。
 - 剩余引用只来自该文件自身、旧 wizard 单元测试、planning/guard/docs 历史说明与旧 Phase spec。
-- `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、provider doctor/list/models/select/env、diagnostics provider stage 与 run/chat/LLM provider path 仍需保护。
+- `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、diagnostics provider stage 与 run/chat/LLM provider path 仍需保护；FEAT-081X 后 standalone provider CLI 管理面不再作为保留项。
 
 本阶段完成的最小安全代码清理：
 
 - 物理删除 `packages/cli/src/provider-codex-wizard.ts`。
 - 删除只服务该 wizard 的 `packages/cli/test/provider-codex-wizard.test.ts`，并从 `packages/cli/package.json` `test:legacy` 移除该测试入口。
 - 081O 当时仍保留 `haro provider setup ...` retired/fail-closed stub；081R 后该 stub 已删除。
-- 将 provider doctor/models/diagnostics 中仍指向 `haro provider setup codex` 的 remediation 改为 `OPENAI_API_KEY`、外部 `codex login --device-auth` 与 `haro provider doctor codex` 口径。
+- 将 provider doctor/models/diagnostics 中仍指向 `haro provider setup codex` 的 remediation 改为 `OPENAI_API_KEY`、外部 `codex login --device-auth` 与当时的 provider doctor 口径；FEAT-081X 后 diagnostics remediation 不再引导 standalone `haro provider doctor`。
 
 081O guard 口径：
 
@@ -1303,15 +1303,15 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 081P 的只读盘点结论：
 
 - `writeProviderEnvFile` / `ProviderEnvFileWriteResult` 已无 CLI/runtime 业务入口；081N 后 `haro provider setup --write-env-file` 已 retired/fail-closed，不再调用该 writer。
-- `ProviderEnvFileSummary`、`readProviderEnvFileSummary`、`resolveProviderEnvFile`、`ProviderSecretSummary.envFile` 仍服务 `runProviderDoctor`、`haro provider env` 与 diagnostics provider stage 的只读 summary，必须保留。
-- `writeProviderConfig` / `parseProviderScope` 仍服务 `haro provider select`，必须保留。
+- `ProviderEnvFileSummary`、`readProviderEnvFileSummary`、`resolveProviderEnvFile`、`ProviderSecretSummary.envFile` 仍服务 `runProviderDoctor` 与 diagnostics provider stage 的只读 summary；081P 当时也服务 `haro provider env`，FEAT-081X 后 standalone provider env CLI 已 retired。
+- `writeProviderConfig` / `parseProviderScope` 在 081P 当时仍服务 `haro provider select`；FEAT-081X 后 standalone provider select CLI 已 retired，不代表 provider runtime 删除批准。
 
 本阶段完成的最小安全代码清理：
 
 - 删除 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile`。
 - 删除 `ProviderEnvFileWriteResult`。
 - 删除随 writer 变 dead 的 `renameSync` / `chmodSync` import 和 env-file merge/quote helper。
-- 081P 当时仍保留 `haro provider setup ...` retired/fail-closed stub；081R 后该 stub 已删除。继续保留 `provider env` 只读 summary、`provider select` 与 provider runtime。
+- 081P 当时仍保留 `haro provider setup ...` retired/fail-closed stub；081R 后该 stub 已删除。081X 后 standalone `provider env/select` CLI 管理面已 retired，provider runtime 与 diagnostics 继续保留。
 
 081P guard 口径：
 
@@ -1322,7 +1322,7 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `provider-codex` 仍是 `blocked`，`deleteAllowed=false`，`stillReferenced=true`。
 - `deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
-后续风险：provider runtime、diagnostics provider stage、run/chat/LLM path、provider doctor/list/models/select/env 仍有业务引用；不得把 081P 解读为 provider runtime/package 删除批准。
+后续风险：provider runtime、diagnostics provider stage、run/chat/LLM path 仍有业务引用；不得把 081P 或 081X 解读为 provider runtime/package 删除批准。
 
 ## 25. FEAT-081Q guard physicalRemovals schema 收口（2026-05-26）
 
@@ -1352,13 +1352,13 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 
 - `packages/cli/src/index.ts` 中仅剩 081N 后保留的 provider setup retired command registration/stub。
 - `runCodexAuthWizard`、旧 `provider-codex-wizard.ts`、旧 `writeProviderEnvFile` writer 已分别在 081N/081O/081P 后从业务入口摘线或删除。
-- `haro provider list/doctor/models/select/env` 仍共享 provider runtime/helper，必须保留。
+- `haro provider list/doctor/models/select/env` 在 081R 时仍共享 provider runtime/helper；FEAT-081X 后 standalone CLI 管理面已 retired，runtime/helper 仅按 diagnostics/LLM path 保护。
 
 本阶段完成的最小安全代码清理：
 
 - 删除 `packages/cli/src/index.ts#provider-setup-retired-stub`。
 - `haro provider setup ...` 不再注册为子命令；调用会由 provider command unknown-command fail-closed，exit 非 0，不写 `HARO_HOME/config.yaml` 或 provider env file，不进入 REPL/default handler。
-- 保留 `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、provider list/doctor/models/select/env、diagnostics provider stage 与 run/chat/LLM provider path。
+- 保留 `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、diagnostics provider stage 与 run/chat/LLM provider path；FEAT-081X 后 standalone provider CLI 管理面已 retired。
 
 081R guard 口径：
 
@@ -1369,7 +1369,7 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `provider-codex` 仍是 `blocked`，`deleteAllowed=false`，`stillReferenced=true`。
 - `deleteAllowedCount=0`、`physicalDeleteApproved=false`、`wouldDelete=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
-后续风险：provider runtime、diagnostics provider stage、run/chat/LLM path、provider doctor/list/models/select/env 仍有业务引用；不得把 081R 解读为 provider runtime/package 删除批准。
+后续风险：provider runtime、diagnostics provider stage、run/chat/LLM path 仍有业务引用；不得把 081R 或 081X 解读为 provider runtime/package 删除批准。
 
 
 ## 27. FEAT-081S TeamOrchestrator removed-result 兼容 payload 删除（2026-05-27）
@@ -1546,3 +1546,29 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - 未把 TeamOrchestrator docs closure 扩大为 ScenarioRouter、runtime、run/chat 或 LLM provider path 删除授权。
 
 后续风险：本切片本身完成，但总清理目标仍未达成。继续向下推进需要 provider runtime、memory ownership/MCP registry、scenario-router/runtime/run-chat-LLM、skills production path 的产品/架构/数据 ownership 决策或更窄的单项授权。
+
+## 32. FEAT-081X / F-1 provider CLI 管理面退役（2026-05-28）
+
+用户在 2026-05-28 07:48:26 UTC 明确要求“全部下掉，仅保留现在产品形态必要的基本功能”。FEAT-081W 已证明剩余 provider/memory/runtime/skills 面继续删除需要产品/架构/数据 ownership 决策；081X/F-1 选择最窄 provider CLI 管理面作为第一刀，不触碰真实 `~/.haro*` 数据、Review Board 或 provider runtime。
+
+本阶段完成：
+
+- `haro provider` root 以及 `list` / `doctor` / `models` / `select` / `env` standalone CLI 管理面统一 retired/fail-closed。
+- retired 文案明确包含 FEAT-081X、AgentDock/ModelHub owner，以及 Haro 仅保留 AgentDock self-evolution sidecar proposal/review workflows。
+- CLI 不再从这些 provider 管理命令调用 `formatProviderList`、`runProviderDoctor`、`listProviderModels`、`writeProviderConfig`、`parseProviderScope` 等旧管理逻辑。
+- diagnostics provider stage 保留，但 remediation 不再引导 standalone `haro provider doctor` 管理面，改为 AgentDock/ModelHub provider management、外部 `codex login --device-auth` / `OPENAI_API_KEY` 与 `haro setup --check` 口径。
+
+Guard 口径：
+
+- `planning.stage=FEAT-081X`。
+- `planning.lastCompletedStage=FEAT-081X`。
+- `planning.lastUpdatedBy=FEAT-081X`。
+- `provider-codex.physicalRemovals[]` 新增 `packages/cli/src/index.ts#provider-cli-management-surface`，`removedBy=FEAT-081X`。
+- `completedPhysicalRemovals=16`。
+- `provider-codex` 仍 `candidatePriority.status=blocked`、`deleteAllowed=false`、`stillReferenced=true`；`deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null`。
+
+明确未做：
+
+- 未删除或修改 `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、`createDefaultProviderRegistry`。
+- 未修改 `AgentRunner`、`ScenarioRouter`、`haro run`、`haro chat`、Review Board、sidecar CLI/MCP、MCP `send_message`、AgentDock host 或真实 `~/.haro*` / aria-memory-vault。
+- 未把 081X 解读为 provider runtime/package 删除批准；后续若要继续 provider runtime 减法，必须先证明 diagnostics/sidecar/review/run/chat LLM path 不再依赖 provider runtime。
