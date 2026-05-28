@@ -48,7 +48,7 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
     const responses = await runServerWith(e, [
       { jsonrpc: '2.0', id: 7, method: 'tools/list' },
     ]);
-    const r = responses[0]! as { id: number; result: { tools: Array<{ name: string }> } };
+    const r = responses[0]! as { id: number; result: { tools: Array<{ name: string; description: string }> } };
     const names = r.result.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'memory_query',
@@ -56,6 +56,7 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
       'schedule_task',
       'send_message',
     ]);
+    expect(r.result.tools.find((tool) => tool.name === 'memory_remember')?.description).toContain('FEAT-081X/F-2');
   });
 
   it('routes tools/call to the registry and returns a structured success', async () => {

@@ -4,10 +4,8 @@
  * Decisions follow the spec:
  *   - send_message: allow when caller is in the same channel as the target
  *     session; otherwise needs-approval ('external-service' style).
- *   - memory_remember:
- *       scope=agent  → allow
- *       scope=shared → needs-approval (write-shared)
- *       scope=platform → needs-approval (write-shared)
+ *   - memory_remember: allow the retired tool to execute so it can fail
+ *     closed with TARGET_DISABLED instead of entering approval flow.
  *   - memory_query / schedule_task: allow.
  *
  * The gate is intentionally a small in-package policy table rather than
@@ -31,7 +29,7 @@ export const evaluatePermission: PermissionEvaluator = (input) => {
     case 'memory_query':
       return { decision: 'allowed' };
     case 'memory_remember':
-      return evaluateMemoryRemember(input);
+      return { decision: 'allowed' };
     case 'schedule_task':
       return { decision: 'allowed' };
     default:
@@ -60,17 +58,4 @@ function evaluateSendMessage(input: PermissionDecisionInput): PermissionDecision
     decision: 'needs-approval',
     reason: `cross-channel send (${callerChannel} → ${target}) is external-service class`,
   };
-}
-
-function evaluateMemoryRemember(input: PermissionDecisionInput): PermissionDecisionOutput {
-  const params = (input.params ?? {}) as { scope?: string };
-  const scope = typeof params.scope === 'string' ? params.scope : 'agent';
-  if (scope === 'agent') return { decision: 'allowed' };
-  if (scope === 'shared' || scope === 'platform') {
-    return {
-      decision: 'needs-approval',
-      reason: `write-shared (${scope}) requires operator approval`,
-    };
-  }
-  return { decision: 'allowed' };
 }

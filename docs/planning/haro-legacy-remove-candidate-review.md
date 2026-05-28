@@ -1431,8 +1431,8 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 
 - `packages/cli/src/index.ts` 仍有 `run --legacy-memory` flag，以及 `legacyRunMemory`、`getLegacyMemoryFabric`、`createLegacyMemoryFabric`、`resolveLegacyMemoryRoots`、`createCliMemoryWrapupHook` 等 CLI wiring。
 - `packages/core/src/index.ts` 仍导出 `createMemoryFabric`；`packages/core/src/memory/**`、`packages/core/src/services/memory.ts` 仍是 protected runtime。
-- `packages/cli/src/commands/memory.ts` 仍注册 `haro memory` 子命令。
-- `packages/mcp-tools/src/index.ts`、`packages/mcp-tools/src/tools/memory-query.ts`、`memory-remember.ts` 仍提供 MCP `memory_query` / `memory_remember` 默认 registry/工具。
+- `packages/cli/src/commands/memory.ts` 仍注册 `haro memory` 子命令；FEAT-081X/F-2 后 `remember` 写入口保留为 retired/fail-closed，query/list/show/export/recover-snapshot 仍保留。
+- `packages/mcp-tools/src/index.ts`、`packages/mcp-tools/src/tools/memory-query.ts`、`memory-remember.ts` 仍提供 MCP `memory_query` / `memory_remember` 默认 registry/工具；FEAT-081X/F-2 后 `memory_remember` 执行直接 fail-closed，不再写 Haro MemoryFabric。
 - 真实 `~/.haro`、`~/.haro/evolution` 与 aria-memory-vault 不属于本阶段可读写/迁移/删除范围。
 
 本阶段完成的最小安全代码清理：
@@ -1460,7 +1460,7 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `LEGACY_MODULE_RETIREMENT_BOUNDARIES.memory.deletionCandidateAllowed=false` 保持不变。
 - `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
-后续风险：MCP memory 默认 registry、core MemoryFabric runtime、真实 `~/.haro` 数据和 aria-memory-vault owner 边界仍未解除。后续如继续 memory 减法，必须先完成数据/owner/MCP tool 边界证明；不得从 081U 推导 memory runtime、memory CLI 或 MCP memory tool 删除批准。
+后续风险：MCP memory_query read path、core MemoryFabric runtime、真实 `~/.haro` 数据和 aria-memory-vault owner 边界仍未解除。后续如继续 memory 减法，必须先完成数据/owner/MCP read tool 边界证明；不得从 081U 或 081X/F-2 推导 memory runtime、read-only memory CLI 或 MCP memory_query 删除批准。
 
 ## 30. FEAT-081V / D-1 `marketplace:<name>` skills install placeholder 退役（2026-05-28）
 
@@ -1572,3 +1572,30 @@ Guard 口径：
 - 未删除或修改 `packages/provider-codex/**`、`createCodexProvider`、`readLocalCodexAuth`、`createDefaultProviderRegistry`。
 - 未修改 `AgentRunner`、`ScenarioRouter`、`haro run`、`haro chat`、Review Board、sidecar CLI/MCP、MCP `send_message`、AgentDock host 或真实 `~/.haro*` / aria-memory-vault。
 - 未把 081X 解读为 provider runtime/package 删除批准；后续若要继续 provider runtime 减法，必须先证明 diagnostics/sidecar/review/run/chat LLM path 不再依赖 provider runtime。
+
+## 33. FEAT-081X / F-2 Haro-owned memory write surfaces 退役（2026-05-28）
+
+FEAT-081X/F-2 根据“全部下掉，仅保留现在产品形态必要的基本功能”的产品决策，只处理 Haro-owned memory 写入口：CLI `haro memory remember` 与 legacy MCP `memory_remember`。本阶段不做 MemoryFabric 包级删除，不读写/迁移/删除真实 `~/.haro*`、`~/.haro/evolution` 或 aria-memory-vault。
+
+本阶段完成：
+
+- `haro memory remember` 保留 known subcommand 和原兼容 options（`--scope`、`--agent`、`--topic`、`--summary`、`--source`、`--tags`、`--layer`），但 action 直接 fail-closed，exit 非 0。
+- retired 文案包含 `retired`、`FEAT-081X/F-2`、`AgentDock memory` / `aria-memory-vault`，并说明 Haro 只保留 self-evolution sidecar 与 historical read/forensic memory access。
+- legacy MCP `memory_remember` 保留在 `createDefaultRegistry` 和 tools/list 中，但 execute 直接返回 `TARGET_DISABLED`，不读取 `ctx.deps.memory`，不调用 `memory.writeEntry`，不返回 `entryId`。
+- `memory_query`、`haro memory query/list/show/export/recover-snapshot`、core MemoryFabric runtime 与真实数据路径继续保留。
+
+Guard 口径：
+
+- `planning.stage=FEAT-081X`，`lastCompletedStage=FEAT-081X`，`lastUpdatedBy=FEAT-081X` 保持。
+- `memory-fabric.physicalRemovals[]` 新增 scoped removal：`packages/cli/src/commands/memory.ts#memory-remember-write-surface+packages/mcp-tools/src/tools/memory-remember.ts#legacy-mcp-write-surface`，`removedBy=FEAT-081X`。
+- `completedPhysicalRemovals=17`。
+- `memory-fabric` 仍 `candidatePriority.status=blocked`、`deleteAllowed=false`、`stillReferenced=true`。
+- `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null`、`verifiedAbsentFailedCount=0` 保持。
+
+明确未做：
+
+- 未删除/修改 `packages/core/src/memory/**`、`packages/core/src/services/memory.ts`、`createMemoryFabric` export、MCP `memory_query`。
+- 未删除/修改 `haro memory query/list/show/export/recover-snapshot` 的 read-only/forensic 行为。
+- 未触碰 AgentDock memory、AgentDock host、MCP `send_message`、provider runtime、skills、Web Review Board、runtime/scenario-router/run-chat-LLM 或真实数据。
+
+后续风险：memory-fabric 仍 blocked。继续向下推进前，需要产品/数据 ownership 决策来界定真实 `~/.haro*` 数据、aria-memory-vault、MCP `memory_query` read path 与 core MemoryFabric runtime 的最终 owner。

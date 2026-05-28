@@ -2,8 +2,8 @@
  * FEAT-039 §7 — end-to-end self-use flow.
  *
  * Drives a single haro home through the full daily lifecycle the spec
- * promises: create user → create agent → chat → session list → memory
- * remember → memory query → logs show → workflow list → budget show →
+ * promises: create user → create agent → chat → session list → retired memory
+ * remember fail-closed → memory query → logs show → workflow list → budget show →
  * config set/get/unset. Each step asserts exit code 0 + a key signal in
  * the JSON envelope. This is the smoking-gun test that the CLI surface
  * actually composes — individual command tests can pass while the flow
@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ProviderRegistry } from '@haro/core';
+import { ProviderRegistry, services } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
 
@@ -117,10 +117,24 @@ describe('FEAT-039 §7 — end-to-end self-use flow', () => {
     expect(sessionRecords.length).toBeGreaterThanOrEqual(1);
     const firstSessionId = sessionRecords[0]!.data.sessionId as string;
 
-    // 7. memory remember --scope shared.
+    // 7. memory remember --scope shared is retired/fail-closed.
     const memoryRemember = await run({ argv: ['memory', 'remember', 'pineapple is allowed', '--scope', 'shared'], root });
-    expect(memoryRemember.exitCode).toBe(0);
-    expect(memoryRemember.stdout).toContain('memory entry created');
+    expect(memoryRemember.exitCode).toBe(1);
+    expect(memoryRemember.stderr).toContain('retired');
+    expect(memoryRemember.stderr).toContain('FEAT-081X/F-2');
+    expect(memoryRemember.stderr).toContain('AgentDock memory');
+
+    await services.memory.writeMemoryEntry(
+      { root, dbFile: join(root, 'haro.db') },
+      {
+        scope: 'shared',
+        layer: 'persistent',
+        topic: 'pineapple',
+        content: 'pineapple is allowed',
+        sourceRef: 'test:feat039-e2e',
+      },
+      { currentAgentId: 'my-agent' },
+    );
 
     // 8. memory query "pineapple" --json.
     const memoryQuery = await run({ argv: ['memory', 'query', 'pineapple', '--json'], root });

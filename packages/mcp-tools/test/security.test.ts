@@ -23,7 +23,7 @@ describe('mcp-tools security [FEAT-032 §7]', () => {
     expect(e.messaging.outbound).toHaveLength(0);
   });
 
-  it('cross-scope memory write (shared) is blocked at the permission layer', async () => {
+  it('cross-scope memory write (shared) fails closed before any MemoryFabric write', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
     const out = await registry.invoke({
@@ -32,9 +32,10 @@ describe('mcp-tools security [FEAT-032 §7]', () => {
       session: e.buildSession(),
       deps: e.buildDeps(),
     });
-    expect(out.decision).toBe('needs-approval');
+    expect(out.decision).toBe('allowed');
     if (out.result.ok) throw new Error('unreachable');
-    expect(out.result.error.code).toBe('NEEDS_APPROVAL');
+    expect(out.result.error.code).toBe('TARGET_DISABLED');
+    expect(out.result.error.message).toContain('FEAT-081X/F-2');
   });
 
   it('cron expression injection is rejected as INVALID_PARAMS', async () => {
@@ -80,7 +81,7 @@ describe('mcp-tools security [FEAT-032 §7]', () => {
     expect(out.result.error.code).toBe('INVALID_PARAMS');
   });
 
-  it('audit row is written even when permission denies the call (so operators see the attempt)', async () => {
+  it('audit row is written when retired memory_remember fails closed (so operators see the attempt)', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
     await registry.invoke({
@@ -90,7 +91,7 @@ describe('mcp-tools security [FEAT-032 §7]', () => {
       deps: e.buildDeps(),
     });
     const rows = e.audit.list();
-    expect(rows[0]!.decision).toBe('needs-approval');
-    expect(rows[0]!.errorCode).toBe('NEEDS_APPROVAL');
+    expect(rows[0]!.decision).toBe('allowed');
+    expect(rows[0]!.errorCode).toBe('TARGET_DISABLED');
   });
 });

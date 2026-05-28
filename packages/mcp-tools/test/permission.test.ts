@@ -46,31 +46,17 @@ describe('evaluatePermission [FEAT-032 R3 / G3]', () => {
     ).toEqual({ decision: 'allowed' });
   });
 
-  it('memory_remember scope=agent → allow, shared/platform → needs-approval', () => {
-    expect(
-      evaluatePermission({
-        toolName: 'memory_remember',
-        params: { scope: 'agent', content: 'x' },
-        session: session(),
-        deps: fakeDeps,
-      }),
-    ).toEqual({ decision: 'allowed' });
-    expect(
-      evaluatePermission({
-        toolName: 'memory_remember',
-        params: { scope: 'shared', content: 'x' },
-        session: session(),
-        deps: fakeDeps,
-      }).decision,
-    ).toBe('needs-approval');
-    expect(
-      evaluatePermission({
-        toolName: 'memory_remember',
-        params: { scope: 'platform', content: 'x' },
-        session: session(),
-        deps: fakeDeps,
-      }).decision,
-    ).toBe('needs-approval');
+  it('allows retired memory_remember for every scope so execution can fail closed', () => {
+    for (const scope of ['agent', 'shared', 'platform'] as const) {
+      expect(
+        evaluatePermission({
+          toolName: 'memory_remember',
+          params: { scope, content: 'x' },
+          session: session(),
+          deps: fakeDeps,
+        }).decision,
+      ).toBe('allowed');
+    }
   });
 
   it('allows memory_query and schedule_task by default', () => {

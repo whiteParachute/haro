@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupEnv, type TestEnv } from '../helpers.js';
 
 let env: TestEnv | null = null;
@@ -7,10 +7,34 @@ afterEach(() => {
   env = null;
 });
 
-describe('memory_remember tool [FEAT-032 R6 / AC3]', () => {
-  it('writes agent-scope memory and persists the input dimension as a tag', async () => {
+function expectRetiredMessage(message: string): void {
+  expect(message).toContain('retired');
+  expect(message).toContain('FEAT-081X/F-2');
+  expect(message).toContain('AgentDock memory');
+  expect(message).toContain('aria-memory-vault');
+}
+
+describe('memory_remember tool [FEAT-081X/F-2]', () => {
+  it('remains registered but advertises retired/fail-closed semantics', () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
+    const tools = registry.list();
+    const remember = tools.find((tool) => tool.name === 'memory_remember');
+
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'memory_query',
+      'memory_remember',
+      'schedule_task',
+      'send_message',
+    ]);
+    expect(remember).toBeDefined();
+    expectRetiredMessage(remember!.description);
+  });
+
+  it('fails closed with TARGET_DISABLED and never writes agent-scope memory', async () => {
+    const e = (env = setupEnv());
+    const registry = e.buildRegistry();
+    const writeSpy = vi.spyOn(e.memory, 'writeEntry');
     const out = await registry.invoke({
       name: 'memory_remember',
       rawParams: {
@@ -22,71 +46,38 @@ describe('memory_remember tool [FEAT-032 R6 / AC3]', () => {
       session: e.buildSession(),
       deps: e.buildDeps(),
     });
+
     expect(out.decision).toBe('allowed');
-    if (!out.result.ok) throw new Error('expected success');
-    expect(out.result.value.dimension).toBe('feedback');
-    expect(out.result.value.dimensionPersisted).toBe(true);
-    expect(out.result.value.scope.startsWith('agent:')).toBe(true);
-  });
-
-  it('returns NEEDS_APPROVAL for shared scope', async () => {
-    const e = (env = setupEnv());
-    const registry = e.buildRegistry();
-    const out = await registry.invoke({
-      name: 'memory_remember',
-      rawParams: { content: 'x', scope: 'shared', dimension: 'reference' },
-      session: e.buildSession(),
-      deps: e.buildDeps(),
-    });
-    expect(out.decision).toBe('needs-approval');
+    expect(out.result.ok).toBe(false);
     if (out.result.ok) throw new Error('unreachable');
-    expect(out.result.error.code).toBe('NEEDS_APPROVAL');
+    expect(out.result.error.code).toBe('TARGET_DISABLED');
+    expectRetiredMessage(out.result.error.message);
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it('returns NEEDS_APPROVAL for platform scope', async () => {
+  it('fails closed for shared/platform scopes without approval flow or writes', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
-    const out = await registry.invoke({
-      name: 'memory_remember',
-      rawParams: { content: 'p', scope: 'platform', dimension: 'project' },
-      session: e.buildSession(),
-      deps: e.buildDeps(),
-    });
-    expect(out.decision).toBe('needs-approval');
+    const writeSpy = vi.spyOn(e.memory, 'writeEntry');
+
+    for (const scope of ['shared', 'platform'] as const) {
+      const out = await registry.invoke({
+        name: 'memory_remember',
+        rawParams: { content: `retired ${scope}`, scope, dimension: 'reference' },
+        session: e.buildSession(),
+        deps: e.buildDeps(),
+      });
+      expect(out.decision).toBe('allowed');
+      expect(out.result.ok).toBe(false);
+      if (out.result.ok) throw new Error('unreachable');
+      expect(out.result.error.code).toBe('TARGET_DISABLED');
+      expectRetiredMessage(out.result.error.message);
+    }
+
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it('does not register memory writes as Haro evolution assets', async () => {
-    const e = (env = setupEnv());
-    const registry = e.buildRegistry();
-    const out = await registry.invoke({
-      name: 'memory_remember',
-      rawParams: {
-        content: 'project Haro phase 1.5',
-        scope: 'agent',
-        dimension: 'project',
-      },
-      session: e.buildSession(),
-      deps: e.buildDeps(),
-    });
-    if (!out.result.ok) throw new Error('expected success');
-    expect(Object.prototype.hasOwnProperty.call(out.result.value, 'assetEventId')).toBe(false);
-    expect(e.evolution.listEvents()).toEqual([]);
-  });
-
-  it('infers one valid dimension when caller omits it', async () => {
-    const e = (env = setupEnv());
-    const registry = e.buildRegistry();
-    const out = await registry.invoke({
-      name: 'memory_remember',
-      rawParams: { content: 'random', scope: 'agent' },
-      session: e.buildSession(),
-      deps: e.buildDeps(),
-    });
-    if (!out.result.ok) throw new Error('expected success');
-    expect(['user', 'feedback', 'project', 'reference']).toContain(out.result.value.dimension);
-  });
-
-  it('returns INVALID_PARAMS on empty content', async () => {
+  it('returns INVALID_PARAMS on empty content before retired execution', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();
     const out = await registry.invoke({

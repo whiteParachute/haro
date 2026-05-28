@@ -2,7 +2,7 @@
  * `haro memory` command tree (FEAT-039 R4).
  *
  *   query  — FTS5 search (delegates to services.memory.queryMemory)
- *   remember — write a new memory entry (services.memory.writeMemoryEntry)
+ *   remember — retired Haro-owned memory write surface (FEAT-081X/F-2)
  *   list — query with no keyword
  *   show <id> — query and pick a single entry
  *   export --output <dir> — JSON dump of all entries in a scope
@@ -11,7 +11,7 @@
 import { writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { Command } from 'commander';
-import { DEFAULT_AGENT_ID, services } from '@haro/core';
+import { services } from '@haro/core';
 import {
   confirmDestructive,
   renderError,
@@ -25,6 +25,9 @@ import { buildServiceContext } from './service-context.js';
 import { CommanderExit, writeLegacySurfaceWarning, type AppContext } from '../index.js';
 
 interface OutputFlags { json?: boolean; human?: boolean }
+
+export const MEMORY_REMEMBER_RETIRED_MESSAGE =
+  'Haro-owned memory write surfaces have been retired in FEAT-081X/F-2; use AgentDock memory / aria-memory-vault for durable memory writes. Haro now keeps only AgentDock self-evolution sidecar workflows plus historical read/forensic memory access.';
 
 export function registerMemoryCommands(program: Command, app: AppContext): void {
   const memory = program.command('memory').description('Memory Fabric query / remember / list / export (FEAT-039 R4)');
@@ -83,39 +86,17 @@ export function registerMemoryCommands(program: Command, app: AppContext): void 
   memory
     .command('remember')
     .argument('<text>', 'memory content (free text)')
-    .description('Write a new memory entry')
-    .requiredOption('--scope <scope>', 'shared | agent')
+    .description('Retired memory write surface')
+    .option('--scope <scope>', 'shared | agent')
     .option('--agent <id>', 'agent id (required when scope=agent)')
     .option('--topic <topic>', 'memory topic; defaults to first 60 chars of content')
     .option('--summary <summary>', 'optional one-line summary')
     .option('--source <source>', 'sourceRef tag', 'cli')
     .option('--tags <tags...>', 'space-separated tags')
     .option('--layer <layer>', 'session | persistent | skill', 'persistent')
-    .action(async (text: string, opts: Record<string, string | string[] | undefined>) => {
-      try {
-        writeLegacySurfaceWarning(app);
-        const scope = opts.scope as 'shared' | 'agent';
-        const currentAgentId = app.cliState.defaultAgentId ?? app.loaded.config.defaultAgent ?? DEFAULT_AGENT_ID;
-        const agentId = (opts.agent as string | undefined) ?? (scope === 'agent' ? currentAgentId : undefined);
-        const entry = await services.memory.writeMemoryEntry(
-          buildServiceContext(app),
-          {
-            scope,
-            ...(agentId ? { agentId } : {}),
-            layer: (opts.layer ?? 'persistent') as 'session' | 'persistent' | 'skill',
-            topic: (opts.topic as string | undefined) ?? text.split(/\s+/).slice(0, 8).join(' ').slice(0, 60),
-            ...(opts.summary ? { summary: String(opts.summary) } : {}),
-            content: text,
-            sourceRef: (opts.source as string | undefined) ?? 'cli',
-            ...(Array.isArray(opts.tags) ? { tags: opts.tags } : {}),
-          },
-          { currentAgentId },
-        );
-        app.stdout.write(`memory entry created: ${entry.id} (scope=${entry.scope}, layer=${entry.layer})\n`);
-      } catch (error) {
-        renderError(error, { stderr: app.stderr });
-        throw new CommanderExit(1, error instanceof Error ? error.message : String(error));
-      }
+    .action((_text: string, _opts: Record<string, string | string[] | undefined>) => {
+      app.stderr.write(`${MEMORY_REMEMBER_RETIRED_MESSAGE}\n`);
+      throw new CommanderExit(1, MEMORY_REMEMBER_RETIRED_MESSAGE);
     });
 
   memory
