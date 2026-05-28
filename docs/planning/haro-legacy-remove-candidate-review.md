@@ -1501,3 +1501,48 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
 后续风险：AgentDock skills owner、Haro local/git install 用户入口、eat/shit 兼容资产、sync-runtime 与 prepareTask 的边界仍未完全拆清。后续如继续 skills 减法，必须先做单项评审并证明不影响 production path；不得从 081V 推导 `packages/skills` 或 `SkillsManager` 删除批准。
+
+## 31. FEAT-081W / E-1 TeamOrchestrator stale docs/schema closure（2026-05-28）
+
+081W/E-1 只做 docs/schema closure，不做 production code 删除，不新增 `physicalRemovals`，也不把 `agent-runtime-router` 标为 done 或可删。
+
+只读 research 结论：
+
+- 当前 guard 仍显示总清理目标未达成：`deleteAllowedCount=0`、`nextDeletionCandidate=null`、`nextReviewCandidate=null`、`completedPhysicalRemovals=15`。
+- 剩余 blocked/defer 面：`provider-codex`、`memory-fabric`、`agent-runtime-router` blocked；`skills-marketplace` deferred。
+- 没有不触碰真实 `~/.haro*`、aria-memory-vault、AgentDock host、production MCP/channel/memory/provider/Web/runtime/scenario-router/run/chat/LLM provider path 或 skills production path 的下一块安全 production code 删除。
+- 唯一安全切片是修正文档中仍把 TeamOrchestrator 描述为当前 active implementation 的 stale 表述。
+
+本阶段完成的 docs/schema closure：
+
+- `docs/modules/team-orchestrator.md` 改为 historical / removed module 归档，明确：
+  - `packages/core/src/team-orchestrator.ts` 已由 FEAT-081D 删除。
+  - legacy re-export / package export / 旧测试已由 FEAT-081D 删除。
+  - CLI `legacy_team_orchestrator_removed` / removed-result payload 已由 FEAT-081S 删除。
+  - 本文档不描述当前实现，也不能作为恢复 Haro-owned TeamOrchestrator 的依据。
+- `docs/modules/scenario-router.md` 更新当前边界：
+  - ScenarioRouter / AgentRunner / `haro run` / historical `haro chat` / LLM provider path 仍保留且 blocked/protected。
+  - TeamOrchestrator integration 已删除；team-mode 不再调用已删除 TeamOrchestrator。
+  - 没有 skill `directOutput` 时，team-mode 请求走当前 single-agent / runner fallback 行为。
+  - 该事实不是 runtime/router 删除批准。
+- `docs/planning/haro-agentdock-boundary-review.md` 更新 readiness table：
+  - 不再说 `team-orchestrator.ts` 仍存在、仍导出、仍有旧测试。
+  - TeamOrchestrator scoped removal 已归档为 FEAT-081D/081S facts。
+  - 剩余 blocker 聚焦 ScenarioRouter、runtime、run/chat/LLM provider path。
+
+081W guard 口径：
+
+- 本阶段默认不改 guard schema/test；`packages/cli/src/legacy-removal-guard.ts` 保持 FEAT-081V 状态。
+- `planning.stage` 仍为 `FEAT-081V`。
+- `completedPhysicalRemovals` 仍为 15。
+- `agent-runtime-router` 仍 `candidatePriority.status=blocked`、`deleteAllowed=false`、`stillReferenced=true`。
+- `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
+
+明确未做：
+
+- 未修改 runtime/provider/memory/skills/Web/MCP/AgentDock host 代码。
+- 未读写真实 `~/.haro*` 或 aria-memory-vault。
+- 未新增 physical deletion approval。
+- 未把 TeamOrchestrator docs closure 扩大为 ScenarioRouter、runtime、run/chat 或 LLM provider path 删除授权。
+
+后续风险：本切片本身完成，但总清理目标仍未达成。继续向下推进需要 provider runtime、memory ownership/MCP registry、scenario-router/runtime/run-chat-LLM、skills production path 的产品/架构/数据 ownership 决策或更窄的单项授权。

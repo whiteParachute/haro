@@ -79,8 +79,8 @@ FEAT-081K/081L 已完成 channel-layer 解绑与物理删除：`packages/channel
 | `packages/channel`, `channel-feishu`, `channel-telegram` | AgentDock IM manager/channel | 历史 blocker 已在 FEAT-081K/081L 处理：mcp-tools 不再依赖 `@haro/channel`，CLI `haro channel list/doctor` 与 `packages/channel*` 已删除；081L hotfix `03c35cb` / `c3ae19b` 要求退役 `haro channel ...` fail-closed | done；无下一项 channel 删除授权 | 继续保护 MCP `send_message`、AgentDock 生产消息与真实 Feishu/Telegram/IM 投递链路 |
 | `packages/skills` / skills marketplace | AgentDock skills/agent runtime | `packages/cli/package.json:36` 仍依赖 `@haro/skills`；旧 docs/spec 已打 legacy | freeze；不能直接删 | 移除 CLI legacy skills 入口与测试；确认 sidecar MCP 不依赖 skills package |
 | Haro MemoryFabric | AgentDock memory / aria-memory-vault | `packages/mcp-tools/src/tools/memory-query.ts:1-6` 和 `memory-remember.ts:1-7` 都标注为 historical compatibility；`packages/core/src/memory/memory-fabric.ts:139-142` 明确 sidecar baseline 消费 AgentDock-owned memory refs；`packages/core/package.json:83-84` legacy tests 仍覆盖 memory-fabric | deprecated compatibility；不能删 | 移除或替换 `memory_query`/`memory_remember` legacy tool；清 `createMemoryFabric` exports；保留观察引用；legacy tests 更新 |
-| `team-orchestrator.ts` | AgentDock workspace/multi-agent execution | `packages/core/src/team-orchestrator.ts:35-46` 仍定义 legacy team 状态；`packages/core/src/index.ts:173-210` 仍导出；`packages/core/package.json:84` legacy tests 含 `team-orchestrator.test.ts` | freeze；不能直接删 | 先取消 public exports；迁移 workflows service；确认 no import；保留或归档 tests |
-| `scenario-router.ts` | AgentDock routing/workspace dispatch | `packages/core/src/scenario-router.ts:6-20` 仍定义 task/execution/orchestration modes；`packages/core/src/index.ts:141-172` 仍导出；`packages/core/package.json:84` legacy tests 含 `scenario-router.test.ts` | freeze；不能直接删 | 先解绑 exports/imports；确认 CLI run/chat 不依赖；迁移/归档 tests |
+| `team-orchestrator.ts` | AgentDock workspace/multi-agent execution | FEAT-081D 已删除 `packages/core/src/team-orchestrator.ts`、legacy re-export、package export 与旧测试；FEAT-081S 已删除 CLI `legacy_team_orchestrator_removed` / removed-result payload | done for scoped TeamOrchestrator removal；不能扩大为 runtime/router 删除批准 | 不恢复 Haro-owned TeamOrchestrator；继续保护 ScenarioRouter、runtime、run/chat/LLM provider path |
+| `scenario-router.ts` | AgentDock routing/workspace dispatch | `packages/core/src/scenario-router.ts` 仍存在；CLI 仍构造/引用 ScenarioRouter；run/chat/LLM provider path 与 AgentRunner fallback 仍需保护 | blocked/freeze；不能直接删 | 先证明 CLI run/chat/LLM provider path 与 AgentDock runner/workspace bridge 边界；不得由 TeamOrchestrator 删除事实推导 scenario-router 可删 |
 | legacy CLI provider/channel/memory/team/runtime 入口 | AgentDock Web/API/runner/memory | `packages/cli/package.json:23-24` 已把 sidecar/legacy 测试拆开，legacy suite 仍保留 provider/channel/wizard 等测试 | 保留 warning；逐步隐藏 | 继续保持 human warning；JSON 不污染；删除前跑 `@haro/cli test:legacy` |
 | 旧 docs/specs | Haro 新主线 docs | legacy banner 与删除候选文档已经存在 | 第一批可进入 archive/review | 搬到 `docs/planning/archive/legacy-workbench/` 前确认 link/check；不影响 `test:sidecar` |
 
@@ -98,7 +98,7 @@ FEAT-081K/081L 已完成 channel-layer 解绑与物理删除：`packages/channel
 
 1. docs/spec archive：优先级最高，风险最低；
 2. legacy CLI warning/hidden：继续保持 JSON 不污染；
-3. public export unlink：先从 `scenario-router` / `team-orchestrator` 这类单文件模块做只读影响面；
+3. public export unlink：`team-orchestrator` scoped removal 已由 FEAT-081D/081S 完成；剩余只能从 `scenario-router` 等仍存在模块做只读影响面；
 4. package dependency unlink：provider/channel/skills/memory package 删除前必须先清依赖。
 5. workspace/package publish surface：删除 package 前必须同步清 `pnpm-workspace.yaml`、package `main`/`exports`、dist 暴露面和发布脚本引用。
 
@@ -194,7 +194,7 @@ Otherway 额外确认以下能力也是 keep 范围：
 3. 切断 `packages/core/src/index.ts` barrel exports；
 4. 分离 `@haro/mcp-tools` legacy default registry 与 sidecar registry（channel 依赖已由 FEAT-081K/081L 收口，剩余重点是 memory_* / schedule_task 边界）；
 5. 移除 CLI 对 provider/channel/agent/runtime/memory/skills/router/budget 的默认构造；
-6. 再评审单文件删除，优先 `team-orchestrator.ts`、`scenario-router.ts`；
+6. 再评审单文件删除：`team-orchestrator.ts` 已完成 scoped removal；剩余 `scenario-router.ts` / runtime 必须先证明 run/chat/LLM provider path 不再依赖；
 7. 最后才考虑 provider/channel/memory/runtime package 物理删除。
 
 第 7.4 节是 6.4 删除候选评审的细化执行序；删除 PR 以 `docs/planning/haro-legacy-remove-candidate-review.md` 的候选边界为上游依据，以本文第 7.4 的 blocker 顺序为执行检查清单。

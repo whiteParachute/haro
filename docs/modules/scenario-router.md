@@ -22,25 +22,20 @@ Scenario Router 是 Phase 1 的 canonical ingress，负责在任务进入执行�
 当前实现位于：
 
 - `packages/core/src/scenario-router.ts`
-- `packages/cli/src/index.ts`（CLI ingress、single-agent 与 team workflow 分派、checkpoint 落盘）
+- `packages/cli/src/index.ts`（CLI ingress、single-agent / fallback 路径、checkpoint 落盘）
 
 它的职责边界已经和 Phase 0 单 Agent Runtime 分开：Router 决定“走哪条 workflow”，`AgentRunner` 负责 single-agent leaf execution，provider/model 解析继续交给既有选择规则和 ProviderRegistry。
 
-## 当前实现边界
+## 当前实现边界（FEAT-081W 更新）
 
-当前代码已经实现了 `SceneClassifier`、`RoutingMatrix`、`ScenarioRouter`、`CheckpointStore` 与 FEAT-014
-`TeamOrchestrator` 接入。
+当前代码仍保留 `SceneClassifier`、`RoutingMatrix`、`ScenarioRouter` 与 `CheckpointStore`，但 FEAT-014 时代的 TeamOrchestrator runtime integration 已经退役：
 
-因此，当前落地行为是：
+- `packages/core/src/team-orchestrator.ts` 已由 FEAT-081D 物理删除。
+- CLI `legacy_team_orchestrator_removed` / removed-result 兼容 payload 已由 FEAT-081S 删除。
+- team-mode 请求不再调用已删除的 TeamOrchestrator；没有 skill `directOutput` 时走当前 single-agent / runner fallback 行为。
+- `ScenarioRouter`、`AgentRunner`、`haro run` / historical `haro chat` / LLM provider path 仍是 blocked/protected，不因 TeamOrchestrator 删除而获得 runtime/router 删除批准。
 
-- Router 可以把复杂 analysis / research / design / review / deterministic-toolchain 场景路由成 `executionMode = team`
-- CLI 在 team 路径下直接调用 `TeamOrchestrator.executeWorkflow()`
-- Team Orchestrator 负责 fork、leaf dispatch、merge 与 checkpoint 写入
-- checkpoint 的 `branchState` 会包含 team branch ledger、`merge.envelope`、`consumedBranches` 与
-  `fallbackExecutionMode = null` / `teamOrchestratorPending = false`
-
-这意味着：**Router 是统一入口，Team Orchestrator 是 team workflow 的运行时控制面；CLI release 路径不再把已支持的
-team workflow 固化回退成 single-agent。**
+这意味着：**Router 仍是路由与 checkpoint 边界；TeamOrchestrator 不再是当前运行控制面。**
 
 ## 场景描述：`SceneDescriptor`
 
@@ -194,7 +189,7 @@ interface ScenarioWorkflow {
 - `single-agent`：只创建一个 `leaf-1 / agent`
 - `team`：只创建 `dispatch-1 / team` 与 `merge-1 / merge`
 
-也就是说，Router 当前只负责把 team workflow 的入口和 merge 边界固定下来，不在这里展开 FEAT-014 的内部调度图。
+也就是说，Router 当前仍保留 historical team workflow 的入口形状和 checkpoint schema 语义，但已不再展开 FEAT-014 TeamOrchestrator 内部调度图。
 
 FEAT-023 后，Router 创建的 workflow 会附带预算估计：
 
@@ -298,18 +293,17 @@ Provider fallback 仍然属于 Phase 0 `AgentRunner` 语义，不属于 Router �
 
 因此，**provider fallback 不是 Router 层的 reroute，也不是 workflow 分叉。**
 
-## Team 请求的当前执行行为
+## Team 请求的当前执行行为（FEAT-081D / FEAT-081S 后）
 
-FEAT-014 落地后，team 路由的执行语义是：
+TeamOrchestrator 已不再是当前执行面：
 
-1. Router 正常产出 `executionMode = team` 的 `RoutingDecision` 与 `ScenarioWorkflow`
-2. CLI 将同一份 `RoutingDecision + ScenarioWorkflow + rawContextRefs` 交给 `TeamOrchestrator.executeWorkflow()`
-3. Team Orchestrator 在 fork / leaf terminal / merge 阶段写入 checkpoint
-4. leaf branch 统一通过 `AgentRunner.run()` 执行，branch retry 默认隔离运行，不使用同 agent/provider 的 latest session
-5. merge 完成后 checkpoint 保存 branch ledger、`MergeEnvelope`、`consumedBranches` 与 leaf session refs
+1. Router 仍可能产出 historical `executionMode = team` 形状，用于保持路由/checkpoint 兼容语义。
+2. CLI 不再调用已删除的 TeamOrchestrator，也不再返回 `legacy_team_orchestrator_removed` 专用 payload。
+3. 若 skill matching 产生 `directOutput`，CLI 保持该 skill direct output 行为。
+4. 若没有 skill `directOutput`，team-mode 请求走当前 single-agent / runner fallback 行为。
+5. 该 fallback 仍依赖 `AgentRunner`、provider runtime 与 run/chat/LLM path，不能被解释为 runtime/router 可删。
 
-若未来出现不支持或非法 workflow，CLI 应返回明确错误或显式降级边界；不得把已支持的 FEAT-014 team 路径伪装成
-single-agent fallback。
+FEAT-081W 只修正文档事实；它不恢复 TeamOrchestrator，不新增降级协议，也不批准 ScenarioRouter 或 runtime 删除。
 
 ## 与其他模块的关系
 
@@ -317,7 +311,7 @@ single-agent fallback。
 
 - Router 决定 workflow，不直接跑 provider query
 - `AgentRunner` 仍是当前唯一已实现的 leaf executor
-- single-agent 直接调用 Runner；team workflow 由 Team Orchestrator 分派多个 Runner leaf attempt
+- single-agent / fallback 路径仍调用 Runner；historical team workflow 不再由 Haro TeamOrchestrator 分派 Runner leaf attempt
 
 ### 与 Provider Selection
 
@@ -325,10 +319,12 @@ single-agent fallback。
 - 具体 provider/model 解析仍由 Runtime 选择规则引擎处理
 - Router 不复制 `provider-selection.md` 的逻辑
 
-### 与 Team Orchestrator
+### 与已删除的 TeamOrchestrator
 
-- Router 负责定义 team workflow 的入口、模板和 merge 边界
-- Team Orchestrator 负责真实执行图、branch 调度、retry 隔离、merge payload schema 与 checkpoint/resume 语义
+- Router 仍保留 historical team workflow 的入口、模板和 checkpoint schema 边界。
+- TeamOrchestrator runtime、branch 调度、retry 隔离与 merge payload 生产面已由 FEAT-081D 删除。
+- FEAT-081S 删除了已删除 TeamOrchestrator 的 CLI removed-result 兼容 payload。
+- 后续如继续 runtime/router 减法，必须另起单项评审；不能从 TeamOrchestrator 删除推导 ScenarioRouter 可删。
 
 ## 当前结论
 
@@ -338,6 +334,6 @@ Scenario Router 现在已经不是概念占位，而是一个有代码落地的 
 - 基于 `RoutingMatrix` 的确定性 workflow 选择
 - `workflowId` / `leaf sessionId` / `channel sessionId` 的边界管理
 - 基于 SQLite JSON state 的 checkpoint 与恢复
-- 对 team workflow 的 FEAT-014 运行时入口，并在 checkpoint 中保留 branch ledger 与 merge envelope
+- 保留 historical team workflow 的 schema/route 兼容边界；TeamOrchestrator FEAT-014 运行时入口已删除
 
 因此，理解这个模块时应把它看成 **“已实现的路由与状态边界层”**，而不是 “依赖 LangGraph 的未来构想图”。

@@ -1,202 +1,69 @@
-# Team Orchestrator 模块
+# Team Orchestrator 模块（historical / removed）
 
-> **已停止发展**：本文描述的是历史 Haro-owned workbench/runtime 方向。
-> 当前主线：`docs/planning/haro-sidecar-subtraction-and-feedback-loop.md`。
-> 不要据此新增 provider/channel/memory/runtime/team/dashboard/skills marketplace 能力。
-> 相关能力应由 AgentDock 承接，或通过 Haro sidecar contract 暴露。
-
-
-> **2026-05-08 状态：historical workbench baseline。**
+> **FEAT-081W / E-1 docs closure（2026-05-28）**
 >
-> 本文描述 Haro 自建 workbench/runtime 路线中的模块设计。新基线下，AgentDock 是 runtime/workbench kernel，Haro 是 self-evolution sidecar。本文只作为可复用经验和迁移参考，不再作为后续主路径；涉及新实现时，以 `docs/planning/agentdock-kernel-sidecar-architecture.md`、`docs/architecture/overview.md`、`roadmap/phases.md` 和 `specs/sidecar/` 为准。
+> 本文是历史 Haro-owned workbench/runtime 设计归档，不描述当前运行实现。
+> 当前主线是 AgentDock runtime/workspace kernel + Haro self-evolution sidecar；Haro 不再拥有 TeamOrchestrator 生产执行面。
 
+## 当前事实
 
-## 概述
+- `packages/core/src/team-orchestrator.ts` 已由 **FEAT-081D** 物理删除。
+- `packages/core/src/legacy/team-orchestrator.ts` legacy re-export 与 package export 已由 **FEAT-081D** 删除。
+- 旧 CLI `legacy_team_orchestrator_removed` / removed-result 兼容 payload 已由 **FEAT-081S** 删除。
+- `HARO_ENABLE_LEGACY_TEAM_ORCHESTRATOR=1` 不会恢复 TeamOrchestrator。
+- team-mode 请求没有 skill `directOutput` 时，不再进入已删除 TeamOrchestrator 的专用 removed-result；当前行为走普通 single-agent / runner fallback 路径。
 
-`packages/core/src/team-orchestrator.ts` 现在承接 FEAT-014：它消费 FEAT-013 的
-`RoutingDecision + ScenarioWorkflow + CheckpointStore`，把 team workflow 展开为可执行、可恢复、可合并的 fork-and-merge 运行时。
+## 本文档保留目的
 
-当前实现边界：
+本文仅保留三类历史上下文：
 
-- 只支持 Phase 1 的四种 mode：`parallel`、`debate`、`pipeline`、`hub-spoke`
-- leaf 执行统一通过 `AgentRunner.run()`，不直接碰 provider
-- checkpoint 继续落在 FEAT-013 的 `workflow_checkpoints`
-- merge 输出统一为 `MergeEnvelope`，但 body 仍按 mode 分化
-- `evolution-loop` 仍未进入 Phase 1 runtime
+1. 解释 FEAT-081D/081S 为什么只删除 TeamOrchestrator 窄面，而没有扩大到 ScenarioRouter、runtime 或 provider path。
+2. 作为历史设计归档，帮助识别旧文档、测试、spec 中出现的 TeamOrchestrator 术语。
+3. 明确未来不能根据本文恢复 Haro-owned multi-agent runtime；此类能力应由 AgentDock workspace / runner / skills 承接，或通过 Haro sidecar contract 暴露。
 
-## 核心导出
+## 已删除内容边界
 
-```ts
-import {
-  TeamOrchestrator,
-  BRANCH_STATUS_VALUES,
-  type BranchLedgerEntry,
-  type TeamBranchState,
-  type MergeEnvelope,
-  type ParallelMergeBody,
-  type DebateMergeBody,
-  type PipelineMergeBody,
-  type HubSpokeMergeBody,
-  type CriticOutput,
-} from '@haro/core'
-```
+FEAT-081D 的 scoped removal 只覆盖：
 
-### Branch Ledger
+- `packages/core/src/team-orchestrator.ts`
+- `packages/core/src/legacy/team-orchestrator.ts`
+- `packages/core/test/team-orchestrator.test.ts`
+- `@haro/core/legacy/team-orchestrator` package export
 
-`BranchLedgerEntry` 是 Team runtime 的最小 ledger 单元，核心字段包括：
+FEAT-081S 的 scoped removal 只覆盖：
 
-- `branchId / nodeId / memberKey / workflowId`
-- `status`: `pending -> dispatched -> running -> completed|failed|cancelled|timed-out -> merge-consumed`
-- `attempt`: 显式 retry 才递增
-- `leafSessionRef`: 与 FEAT-013 的 leaf session 映射兼容
-- `outputRef / output / consumedByMerge / lastError`
-- `usage`: leaf terminal 后记录 provider/model 与 input/output tokens，用于 FEAT-023 budget ledger
+- `packages/cli/src/index.ts#legacy-team-orchestrator-removed-result`
+- `legacy_team_orchestrator_removed` 专用 JSON payload
+- 已删除 TeamOrchestrator 后遗留的 CLI removed-result 兼容入口
 
-`BRANCH_STATUS_VALUES` 暴露了运行时允许的状态全集，便于 schema/test 对齐。
+这些删除记录已在 `packages/cli/src/legacy-removal-guard.ts` 的 `agent-runtime-router.physicalRemovals[]` 中固化。
 
-### TeamBranchState
+## 仍受保护的范围
 
-`TeamBranchState` 是 checkpoint 中 `branchState` 的 team 扩展，包含：
+以下范围没有因为 FEAT-081D、FEAT-081S 或 FEAT-081W 获得删除批准：
 
-- `teamStatus`
-- `activeNodeId`
-- `branches`
-- `merge.status / consumedBranches / envelopeRef`
-- `workflowDeadline`（整体 workflow 超时）
-- `leafTimeoutMs`（per-leaf 超时）
-- `fallbackExecutionMode / teamOrchestratorPending`（当前 CLI release team 路径为 `null / false`；仅用于识别早期
-  checkpoint 或未来显式降级边界）
-- `budget`（可选）：当前 workflow 的 FEAT-023 budget read model snapshot；`near-limit` 时可配合
-  `teamOrchestratorPending = true` 表达需要人工介入
+- `packages/core/src/scenario-router.ts`
+- `packages/core/src/runtime/**`
+- `packages/core/src/agent/**`
+- `packages/cli/src/index.ts` 中普通 run/chat/LLM provider path
+- `AgentRunner` 与 provider runtime
+- MCP `send_message` / memory tools / schedule task production path
+- provider、memory、skills、Web/Web API
+- AgentDock host
+- 真实 `~/.haro*`、`aria-memory-vault`
 
-这对应 FEAT-014 的双层超时模型：整体 deadline 会裁剪 branch 的可运行时长；若先触发 workflow deadline，
-branch 记为 `cancelled` 且 teamStatus 记为 `timed-out`；否则保留 `timed-out` 给 per-leaf timeout。
+## 与 ScenarioRouter 的当前关系
 
-## Dashboard read model（FEAT-018）
+当前 ScenarioRouter 仍是 blocked/protected 的路由与 checkpoint 边界。它可以产出 historical team execution mode 形状，但 TeamOrchestrator integration 已删除。
 
-FEAT-018 的 Dashboard 只能把 Team Orchestrator 的 checkpoint 状态投影成只读 read model，不改变执行语义：
+因此：
 
-- `GET /api/v1/workflows` 从最新 workflow checkpoint 汇总 list summary：`workflowId`、`executionMode`、
-  `orchestrationMode`、`workflowTemplateId`、`status`、`currentNodeId`、`blockedReason` 与更新时间。
-- `GET /api/v1/workflows/:id` 读取最新 checkpoint 的完整 `branchState`，投影出 branch ledger、merge envelope、
-  `leafSessionRefs`、`rawContextRefs`、`latestCheckpointRef` 和 `stalledBranches`。
-- `GET /api/v1/workflows/:id/checkpoints` 按时间顺序返回 checkpoint metadata，并允许按 checkpoint id 查看原始
-  JSON，用于 debug drawer。
-- `budgetState / permissionState` 来自 FEAT-023 guard read model；Dashboard 只聚合展示，不在这里重新执行策略判断。
+- 不应再把 TeamOrchestrator 描述为当前 active implementation。
+- 不应再说 CLI 当前直接调用 TeamOrchestrator。
+- 不应把 TeamOrchestrator 删除事实推导成 ScenarioRouter、runtime、run/chat 或 LLM provider path 可删。
 
-read model 必须保留 fork-and-merge 形状：branch 平行展示并统一汇入 merge；不得把 `branches[]` 排序结果解释为
-branch-to-branch handoff，也不得把 checkpoint JSON 压缩成不可追溯摘要。
+## FEAT-081W 结论
 
-## 四种编排模式
+FEAT-081W/E-1 只做 stale docs/schema closure：修正文档中把 TeamOrchestrator 描述为当前实现的表述。它不新增 `physicalRemovals`，不修改 guard stage，不删除 production code。
 
-### 1. parallel
-
-- 模板：`parallel-research`
-- 拆分维度：信息来源（本地代码 / 文档 / 历史记忆）
-- merge body：`ParallelMergeBody`
-- 语义：竞争/交叉验证候选，最终做 structured union/select
-
-### 2. debate
-
-- 模板：`debate-design-review`、`debate-review`
-- 分支：`proposer` + `critic`
-- proposer 先执行；critic 由 orchestrator 注入 `reviewTargetOutputRef`，针对 proposer 输出做负向审查
-- `critic` 输出必须满足 `CriticOutput`
-- 禁止字段：`fix`、`patch`、`implementationPlan`、`revisedProposal`、`delegateTo`
-- merge body：`DebateMergeBody`
-
-### 3. pipeline
-
-- 模板：`pipeline-deterministic-tools`
-- 只允许 deterministic toolchain
-- 两层 enforcement：
-  1. 模板 metadata 静态声明 `deterministicToolStep: true`、`reasoningAllowed: false`
-  2. runtime guard 要求 `sceneDescriptor.taskType === 'deterministic-toolchain'`
-- 默认 strict fail-fast
-- merge body：`PipelineMergeBody`
-
-### 4. hub-spoke
-
-- 模板：`hub-spoke-analysis`
-- 拆分维度：互补信息切片（代码 / 文档 / CI 日志）
-- merge body：`HubSpokeMergeBody`
-- 语义：不是候选投票，而是 complementary slice synthesis
-
-## 执行流程
-
-`TeamOrchestrator.executeWorkflow()` 的主流程：
-
-1. 校验 team decision / mode / template
-2. `expandBranches()` 展开 branch plan
-3. `writeCheckpoint('fork-dispatch')`
-4. `dispatchBranch()` 通过 `AgentRunner` 执行 leaf
-5. 每个 leaf terminal 后 `writeCheckpoint('leaf-terminal')`
-6. `runMerge()` 生成统一 `MergeEnvelope`，先把 merge-ready envelope 持久化到 checkpoint
-7. commit merge consumption，写入最终 `writeCheckpoint('merge')`
-
-FEAT-023 增加预算护栏：
-
-- `createInitialState()` 会把 Router 的 `budget` estimate 落到 `workflow_budgets`，并把 `budgetId` /
-  `allocatedTokens` 标注到 branch metadata。
-- `executeBranch()` 在 branch attempt / retry 前调用 budget check；soft limit 写 audit 并标记 near-limit，
-  hard limit 直接取消新增 attempt。
-- leaf terminal 后从 `RunAgentResult.finalEvent.usage`（或 events 中最后一个 result usage）写入
-  `token_budget_ledger`。
-- `prepareMerge()` 在 merge 前再次检查预算；若已 exceeded，会生成 `status=blocked` 的 merge envelope，
-  让 CLI/Web summary 看到 `budgetExceeded` 与 `blockedReason`。
-
-其中 `runMerge()` 采用 **hybrid** 路径：
-
-- envelope 公共字段由规则组装
-- mode body 通过 synthesizer 生成（默认 deterministic synthesizer，可注入自定义实现）
-- 即便使用自定义 synthesizer，返回的 envelope body 仍会经过 runtime schema guard
-
-## 恢复语义
-
-`resumeWorkflow(workflowId)` 复用 FEAT-013 的恢复优先级：
-
-1. `workflow checkpoint`
-2. `continuationRef`
-3. `providerResponseId`
-4. `node restart`
-
-并额外满足：
-
-- 已 `merge-consumed` 的 branch 不会被重复执行
-- `merge.consumedBranches` 用作 partial-merge 去重来源
-- merge-ready checkpoint 若已持久化 envelope，resume 会直接 commit，不重跑 merge synthesizer
-- merge 已完成时，resume 不会再次消费相同 branch
-- `leafSessionRefs` 保留同一 node 的 retry 历史，最新 sessionRef 排在最前
-- branch retry 不会设置 `continueLatestSession: true`，因此不会按 `agent_id + provider` 隐式续接全局 latest
-  session；如果存在当前 branch 的上一轮 `leafSessionRef.sessionId`，只作为精确 `retryOfSessionId` 传给 Runner
-  做审计关联，实际 attempt 默认隔离运行
-
-## 与 CLI / Router 的关系
-
-- `ScenarioRouter` 仍只负责“路由到哪条 workflow”
-- `TeamOrchestrator` 负责“这条 team workflow 怎么 fan-out / checkpoint / merge / resume”
-- `AgentRunner` 仍是唯一 leaf executor
-- CLI release 路径在 `executionMode = team` 且 workflow 合法时直接调用 `executeWorkflow()`，不再 warning 后回退到
-  single-agent；fallback 字段只作为旧 checkpoint 兼容或未来显式 unsupported 边界的状态槽位
-
-## 测试覆盖
-
-`packages/core/test/team-orchestrator.test.ts` 当前覆盖：
-
-- schema：MergeEnvelope、CriticOutput、BranchStatus
-- mode conformance：parallel / debate / pipeline / hub-spoke（含 proposer→critic 引用传递）
-- lifecycle：状态迁移、retry attempt、provider fallback 不新增 branch、workflow deadline 抢占 leaf timeout
-- retry isolation：branch retry 不续接其他 branch 或普通 CLI latest session
-- checkpoint / resume：fork 恢复、partial-merge 去重、merge-ready envelope commit、continuationRef 优先级、leafSessionRefs 历史保留
-
-
-## Web 可观测性（FEAT-018）
-
-FEAT-018 的 Dashboard 不改变 TeamOrchestrator 执行语义，只读取既有持久化结果：
-
-- `workflow_checkpoints.state.branchState.branches` 作为 branch ledger read model。
-- `workflow_checkpoints.state.branchState.merge` / `merge.envelope` 作为 merge envelope read model。
-- `workflow_checkpoints.state.leafSessionRefs` 与 branch 内 `leafSessionRef` 用于定位 leaf session / continuation。
-- `PermissionBudgetStore.readWorkflowPermissionBudgetSummary()` 作为预算/权限阻断摘要来源。
-
-因此，调试面可以解释 fork、leaf terminal、merge、budget blocked、permission needs-approval 等状态，但不会触发 approve/continue/stop/retry/skip，也不会重放或修改 workflow。
+总清理目标仍未达成：`provider-codex`、`memory-fabric`、`agent-runtime-router` 仍 blocked，`skills-marketplace` 仍 deferred。后续是否继续删除需要新的产品/架构/数据 ownership 证据或单项用户授权。
