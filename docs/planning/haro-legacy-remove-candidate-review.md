@@ -1636,3 +1636,23 @@ Scope explicitly protected:
 Guard state after F-4 remains intentionally blocked for `memory-fabric`: `deleteAllowed=false`, `stillReferenced=true`, `deleteAllowedCount=0`, `nextDeletionCandidate=null`, `nextReviewCandidate=null`, and `verifiedAbsentFailedCount=0`. The physical-removal ledger increments only by the scoped entry `packages/cli/src/commands/memory.ts#memory-cli-read-forensic-surfaces`; this is an execution-entry retirement, not MemoryFabric/core or data deletion.
 
 Remaining risk: `memory-fabric` is still not deletable. Real data ownership/retention, aria-memory-vault boundary, core MemoryFabric imports/runtime, and any non-CLI/MCP historical compatibility obligations still need separate proof before package/runtime deletion can be considered.
+
+## FEAT-081X/F-5 — legacy MCP server MemoryFabric bootstrap/deps injection retired
+
+FEAT-081X/F-5 continues the memory cleanup after F-2/F-3/F-4 by removing only the legacy MCP server's MemoryFabric bootstrap/dependency injection path. The default MCP tools remain registered for compatibility, but the legacy memory tools continue to fail closed with `TARGET_DISABLED` and no longer depend on a configured Haro-owned MemoryFabric instance.
+
+Scope closed:
+- `packages/mcp-tools/src/bin/server-entry.ts` no longer imports `@haro/core/memory` or calls `createMemoryFabric`.
+- The server entry no longer resolves a MemoryFabric `memoryDir`, creates a MemoryFabric instance, injects `deps.memory`, or closes a MemoryFabric handle during shutdown.
+- `memory_query` and `memory_remember` remain present in `tools/list` alongside `send_message` and `schedule_task`.
+- Valid `memory_query` / `memory_remember` calls still return retired `TARGET_DISABLED` errors (`FEAT-081X/F-3` and `FEAT-081X/F-2` respectively), not a “memory not configured” path.
+
+Scope explicitly protected:
+- No deletion of `packages/core/src/memory/**`, `packages/core/src/services/memory.ts`, `createMemoryFabric`, or MemoryFabric core/runtime.
+- No deletion of `memory_query` / `memory_remember` tool definitions, input schemas, or tools/list compatibility shape.
+- No reading, deletion, export, recovery, migration, or mutation of real `~/.haro*`, `~/.haro/evolution`, AgentDock memory, or aria-memory-vault data.
+- No change to Haro Web Review Board, sidecar main path, AgentDock host, MCP `send_message`, provider runtime, run/chat router, or skills runtime.
+
+Guard state after F-5 remains intentionally blocked for `memory-fabric`: `deleteAllowed=false`, `stillReferenced=true`, `deleteAllowedCount=0`, `nextDeletionCandidate=null`, `nextReviewCandidate=null`, and `verifiedAbsentFailedCount=0`. The physical-removal ledger increments only by the scoped entry `packages/mcp-tools/src/bin/server-entry.ts#legacy-mcp-memory-bootstrap`; this is bootstrap/deps retirement, not MemoryFabric/core or data deletion.
+
+Remaining risk: `memory-fabric` is still not deletable. Real data ownership/retention, aria-memory-vault boundary, core MemoryFabric imports/runtime, and any non-MCP-server historical compatibility obligations still need separate proof before package/runtime deletion can be considered.

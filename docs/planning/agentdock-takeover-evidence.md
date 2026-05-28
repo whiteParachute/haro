@@ -214,3 +214,19 @@ Evidence:
 Boundary:
 - This does not approve deleting MemoryFabric/core runtime, `createMemoryFabric`, `packages/core/src/memory/**`, `packages/core/src/services/memory.ts`, real `~/.haro*` data, `~/.haro/evolution`, AgentDock memory, or aria-memory-vault.
 - This does not change Haro Web Review Board, sidecar registry/main path, AgentDock host, MCP `send_message`, provider runtime, run/chat router, or skills runtime.
+
+## FEAT-081X/F-5 takeover evidence — legacy MCP server MemoryFabric bootstrap retired
+
+FEAT-081X/F-5 retires only the legacy MCP server entry's Haro-owned MemoryFabric bootstrap/deps injection path. This closes an obsolete dependency injection surface while preserving the legacy MCP tool descriptors needed for compatibility.
+
+Evidence:
+- `packages/mcp-tools/src/bin/server-entry.ts` contains the F-5 note and no longer imports `@haro/core/memory`.
+- The server entry no longer calls `createMemoryFabric`, no longer resolves a MemoryFabric `memoryDir`, no longer injects `memory` into `ToolDependencies`, and no longer closes a MemoryFabric handle during shutdown.
+- Default MCP `tools/list` still includes `send_message`, `memory_query`, `memory_remember`, and `schedule_task`.
+- `memory_query` remains retired/fail-closed with `TARGET_DISABLED` and `FEAT-081X/F-3` whether `deps.memory` exists or is absent.
+- `memory_remember` remains retired/fail-closed with `TARGET_DISABLED` and `FEAT-081X/F-2` whether `deps.memory` exists or is absent.
+- Sidecar-only tools continue to run with `memory: undefined` and are not changed by this slice.
+
+Boundary:
+- This does not approve deleting MemoryFabric/core runtime, `createMemoryFabric`, `packages/core/src/memory/**`, `packages/core/src/services/memory.ts`, `memory_query` / `memory_remember` tool definitions, real `~/.haro*` data, `~/.haro/evolution`, AgentDock memory, or aria-memory-vault.
+- This does not change Haro Web Review Board, sidecar registry/main path, AgentDock host, MCP `send_message`, provider runtime, run/chat router, or skills runtime.

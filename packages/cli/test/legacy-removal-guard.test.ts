@@ -258,9 +258,10 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/cli/src/commands/memory.ts#memory-remember-write-surface+packages/mcp-tools/src/tools/memory-remember.ts#legacy-mcp-write-surface', removedBy: 'FEAT-081X' }),
       expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/mcp-tools/src/tools/memory-query.ts#legacy-mcp-read-surface', removedBy: 'FEAT-081X' }),
       expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/cli/src/commands/memory.ts#memory-cli-read-forensic-surfaces', removedBy: 'FEAT-081X/F-4' }),
+      expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/mcp-tools/src/bin/server-entry.ts#legacy-mcp-memory-bootstrap', removedBy: 'FEAT-081X/F-5' }),
       expect.objectContaining({ id: 'skills-marketplace', candidate: 'packages/skills/src/manager.ts#marketplace-install-placeholder', removedBy: 'FEAT-081V' }),
     ]));
-    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(19);
+    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(20);
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     expect(payload.data.items.every((item) => !('physicalRemoval' in item))).toBe(true);
     const providerCodex = byId.get('provider-codex');
@@ -411,6 +412,11 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
         status: 'physically-removed',
         removedBy: 'FEAT-081X/F-4',
       }),
+      expect.objectContaining({
+        candidate: 'packages/mcp-tools/src/bin/server-entry.ts#legacy-mcp-memory-bootstrap',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081X/F-5',
+      }),
     ]));
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('--legacy-memory CLI opt-in'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('createLegacyMemoryFabric'))).toMatchObject({ present: false, absent: true });
@@ -420,11 +426,17 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('memory_query 执行入口返回 TARGET_DISABLED'))).toMatchObject({ present: true });
     expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('CLI memory read/forensic surfaces 保留命令形状'))).toMatchObject({ present: true });
     expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('FEAT-081X/F-4'))).toMatchObject({ present: true });
+    expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('FEAT-081X/F-5'))).toMatchObject({ present: true });
+    expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('memory_remember 执行入口返回 TARGET_DISABLED'))).toMatchObject({ present: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('不再调用 Haro MemoryFabric queryMemory'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('recoverMemoryV1Snapshot'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('memory export 文件'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('destructive confirmation'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('service context'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('server-entry 不再 createMemoryFabric'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('server-entry 不再 import'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('server-entry 不再 resolve MemoryFabric'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('server-entry 不再 inject deps.memory'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('不再读取 ToolDependencies.memory'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('不再调用 Haro MemoryFabric searchMemoryFiles'))).toMatchObject({ present: false, absent: true });
     const skillsMarketplace = byId.get('skills-marketplace');
@@ -570,6 +582,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalRemovals=physically-removed:packages/cli/src/index.ts#--legacy-memory-opt-in:FEAT-081U');
     expect(text).toContain('physically-removed:packages/cli/src/commands/memory.ts#memory-remember-write-surface+packages/mcp-tools/src/tools/memory-remember.ts#legacy-mcp-write-surface:FEAT-081X');
     expect(text).toContain('physically-removed:packages/mcp-tools/src/tools/memory-query.ts#legacy-mcp-read-surface:FEAT-081X');
+    expect(text).toContain('physically-removed:packages/mcp-tools/src/bin/server-entry.ts#legacy-mcp-memory-bootstrap:FEAT-081X/F-5');
     expect(text).toContain('physicalRemovals=physically-removed:packages/skills/src/manager.ts#marketplace-install-placeholder:FEAT-081V');
     expect(evolutionFileCounts(root)).toEqual(before);
   });

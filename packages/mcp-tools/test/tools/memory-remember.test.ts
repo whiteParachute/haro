@@ -77,6 +77,27 @@ describe('memory_remember tool [FEAT-081X/F-2]', () => {
     expect(writeSpy).not.toHaveBeenCalled();
   });
 
+
+
+  it('fails closed with the same TARGET_DISABLED retired message when memory deps are absent', async () => {
+    const e = (env = setupEnv());
+    const writeSpy = vi.spyOn(e.memory, 'writeEntry');
+    const registry = e.buildRegistry();
+    const out = await registry.invoke({
+      name: 'memory_remember',
+      rawParams: { content: 'do not write', scope: 'agent' },
+      session: e.buildSession(),
+      deps: { ...e.buildDeps(), memory: undefined },
+    });
+
+    expect(out.decision).toBe('allowed');
+    expect(out.result.ok).toBe(false);
+    if (out.result.ok) throw new Error('unreachable');
+    expect(out.result.error.code).toBe('TARGET_DISABLED');
+    expectRetiredMessage(out.result.error.message);
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
   it('returns INVALID_PARAMS on empty content before retired execution', async () => {
     const e = (env = setupEnv());
     const registry = e.buildRegistry();

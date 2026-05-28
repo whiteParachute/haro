@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { setupEnv, type TestEnv } from './helpers.js';
 import { McpServer } from '../src/server.js';
@@ -17,7 +19,7 @@ async function runServerWith(env: TestEnv, requests: JsonRpcMessage[]): Promise<
     transport,
     registry,
     session: env.buildSession({ channelId: 'feishu:oc_fake' }),
-    deps: env.buildDeps(),
+    deps: { ...env.buildDeps(), memory: undefined },
   });
   // Run server, drain responses, then close.
   const runPromise = server.run();
@@ -59,6 +61,47 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
     expect(r.result.tools.find((tool) => tool.name === 'memory_query')?.description).toContain('FEAT-081X/F-3');
     expect(r.result.tools.find((tool) => tool.name === 'memory_query')?.description).toContain('retired');
     expect(r.result.tools.find((tool) => tool.name === 'memory_remember')?.description).toContain('FEAT-081X/F-2');
+  });
+
+
+
+  it('fails closed for memory tools without MemoryFabric deps while keeping tools/list stable', async () => {
+    const e = (env = setupEnv());
+    const responses = await runServerWith(e, [
+      {
+        jsonrpc: '2.0',
+        id: 31,
+        method: 'tools/call',
+        params: { name: 'memory_query', arguments: { query: 'project' } },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 32,
+        method: 'tools/call',
+        params: { name: 'memory_remember', arguments: { content: 'do not write', scope: 'agent' } },
+      },
+    ]);
+
+    for (const response of responses as Array<{ result: { isError: boolean; structuredContent: { error: { code: string; message: string } } } }>) {
+      expect(response.result.isError).toBe(true);
+      expect(response.result.structuredContent.error.code).toBe('TARGET_DISABLED');
+      expect(response.result.structuredContent.error.message).toContain('retired');
+    }
+    expect(responses[0] as { result: { structuredContent: { error: { message: string } } } }).toMatchObject({
+      result: { structuredContent: { error: { message: expect.stringContaining('FEAT-081X/F-3') } } },
+    });
+    expect(responses[1] as { result: { structuredContent: { error: { message: string } } } }).toMatchObject({
+      result: { structuredContent: { error: { message: expect.stringContaining('FEAT-081X/F-2') } } },
+    });
+  });
+
+  it('server-entry no longer bootstraps or injects Haro MemoryFabric [FEAT-081X/F-5]', () => {
+    const source = readFileSync(join(import.meta.dirname, '../src/bin/server-entry.ts'), 'utf8');
+    expect(source).toContain('FEAT-081X/F-5');
+    expect(source).not.toContain("@haro/core/memory");
+    expect(source).not.toContain('createMemoryFabric');
+    expect(source).not.toContain('memoryDir');
+    expect(source).not.toContain('memory,');
   });
 
   it('routes tools/call to the registry and returns a structured success', async () => {
@@ -120,7 +163,7 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
       transport,
       registry,
       session: e.buildSession({ channelId: 'web' }),
-      deps: e.buildDeps(),
+      deps: { ...e.buildDeps(), memory: undefined },
     });
     const runPromise = server.run();
     const drained = await transport.drain();

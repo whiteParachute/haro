@@ -5,18 +5,22 @@
  *   node dist/bin/server-entry.js <session-context-json> [<config-json>]
  *
  * The first arg is a JSON-encoded SessionContext; the second is optional
- * config (root / dbFile so the subprocess can open its historical MemoryFabric /
- * EvolutionAssetRegistry / cron service-context view).
+ * config (root / dbFile so the subprocess can open its EvolutionAssetRegistry
+ * / cron service-context view).
  *
  * FEAT-081K: send_message uses AgentDock's external messaging IPC contract
  * instead of Haro-owned ChannelRegistry/adapters. When the subprocess is not
  * launched under AgentDock (missing HAPPYCLAW_WORKSPACE_IPC /
  * HAPPYCLAW_CHAT_JID), send_message fails closed with TARGET_NOT_FOUND rather
  * than silently falling back to Haro channel packages.
+ *
+ * FEAT-081X/F-5: this legacy MCP server entry no longer bootstraps or
+ * injects Haro-owned MemoryFabric. memory_query / memory_remember remain
+ * registered for tools/list compatibility, but their execution fails closed
+ * with TARGET_DISABLED rather than depending on MemoryFabric availability.
  */
 
 import process from 'node:process';
-import { createMemoryFabric } from '@haro/core/memory';
 import { createEvolutionAssetRegistry } from '@haro/core/evolution';
 import { buildHaroPaths } from '@haro/core/paths';
 
@@ -55,9 +59,7 @@ async function main(): Promise<void> {
   }
 
   const paths = buildHaroPaths(parsed.root);
-  const memoryDir = paths.dirs.memory;
   const dbFile = parsed.dbFile ?? paths.dbFile;
-  const memory = createMemoryFabric({ root: memoryDir, dbFile });
   const evolution = createEvolutionAssetRegistry({
     ...(parsed.root ? { root: parsed.root } : {}),
     ...(dbFile ? { dbFile } : {}),
@@ -78,7 +80,6 @@ async function main(): Promise<void> {
   const transport = new StdioTransport();
   const deps: ToolDependencies = {
     ...(messaging ? { messaging } : {}),
-    memory,
     evolution,
     serviceContext: {
       ...(parsed.root ? { root: parsed.root } : {}),
@@ -99,7 +100,6 @@ async function main(): Promise<void> {
     process.stderr.write(`mcp-tools server-entry: ${signal} received, shutting down\n`);
     await server.stop();
     audit.close();
-    if ('close' in memory && typeof memory.close === 'function') memory.close();
     // Detach stdin so the run() loop exits on the next tick. Without this the
     // process would wait for SIGKILL because StdioTransport only flips a flag
     // when close() is called and node keeps the read loop alive.
