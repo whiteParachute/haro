@@ -1421,3 +1421,43 @@ guard 在 081L 主删除阶段应保持：`stage=FEAT-081L`、`deleteAllowedCoun
 - `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
 
 后续风险：Review Board/auth/bootstrap/health/fallback/infrastructure 是 Haro sidecar 人审链路基础设施；不得从 081T 推导 `packages/web` / `packages/web-api` runtime 或包级删除批准。未来如出现新的非 review Web/API surface，必须逐路由单项评审。
+
+
+## 29. FEAT-081U / C-1 `haro run --legacy-memory` CLI opt-in 删除（2026-05-28）
+
+081U/C-1 只处理 memory-fabric 的最小安全切片：删除 `haro run --legacy-memory` 用户 opt-in 与仅服务该 opt-in 的 CLI-side MemoryFabric wiring。它不是 MemoryFabric runtime、真实数据、MCP memory tool 或 `haro memory` 子命令删除批准。
+
+只读盘点结论：
+
+- `packages/cli/src/index.ts` 仍有 `run --legacy-memory` flag，以及 `legacyRunMemory`、`getLegacyMemoryFabric`、`createLegacyMemoryFabric`、`resolveLegacyMemoryRoots`、`createCliMemoryWrapupHook` 等 CLI wiring。
+- `packages/core/src/index.ts` 仍导出 `createMemoryFabric`；`packages/core/src/memory/**`、`packages/core/src/services/memory.ts` 仍是 protected runtime。
+- `packages/cli/src/commands/memory.ts` 仍注册 `haro memory` 子命令。
+- `packages/mcp-tools/src/index.ts`、`packages/mcp-tools/src/tools/memory-query.ts`、`memory-remember.ts` 仍提供 MCP `memory_query` / `memory_remember` 默认 registry/工具。
+- 真实 `~/.haro`、`~/.haro/evolution` 与 aria-memory-vault 不属于本阶段可读写/迁移/删除范围。
+
+本阶段完成的最小安全代码清理：
+
+- 删除 `packages/cli/src/index.ts#--legacy-memory-opt-in`。
+- 删除 CLI-side legacy MemoryFabric factory/path resolver/wrapup hook wiring。
+- 删除 `haro run` 上的 legacy memory 用户选项；`haro run --legacy-memory ...` 现在由 commander unknown option fail-closed，exit 非 0，不创建 `memory/` 目录。
+- 普通 `haro run` 继续不创建 Haro-owned `memory/` 目录，也不注入 `<memory-context>`。
+- 保留内部 `ExecutionOptions.noMemory` 字段及内部调用语义；review conversation 等内部路径仍可传 `noMemory: true`。
+
+明确不变：
+
+- 不修改 `packages/core/src/memory/**`、`packages/core/src/services/memory.ts`、`packages/cli/src/commands/memory.ts`、`packages/mcp-tools/**`。
+- 不读写、迁移、删除真实 `~/.haro*` 或 aria-memory-vault。
+- 不修改 AgentDock host、provider、skills、Web/Web API、runtime/scenario-router、run/chat/LLM provider path。
+
+081U guard 口径：
+
+- `planning.stage=FEAT-081U`。
+- `planning.lastCompletedStage=FEAT-081U`。
+- `planning.lastUpdatedBy=FEAT-081U`。
+- `memory-fabric.physicalRemovals[]` 新增 `packages/cli/src/index.ts#--legacy-memory-opt-in`，`removedBy=FEAT-081U`。
+- `completedPhysicalRemovals=14`。
+- `memory-fabric` 仍 `candidatePriority.status=blocked`，`deleteAllowed=false`，`stillReferenced=true`。
+- `LEGACY_MODULE_RETIREMENT_BOUNDARIES.memory.deletionCandidateAllowed=false` 保持不变。
+- `deleteAllowedCount=0`、`wouldDelete=false`、`physicalDeleteApproved=false`、`nextDeletionCandidate=null`、`nextReviewCandidate=null` 保持不变。
+
+后续风险：MCP memory 默认 registry、core MemoryFabric runtime、真实 `~/.haro` 数据和 aria-memory-vault owner 边界仍未解除。后续如继续 memory 减法，必须先完成数据/owner/MCP tool 边界证明；不得从 081U 推导 memory runtime、memory CLI 或 MCP memory tool 删除批准。

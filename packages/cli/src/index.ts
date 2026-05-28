@@ -15,7 +15,6 @@ import {
   buildHaroPaths,
   classifyOperation,
   createEvolutionAssetRegistry,
-  createMemoryFabric,
   extractTokenUsage,
   createLogger,
   db as haroDb,
@@ -242,7 +241,6 @@ export interface ExecutionOptions {
   provider?: string;
   model?: string;
   noMemory?: boolean;
-  legacyMemory?: boolean;
   retryOfSessionId?: string;
   continueLatestSession?: boolean;
   /**
@@ -415,8 +413,6 @@ function buildProgram(app: AppContext): Command {
         .option('--agent <id>', 'agent id')
         .option('--provider <id>', 'provider override')
         .option('--model <id>', 'model override')
-        .option('--no-memory', 'legacy alias: keep Haro-owned memory disabled for this session')
-        .option('--legacy-memory', 'enable historical Haro-owned MemoryFabric context/wrapup for this session')
         .action(
           async (
             task: string,
@@ -424,9 +420,6 @@ function buildProgram(app: AppContext): Command {
               agent?: string;
               provider?: string;
               model?: string;
-              noMemory?: boolean;
-              memory?: boolean;
-              legacyMemory?: boolean;
             },
           ) => {
             writeLegacySurfaceWarning(app);
@@ -440,8 +433,6 @@ function buildProgram(app: AppContext): Command {
               agentId,
               provider: options.provider ?? app.cliState.defaultProvider,
               model: options.model ?? app.cliState.defaultModel,
-              noMemory: options.noMemory ?? options.memory === false,
-              legacyMemory: options.legacyMemory === true,
             });
             if (result.finalEvent.type !== 'result') {
               throw new CommanderExit(1, result.finalEvent.message);
@@ -1501,23 +1492,17 @@ async function bootstrapApp(
     input.argv?.[0] === 'intake' ||
     input.argv?.[0] === 'status' ||
     input.argv?.[0] === 'doctor';
-  const legacyRunMemory =
-    input.argv?.[0] === 'run' && input.argv.includes('--legacy-memory') && !input.argv.includes('--no-memory');
-  const legacyMemoryRoots = resolveLegacyMemoryRoots(loaded.config, paths);
   const dirResult = haroFs.ensureHaroDirectories(input.root, {
     skip:
       sidecarOnly ||
-      (input.argv?.[0] === 'run' && (!legacyRunMemory || legacyMemoryRoots.root !== paths.dirs.memory))
+      input.argv?.[0] === 'run'
         ? ['memory']
         : [],
   });
   haroDb.initHaroDatabase({ root: input.root });
   const skills = new SkillsManager({ root: paths.root });
   skills.ensureInitialized();
-  let legacyMemoryFabric: ReturnType<typeof createMemoryFabric> | undefined;
-  const getLegacyMemoryFabric = () =>
-    (legacyMemoryFabric ??= createLegacyMemoryFabric(loaded.config, paths));
-  const memoryWrapupHook = createCliMemoryWrapupHook(skills, logger, getLegacyMemoryFabric);
+  const memoryWrapupHook: MemoryWrapupHook = async () => undefined;
 
   const providerRegistry = input.createProviderRegistry
     ? await input.createProviderRegistry({ config: loaded.config })
@@ -1557,7 +1542,6 @@ async function bootstrapApp(
           createSessionId,
           logger,
           memoryWrapupHook,
-          ...(legacyRunMemory ? { memoryFabric: getLegacyMemoryFabric() } : {}),
         });
   const runner = createRunner();
   const router = new ScenarioRouter({
@@ -1793,7 +1777,6 @@ async function executeTask(
       ...(input.provider ? { provider: input.provider } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.noMemory ? { noMemory: true } : {}),
-      ...(input.legacyMemory ? { legacyMemory: true } : {}),
       ...(input.retryOfSessionId ? { retryOfSessionId: input.retryOfSessionId } : {}),
       ...(input.continueLatestSession === false ? { continueLatestSession: false } : {}),
       ...(input.continueFromSessionId ? { continueFromSessionId: input.continueFromSessionId } : {}),
@@ -2355,66 +2338,6 @@ async function createDefaultProviderRegistry(config: LoadedConfig['config']): Pr
   const registry = new ProviderRegistry();
   registry.register(createCodexProvider(config.providers?.codex ?? {}));
   return registry;
-}
-
-function createLegacyMemoryFabric(config: LoadedConfig['config'], paths: HaroPaths): ReturnType<typeof createMemoryFabric> {
-  const { root, backupRoot } = resolveLegacyMemoryRoots(config, paths);
-  return createMemoryFabric({
-    root,
-    ...(backupRoot ? { backupRoot } : {}),
-  });
-}
-
-function resolveLegacyMemoryRoots(
-  config: LoadedConfig['config'],
-  paths: HaroPaths,
-): { root: string; backupRoot?: string } {
-  const root = config.memory?.primary?.path ?? config.memory?.path ?? paths.dirs.memory;
-  const backupRoot = config.memory?.backup?.path;
-  return {
-    root,
-    ...(backupRoot ? { backupRoot } : {}),
-  };
-}
-
-function createCliMemoryWrapupHook(
-  skills: SkillsManager,
-  logger: CliLogger,
-  createFabric: () => ReturnType<typeof createMemoryFabric>,
-): MemoryWrapupHook {
-  let memoryFabric: ReturnType<typeof createMemoryFabric> | undefined;
-  return async ({ sessionId, agentId, task, result }) => {
-    const enabled = skills.list().some((entry) => entry.id === 'memory-wrapup' && entry.enabled);
-    if (!enabled) {
-      logger.debug?.({ sessionId, agentId }, 'memory-wrapup skill disabled; skipping CLI memory wrapup');
-      return;
-    }
-    try {
-      memoryFabric ??= createFabric();
-      await memoryFabric.wrapupSession({
-        scope: 'agent',
-        agentId,
-        wrapupId: sessionId,
-        topic: previewText(task),
-        summary: previewText(result),
-        transcript: [`Task: ${task}`, '', `Result: ${result}`].join('\n'),
-        source: 'skill:memory-wrapup',
-      });
-    } catch (err) {
-      logger.warn?.(
-        { sessionId, agentId, err: err instanceof Error ? err.message : String(err) },
-        'CLI memory-wrapup hook failed',
-      );
-    }
-  };
-}
-
-function previewText(value: string, limit = 80): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= limit) {
-    return normalized;
-  }
-  return `${normalized.slice(0, Math.max(0, limit - 1))}…`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

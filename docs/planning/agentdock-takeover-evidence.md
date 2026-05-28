@@ -1,10 +1,10 @@
-# AgentDock takeover evidence 盘点（FEAT-081M / FEAT-081N / FEAT-081O / FEAT-081P / FEAT-081R / FEAT-081T）
+# AgentDock takeover evidence 盘点（FEAT-081M / FEAT-081N / FEAT-081O / FEAT-081P / FEAT-081R / FEAT-081T / FEAT-081U）
 
-> 日期：2026-05-27
+> 日期：2026-05-28
 >
-> 范围：081M 只做文档、guard 状态说明与替代证据盘点；081N 只退役 Haro CLI `provider setup/onboarding` 入口；081O 只删除 setup-only Codex wizard dead file 并清理旧 provider setup remediation；081P 只删除旧 setup env-file writer helper；081R 只删除 provider setup retired 子命令 stub；081T/B-1 只固化非 review Web/API surface 为空的 guard/docs schema closure。本文不是 provider runtime/package 或 Web/API runtime/package 删除批准，不触发真实数据迁移，不修改 memory/skills/runtime/Web/MCP 业务代码，不触碰真实 `~/.haro`、`~/.haro/evolution` 或 aria-memory-vault。
+> 范围：081M 只做文档、guard 状态说明与替代证据盘点；081N 只退役 Haro CLI `provider setup/onboarding` 入口；081O 只删除 setup-only Codex wizard dead file 并清理旧 provider setup remediation；081P 只删除旧 setup env-file writer helper；081R 只删除 provider setup retired 子命令 stub；081T/B-1 只固化非 review Web/API surface 为空的 guard/docs schema closure；081U/C-1 只删除 `haro run --legacy-memory` CLI opt-in/wiring。本文不是 provider runtime/package、Web/API runtime/package 或 MemoryFabric runtime 删除批准，不触发真实数据迁移，不修改 core memory runtime、MCP memory tools、skills/runtime/Web/MCP 业务代码，不触碰真实 `~/.haro`、`~/.haro/evolution` 或 aria-memory-vault。
 >
-> 当前结论：channel-layer 已在 FEAT-081K/081L 后完成 Haro-owned package 退役；FEAT-081N 已按用户产品决策退役 `haro provider setup ...` 初始化入口；FEAT-081O 已删除 `packages/cli/src/provider-codex-wizard.ts` setup-only dead file；FEAT-081P 已删除 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile` 写入 helper；FEAT-081R 已删除 `packages/cli/src/index.ts#provider-setup-retired-stub` 子命令注册 stub；FEAT-081T 已确认非 review Web/API surface 为空并将 `web-dashboard-non-review` guard status 收口为 done，但不修改 `packages/web`/`packages/web-api` runtime、不批准包级或路由删除；provider-codex package/runtime、provider doctor/list/models/select/env、diagnostics provider stage 与 run/chat/LLM provider path 继续保留且 fail-closed。
+> 当前结论：channel-layer 已在 FEAT-081K/081L 后完成 Haro-owned package 退役；FEAT-081N 已按用户产品决策退役 `haro provider setup ...` 初始化入口；FEAT-081O 已删除 `packages/cli/src/provider-codex-wizard.ts` setup-only dead file；FEAT-081P 已删除 `packages/cli/src/provider-onboarding.ts#writeProviderEnvFile` 写入 helper；FEAT-081R 已删除 `packages/cli/src/index.ts#provider-setup-retired-stub` 子命令注册 stub；FEAT-081T 已确认非 review Web/API surface 为空并将 `web-dashboard-non-review` guard status 收口为 done；FEAT-081U 已删除 `haro run --legacy-memory` opt-in 和 CLI-side MemoryFabric wiring，但不修改 core memory runtime、`haro memory`、MCP `memory_query`/`memory_remember` 默认 registry、真实 `~/.haro*` 或 aria-memory-vault。
 
 ## 0. 081M guard 口径
 
@@ -19,7 +19,7 @@
 | 候选 | AgentDock / 共享能力替代证据 | Haro 当前 blocker | 081M 判断 | 推荐下一步 |
 | --- | --- | --- | --- | --- |
 | `provider-codex` | AgentDock/ModelHub 已承担 runner/model 能力方向；用户产品决策接受外部 codex CLI/auth 作为前置 | `haro provider setup ...` 已由 FEAT-081N retired/fail-closed，FEAT-081R 进一步删除 retired 子命令 stub；FEAT-081O 删除 setup-only wizard dead file；FEAT-081P 删除 setup env-file writer helper；provider-codex runtime、doctor/list/models/select/env、CLI bootstrap 仍在 Haro | setup/onboarding + wizard/env-writer/stub cleanup done；runtime blocked | 不再恢复 Haro provider setup/wizard/env-file writer/retired stub；provider runtime 删除必须另行证明无业务引用 |
-| `memory-fabric` | AgentDock memory 与共享 aria-memory-vault 是目标 owner | 真实 `~/.haro` 数据、aria-memory-vault、MCP `memory_query` / `memory_remember` 默认注册仍有风险 | blocked | 先做只读数据/owner 边界证明与 MCP memory tool 隔离方案 |
+| `memory-fabric` | AgentDock memory 与共享 aria-memory-vault 是目标 owner；FEAT-081U 已移除 `haro run --legacy-memory` CLI opt-in/wiring | 真实 `~/.haro` 数据、aria-memory-vault、MCP `memory_query` / `memory_remember` 默认注册、core MemoryFabric runtime 与 `haro memory` 仍有风险 | C-1 done；memory runtime blocked | 不恢复 CLI opt-in；后续必须先证明 MCP/default registry、真实数据和 core runtime owner 边界 |
 | `skills-marketplace` | AgentDock skills 是目标 owner | `haro skills install/enable/disable`、`SkillsManager`、eat/shit 兼容资产仍存在 | deferred | 先拆 marketplace 扩展面与保留兼容资产边界 |
 | `web-dashboard-non-review` | AgentDock 是平台 Web/API host；FEAT-081T 已枚举 Review Board allowlist 与非 review Web/API 路由，非 review surface 为空 | Review Board、approval conversation、auth/bootstrap、health/fallback/infrastructure 不能误删；包级删除仍禁止 | done / freeze | 保持 allowlist/freeze；不得从 081T 推导 `packages/web` / `packages/web-api` 包级或 runtime 删除批准 |
 | `agent-runtime-router` | AgentDock scheduler / workspace / runner 是目标 owner | 用户指定第 4 项 deferred；仍需证明 AgentDock 定时任务能稳定触发 Haro 提案到 Review Board | deferred | 等 AgentDock 定时任务 → Haro 提案 → approval request → Review Board 可审链路稳定后再评估 |
@@ -64,6 +64,7 @@
 
 - memory owner 方向应收口到共享 aria-memory-vault / AgentDock memory。
 - Haro sidecar 主线只应记录 proposal/validation/approval/application artifacts，不应拥有用户长期记忆。
+- FEAT-081U/C-1 已删除 `haro run --legacy-memory` CLI opt-in、CLI-side MemoryFabric factory/path resolver/wrapup hook wiring；普通 `haro run` 不创建 `memory/` 目录，也不注入 `<memory-context>`。
 
 ### 仍在 Haro 的证据
 
@@ -72,6 +73,7 @@
 - `packages/cli/src/commands/memory.ts` 仍存在 legacy memory CLI。
 - `packages/mcp-tools/src/index.ts` 默认 registry 仍注册 `memory_query` / `memory_remember`。
 - `packages/mcp-tools/src/tools/memory-query.ts`、`memory-remember.ts` 仍提供兼容 MCP tool。
+- `packages/core/src/memory/*`、`packages/core/src/services/memory.ts` 与 `packages/cli/src/commands/memory.ts` 仍受保护，本阶段未修改。
 
 ### Blockers
 
@@ -79,10 +81,11 @@
 2. aria-memory-vault 是共享资产，不属于 Haro repo 删除面。
 3. MCP `memory_query` / `memory_remember` 默认注册尚未完成隔离或替代。
 4. 未证明 sidecar 主链路完全不读写 Haro-owned MemoryFabric。
+5. 081U 的 scoped physical removal 仅限 `packages/cli/src/index.ts#--legacy-memory-opt-in`，不代表 core MemoryFabric、`haro memory` 或 MCP memory tool 可删。
 
 ### 下一步
 
-先做只读边界证明：列出真实数据路径、MCP memory tool 注册路径、core barrel export 下游 import，并设计 fail-closed 替代方案；没有这些证据前不得物理删除。
+继续只读边界证明：列出真实数据路径、MCP memory tool 注册路径、core barrel export 下游 import，并设计 fail-closed 替代方案；没有这些证据前不得删除 memory runtime、memory CLI 或 MCP memory tool。
 
 ## 4. `skills-marketplace`
 

@@ -25,7 +25,7 @@ export interface LegacyRemovalEvidenceDefinition {
 export interface LegacyPhysicalRemovalRecord {
   candidate: string;
   status: 'physically-removed';
-  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S';
+  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U';
   rollbackPlan: string;
   note: string;
 }
@@ -104,9 +104,9 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateCount: number;
   };
   planning: {
-    stage: 'FEAT-081T';
-    lastCompletedStage: 'FEAT-081T';
-    lastUpdatedBy: 'FEAT-081T';
+    stage: 'FEAT-081U';
+    lastCompletedStage: 'FEAT-081U';
+    lastUpdatedBy: 'FEAT-081U';
     moduleRetirementBoundaries: LegacyModuleRetirementBoundary[];
     nextDeletionCandidate: {
       id: string;
@@ -129,7 +129,7 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
     deferredCandidateIds: string[];
-    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S'; rollbackPlan: string }>;
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -187,8 +187,8 @@ export const LEGACY_MODULE_RETIREMENT_BOUNDARIES: LegacyModuleRetirementBoundary
     owner: 'aria-memory-vault / AgentDock memory',
     haroRetireScope: ['packages/core/src/memory', 'packages/cli/src/commands/memory.ts', 'Haro-owned MemoryFabric'],
     protectedScope: ['真实 ~/.haro 数据', 'aria-memory vault', 'AgentDock/aria-memory 共享记忆'],
-    decision: 'memory 方向应收口到共享 aria-memory-vault / AgentDock memory，但真实 ~/.haro 数据、aria-memory vault 与 MCP memory_* 默认注册仍是 blocker；081M 不批准删除。',
-    nextAction: '先证明 sidecar 主链路不读写 Haro-owned memory，并隔离 memory_query/memory_remember 默认注册与真实数据边界。',
+    decision: 'memory 方向应收口到共享 aria-memory-vault / AgentDock memory；FEAT-081U 只删除 haro run --legacy-memory CLI opt-in wiring，不触碰真实 ~/.haro 数据、aria-memory vault、MCP memory_* 默认注册或 core MemoryFabric runtime。',
+    nextAction: '继续证明 sidecar 主链路不读写 Haro-owned memory，并隔离 memory_query/memory_remember 默认 registry 与真实数据边界；不得把 081U 解读为 MemoryFabric/runtime 删除批准。',
     deletionCandidateAllowed: false,
   },
   {
@@ -451,18 +451,33 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       '确认真实 ~/.haro 数据与 aria-memory-vault 不被迁移/删除',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'memory 统一方向是共享 aria-memory-vault / AgentDock memory，但真实 ~/.haro 数据、aria-memory-vault 与 MCP memory_* 默认注册仍阻塞；081M 只记录证据，不删除。',
+    decision: 'FEAT-081U/C-1 只删除 `haro run --legacy-memory` CLI opt-in 与随附 CLI wiring；memory 统一方向仍是共享 aria-memory-vault / AgentDock memory，但真实 ~/.haro 数据、aria-memory-vault 与 MCP memory_* 默认注册仍阻塞，不批准 core MemoryFabric 或 memory CLI/MCP 删除。',
     candidatePriority: {
       status: 'blocked',
       rank: 5,
-      reason: 'Haro-owned memory 退役方向已明确，但牵涉真实 ~/.haro 数据、aria-memory vault 和 MCP memory tools，删除前必须先完成数据/owner 边界验证。',
+      reason: '081U 仅完成 run --legacy-memory opt-in 的安全删除；Haro-owned memory 仍牵涉真实 ~/.haro 数据、aria-memory vault 和 MCP memory tools，删除前必须先完成数据/owner 边界验证。',
       blockedUntil: ['确认真实 ~/.haro memory 数据迁移/保留策略', '隔离 MCP memory_* 默认 registry', '证明 sidecar 主链路不读写 Haro-owned memory', '确认 aria-memory-vault 不在 Haro 删除范围'],
       forbiddenScope: ['真实 ~/.haro 数据', 'aria-memory vault'],
     },
+    physicalRemovals: [
+      {
+        candidate: 'packages/cli/src/index.ts#--legacy-memory-opt-in',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081U',
+        rollbackPlan: 'git revert FEAT-081U commit 可恢复 haro run --legacy-memory CLI opt-in 与 CLI-side MemoryFabric wiring。',
+        note: '仅删除 CLI opt-in/wiring；core MemoryFabric、haro memory 子命令、MCP memory_query/memory_remember 默认 registry、真实 ~/.haro* 与 aria-memory-vault 均保持保护。',
+      },
+    ],
     evidence: [
       { path: 'packages/core/src/index.ts', kind: 'contains', pattern: 'createMemoryFabric', description: 'core barrel 仍导出 MemoryFabric' },
       { path: 'packages/cli/src/commands/memory.ts', kind: 'exists', description: 'legacy memory CLI 仍存在' },
       { path: 'packages/mcp-tools/src/index.ts', kind: 'contains', pattern: 'memoryRememberTool', description: 'MCP default registry 仍注册 memory tool' },
+    ],
+    verifiedAbsent: [
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: '--legacy-memory', description: 'haro run --legacy-memory CLI opt-in 已由 FEAT-081U 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'createLegacyMemoryFabric', description: 'CLI legacy createLegacyMemoryFabric factory wiring 已由 FEAT-081U 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'resolveLegacyMemoryRoots', description: 'CLI legacy memory path resolver wiring 已由 FEAT-081U 删除' },
+      { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'createCliMemoryWrapupHook', description: 'CLI memory wrapup hook wiring 已由 FEAT-081U 删除' },
     ],
   },
   {
@@ -662,9 +677,9 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       forbiddenCandidateCount: items.filter((item) => item.candidatePriority.status === 'forbidden').length,
     },
     planning: {
-      stage: 'FEAT-081T',
-      lastCompletedStage: 'FEAT-081T',
-      lastUpdatedBy: 'FEAT-081T',
+      stage: 'FEAT-081U',
+      lastCompletedStage: 'FEAT-081U',
+      lastUpdatedBy: 'FEAT-081U',
       moduleRetirementBoundaries: LEGACY_MODULE_RETIREMENT_BOUNDARIES,
       nextDeletionCandidate: planningNext,
       nextReviewCandidate,
@@ -690,6 +705,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       'FEAT-081R 已删除 provider setup retired 子命令 stub；haro provider setup ... 现在由 provider command unknown-command fail-closed，provider runtime 与其它 provider 子命令继续保留。',
       'FEAT-081S 已删除 TeamOrchestrator removed-result 兼容 payload；team-routing 无 skill directOutput 时走普通 single-agent fallback，scenario-router/runtime/provider path 继续保留。',
       'FEAT-081T/B-1 只做 Web/API guard/docs schema closure：非 review Web/API surface 为空，Review Board + auth/bootstrap + health/fallback/infrastructure 继续保留，不新增物理删除。',
+      'FEAT-081U/C-1 已删除 haro run --legacy-memory CLI opt-in 与 CLI-side MemoryFabric wiring；core memory runtime、haro memory、MCP memory tools、真实 ~/.haro* 与 aria-memory-vault 继续保护。',
       'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };

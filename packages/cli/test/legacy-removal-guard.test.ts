@@ -186,9 +186,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(payload.data.summary.blockedCandidateCount).toBeGreaterThanOrEqual(3);
     expect(payload.data.summary.forbiddenCandidateCount).toBe(0);
       expect(payload.data.planning).toMatchObject({
-        stage: 'FEAT-081T',
-        lastCompletedStage: 'FEAT-081T',
-        lastUpdatedBy: 'FEAT-081T',
+        stage: 'FEAT-081U',
+        lastCompletedStage: 'FEAT-081U',
+        lastUpdatedBy: 'FEAT-081U',
       });
     expect(payload.data.planning.moduleRetirementBoundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -208,6 +208,10 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
         deletionCandidateAllowed: false,
       }),
     ]));
+    const memoryBoundary = payload.data.planning.moduleRetirementBoundaries.find((boundary) => boundary.module === 'memory');
+    expect(memoryBoundary?.deletionCandidateAllowed).toBe(false);
+    expect(memoryBoundary?.decision).toContain('FEAT-081U');
+    expect(memoryBoundary?.decision).toContain('不触碰真实 ~/.haro 数据');
     const runtimeBoundary = payload.data.planning.moduleRetirementBoundaries.find((boundary) => boundary.module === 'run-router-runtime-scenario');
     expect(runtimeBoundary?.deferredUntil).toEqual(expect.arrayContaining([
       'AgentDock 定时任务稳定触发 Haro 生成提案',
@@ -249,8 +253,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/provider-codex-wizard.ts', removedBy: 'FEAT-081O' }),
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/provider-onboarding.ts#writeProviderEnvFile', removedBy: 'FEAT-081P' }),
       expect.objectContaining({ id: 'provider-codex', candidate: 'packages/cli/src/index.ts#provider-setup-retired-stub', removedBy: 'FEAT-081R' }),
+      expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/cli/src/index.ts#--legacy-memory-opt-in', removedBy: 'FEAT-081U' }),
     ]));
-    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(13);
+    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(14);
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     expect(payload.data.items.every((item) => !('physicalRemoval' in item))).toBe(true);
     const providerCodex = byId.get('provider-codex');
@@ -365,7 +370,19 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('packages/channel-telegram 已由 FEAT-081L'))).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.verifiedAbsent.find((entry) => entry.description?.includes('CLI package dependency 已由 FEAT-081L'))).toMatchObject({ present: false, absent: true });
     expect(channelLayer?.evidence.find((entry) => entry.path === 'packages/channel/package.json')?.present).toBe(false);
-    expect(byId.get('memory-fabric')).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
+    const memoryFabric = byId.get('memory-fabric');
+    expect(memoryFabric).toMatchObject({ state: 'deprecate', deleteAllowed: false, stillReferenced: true });
+    expect(memoryFabric?.candidatePriority.status).toBe('blocked');
+    expect(memoryFabric?.candidatePriority.forbiddenScope).toEqual(expect.arrayContaining(['真实 ~/.haro 数据', 'aria-memory vault']));
+    expect(memoryFabric?.physicalRemovals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidate: 'packages/cli/src/index.ts#--legacy-memory-opt-in',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081U',
+      }),
+    ]));
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('--legacy-memory CLI opt-in'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('createLegacyMemoryFabric'))).toMatchObject({ present: false, absent: true });
     const agentRuntime = byId.get('agent-runtime-router');
     expect(agentRuntime?.evidence.some((entry) => entry.present)).toBe(true);
     expect(agentRuntime?.candidatePriority).toMatchObject({
@@ -428,7 +445,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physicalDeleteApproved: false');
     expect(text).toContain('deleteAllowed=false');
     expect(text).toContain('provider-codex');
-    expect(text).toContain('planning stage: FEAT-081T lastCompleted=FEAT-081T');
+    expect(text).toContain('planning stage: FEAT-081U lastCompleted=FEAT-081U');
     expect(text).toContain('next deletion candidate (candidate only, not approval): none');
     expect(text).toContain('next review candidate: none');
     expect(text).toContain('forbidden now: none');
@@ -455,7 +472,9 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('FEAT-081R');
     expect(text).toContain('FEAT-081S');
     expect(text).toContain('FEAT-081T');
+    expect(text).toContain('FEAT-081U');
     expect(text).toContain('非 review Web/API surface 为空');
+    expect(text).toContain('haro run --legacy-memory CLI opt-in');
     expect(text).toContain('provider setup/onboarding CLI 入口 retired/fail-closed');
     expect(text).toContain('pilotUnbind=default-path-unbound:packages/cli/src/index.ts#provider-setup-onboarding-command');
     expect(text).toContain('AgentDock IPC 消息 contract');
@@ -473,6 +492,7 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(text).toContain('physically-removed:packages/cli/src/provider-codex-wizard.ts:FEAT-081O');
     expect(text).toContain('physically-removed:packages/cli/src/provider-onboarding.ts#writeProviderEnvFile:FEAT-081P');
     expect(text).toContain('physically-removed:packages/cli/src/index.ts#provider-setup-retired-stub:FEAT-081R');
+    expect(text).toContain('physicalRemovals=physically-removed:packages/cli/src/index.ts#--legacy-memory-opt-in:FEAT-081U');
     expect(evolutionFileCounts(root)).toEqual(before);
   });
 

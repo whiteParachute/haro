@@ -1073,16 +1073,19 @@ describe('runCli [FEAT-006]', () => {
     }
   });
 
-  it('AC8: haro run --no-memory skips memory wrapup for this session', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-no-memory-'));
+  it('FEAT-081U: haro run --legacy-memory is removed and fails closed without creating memory dir', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-run-legacy-memory-removed-'));
     roots.push(root);
     const stdout = new PassThrough();
-    const wrapup = vi.fn(async () => undefined);
+    const stderr = new PassThrough();
+    const stderrChunks: string[] = [];
+    stderr.on('data', (chunk) => stderrChunks.push(String(chunk)));
 
     const result = await runCli({
-      argv: ['run', '--no-memory', '不要写记忆'],
+      argv: ['run', '--legacy-memory', '显式启用历史 Haro 记忆'],
       root,
       stdout,
+      stderr,
       createProviderRegistry: async () =>
         createProviderRegistry(
           new StubProvider({
@@ -1092,20 +1095,12 @@ describe('runCli [FEAT-006]', () => {
           }),
         ),
       loadAgentRegistry: async () => createAgentRegistry(),
-      createRunner: ({ agentRegistry, providerRegistry, logger, root: haroRoot, projectRoot, createSessionId }) =>
-        new AgentRunner({
-          agentRegistry,
-          providerRegistry,
-          logger,
-          root: haroRoot,
-          projectRoot,
-          createSessionId,
-          memoryWrapupHook: wrapup,
-        }),
+      createAdditionalChannels: async () => [],
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(wrapup).not.toHaveBeenCalled();
+    expect(result.exitCode).not.toBe(0);
+    expect(stderrChunks.join('')).toContain("unknown option '--legacy-memory'");
+    expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
   it('sidecar default: haro run does not create the historical Haro memory directory', async () => {
@@ -1132,32 +1127,8 @@ describe('runCli [FEAT-006]', () => {
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
-  it('legacy compatibility: haro run --legacy-memory keeps the historical memory directory available', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-run-legacy-memory-'));
-    roots.push(root);
-
-    const result = await runCli({
-      argv: ['run', '--legacy-memory', '显式启用历史 Haro 记忆'],
-      root,
-      stdout: new PassThrough(),
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'done', responseId: 'resp-1' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [],
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(existsSync(join(root, 'memory'))).toBe(true);
-  });
-
-  it('legacy compatibility: haro run --legacy-memory injects historical MemoryFabric context', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-run-legacy-memory-context-'));
+  it('FEAT-081U: haro run does not inject historical MemoryFabric context even when legacy files exist', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'haro-cli-run-memory-context-removed-'));
     roots.push(root);
     const seenSystemPrompts: string[] = [];
     const legacyMemoryRoot = join(root, 'custom-memory');
@@ -1173,7 +1144,7 @@ describe('runCli [FEAT-006]', () => {
     memory.close();
 
     const result = await runCli({
-      argv: ['run', '--legacy-memory', 'legacy context marker'],
+      argv: ['run', 'legacy context marker'],
       root,
       stdout: new PassThrough(),
       createProviderRegistry: async () =>
@@ -1190,32 +1161,8 @@ describe('runCli [FEAT-006]', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(seenSystemPrompts[0]).toContain('<memory-context>');
-    expect(seenSystemPrompts[0]).toContain('历史 Haro 记忆上下文应只在 legacy memory 显式开启时注入。');
-    expect(existsSync(join(root, 'memory'))).toBe(false);
-  });
-
-  it('legacy compatibility: --no-memory wins over --legacy-memory at directory bootstrap', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'haro-cli-run-no-memory-wins-'));
-    roots.push(root);
-
-    const result = await runCli({
-      argv: ['run', '--legacy-memory', '--no-memory', '显式禁止 Haro 记忆'],
-      root,
-      stdout: new PassThrough(),
-      createProviderRegistry: async () =>
-        createProviderRegistry(
-          new StubProvider({
-            query: async function* () {
-              yield { type: 'result', content: 'done', responseId: 'resp-no-memory-wins' };
-            },
-          }),
-        ),
-      loadAgentRegistry: async () => createAgentRegistry(),
-      createAdditionalChannels: async () => [],
-    });
-
-    expect(result.exitCode).toBe(0);
+    expect(seenSystemPrompts[0]).not.toContain('<memory-context>');
+    expect(seenSystemPrompts[0]).not.toContain('历史 Haro 记忆上下文应只在 legacy memory 显式开启时注入。');
     expect(existsSync(join(root, 'memory'))).toBe(false);
   });
 
