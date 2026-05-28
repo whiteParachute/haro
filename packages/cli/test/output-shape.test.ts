@@ -15,7 +15,6 @@ import {
   AgentRegistry,
   ProviderRegistry,
   db as haroDb,
-  services,
 } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
@@ -182,22 +181,15 @@ describe('FEAT-039 AC12 — --json envelope shape gate', () => {
     expect(isRecord(JSON.parse(out.stdoutLines.at(-1)!))).toBe(true);
   });
 
-  it('memory query --json: NDJSON records + summary', async () => {
+  it('memory query --json: retired/fail-closed error', async () => {
     const root = mkdtempSync(join(tmpdir(), 'haro-shape-mem-'));
     roots.push(root);
-    await services.memory.writeMemoryEntry(
-      { root, dbFile: join(root, 'haro.db') },
-      { scope: 'shared', layer: 'persistent', topic: 'shape topic', content: 'shape body', sourceRef: 'test' },
-      { currentAgentId: 'haro-assistant' },
-    );
 
     const out = await runJson(root, ['memory', 'query', 'shape', '--json']);
-    expect(out.exitCode).toBe(0);
-    expect(out.stdoutLines.length).toBeGreaterThanOrEqual(2);
-    for (const line of out.stdoutLines.slice(0, -1)) {
-      expect(isRecord(JSON.parse(line))).toBe(true);
-    }
-    expect(isListSummary(JSON.parse(out.stdoutLines.at(-1)!))).toBe(true);
+    expect(out.exitCode).toBe(1);
+    expect(out.stdoutLines).toEqual([]);
+    expect(out.stderrLines.join('\n')).toContain('retired');
+    expect(out.stderrLines.join('\n')).toContain('FEAT-081X/F-4');
   });
 
   it('logs show --json: NDJSON records + summary', async () => {

@@ -257,9 +257,10 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
       expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/cli/src/index.ts#--legacy-memory-opt-in', removedBy: 'FEAT-081U' }),
       expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/cli/src/commands/memory.ts#memory-remember-write-surface+packages/mcp-tools/src/tools/memory-remember.ts#legacy-mcp-write-surface', removedBy: 'FEAT-081X' }),
       expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/mcp-tools/src/tools/memory-query.ts#legacy-mcp-read-surface', removedBy: 'FEAT-081X' }),
+      expect.objectContaining({ id: 'memory-fabric', candidate: 'packages/cli/src/commands/memory.ts#memory-cli-read-forensic-surfaces', removedBy: 'FEAT-081X/F-4' }),
       expect.objectContaining({ id: 'skills-marketplace', candidate: 'packages/skills/src/manager.ts#marketplace-install-placeholder', removedBy: 'FEAT-081V' }),
     ]));
-    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(18);
+    expect(payload.data.planning.completedPhysicalRemovals).toHaveLength(19);
     const byId = new Map(payload.data.items.map((item) => [item.id, item]));
     expect(payload.data.items.every((item) => !('physicalRemoval' in item))).toBe(true);
     const providerCodex = byId.get('provider-codex');
@@ -405,6 +406,11 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
         status: 'physically-removed',
         removedBy: 'FEAT-081X',
       }),
+      expect.objectContaining({
+        candidate: 'packages/cli/src/commands/memory.ts#memory-cli-read-forensic-surfaces',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081X/F-4',
+      }),
     ]));
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('--legacy-memory CLI opt-in'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('createLegacyMemoryFabric'))).toMatchObject({ present: false, absent: true });
@@ -412,6 +418,13 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('writeEntry'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('memory_query 保留注册但 retired'))).toMatchObject({ present: true });
     expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('memory_query 执行入口返回 TARGET_DISABLED'))).toMatchObject({ present: true });
+    expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('CLI memory read/forensic surfaces 保留命令形状'))).toMatchObject({ present: true });
+    expect(memoryFabric?.evidence.find((entry) => entry.description?.includes('FEAT-081X/F-4'))).toMatchObject({ present: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('不再调用 Haro MemoryFabric queryMemory'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('recoverMemoryV1Snapshot'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('memory export 文件'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('destructive confirmation'))).toMatchObject({ present: false, absent: true });
+    expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('service context'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('不再读取 ToolDependencies.memory'))).toMatchObject({ present: false, absent: true });
     expect(memoryFabric?.verifiedAbsent.find((entry) => entry.description?.includes('不再调用 Haro MemoryFabric searchMemoryFiles'))).toMatchObject({ present: false, absent: true });
     const skillsMarketplace = byId.get('skills-marketplace');
@@ -573,5 +586,56 @@ describe('haro legacy-removal guard [FEAT-081A]', () => {
     await expect(confirm.result).resolves.toMatchObject({ exitCode: 2, action: 'legacy-removal' });
     expect((await confirm.result).error?.message).toContain('does not support --confirm');
     expect(evolutionFileCounts(root)).toEqual(before);
+  });
+});
+
+describe('haro memory CLI read/forensic surfaces [FEAT-081X/F-4]', () => {
+  const roots: string[] = [];
+
+  function tempRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), 'haro-memory-cli-read-retired-'));
+    roots.push(root);
+    return root;
+  }
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  async function runMemory(root: string, argv: string[]) {
+    const { result, stdout, stderr } = runGuard(root, argv);
+    const resolved = await result;
+    return { result: resolved, stdout: stdout.read(), stderr: stderr.read() };
+  }
+
+  it('fails closed for CLI memory read/forensic actions without exporting or recovering data', async () => {
+    const root = tempRoot();
+    const exportPath = join(root, 'memory-export.json');
+    const cases: string[][] = [
+      ['memory', 'query', 'needle', '--json'],
+      ['memory', 'list', '--json'],
+      ['memory', 'show', 'mem-1', '--json'],
+      ['memory', 'export', '--output', exportPath],
+      ['memory', 'recover-snapshot', '--yes', '--quiet'],
+    ];
+
+    for (const argv of cases) {
+      const out = await runMemory(root, argv);
+      expect(out.result.exitCode).toBe(1);
+      expect(out.stderr).toContain('retired');
+      expect(out.stderr).toContain('FEAT-081X/F-4');
+      expect(out.stderr).toContain('AgentDock self-evolution sidecar');
+      expect(out.stderr).toContain('not read, deleted, exported, recovered, or migrated');
+    }
+    expect(existsSync(exportPath)).toBe(false);
+  });
+
+  it('keeps memory remember on the FEAT-081X/F-2 retired write path', async () => {
+    const root = tempRoot();
+    const out = await runMemory(root, ['memory', 'remember', 'do not write', '--scope', 'shared']);
+    expect(out.result.exitCode).toBe(1);
+    expect(out.stderr).toContain('retired');
+    expect(out.stderr).toContain('FEAT-081X/F-2');
+    expect(out.stderr).toContain('AgentDock memory');
   });
 });

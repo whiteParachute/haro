@@ -25,7 +25,7 @@ export interface LegacyRemovalEvidenceDefinition {
 export interface LegacyPhysicalRemovalRecord {
   candidate: string;
   status: 'physically-removed';
-  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V' | 'FEAT-081X';
+  removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V' | 'FEAT-081X' | 'FEAT-081X/F-4';
   rollbackPlan: string;
   note: string;
 }
@@ -129,7 +129,7 @@ export interface LegacyRemovalGuardReport {
     forbiddenCandidateIds: string[];
     blockedCandidateIds: string[];
     deferredCandidateIds: string[];
-    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V' | 'FEAT-081X'; rollbackPlan: string }>;
+    completedPhysicalRemovals: Array<{ id: string; candidate: string; removedBy: 'FEAT-081D' | 'FEAT-081E' | 'FEAT-081H' | 'FEAT-081J' | 'FEAT-081L' | 'FEAT-081O' | 'FEAT-081P' | 'FEAT-081R' | 'FEAT-081S' | 'FEAT-081U' | 'FEAT-081V' | 'FEAT-081X' | 'FEAT-081X/F-4'; rollbackPlan: string }>;
   };
   items: LegacyRemovalGuardItem[];
   nextActions: string[];
@@ -463,16 +463,16 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
     replacement: '共享 aria-memory-vault / AgentDock memory',
     blockingDependencies: [
       '移除 core barrel MemoryFabric export 前需证明下游 import 清零',
-      '确认 legacy MCP memory_query 已由 FEAT-081X/F-3 保留注册但执行 fail-closed；memory_remember 已由 FEAT-081X/F-2 fail-closed',
+      '确认 legacy MCP memory_query 已由 FEAT-081X/F-3 保留注册但执行 fail-closed；CLI memory query/list/show/export/recover-snapshot 已由 FEAT-081X/F-4 fail-closed；memory_remember 已由 FEAT-081X/F-2 fail-closed',
       '确认 sidecar 主链路不读写 Haro-owned memory',
       '确认真实 ~/.haro 数据与 aria-memory-vault 不被迁移/删除',
     ],
     requiredVerification: ['pnpm test:sidecar', 'pnpm -F @haro/core test:legacy', 'pnpm -F @haro/cli test:legacy'],
-    decision: 'FEAT-081U/C-1 只删除 `haro run --legacy-memory` CLI opt-in 与随附 CLI wiring；FEAT-081X/F-2 退役 Haro-owned memory write surfaces（CLI memory remember 与 legacy MCP memory_remember 执行 fail-closed）；FEAT-081X/F-3 只退役 legacy MCP memory_query read surface（保留注册但执行 TARGET_DISABLED，且不读取 Haro MemoryFabric）；memory 统一方向仍是共享 aria-memory-vault / AgentDock memory，但真实 ~/.haro 数据、aria-memory-vault、read-only/forensic memory 与 core MemoryFabric runtime 仍阻塞，不批准 core MemoryFabric、CLI read-only memory 或真实数据删除。',
+    decision: 'FEAT-081U/C-1 只删除 `haro run --legacy-memory` CLI opt-in 与随附 CLI wiring；FEAT-081X/F-2 退役 Haro-owned memory write surfaces（CLI memory remember 与 legacy MCP memory_remember 执行 fail-closed）；FEAT-081X/F-3 只退役 legacy MCP memory_query read surface（保留注册但执行 TARGET_DISABLED，且不读取 Haro MemoryFabric）；FEAT-081X/F-4 只退役 CLI memory query/list/show/export/recover-snapshot read/forensic 执行入口（保留命令形状但 fail-closed，不读取/导出/恢复真实数据）；memory 统一方向仍是共享 aria-memory-vault / AgentDock memory，但真实 ~/.haro 数据、aria-memory-vault 与 core MemoryFabric runtime 仍阻塞，不批准 core MemoryFabric 或真实数据删除。',
     candidatePriority: {
       status: 'blocked',
       rank: 5,
-      reason: '081U 删除 run --legacy-memory opt-in，081X/F-2 退役 write surfaces，081X/F-3 退役 legacy MCP memory_query 执行入口；Haro-owned memory 仍牵涉真实 ~/.haro 数据、aria-memory vault、read-only/forensic memory 和 core MemoryFabric runtime，删除前必须先完成数据/owner 边界验证。',
+      reason: '081U 删除 run --legacy-memory opt-in，081X/F-2 退役 write surfaces，081X/F-3 退役 legacy MCP memory_query 执行入口，081X/F-4 退役 CLI memory read/forensic 执行入口；Haro-owned memory 仍牵涉真实 ~/.haro 数据、aria-memory vault 和 core MemoryFabric runtime，删除前必须先完成数据/owner 边界验证。',
       blockedUntil: ['确认真实 ~/.haro memory 数据迁移/保留策略', '证明 core MemoryFabric runtime 无保留必要或完成 owner 交接', '证明 sidecar 主链路不读写 Haro-owned memory', '确认 aria-memory-vault 不在 Haro 删除范围'],
       forbiddenScope: ['真实 ~/.haro 数据', 'aria-memory vault'],
     },
@@ -482,21 +482,28 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
         status: 'physically-removed',
         removedBy: 'FEAT-081U',
         rollbackPlan: 'git revert FEAT-081U commit 可恢复 haro run --legacy-memory CLI opt-in 与 CLI-side MemoryFabric wiring。',
-        note: '仅删除 CLI opt-in/wiring；core MemoryFabric、haro memory read/forensic 子命令、MCP memory_query、真实 ~/.haro* 与 aria-memory-vault 均保持保护。',
+        note: '仅删除 CLI opt-in/wiring；core MemoryFabric、MCP memory_query 注册、真实 ~/.haro* 与 aria-memory-vault 均保持保护。',
       },
       {
         candidate: 'packages/cli/src/commands/memory.ts#memory-remember-write-surface+packages/mcp-tools/src/tools/memory-remember.ts#legacy-mcp-write-surface',
         status: 'physically-removed',
         removedBy: 'FEAT-081X',
         rollbackPlan: 'git revert FEAT-081X/F-2 commit 可恢复 CLI memory remember 与 legacy MCP memory_remember 写入行为。',
-        note: '仅退役 Haro-owned memory write surfaces；core MemoryFabric、haro memory query/list/show/export/recover-snapshot、MCP memory_query、真实 ~/.haro*、aria-memory-vault 与 AgentDock memory 均保持保护。',
+        note: '仅退役 Haro-owned memory write surfaces；core MemoryFabric、CLI memory query/list/show/export/recover-snapshot 命令形状、MCP memory_query、真实 ~/.haro*、aria-memory-vault 与 AgentDock memory 均保持保护。',
       },
       {
         candidate: 'packages/mcp-tools/src/tools/memory-query.ts#legacy-mcp-read-surface',
         status: 'physically-removed',
         removedBy: 'FEAT-081X',
         rollbackPlan: 'git revert FEAT-081X/F-3 commit 可恢复 legacy MCP memory_query 对 Haro MemoryFabric 的读取行为。',
-        note: '仅退役 legacy MCP memory_query 执行入口；tool 注册、input schema 与 tools/list 稳定保留。core MemoryFabric、haro memory query/list/show/export/recover-snapshot、真实 ~/.haro*、aria-memory-vault 与 AgentDock memory 均保持保护。',
+        note: '仅退役 legacy MCP memory_query 执行入口；tool 注册、input schema 与 tools/list 稳定保留。core MemoryFabric、CLI memory query/list/show/export/recover-snapshot 命令形状、真实 ~/.haro*、aria-memory-vault 与 AgentDock memory 均保持保护。',
+      },
+      {
+        candidate: 'packages/cli/src/commands/memory.ts#memory-cli-read-forensic-surfaces',
+        status: 'physically-removed',
+        removedBy: 'FEAT-081X/F-4',
+        rollbackPlan: 'git revert FEAT-081X/F-4 commit 可恢复 CLI memory query/list/show/export/recover-snapshot 对 Haro MemoryFabric 的 read/export/recover 行为。',
+        note: '仅退役 CLI memory read/forensic 执行入口；命令形状保留但 fail-closed。core MemoryFabric、legacy MCP memory_query 注册、真实 ~/.haro*、aria-memory-vault 与 AgentDock memory 均保持保护。',
       },
     ],
     evidence: [
@@ -504,9 +511,11 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       { path: 'packages/cli/src/commands/memory.ts', kind: 'exists', description: 'legacy memory CLI 仍存在' },
       { path: 'packages/mcp-tools/src/index.ts', kind: 'contains', pattern: 'memoryRememberTool', description: 'MCP default registry 仍注册 memory tool' },
       { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'MEMORY_REMEMBER_RETIRED_MESSAGE', description: 'CLI memory remember 保留注册但 retired/fail-closed' },
+      { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'MEMORY_CLI_READ_RETIRED_MESSAGE', description: 'CLI memory read/forensic surfaces 保留命令形状但 retired/fail-closed' },
       { path: 'packages/mcp-tools/src/tools/memory-remember.ts', kind: 'contains', pattern: 'MEMORY_REMEMBER_RETIRED_MESSAGE', description: 'legacy MCP memory_remember 保留注册但 retired/fail-closed' },
       { path: 'packages/mcp-tools/src/tools/memory-query.ts', kind: 'contains', pattern: 'MEMORY_QUERY_RETIRED_MESSAGE', description: 'legacy MCP memory_query 保留注册但 retired/fail-closed' },
       { path: 'packages/mcp-tools/src/tools/memory-query.ts', kind: 'contains', pattern: 'TARGET_DISABLED', description: 'legacy MCP memory_query 执行入口返回 TARGET_DISABLED' },
+      { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'FEAT-081X/F-4', description: 'CLI memory read/forensic retired message 标明 FEAT-081X/F-4' },
     ],
     verifiedAbsent: [
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: '--legacy-memory', description: 'haro run --legacy-memory CLI opt-in 已由 FEAT-081U 删除' },
@@ -514,6 +523,11 @@ export const LEGACY_REMOVAL_GUARD_DEFINITIONS: LegacyRemovalGuardDefinition[] = 
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'resolveLegacyMemoryRoots', description: 'CLI legacy memory path resolver wiring 已由 FEAT-081U 删除' },
       { path: 'packages/cli/src/index.ts', kind: 'contains', pattern: 'createCliMemoryWrapupHook', description: 'CLI memory wrapup hook wiring 已由 FEAT-081U 删除' },
       { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'writeMemoryEntry', description: 'CLI memory remember 不再调用 Haro MemoryFabric writeMemoryEntry' },
+      { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'services.memory.queryMemory', description: 'CLI memory read/forensic surfaces 不再调用 Haro MemoryFabric queryMemory' },
+      { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'recoverMemoryV1Snapshot', description: 'CLI memory recover-snapshot 不再调用 Haro MemoryFabric recoverMemoryV1Snapshot' },
+      { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'writeFile', description: 'CLI memory export 不再写出 memory export 文件' },
+      { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'confirmDestructive', description: 'CLI memory recover-snapshot 不再进入 destructive confirmation/recover path' },
+      { path: 'packages/cli/src/commands/memory.ts', kind: 'contains', pattern: 'buildServiceContext(app)', description: 'CLI memory read/forensic surfaces 不再构造 memory service context' },
       { path: 'packages/mcp-tools/src/tools/memory-remember.ts', kind: 'contains', pattern: 'memory.writeEntry', description: 'MCP memory_remember 不再调用 Haro MemoryFabric writeEntry' },
       { path: 'packages/mcp-tools/src/tools/memory-remember.ts', kind: 'contains', pattern: 'entryId: entry.id', description: 'MCP memory_remember 不再返回新写入的 Haro memory entry id' },
       { path: 'packages/mcp-tools/src/tools/memory-query.ts', kind: 'contains', pattern: 'ctx.deps.memory', description: 'MCP memory_query 不再读取 ToolDependencies.memory' },
@@ -768,7 +782,7 @@ export function buildLegacyRemovalGuardReport(workspaceRoot: string): LegacyRemo
       'FEAT-081U/C-1 已删除 haro run --legacy-memory CLI opt-in 与 CLI-side MemoryFabric wiring；core memory runtime、haro memory、MCP memory tools、真实 ~/.haro* 与 aria-memory-vault 继续保护。',
       'FEAT-081V/D-1 已退役 marketplace:<name> 占位 install surface；local/git install、SkillsManager、eat/shit、sync-runtime、prepareTask 与 packages/skills 仍保留且不获删除批准。',
       'FEAT-081X/F-1 已退役 standalone haro provider CLI 管理面；AgentDock/ModelHub 承接 provider 管理 owner，provider-codex runtime 与 diagnostics/review/run/chat LLM path 仍保留且不获删除批准。',
-      'FEAT-081X/F-2 已退役 Haro-owned memory write surfaces：haro memory remember 与 legacy MCP memory_remember 保留注册但 fail-closed；FEAT-081X/F-3 已退役 legacy MCP memory_query 执行入口：保留注册但 TARGET_DISABLED，且不读取 ~/.haro memory 数据；core MemoryFabric、read-only/forensic memory、真实 ~/.haro* 与 aria-memory-vault 继续保护。',
+      'FEAT-081X/F-2 已退役 Haro-owned memory write surfaces：haro memory remember 与 legacy MCP memory_remember 保留注册但 fail-closed；FEAT-081X/F-3 已退役 legacy MCP memory_query 执行入口：保留注册但 TARGET_DISABLED，且不读取 ~/.haro memory 数据；FEAT-081X/F-4 已退役 CLI memory query/list/show/export/recover-snapshot read/forensic 执行入口：保留命令形状但 fail-closed，不 read/export/recover/migrate 真实历史数据；core MemoryFabric、真实 ~/.haro* 与 aria-memory-vault 继续保护。',
       'channel-layer 当前没有下一项删除授权；如继续减法，需先补 AgentDock takeover 证据，再重新排序并单项评审其它模块。',
     ],
   };

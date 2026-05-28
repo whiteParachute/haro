@@ -115,17 +115,19 @@ describe('legacy workbench surface warnings', () => {
     expect(stdout.read()).toContain(LEGACY_SURFACE_WARNING);
   });
 
-  it('prints a legacy warning for human memory output but keeps JSON output clean', async () => {
+  it('retires memory read surfaces without printing the legacy workbench warning', async () => {
     const root = tempRoot('haro-legacy-memory-');
     const human = runWithCapturedOutput(root, ['memory', 'list', '--human']);
 
-    await expect(human.result).resolves.toMatchObject({ exitCode: 0 });
-    expect(human.stdout.read()).toContain(LEGACY_SURFACE_WARNING);
+    await expect(human.result).resolves.toMatchObject({ exitCode: 1 });
+    expect(human.stdout.read()).not.toContain(LEGACY_SURFACE_WARNING);
+    expect(human.stderr.read()).toContain('retired');
+    expect(human.stderr.read()).toContain('FEAT-081X/F-4');
 
     const json = runWithCapturedOutput(root, ['memory', 'list', '--json']);
-    await expect(json.result).resolves.toMatchObject({ exitCode: 0 });
+    await expect(json.result).resolves.toMatchObject({ exitCode: 1 });
     expect(json.stdout.read()).not.toContain(LEGACY_SURFACE_WARNING);
-    expectJsonLines(json.stdout.read());
+    expect(json.stderr.read()).toContain('FEAT-081X/F-4');
   });
 
   it('retires human provider surfaces without printing the legacy workbench warning', async () => {

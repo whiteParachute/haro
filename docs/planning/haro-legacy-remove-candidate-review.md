@@ -1616,3 +1616,23 @@ Explicitly not approved:
 - No change to AgentDock host, MCP `send_message`, Haro Web Review Board, approval/apply/rollback, provider runtime, run/chat/runtime router, or skills package surfaces.
 
 Guard state after F-3 remains intentionally blocked for `memory-fabric`: `deleteAllowed=false`, `stillReferenced=true`, `deleteAllowedCount=0`, `nextDeletionCandidate=null`, `nextReviewCandidate=null`, and `verifiedAbsentFailedCount=0`. The physical-removal ledger increments only by the scoped entry `packages/mcp-tools/src/tools/memory-query.ts#legacy-mcp-read-surface`; this is an entry retirement, not MemoryFabric/core or data deletion.
+
+## FEAT-081X/F-4 — CLI `haro memory` read/forensic surfaces retired
+
+FEAT-081X/F-4 continues the product-essential cleanup after F-2 write surface retirement and F-3 legacy MCP `memory_query` retirement. The next smallest safe slice is limited to Haro-owned CLI memory read/forensic execution paths: `haro memory query`, `list`, `show`, `export`, and `recover-snapshot`.
+
+Scope closed:
+- `packages/cli/src/commands/memory.ts` keeps the `haro memory` command shape and known options for compatibility.
+- `query/list/show/export/recover-snapshot` now fail closed with a retired message referencing `FEAT-081X/F-4` and `AgentDock self-evolution sidecar`.
+- These commands no longer call `services.memory.queryMemory`, `recoverMemoryV1Snapshot`, memory export `writeFile`, `confirmDestructive`, or memory service `buildServiceContext(app)`.
+- Export fail-closed occurs before any file creation; recover-snapshot fail-closed occurs before confirmation or snapshot copy.
+
+Scope explicitly protected:
+- No deletion of `packages/core/src/memory/**`, `packages/core/src/services/memory.ts`, `createMemoryFabric`, or MemoryFabric core/runtime.
+- No reading, deletion, export, recovery, migration, or mutation of real `~/.haro*`, `~/.haro/evolution`, or aria-memory-vault data.
+- No change to Haro Web Review Board, sidecar main path, AgentDock host, MCP `send_message`, provider runtime, run/chat router, or skills runtime.
+- F-2 `haro memory remember` remains retired/fail-closed and is not restored.
+
+Guard state after F-4 remains intentionally blocked for `memory-fabric`: `deleteAllowed=false`, `stillReferenced=true`, `deleteAllowedCount=0`, `nextDeletionCandidate=null`, `nextReviewCandidate=null`, and `verifiedAbsentFailedCount=0`. The physical-removal ledger increments only by the scoped entry `packages/cli/src/commands/memory.ts#memory-cli-read-forensic-surfaces`; this is an execution-entry retirement, not MemoryFabric/core or data deletion.
+
+Remaining risk: `memory-fabric` is still not deletable. Real data ownership/retention, aria-memory-vault boundary, core MemoryFabric imports/runtime, and any non-CLI/MCP historical compatibility obligations still need separate proof before package/runtime deletion can be considered.

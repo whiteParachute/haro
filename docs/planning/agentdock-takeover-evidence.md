@@ -198,3 +198,19 @@ Evidence:
 Boundary:
 - This does not approve deleting MemoryFabric/core runtime, `createMemoryFabric`, read-only/forensic `haro memory query/list/show/export/recover-snapshot`, real `~/.haro*` data, `~/.haro/evolution`, AgentDock memory, or aria-memory-vault.
 - Haro current product shape remains AgentDock self-evolution sidecar proposal/review workflows, Review Board, approval APIs, sidecar artifacts/MCP mainline, and product-essential provider/run/review paths.
+
+## FEAT-081X/F-4 takeover evidence — CLI memory read/forensic entries retired
+
+FEAT-081X/F-4 retires only the Haro-owned CLI `haro memory` read/forensic execution paths: `query`, `list`, `show`, `export`, and `recover-snapshot`. This closes the remaining CLI memory read/export/recover surface while preserving command compatibility and current product-essential Haro sidecar behavior.
+
+Evidence:
+- `packages/cli/src/commands/memory.ts` keeps the `haro memory` command group and known option shapes.
+- `MEMORY_CLI_READ_RETIRED_MESSAGE` references `FEAT-081X/F-4`, `AgentDock self-evolution sidecar`, and states real historical `~/.haro` memory data is not read, deleted, exported, recovered, or migrated.
+- `query/list/show/export/recover-snapshot` actions fail closed before MemoryFabric read/export/recover logic.
+- The implementation no longer references `services.memory.queryMemory`, `recoverMemoryV1Snapshot`, export `writeFile`, `confirmDestructive`, or memory service `buildServiceContext(app)` from the CLI memory command file.
+- Temporary-HARO_HOME smoke verifies all five read/forensic commands exit non-zero with the retired F-4 message and `export` creates no output file.
+- `haro memory remember` remains on the FEAT-081X/F-2 fail-closed write path.
+
+Boundary:
+- This does not approve deleting MemoryFabric/core runtime, `createMemoryFabric`, `packages/core/src/memory/**`, `packages/core/src/services/memory.ts`, real `~/.haro*` data, `~/.haro/evolution`, AgentDock memory, or aria-memory-vault.
+- This does not change Haro Web Review Board, sidecar registry/main path, AgentDock host, MCP `send_message`, provider runtime, run/chat router, or skills runtime.

@@ -3,7 +3,7 @@
  *
  * Drives a single haro home through the full daily lifecycle the spec
  * promises: create user → create agent → chat → session list → retired memory
- * remember fail-closed → memory query → logs show → workflow list → budget show →
+ * remember fail-closed → memory query fail-closed → logs show → workflow list → budget show →
  * config set/get/unset. Each step asserts exit code 0 + a key signal in
  * the JSON envelope. This is the smoking-gun test that the CLI surface
  * actually composes — individual command tests can pass while the flow
@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ProviderRegistry, services } from '@haro/core';
+import { ProviderRegistry } from '@haro/core';
 import type { AgentEvent, AgentProvider, AgentQueryParams } from '@haro/core/provider';
 import { runCli } from '../src/index.js';
 
@@ -124,24 +124,12 @@ describe('FEAT-039 §7 — end-to-end self-use flow', () => {
     expect(memoryRemember.stderr).toContain('FEAT-081X/F-2');
     expect(memoryRemember.stderr).toContain('AgentDock memory');
 
-    await services.memory.writeMemoryEntry(
-      { root, dbFile: join(root, 'haro.db') },
-      {
-        scope: 'shared',
-        layer: 'persistent',
-        topic: 'pineapple',
-        content: 'pineapple is allowed',
-        sourceRef: 'test:feat039-e2e',
-      },
-      { currentAgentId: 'my-agent' },
-    );
-
-    // 8. memory query "pineapple" --json.
+    // 8. memory query "pineapple" --json is retired/fail-closed.
     const memoryQuery = await run({ argv: ['memory', 'query', 'pineapple', '--json'], root });
-    expect(memoryQuery.exitCode).toBe(0);
-    const memoryHits = memoryQuery.lines.map((line) => JSON.parse(line))
-      .filter((parsed) => parsed.ok === true && parsed.data?.entry);
-    expect(memoryHits.length).toBeGreaterThan(0);
+    expect(memoryQuery.exitCode).toBe(1);
+    expect(memoryQuery.stderr).toContain('retired');
+    expect(memoryQuery.stderr).toContain('FEAT-081X/F-4');
+    expect(memoryQuery.stderr).toContain('AgentDock self-evolution sidecar');
 
     // 9. logs show --session <id> --json.
     const logsShow = await run({ argv: ['logs', 'show', '--session', firstSessionId, '--json'], root });
