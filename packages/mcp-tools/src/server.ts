@@ -17,7 +17,11 @@ import type {
   ToolErrorPayload,
 } from './types.js';
 
-const PROTOCOL_VERSION = '2025-05-01';
+// Keep the protocol version on a value supported by the AgentDock ModelHub
+// MCP client (@modelcontextprotocol/sdk). `2025-05-01` is not a published
+// MCP protocol version and makes the client reject the whole Haro sidecar
+// server before tools/list, hiding tools such as haro_run_daily_workflow.
+const PROTOCOL_VERSION = '2025-03-26';
 
 export interface ServerOptions {
   transport: Transport;

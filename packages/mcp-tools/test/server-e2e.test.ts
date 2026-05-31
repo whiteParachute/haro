@@ -40,8 +40,12 @@ describe('McpServer E2E [FEAT-032 R2]', () => {
       { jsonrpc: '2.0', id: 1, method: 'initialize' },
     ]);
     expect(responses).toHaveLength(1);
-    const r = responses[0]! as { id: number; result: { serverInfo: { name: string } } };
+    const r = responses[0]! as {
+      id: number;
+      result: { protocolVersion: string; serverInfo: { name: string } };
+    };
     expect(r.id).toBe(1);
+    expect(r.result.protocolVersion).toBe('2025-03-26');
     expect(r.result.serverInfo.name).toBe('haro-mcp-tools');
   });
 
