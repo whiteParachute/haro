@@ -1943,19 +1943,63 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       };
     }
 
-    let generated = createAutoProposal(app.paths.root, selected, app.now, frontierResult.signals);
-    const policyAudit = generated.proposal.status === 'proposed'
-      ? evaluateGeneratedProposalAgainstPolicy(generated, emitAndLoadCurrentMcpAuditPolicy(app))
-      : undefined;
-    generated.policyAudit = policyAudit?.evaluations[0];
-    if (generated.policyAudit?.decision === 'blocked-by-policy') {
-      app.stderr.write(`haro propose: skipped candidate blocked by mcp-audit-policy: ${generated.policyAudit.reason}\n`);
+    const candidates = createAutoProposalCandidates(app.paths.root, selected, app.now, frontierResult.signals);
+    const activeTargetDedupeKeys = readActiveProposalTargetDedupeKeys(app.paths.root);
+    let policyLoadResult: CurrentMcpAuditPolicyLoadResult | undefined;
+    const skippedPolicyAudits: ProposePolicyAuditSummary[] = [];
+    const awaitingFeedbackEvents: BlockedProposalEvent[] = [];
+    const awaitingFeedbackEventPaths: string[] = [];
+    let skippedProposalCount = 0;
+    let skippedAwaitingFeedbackCount = 0;
+    let generated: GeneratedProposal | undefined;
+    let policyAudit: ProposePolicyAuditSummary | undefined;
+
+    for (const candidate of candidates) {
+      if (candidate.proposal.status === 'proposed' && candidate.proposal.targetKind === 'mcp-tool-config' && !policyLoadResult) {
+        policyLoadResult = emitAndLoadCurrentMcpAuditPolicy(app);
+      }
+      const candidatePolicyAudit = candidate.proposal.status === 'proposed' && candidate.proposal.targetKind === 'mcp-tool-config' && policyLoadResult
+        ? evaluateGeneratedProposalAgainstPolicy(candidate, policyLoadResult)
+        : undefined;
+      candidate.policyAudit = candidatePolicyAudit?.evaluations[0];
+      if (candidate.policyAudit?.decision === 'blocked-by-policy') {
+        skippedProposalCount += 1;
+        if (candidatePolicyAudit) skippedPolicyAudits.push(candidatePolicyAudit);
+        app.stderr.write(`haro propose: skipped candidate blocked by mcp-audit-policy: ${candidate.policyAudit.reason} (${candidate.proposal.id}); trying next candidate if available\n`);
+        continue;
+      }
+      if (activeTargetDedupeKeys.has(proposalTargetDedupeKey(candidate.proposal))) {
+        skippedProposalCount += 1;
+        if (candidatePolicyAudit) skippedPolicyAudits.push(candidatePolicyAudit);
+        app.stderr.write(`haro propose: skipped candidate ${candidate.proposal.id} because an undecided proposal already targets ${proposalTargetSummary(candidate.proposal)}; trying next candidate if available\n`);
+        continue;
+      }
+      const awaitingFeedbackBlock = maybeBlockProposalAwaitingFeedback(app.paths.root, candidate, app.now());
+      if (awaitingFeedbackBlock) {
+        skippedProposalCount += 1;
+        skippedAwaitingFeedbackCount += 1;
+        awaitingFeedbackEvents.push(awaitingFeedbackBlock.event);
+        awaitingFeedbackEventPaths.push(awaitingFeedbackBlock.path);
+        if (candidatePolicyAudit) skippedPolicyAudits.push(candidatePolicyAudit);
+        writeJsonFile(awaitingFeedbackBlock.path, awaitingFeedbackBlock.event);
+        app.stderr.write(
+          `haro propose: skipped candidate ${candidate.proposal.id} because target ${proposalTargetSummary(candidate.proposal)} awaits feedback incorporation (last direction: ${truncateForLog(awaitingFeedbackBlock.event.priorDirection ?? '无', 120)}); trying next candidate if available\n`,
+        );
+        continue;
+      }
+      generated = candidate;
+      policyAudit = candidatePolicyAudit;
+      break;
+    }
+
+    if (!generated) {
+      const mergedPolicyAudit = skippedPolicyAudits.length === 1 ? skippedPolicyAudits[0] : mergePolicyAuditSummaries(skippedPolicyAudits);
       return {
         command: 'propose',
         mode: 'dry-run',
         includeFrontier: options.includeFrontier === true,
         proposalCount: 0,
-        skippedProposalCount: 1,
+        skippedProposalCount,
         consumedObservationCount: 0,
         pendingObservationCount: pending.length,
         includedFrontierSignalCount: frontierResult.signals.length,
@@ -1963,73 +2007,18 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
         skippedCorruptObservationCount: pendingResult.corruptCount,
         skippedCorruptProposalCount: consumedResult.corruptCount,
         skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
-        skippedAwaitingFeedbackCount: 0,
+        skippedAwaitingFeedbackCount,
         proposalsWithFeedbackContext: 0,
-        awaitingFeedbackEvents: [],
-        awaitingFeedbackEventPaths: [],
-        awaitingFeedbackBlocks: [],
+        awaitingFeedbackEvents: awaitingFeedbackEvents.map((event) => event.id),
+        awaitingFeedbackEventPaths,
+        awaitingFeedbackBlocks: awaitingFeedbackEvents,
         wroteProposal: false,
         assetEventCount: 0,
         assetEventIds: [],
-        ...(policyAudit ? { policyAudit } : {}),
+        ...(mergedPolicyAudit ? { policyAudit: mergedPolicyAudit } : {}),
       };
     }
-    if (readActiveProposalTargetDedupeKeys(app.paths.root).has(proposalTargetDedupeKey(generated.proposal))) {
-      app.stderr.write(`haro propose: skipped candidate because an undecided proposal already targets ${proposalTargetSummary(generated.proposal)}\n`);
-      return {
-        command: 'propose',
-        mode: 'dry-run',
-        includeFrontier: options.includeFrontier === true,
-        proposalCount: 0,
-        skippedProposalCount: 1,
-        consumedObservationCount: 0,
-        pendingObservationCount: pending.length,
-        includedFrontierSignalCount: frontierResult.signals.length,
-        availableFrontierSignalCount: frontierResult.signals.length,
-        skippedCorruptObservationCount: pendingResult.corruptCount,
-        skippedCorruptProposalCount: consumedResult.corruptCount,
-        skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
-        skippedAwaitingFeedbackCount: 0,
-        proposalsWithFeedbackContext: 0,
-        awaitingFeedbackEvents: [],
-        awaitingFeedbackEventPaths: [],
-        awaitingFeedbackBlocks: [],
-        wroteProposal: false,
-        assetEventCount: 0,
-        assetEventIds: [],
-        ...(policyAudit ? { policyAudit } : {}),
-      };
-    }
-    const awaitingFeedbackBlock = maybeBlockProposalAwaitingFeedback(app.paths.root, generated, app.now());
-    if (awaitingFeedbackBlock) {
-      writeJsonFile(awaitingFeedbackBlock.path, awaitingFeedbackBlock.event);
-      app.stderr.write(
-        `haro propose: skipped candidate because target ${proposalTargetSummary(generated.proposal)} awaits feedback incorporation (last direction: ${truncateForLog(awaitingFeedbackBlock.event.priorDirection ?? '无', 120)})\n`,
-      );
-      return {
-        command: 'propose',
-        mode: 'dry-run',
-        includeFrontier: options.includeFrontier === true,
-        proposalCount: 0,
-        skippedProposalCount: 1,
-        consumedObservationCount: 0,
-        pendingObservationCount: pending.length,
-        includedFrontierSignalCount: frontierResult.signals.length,
-        availableFrontierSignalCount: frontierResult.signals.length,
-        skippedCorruptObservationCount: pendingResult.corruptCount,
-        skippedCorruptProposalCount: consumedResult.corruptCount,
-        skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
-        skippedAwaitingFeedbackCount: 1,
-        proposalsWithFeedbackContext: 0,
-        awaitingFeedbackEvents: [awaitingFeedbackBlock.event.id],
-        awaitingFeedbackEventPaths: [awaitingFeedbackBlock.path],
-        awaitingFeedbackBlocks: [awaitingFeedbackBlock.event],
-        wroteProposal: false,
-        assetEventCount: 0,
-        assetEventIds: [],
-        ...(policyAudit ? { policyAudit } : {}),
-      };
-    }
+
     generated = attachFeedbackContextIfNeeded(app.paths.root, generated, app.now());
     if (policyAudit && generated.proposal.descriptionLint) {
       policyAudit.descriptionLint = generated.proposal.descriptionLint;
@@ -2046,7 +2035,7 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       mode: 'dry-run',
       includeFrontier: options.includeFrontier === true,
       proposalCount: 1,
-      skippedProposalCount: 0,
+      skippedProposalCount,
       consumedObservationCount: selected.length,
       pendingObservationCount: pending.length - selected.length,
       includedFrontierSignalCount: frontierResult.signals.length,
@@ -2054,11 +2043,11 @@ function proposeAgentDock(app: AppContext, options: ProposeOptions): ProposeResu
       skippedCorruptObservationCount: pendingResult.corruptCount,
       skippedCorruptProposalCount: consumedResult.corruptCount,
       skippedCorruptFrontierSignalCount: frontierResult.corruptCount,
-      skippedAwaitingFeedbackCount: 0,
+      skippedAwaitingFeedbackCount,
       proposalsWithFeedbackContext: proposal.feedbackContext ? 1 : 0,
-      awaitingFeedbackEvents: [],
-      awaitingFeedbackEventPaths: [],
-      awaitingFeedbackBlocks: [],
+      awaitingFeedbackEvents: awaitingFeedbackEvents.map((event) => event.id),
+      awaitingFeedbackEventPaths,
+      awaitingFeedbackBlocks: awaitingFeedbackEvents,
       wroteProposal: true,
       assetEventCount: assetEventIds.length,
       assetEventIds,
@@ -9078,22 +9067,24 @@ function createDryRunProposal(
   });
 }
 
-function createAutoProposal(
+function createAutoProposalCandidates(
   root: string,
   batches: readonly ObservationBatch[],
   now: () => Date,
   frontierSignals: readonly FrontierSignal[] = [],
-): GeneratedProposal {
+): GeneratedProposal[] {
+  const candidates: GeneratedProposal[] = [];
   const actionableRunnerProfileProposal = createActionableRunnerProfileProposal(root, batches, now);
-  if (actionableRunnerProfileProposal) return attachGeneratedProposalMetadata(actionableRunnerProfileProposal);
+  if (actionableRunnerProfileProposal) candidates.push(attachGeneratedProposalMetadata(actionableRunnerProfileProposal));
   const actionableScheduleConfigProposal = createActionableScheduleConfigProposal(root, batches, now);
-  if (actionableScheduleConfigProposal) return attachGeneratedProposalMetadata(actionableScheduleConfigProposal);
+  if (actionableScheduleConfigProposal) candidates.push(attachGeneratedProposalMetadata(actionableScheduleConfigProposal));
   const actionableMcpProposal = createActionableMcpToolConfigProposal(root, batches, now, frontierSignals);
-  if (actionableMcpProposal) return attachGeneratedProposalMetadata(actionableMcpProposal);
-  return attachGeneratedProposalMetadata({
+  if (actionableMcpProposal) candidates.push(attachGeneratedProposalMetadata(actionableMcpProposal));
+  if (candidates.length > 0) return candidates;
+  return [attachGeneratedProposalMetadata({
     proposal: createDryRunProposal(batches, now, frontierSignals),
     contentFiles: [],
-  });
+  })];
 }
 
 function attachGeneratedProposalMetadata(generated: GeneratedProposal): GeneratedProposal {

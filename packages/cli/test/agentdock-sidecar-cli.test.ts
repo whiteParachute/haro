@@ -1562,6 +1562,64 @@ describe('haro AgentDock sidecar CLI [FEAT-045]', () => {
     expect(secondPayload.awaitingFeedbackBlocks[0]?.contentHash).not.toBe(firstPayload.proposal.changeSet[0]?.contentHash);
   });
 
+  it('propose --auto-dry-run skips a rejected duplicate candidate and continues to the next actionable signal', async () => {
+    const root = newHome('agentdock-propose-feedback-continues');
+    writeCurrentMcpAuditPolicy(root);
+    writeRunnerErrorObservation(root, 'obs-runner-error-old', 'AgentDock turn old ended with status timeout');
+
+    const firstOut = captureStream();
+    const firstErr = captureStream();
+    const first = await runCli(commonOpts(root, firstOut, firstErr, ['propose', '--auto-dry-run', '--json']));
+    expect(first.exitCode).toBe(0);
+    expect(firstErr.read()).toBe('');
+    const firstPayload = (JSON.parse(firstOut.read()) as { data: {
+      proposal: { id: string; changeSet: Array<{ targetRef: { id: string } }> };
+    } }).data;
+    expect(firstPayload.proposal.changeSet[0]?.targetRef.id).toBe('haro-sidecar:runner-profile:error-recovery-policy');
+    writeProposalDecisionRecord(root, firstPayload.proposal.id, 'reject', {
+      direction: '同一个目标重复，且没有吸收修改意见。',
+    });
+    markProposalStatus(root, firstPayload.proposal.id, 'rejected');
+    writeRunnerErrorObservation(root, 'obs-runner-error-new', 'AgentDock turn new ended with status timeout');
+    writeMcpAuditSignal(root);
+
+    const secondOut = captureStream();
+    const secondErr = captureStream();
+    const second = await runCli(commonOpts(root, secondOut, secondErr, [
+      'propose',
+      '--auto-dry-run',
+      '--include-frontier',
+      '--json',
+    ]));
+
+    expect(second.exitCode).toBe(0);
+    expect(secondErr.read()).toContain('trying next candidate if available');
+    const secondPayload = (JSON.parse(secondOut.read()) as { data: {
+      proposalCount: number;
+      skippedProposalCount: number;
+      skippedAwaitingFeedbackCount: number;
+      includedFrontierSignalCount: number;
+      awaitingFeedbackBlocks: Array<{ reason: string; priorProposalId: string }>;
+      wroteProposal: boolean;
+      proposal: { targetKind: string; changeSet: Array<{ targetRef: { id: string } }> };
+    } }).data;
+    expect(secondPayload).toMatchObject({
+      proposalCount: 1,
+      skippedProposalCount: 1,
+      skippedAwaitingFeedbackCount: 1,
+      includedFrontierSignalCount: 1,
+      wroteProposal: true,
+    });
+    expect(secondPayload.awaitingFeedbackBlocks[0]).toMatchObject({
+      reason: 'AWAITING_FEEDBACK_INCORPORATION',
+      priorProposalId: firstPayload.proposal.id,
+    });
+    expect(secondPayload.proposal.targetKind).toBe('mcp-tool-config');
+    expect(secondPayload.proposal.changeSet[0]?.targetRef.id).toBe('agentdock:haro-sidecar-mcp-audit-policy');
+    expect(readdirSync(join(root, 'evolution', 'proposals')).filter((name) => name.endsWith('.json'))).toHaveLength(2);
+    expect(readdirSync(join(root, 'evolution', 'blocked-proposal-events')).filter((name) => name.endsWith('.json'))).toHaveLength(1);
+  });
+
   it('propose --auto-dry-run allows a same-target candidate when feedback content is genuinely different', async () => {
     const root = newHome('agentdock-propose-feedback-different');
     writeCurrentMcpAuditPolicy(root);
